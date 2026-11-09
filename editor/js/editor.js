@@ -8,7 +8,7 @@ var E = {
   brush: { terrain: 'til_3', object: null, monster: null },
   view: { zoom: 2, x: 40, y: 40 },
   show: { terrain: true, objects: true, grid: true },
-  selected: null, hover: null, mode: null,
+  selected: null, hover: null, mode: null, screen: 'map',
   dirty: { maps: {}, tabs: {}, deleted: [] },
   undo: [], redo: [],
   ground: null, groundDirty: true, needsDraw: true,
@@ -453,6 +453,7 @@ var E = {
 
   var KEYS = { b: 'brush', r: 'rect', f: 'fill', i: 'pick', e: 'erase', v: 'select' };
   addEventListener('keydown', function (ev) {
+    if (E.screen === 'gear') return;             // the gear maker owns the screen; no map shortcuts
     var tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     var k = ev.key.toLowerCase();

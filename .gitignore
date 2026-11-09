@@ -1,4 +1,8 @@
 art/inbox/
+# gear maker scratch output (generated layers/masks/review sheets)
+tools/gearpipe/out/gear/*
+!tools/gearpipe/out/gear/.gitkeep
+tools/gearpipe/raw/gear/
 __pycache__/
 node_modules/
 .clasprc.json

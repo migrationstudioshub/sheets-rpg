@@ -42,13 +42,21 @@ async function getContent() {
   return _content;
 }
 
+// The world and player records are stored as JSON strings, because their keys (entity ids like
+// "map_3.e9", flag names) contain characters the Realtime Database forbids in keys (".", "#", ...).
+function parseVal(v, fallback) {
+  if (v == null) return fallback;
+  return typeof v === 'string' ? JSON.parse(v) : v;        // tolerate records written before this change
+}
 async function readWorld() {
   const snap = await db.ref('state/world').get();
-  return snap.val() || { seq: 0, log: [], maps: {} };
+  return parseVal(snap.val(), { seq: 0, log: [], maps: {} });
 }
 async function readPlayers() {
   const snap = await db.ref('players').get();
-  return snap.val() || {};
+  const raw = snap.val() || {}, out = {};
+  Object.keys(raw).forEach(tok => { try { out[tok] = parseVal(raw[tok]); } catch (e) { /* skip unreadable */ } });
+  return out;
 }
 
 /** The fast-moving, fully-global part of a map's state: all monsters and all players present. */
@@ -99,8 +107,8 @@ async function step(token, action, since) {
   // Persist the actor and anyone combat touched this step — but NOT idle bystanders, so a simultaneous
   // action by another player can't overwrite their position. Also writes fewer records.
   const touched = new Set(ev.filter(e => e.to).map(e => e.to));
-  const updates = { 'state/world': ws, ['players/' + token]: p };
-  players.forEach(q => { if (q.token && q.id !== p.id && touched.has(q.id)) updates['players/' + q.token] = q; });
+  const updates = { 'state/world': JSON.stringify(ws), ['players/' + token]: JSON.stringify(p) };
+  players.forEach(q => { if (q.token && q.id !== p.id && touched.has(q.id)) updates['players/' + q.token] = JSON.stringify(q); });
   await db.ref().update(updates);
 
   // Only push the public view when the moving things actually changed — an idle heartbeat (no one
@@ -121,7 +129,7 @@ async function join(name, cls) {
   p.token = crypto.randomUUID() + crypto.randomUUID().slice(0, 8);
   p.created = new Date().toISOString();
   p._seen = Date.now();
-  await db.ref('players/' + p.token).set(p);
+  await db.ref('players/' + p.token).set(JSON.stringify(p));
   return { token: p.token, player: World.publicPlayer(content, p) };
 }
 

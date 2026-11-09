@@ -20,6 +20,7 @@
   var lastAttack = 0;
   var clockOffset = 0;                   // server clock minus ours, for timed traps
   var timed = [];                        // timed traps on this map, drawn from the clock
+  var liveUnwatch = null;                // stops the Firebase live-world listener (online, when enabled)
 
   var KEYS = { ArrowUp: 'N', KeyW: 'N', ArrowRight: 'E', KeyD: 'E', ArrowDown: 'S', KeyS: 'S', ArrowLeft: 'W', KeyA: 'W' };
 
@@ -44,6 +45,22 @@
     hud();
     if (bagOpen) bag();
     return Promise.resolve();
+  }
+
+  /**
+   * A live world update pushed from Firebase (online, when FIREBASE_URL is set): refresh the moving
+   * things — monsters and other players — between polls, so they glide in near-real-time. Your own
+   * player, object states and events still come from the poll/act replies (authoritative, per-player).
+   */
+  function mergeLiveWorld(w) {
+    if (!me || !w || w.map !== me.map) return;                 // ignore a push for a map we've already left
+    if (w.monsters) view.monsters = w.monsters;
+    if (w.players) view.players = w.players.filter(function (q) { return q.id !== me.id; });
+    if (w.now) clockOffset = w.now - Date.now();
+  }
+  function watchLive() {
+    if (liveUnwatch) { liveUnwatch(); liveUnwatch = null; }
+    if (api.watchMap && me) liveUnwatch = api.watchMap(me.map, mergeLiveWorld);
   }
 
   var COLORS = { hit: '#ff6b5b', heal: '#6fe08a', loot: '#ffd65a', level: '#ffd65a', kill: '#ffffff', death: '#ff6b5b' };
@@ -477,6 +494,7 @@
   // ---------------------------------------------------------------- map and loop
   function enterMap() {
     plan = null;
+    watchLive();                          // (re)subscribe to live monster/player pushes for this map
     hud();
     setNet('loading art…');
     return Assets.loadForMap(content, mapOf()).then(function () {

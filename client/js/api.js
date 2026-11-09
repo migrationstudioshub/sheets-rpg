@@ -88,6 +88,26 @@ var Api = (function () {
   };
   Online.prototype.act = function (action, since) { return this.call({ action: 'act', token: this.token, 'do': action, since: since }); };
   Online.prototype.poll = function (since) { return this.call({ action: 'poll', token: this.token, since: since }); };
+  /**
+   * Listen for live updates to one map (monsters and players), pushed by the server through Firebase.
+   * onWorld({map, now, seq, monsters, players}) runs on every change. Returns a function that stops listening.
+   * Does nothing (polling still works) if FIREBASE_URL is unset or the browser has no EventSource.
+   */
+  Online.prototype.watchMap = function (mapId, onWorld) {
+    if (!GAME_CONFIG.FIREBASE_URL || typeof EventSource === 'undefined') return function () {};
+    var url = GAME_CONFIG.FIREBASE_URL.replace(/\/+$/, '') + '/world/' + encodeURIComponent(mapId) + '.json';
+    var es = new EventSource(url);
+    function handle(ev) {
+      try {
+        var msg = JSON.parse(ev.data);                 // Realtime DB streaming sends { path, data }
+        if (!msg || msg.data == null) return;          // null = the node is empty (no one on this map yet)
+        if (msg.path === '/') onWorld(msg.data);        // we always PUT the whole node, so the change arrives at '/'
+      } catch (e) { /* keep-alive and auth-revoked frames aren't JSON we care about */ }
+    }
+    es.addEventListener('put', handle);
+    es.addEventListener('patch', handle);
+    return function () { es.close(); };
+  };
   Online.prototype.warp = function () { return Promise.reject(new Error('Map jumping is offline-only')); };
   Online.prototype.leave = function () {
     if (this.token && navigator.sendBeacon) navigator.sendBeacon(this.url, JSON.stringify({ action: 'save', token: this.token }));

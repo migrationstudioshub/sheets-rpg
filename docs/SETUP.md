@@ -96,6 +96,36 @@ the next deploy replaces it with the repository's version. (Script properties, t
 never prints them in logs, and doesn't give them to people who copy (fork) the repository. To revoke it at any time:
 [myaccount.google.com/permissions](https://myaccount.google.com/permissions) → remove the clasp / Apps Script entry.
 
+## Live world with Firebase (optional, free — makes other players and monsters move smoothly)
+
+Without this, the game is fine: your own moves and spells are instant, but things you don't control
+(other players, monsters) only refresh when your game checks in with the server — up to a second or two
+late. Turning on Firebase lets the server *push* those live, so other players and monsters glide in
+near-real-time. It's **free** (Firebase's Spark plan, no card needed) and the server stays in charge of
+all the rules — Firebase only carries positions, it never decides anything.
+
+Trade-off, so you know: each of *your own* actions gets a fraction of a second slower (the server now also
+writes the live view to Firebase), in exchange for everyone else seeing your moves almost instantly. It's a
+clear win once two or more people play together. To turn it on:
+
+1. **Create a Firebase project** at [console.firebase.google.com](https://console.firebase.google.com) → *Add project*
+   (you can skip Google Analytics). Stay on the free **Spark** plan — don't upgrade.
+2. **Build → Realtime Database → Create Database.** Pick a location, and start in **locked mode** (we set rules next).
+3. **Rules tab**, paste this and *Publish* — anyone can read the live world (it isn't secret), only the server can write:
+   ```json
+   { "rules": { "world": { ".read": true, ".write": false } } }
+   ```
+4. **Get a write key for the server:** gear icon → *Project settings* → *Service accounts* → *Database secrets* →
+   reveal and copy the secret. (It's a legacy feature but the simplest way in; it lets only the server write.)
+5. **On the Apps Script server** (*Project Settings → Script properties*), add two:
+   - `FIREBASE_URL` → your database URL, e.g. `https://your-project-default-rtdb.firebaseio.com`
+     (shown at the top of the Realtime Database page).
+   - `FIREBASE_SECRET` → the secret from step 4.
+6. **In the repository**, set `FIREBASE_URL` in `client/js/config.js` to that same database URL, and commit. Done.
+
+To turn it off again, clear `FIREBASE_URL` in `config.js` (and optionally remove the script properties) — the game
+drops straight back to poll-only, no other changes. If Firebase is ever unreachable, the game keeps working the old way.
+
 ## Map editor
 
 **https://migrationstudioshub.github.io/sheets-rpg/editor/** (shortcuts are listed in its right panel when nothing is selected).

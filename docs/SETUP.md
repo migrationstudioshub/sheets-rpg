@@ -126,6 +126,38 @@ clear win once two or more people play together. To turn it on:
 To turn it off again, clear `FIREBASE_URL` in `config.js` (and optionally remove the script properties) — the game
 drops straight back to poll-only, no other changes. If Firebase is ever unreachable, the game keeps working the old way.
 
+## Fast referee with Cloud Functions (Phase 1 — snappy real-time play)
+
+The Firebase live world above still waits on Apps Script (~1.5–2 s per move) to decide what happened, so
+other players and monsters lag. This moves the *referee* onto a Firebase Cloud Function running the exact
+same game rules, which answers in ~300 ms. It needs the **Blaze** plan (pay-as-you-go), but the free monthly
+allowance covers ~10 players at roughly **$0** — set a budget alert so there are no surprises.
+
+This is **Phase 1**: a working prototype you deploy and test before committing. It keeps its own player
+state in the database (so you'll create fresh test characters), and Apps Script still serves the content and
+the map editor.
+
+**One-time setup:**
+1. In the Firebase console → **⚙️ → Usage and billing → Modify plan → Blaze**, and add a **budget alert**
+   (e.g. $5) under Google Cloud billing for peace of mind.
+2. Install the CLI and sign in (studio account): `npm install -g firebase-tools` then `firebase login`.
+3. Install the function's dependencies: from the repo, `cd functions && npm install`.
+
+**Deploy:**
+```
+firebase deploy --only functions,database
+```
+The first run enables a few Google APIs (it does this for you) and then prints the function URL, like
+`https://game-xxxxxxxx-uc.a.run.app`. Copy it.
+
+**Test it safely (without changing the live site):**
+- Put that URL in `FUNCTIONS_URL` in `client/js/config.js` **locally, without committing**, serve the client
+  on your machine, and open two tabs. The live site keeps using Apps Script until you commit.
+- Join on both tabs and move around — the other player and the monsters should now react in ~300 ms.
+
+**Ship it (once it feels right):** commit that `FUNCTIONS_URL` and merge to `main`; GitHub Pages republishes
+and everyone plays through the fast referee. To roll back, clear `FUNCTIONS_URL` and it's back to Apps Script.
+
 ## Map editor
 
 **https://migrationstudioshub.github.io/sheets-rpg/editor/** (shortcuts are listed in its right panel when nothing is selected).

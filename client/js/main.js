@@ -525,7 +525,13 @@
       else if (plan && !queue.some(function (a) { return a.type === 'move'; }) && now - lastStep >= moveMs * 0.9) { if (followPlan(now)) lastStep = now; }
       else if (held.length && now - holdSince >= HOLD_MS && now - lastStep >= moveMs) { step(held[held.length - 1]); lastStep = now; }
     }
-    var pollMs = api.mode === 'online' ? (content.config.poll_ms || 500) : 250;
+    // When the live world is pushed over Firebase, polling is just a heartbeat (advance idle monsters,
+    // refresh our own state) — not how we see others — so it can be slow, which keeps request and
+    // download usage low. Without the push, polling is the only way to see others, so stay frequent.
+    var livePush = api.mode === 'online' && GAME_CONFIG.FIREBASE_URL;
+    var pollMs = api.mode !== 'online' ? 250
+      : livePush ? (content.config.heartbeat_ms || 3000)
+      : (content.config.poll_ms || 500);
     if (now - lastReply > pollMs) poll();
 
     ease(shown, me, dt / moveMs);

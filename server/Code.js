@@ -295,6 +295,16 @@ function pushWorld(mapId, payload) {
  * obvious instead of a silent hang. code 200 = working; 401 = wrong/missing FIREBASE_SECRET; a long
  * ms with an error = wrong FIREBASE_URL (unreachable host).
  */
+/**
+ * Run this ONCE from the Apps Script editor (pick it in the toolbar dropdown → Run) to grant the
+ * project permission to make external web requests, which it needs to push to Firebase. It does NOT
+ * catch the error on purpose, so the "Authorization required" dialog appears — approve it and you're
+ * done. (firebaseTest catches its error, which is why running THAT never prompted.)
+ */
+function authorizeExternal() {
+  return UrlFetchApp.fetch('https://www.google.com', { muteHttpExceptions: true }).getResponseCode();
+}
+
 function firebaseTest() {
   var base = firebaseBase();
   if (!base) return { ok: false, reason: 'FIREBASE_URL script property is not set on the server' };

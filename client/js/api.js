@@ -114,6 +114,26 @@ var Api = (function () {
   };
   Online.prototype.forget = function () { localStorage.removeItem(TOKEN_KEY); };
 
-  function create() { return GAME_CONFIG.API_URL ? new Online(GAME_CONFIG.API_URL) : new Offline(); }
+  // ---------- fast referee (Cloud Functions) ----------
+  // Same protocol as Online, but live play goes to a Firebase Cloud Function (~300 ms) instead of
+  // Apps Script (~1.5 s). Content still comes from Apps Script; the live world still comes over
+  // Firebase (watchMap, inherited). Enabled by GAME_CONFIG.FUNCTIONS_URL.
+  function Functions(url) { Online.call(this, url); }
+  Functions.prototype = Object.create(Online.prototype);
+  Functions.prototype.constructor = Functions;
+  Functions.prototype.call = function (body) {
+    return fetch(this.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) { if (res.error) throw new Error(res.error); return res; });
+  };
+  Functions.prototype.loadContent = function () {        // content still lives in the Game Data sheet
+    return fetch(GAME_CONFIG.API_URL + '?action=content').then(function (r) { return r.json(); })
+      .then(function (res) { if (res.error) throw new Error(res.error); return (this.content = res.content); }.bind(this));
+  };
+
+  function create() {
+    if (GAME_CONFIG.FUNCTIONS_URL) return new Functions(GAME_CONFIG.FUNCTIONS_URL);
+    return GAME_CONFIG.API_URL ? new Online(GAME_CONFIG.API_URL) : new Offline();
+  }
   return { create: create };
 })();

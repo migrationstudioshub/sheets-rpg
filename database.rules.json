@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "world": {
+      ".read": true,
+      ".write": false
+    },
+    "players": {
+      ".read": false,
+      ".write": false
+    },
+    "state": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}

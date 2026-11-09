@@ -9,7 +9,8 @@
  *   PORT=4000 node host/server.js  # pick a port
  *
  * Content comes from data/tables.json (the starting content snapshot), so this works fully offline.
- * State lives only in memory: when you stop the host, the session and its characters are gone.
+ * The game is saved to host/save.json, so stopping and restarting this host keeps everyone's
+ * characters and the world (set SAVE_FILE=off for a throwaway in-memory session instead).
  *
  * Nothing here touches the live cloud game. The page it serves sets window.GAME_LAN, which tells
  * client/js/api.js to talk to this host instead of Apps Script / the Cloud Function / Firebase.
@@ -31,9 +32,41 @@ const World = require(path.join(ROOT, 'shared', 'world.js'));
 const tables = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tables.json'), 'utf8'));
 const CONTENT = Content.build(tables);
 
-// ---- the game, all in memory ----
-const PLAYERS = {};                                   // token -> player
-const WORLD = { seq: 0, log: [], maps: {} };          // monsters, object states, event log
+// ---- the game state ----
+// Held in memory while running, and saved to a JSON file so a session survives a restart of THIS
+// host. The state is already plain JSON (the same shape the cloud stores), so saving is just writing
+// it out. Set SAVE_FILE=off to run a throwaway in-memory session that leaves nothing behind.
+let PLAYERS = {};                                     // token -> player
+let WORLD = { seq: 0, log: [], maps: {} };            // monsters, object states, event log
+
+const SAVE_FILE = process.env.SAVE_FILE === 'off' ? null
+  : (process.env.SAVE_FILE || path.join(__dirname, 'save.json'));
+
+function loadSave() {
+  if (!SAVE_FILE) return;
+  try {
+    const raw = JSON.parse(fs.readFileSync(SAVE_FILE, 'utf8'));
+    if (raw.players) PLAYERS = raw.players;           // reassigning is fine: the handlers read these vars live
+    if (raw.world) WORLD = raw.world;
+    return Object.keys(PLAYERS).length;
+  } catch (e) { /* no save yet (first run), or unreadable — just start fresh */ }
+}
+
+function writeSave() {
+  if (!SAVE_FILE) return;
+  try {
+    const tmp = SAVE_FILE + '.tmp';                   // write-then-rename, so a crash never leaves a half-written file
+    fs.writeFileSync(tmp, JSON.stringify({ players: PLAYERS, world: WORLD }));
+    fs.renameSync(tmp, SAVE_FILE);
+  } catch (e) { console.error('  Could not save game:', e.message); }
+}
+
+// A burst of moves shouldn't be a burst of disk writes: coalesce changes into one write a second.
+let saveTimer = null;
+function scheduleSave() {
+  if (!SAVE_FILE || saveTimer) return;
+  saveTimer = setTimeout(() => { saveTimer = null; writeSave(); }, 1000);
+}
 
 function presentOn(all, mapId, now) {
   return Object.keys(all).map(tok => all[tok])
@@ -61,6 +94,7 @@ function step(token, action, since) {
   }
   World.record(ws, ev);
   if (ws.log && ws.log.length > 50) ws.log = ws.log.slice(-50);
+  scheduleSave();                                      // movement, combat, monster ticks — all persisted
 
   // The poll/act answer already carries everyone on the map (World.view), so on a LAN we just poll —
   // no Firebase, no separate pushed world view needed.
@@ -76,6 +110,7 @@ function join(name, cls) {
   p.created = new Date().toISOString();
   p._seen = Date.now();
   PLAYERS[p.token] = p;
+  scheduleSave();                                      // remember the new character
   return { token: p.token, player: World.publicPlayer(CONTENT, p) };
 }
 
@@ -153,6 +188,18 @@ const server = http.createServer((req, res) => {
   res.writeHead(405).end('method not allowed');
 });
 
+// Flush the latest state and exit cleanly when the host presses Ctrl+C (or the process is told to stop).
+function shutdown() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  writeSave();
+  if (SAVE_FILE) console.log('\n  Game saved to ' + SAVE_FILE + '. Bye.\n');
+  process.exit(0);
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+const restored = loadSave();
+
 const PORT = Number(process.env.PORT) || 3000;
 server.listen(PORT, () => {
   const ips = [].concat(...Object.values(os.networkInterfaces()))
@@ -161,5 +208,8 @@ server.listen(PORT, () => {
   console.log('  On THIS computer:      http://localhost:' + PORT);
   ips.forEach(ip => console.log('  Others on your WiFi:   http://' + ip + ':' + PORT));
   console.log('\n  Everyone opens one of those addresses in a browser to play.');
-  console.log('  Press Ctrl+C to stop (this ends the session and its characters).\n');
+  if (!SAVE_FILE) console.log('  (SAVE_FILE=off: this session is not being saved.)');
+  else if (restored) console.log('  Resumed a saved game with ' + restored + ' character(s).');
+  else console.log('  New game. It will be saved to ' + SAVE_FILE + '.');
+  console.log('  Press Ctrl+C to stop (characters and the world are kept for next time).\n');
 });

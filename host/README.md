@@ -36,9 +36,17 @@ It prints something like:
 - **Fully offline.** Content comes from `data/tables.json` (the starting-content snapshot), so this
   does not need the internet or the Game Data sheet. It will not reflect later edits the owner makes
   in the live sheet.
-- **In memory only.** The game and its characters live in the host's RAM. Stop the host (Ctrl+C) and
-  the session is gone — this is a drop-in session, not a saved world.
-- **The host must stay running.** If the host closes, everyone disconnects.
+- **Saved between sessions.** The game is written to `host/save.json` (debounced, once a second, and
+  on Ctrl+C). Restart the host later and everyone's characters and the world come back. A returning
+  player resumes automatically as long as they use the same browser (their character token is kept in
+  that browser, separate from their cloud token). Delete `host/save.json` to start a clean world, or
+  run `SAVE_FILE=off node host/server.js` for a throwaway session that saves nothing. The save file is
+  gitignored, so it never ends up in the repo.
+- **Tied to this host + this machine.** The save lives on the host's computer. If someone else hosts
+  (a different machine), that's a different, separate world. For one always-on world that doesn't
+  depend on who hosts, that's what the cloud game already is.
+- **The host must stay running** during a session. If the host closes mid-game, everyone disconnects
+  (but the saved state is kept for next time).
 - **Firewall.** The first time, Windows/macOS may ask whether to allow Node to accept connections on
   your private network — say yes, or others can't reach you.
 - **Nothing in the repo changes.** The page the host serves sets `window.GAME_LAN`, which tells

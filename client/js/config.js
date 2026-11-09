@@ -9,6 +9,11 @@ var GAME_CONFIG = {
   // (and API_URL is set too), the game listens here for live monster/player positions, pushed in
   // ~100 ms, instead of waiting for the next poll. Empty = today's poll-only behaviour. See docs/SETUP.md.
   FIREBASE_URL: 'https://sheets-rpg-73de1-default-rtdb.firebaseio.com/',
+  // Optional, Phase 1 of the fast referee. The Cloud Function URL (shown after `firebase deploy`,
+  // e.g. https://game-xxxxx-uc.a.run.app). When set, live play (join/load/poll/act) goes to the
+  // Function (~300 ms) instead of Apps Script (~1.5 s); content still comes from API_URL, and the
+  // game listens to FIREBASE_URL for the live world. Empty = use Apps Script. See docs/SETUP.md.
+  FUNCTIONS_URL: '',
   ASSET_BASE: '../',            // repository root, relative to client/
   OFFLINE_TABLES: '../data/tables.json',
   SCALE: 2                      // on-screen pixels per art pixel

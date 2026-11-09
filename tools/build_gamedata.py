@@ -101,6 +101,8 @@ def build():
         {'key': 'attack_ms', 'value': 500, 'notes': 'Minimum time between basic attacks'},
         {'key': 'lockpick_chance', 'value': 0.5, 'notes': 'Base chance to pick a lock (plus the class bonus, minus the lock difficulty)'},
         {'key': 'lockpick_break', 'value': 0.3, 'notes': 'Chance a lockpick breaks on a failed attempt'},
+        {'key': 'start_hair', 'value': 'art/sprites/paperdoll/hair_messy.png', 'notes': 'Paper-doll hair a new character starts with (a hair_*.png layer); blank = bald. Hidden when a helm is worn.'},
+        {'key': 'start_hair_color', 'value': 'hair_brown', 'notes': 'Starting hair colour: a hair_* ramp from Tint.TINTS (hair_black/dark/brown/auburn/ginger/blonde/grey/white)'},
     ]
     t['Tilesets'] = [
         {'id': 'fields', 'image': 'art/tilesets/fields_placeholder.png', 'tile_size': 32, 'columns': 8,
@@ -252,21 +254,27 @@ def build():
     t['MapEntities'] = ents
 
     sp = lambda n: f'art/sprites/{n}.png'
-    # worn_sprite = the paper-doll layer drawn on the body when the item is equipped (see render.js)
-    WORN = {'wooden_sword': 'sword_wooden', 'iron_sword': 'sword_iron',
-            'leather_armor': 'chest_leather', 'iron_armor': 'chest_iron'}
+    # worn_sprite = the paper-doll layer drawn on the body when the item is equipped (see render.js).
+    # default_tint = the recolour ramp for a tintable garment (one that ships a sibling foo.tint.png
+    #   grey mask); '' means the item is not tintable and its worn sprite is drawn as-is.
+    WORN = {'wooden_sword': 'sword_machete', 'iron_sword': 'gun_pistol',
+            'leather_armor': 'chest_leather_jacket', 'iron_armor': 'chest_riot_vest',
+            'army_helmet': 'helm_army'}
+    TINT = {'leather_armor': 'brown', 'iron_armor': 'navy', 'army_helmet': 'olive'}
     worn = lambda n: f'art/sprites/paperdoll/{WORN[n]}.png' if n in WORN else ''
     t['Items'] = [
-        {'id': i, 'name': n, 'sprite': sp(i), 'worn_sprite': worn(i), 'type': ty, 'slot': sl, 'stack_max': st, 'value': v,
+        {'id': i, 'name': n, 'sprite': sp(i), 'worn_sprite': worn(i), 'default_tint': TINT.get(i, ''),
+         'type': ty, 'slot': sl, 'stack_max': st, 'value': v,
          'atk': a, 'def': d, 'heal': hl, 'mp': mp, 'on_use': '', 'notes': ''}
         for i, n, ty, sl, st, v, a, d, hl, mp in [(*r, 0) if len(r) == 9 else r for r in [
             ('potion', 'Potion', 'consumable', '', 20, 10, 0, 0, 40),
             ('mana_potion', 'Mana potion', 'consumable', '', 20, 12, 0, 0, 0, 40),
             ('big_potion', 'Big potion', 'consumable', '', 10, 30, 0, 0, 100),
-            ('wooden_sword', 'Wooden sword', 'weapon', 'weapon', 1, 15, 3, 0, 0),
-            ('iron_sword', 'Iron sword', 'weapon', 'weapon', 1, 60, 7, 0, 0),
-            ('leather_armor', 'Leather armor', 'armor', 'armor', 1, 20, 0, 2, 0),
-            ('iron_armor', 'Iron armor', 'armor', 'armor', 1, 80, 0, 5, 0),
+            ('wooden_sword', 'Machete', 'weapon', 'weapon', 1, 15, 3, 0, 0),
+            ('iron_sword', 'Pistol', 'weapon', 'weapon', 1, 60, 7, 0, 0),
+            ('leather_armor', 'Leather jacket', 'armor', 'armor', 1, 20, 0, 2, 0),
+            ('iron_armor', 'Riot vest', 'armor', 'armor', 1, 80, 0, 5, 0),
+            ('army_helmet', 'Army helmet', 'armor', 'helm', 1, 30, 0, 2, 0),
             ('iron_key', 'Iron key', 'key', '', 10, 0, 0, 0, 0),
             ('lockpick', 'Lockpick', 'tool', '', 20, 5, 0, 0, 0),
             ('bone', 'Bone', 'material', '', 99, 2, 0, 0, 0),
@@ -298,16 +306,17 @@ def build():
     CLASS_COLS = ['id', 'name', 'hp', 'atk', 'def', 'mp', 'hp_per_level', 'atk_per_level', 'def_per_level',
                   'mp_per_level', 'mp_regen', 'start_items', 'skills', 'notes', 'lockpicking']
     t['Classes'] = [dict(zip(CLASS_COLS, r)) for r in [
-        ('warrior', 'Warrior', 120, 6, 2, 30, 12, 2, 1, 3, 1.0, 'potion:2, wooden_sword:1, leather_armor:1', 'charge@1, cleave@1, second_wind@3', 'Front line', 0),
+        ('warrior', 'Warrior', 120, 6, 2, 30, 12, 2, 1, 3, 1.0, 'potion:2, wooden_sword:1, leather_armor:1, army_helmet:1', 'charge@1, cleave@1, second_wind@3', 'Front line', 0),
         ('rogue', 'Rogue', 90, 7, 1, 40, 9, 2, 1, 4, 1.5, 'potion:3, gold:20, lockpick:3', 'throw_dagger@1, poison_strike@1, shadow_step@3', 'Fast, ranged poke', 0.3),
         ('mage', 'Mage', 70, 3, 1, 70, 7, 1, 1, 7, 3.0, 'potion:1, mana_potion:2', 'fireball@1, frost_bolt@1, frost_nova@3', 'Ranged magic, fragile', 0),
         ('paladin', 'Paladin', 110, 5, 3, 45, 11, 2, 1, 4, 1.5, 'potion:2', 'holy_strike@1, blessing@1, lay_on_hands@3', 'Support: protects allies', 0),
         ('priest', 'Priest', 80, 3, 1, 80, 8, 1, 1, 8, 3.0, 'potion:1, mana_potion:2', 'heal@1, smite@1, renew@3', 'Healer', 0),
         ('barbarian', 'Barbarian', 140, 7, 1, 30, 14, 2, 1, 2, 1.0, 'potion:2', 'whirlwind@1, rage@1, leap@3', 'Brute force', 0),
     ]]
-    # Every class shares one placeholder base body for now; swap per-class bodies in later.
+    # Every class shares the survivor base body for now; the package also ships body_survivor_female,
+    # body_zombie and body_zombie_female to assign per class (or per character) later.
     for _cls in t['Classes']:
-        _cls['body_sprite'] = 'art/sprites/paperdoll/body_base.png'
+        _cls['body_sprite'] = 'art/sprites/paperdoll/body_survivor.png'
     STATUS_COLS = ['id', 'name', 'kind', 'amount', 'tick_ms', 'atk', 'def', 'slow', 'color', 'notes']
     t['Statuses'] = [dict(zip(STATUS_COLS, r)) for r in [
         ('burn', 'Burning', 'dot', 3, 1000, 0, 0, 1, '#ff7a2a', 'Damage every tick'),
@@ -376,10 +385,11 @@ README = [
     ('MapEntities', 'Objects placed on maps. key is unique; data = JSON of property overrides.'),
     ('Items', 'Everything that goes in a bag. type: consumable, weapon, armor, key, material. heal = HP restored.'),
     ('', 'worn_sprite (weapons/armor): the paper-doll layer drawn on the body when equipped. 32x48 PNG, transparent, lined up on the base body.'),
+    ('', 'default_tint: for a tintable garment (one with a sibling foo.tint.png grey mask), the colour ramp name from Tint.TINTS (e.g. brown, navy, olive). Blank = not tintable.'),
     ('Monsters', 'Enemy types. Placed through spawn objects on maps. move_ms = time per step; aggro_range = tiles.'),
     ('LootTables', 'Drops: each row rolls on its own. chance 0-1; item "gold" means money.'),
     ('Classes', 'lockpicking = bonus chance to pick locks (0.3 = +30%). Starting stats and growth per level. start_items like potion:2, gold:20. skills like fireball@1, frost_nova@3 (skill@level learned).'),
-    ('', 'body_sprite: the base paper-doll body (32x48 PNG) drawn for this class; worn gear layers on top of it.'),
+    ('', 'body_sprite: the base paper-doll body (32x48 PNG) drawn for this class; worn gear layers on top of it. Bases are bald; hair is a separate head-slot layer (start_hair in Config).'),
     ('Skills', 'target: enemy, ally, self, tile (a spot) or around (centred on the caster). range and area in tiles. los TRUE = walls and blocking objects stop it.'),
     ('', 'effect: damage, heal or none. Amount = power + scale x stat (stat: atk or level); damage then minus the target\'s defence. status + status_ms add a status. dash TRUE = the caster moves there.'),
     ('Statuses', 'kind: dot (damage per tick), hot (healing per tick), buff (atk/def change), slow (steps take slow x longer), stun (cannot act).'),

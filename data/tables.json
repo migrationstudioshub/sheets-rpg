@@ -74,6 +74,16 @@
    "key": "lockpick_break",
    "value": 0.3,
    "notes": "Chance a lockpick breaks on a failed attempt"
+  },
+  {
+   "key": "start_hair",
+   "value": "art/sprites/paperdoll/hair_messy.png",
+   "notes": "Paper-doll hair a new character starts with (a hair_*.png layer); blank = bald. Hidden when a helm is worn."
+  },
+  {
+   "key": "start_hair_color",
+   "value": "hair_brown",
+   "notes": "Starting hair colour: a hair_* ramp from Tint.TINTS (hair_black/dark/brown/auburn/ginger/blonde/grey/white)"
   }
  ],
  "Tilesets": [
@@ -3152,6 +3162,7 @@
    "name": "Potion",
    "sprite": "art/sprites/potion.png",
    "worn_sprite": "",
+   "default_tint": "",
    "type": "consumable",
    "slot": "",
    "stack_max": 20,
@@ -3168,6 +3179,7 @@
    "name": "Mana potion",
    "sprite": "art/sprites/mana_potion.png",
    "worn_sprite": "",
+   "default_tint": "",
    "type": "consumable",
    "slot": "",
    "stack_max": 20,
@@ -3184,6 +3196,7 @@
    "name": "Big potion",
    "sprite": "art/sprites/big_potion.png",
    "worn_sprite": "",
+   "default_tint": "",
    "type": "consumable",
    "slot": "",
    "stack_max": 10,
@@ -3197,9 +3210,10 @@
   },
   {
    "id": "wooden_sword",
-   "name": "Wooden sword",
+   "name": "Machete",
    "sprite": "art/sprites/wooden_sword.png",
-   "worn_sprite": "art/sprites/paperdoll/sword_wooden.png",
+   "worn_sprite": "art/sprites/paperdoll/sword_machete.png",
+   "default_tint": "",
    "type": "weapon",
    "slot": "weapon",
    "stack_max": 1,
@@ -3213,9 +3227,10 @@
   },
   {
    "id": "iron_sword",
-   "name": "Iron sword",
+   "name": "Pistol",
    "sprite": "art/sprites/iron_sword.png",
-   "worn_sprite": "art/sprites/paperdoll/sword_iron.png",
+   "worn_sprite": "art/sprites/paperdoll/gun_pistol.png",
+   "default_tint": "",
    "type": "weapon",
    "slot": "weapon",
    "stack_max": 1,
@@ -3229,9 +3244,10 @@
   },
   {
    "id": "leather_armor",
-   "name": "Leather armor",
+   "name": "Leather jacket",
    "sprite": "art/sprites/leather_armor.png",
-   "worn_sprite": "art/sprites/paperdoll/chest_leather.png",
+   "worn_sprite": "art/sprites/paperdoll/chest_leather_jacket.png",
+   "default_tint": "brown",
    "type": "armor",
    "slot": "armor",
    "stack_max": 1,
@@ -3245,9 +3261,10 @@
   },
   {
    "id": "iron_armor",
-   "name": "Iron armor",
+   "name": "Riot vest",
    "sprite": "art/sprites/iron_armor.png",
-   "worn_sprite": "art/sprites/paperdoll/chest_iron.png",
+   "worn_sprite": "art/sprites/paperdoll/chest_riot_vest.png",
+   "default_tint": "navy",
    "type": "armor",
    "slot": "armor",
    "stack_max": 1,
@@ -3260,10 +3277,28 @@
    "notes": ""
   },
   {
+   "id": "army_helmet",
+   "name": "Army helmet",
+   "sprite": "art/sprites/army_helmet.png",
+   "worn_sprite": "art/sprites/paperdoll/helm_army.png",
+   "default_tint": "olive",
+   "type": "armor",
+   "slot": "helm",
+   "stack_max": 1,
+   "value": 30,
+   "atk": 0,
+   "def": 2,
+   "heal": 0,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  },
+  {
    "id": "iron_key",
    "name": "Iron key",
    "sprite": "art/sprites/iron_key.png",
    "worn_sprite": "",
+   "default_tint": "",
    "type": "key",
    "slot": "",
    "stack_max": 10,
@@ -3280,6 +3315,7 @@
    "name": "Lockpick",
    "sprite": "art/sprites/lockpick.png",
    "worn_sprite": "",
+   "default_tint": "",
    "type": "tool",
    "slot": "",
    "stack_max": 20,
@@ -3296,6 +3332,7 @@
    "name": "Bone",
    "sprite": "art/sprites/bone.png",
    "worn_sprite": "",
+   "default_tint": "",
    "type": "material",
    "slot": "",
    "stack_max": 99,
@@ -3312,6 +3349,7 @@
    "name": "Slime gel",
    "sprite": "art/sprites/slime_gel.png",
    "worn_sprite": "",
+   "default_tint": "",
    "type": "material",
    "slot": "",
    "stack_max": 99,
@@ -3529,7 +3567,7 @@
   {
    "id": "warrior",
    "name": "Warrior",
-   "body_sprite": "art/sprites/paperdoll/body_base.png",
+   "body_sprite": "art/sprites/paperdoll/body_survivor.png",
    "hp": 120,
    "atk": 6,
    "def": 2,
@@ -3539,7 +3577,7 @@
    "def_per_level": 1,
    "mp_per_level": 3,
    "mp_regen": 1,
-   "start_items": "potion:2, wooden_sword:1, leather_armor:1",
+   "start_items": "potion:2, wooden_sword:1, leather_armor:1, army_helmet:1",
    "skills": "charge@1, cleave@1, second_wind@3",
    "notes": "Front line",
    "lockpicking": 0
@@ -3547,7 +3585,7 @@
   {
    "id": "rogue",
    "name": "Rogue",
-   "body_sprite": "art/sprites/paperdoll/body_base.png",
+   "body_sprite": "art/sprites/paperdoll/body_survivor.png",
    "hp": 90,
    "atk": 7,
    "def": 1,
@@ -3565,7 +3603,7 @@
   {
    "id": "mage",
    "name": "Mage",
-   "body_sprite": "art/sprites/paperdoll/body_base.png",
+   "body_sprite": "art/sprites/paperdoll/body_survivor.png",
    "hp": 70,
    "atk": 3,
    "def": 1,
@@ -3583,7 +3621,7 @@
   {
    "id": "paladin",
    "name": "Paladin",
-   "body_sprite": "art/sprites/paperdoll/body_base.png",
+   "body_sprite": "art/sprites/paperdoll/body_survivor.png",
    "hp": 110,
    "atk": 5,
    "def": 3,
@@ -3601,7 +3639,7 @@
   {
    "id": "priest",
    "name": "Priest",
-   "body_sprite": "art/sprites/paperdoll/body_base.png",
+   "body_sprite": "art/sprites/paperdoll/body_survivor.png",
    "hp": 80,
    "atk": 3,
    "def": 1,
@@ -3619,7 +3657,7 @@
   {
    "id": "barbarian",
    "name": "Barbarian",
-   "body_sprite": "art/sprites/paperdoll/body_base.png",
+   "body_sprite": "art/sprites/paperdoll/body_survivor.png",
    "hp": 140,
    "atk": 7,
    "def": 1,
@@ -4161,5 +4199,5 @@
    "xp_needed": 950
   }
  ],
- "_version": "451535ee1437"
+ "_version": "75141bb669c3"
 }

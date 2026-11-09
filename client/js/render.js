@@ -57,14 +57,18 @@ var Render = (function () {
    * stack flips together when facing west (the only turn there is). Returns the top y of the
    * tallest layer, so health bars and names can sit just above the figure, not the tile.
    */
+  // A layer is { path, mask?, ramp? }: the base sprite, plus an optional tint mask + colour
+  // ramp for recolourable cloth/hair. Every layer shares the 32x48 skeleton, so each is drawn
+  // bottom-anchored at the tile's foot and scaled to the tile width; the whole stack flips as one.
   function drawLayers(g, layers, ax, ay, T, flip) {
     var topY = ay;
     g.save();
     if (flip) { g.translate(ax + T, 0); g.scale(-1, 1); }
     var x0 = flip ? 0 : ax;                                 // after the flip, x grows the other way from ax+T
-    layers.forEach(function (path) {
-      var img = Assets.get(path); if (!img) return;
-      var h = Math.round(T * img.height / img.width), dy = ay + T - h;
+    layers.forEach(function (l) {
+      var base = Assets.get(l.path); if (!base) return;
+      var img = (l.mask && l.ramp) ? Tint.getTintedLayer(base, Assets.get(l.mask), l.ramp) : base;
+      var h = Math.round(T * base.height / base.width), dy = ay + T - h;
       if (dy < topY) topY = dy;
       g.drawImage(img, x0, dy, T, h);
     });

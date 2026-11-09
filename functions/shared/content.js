@@ -101,7 +101,8 @@ var Content = (function () {
     (tables.Items || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
       c.items[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), type: str(r.type) || 'material',
-        slot: str(r.slot), wornSprite: str(r.worn_sprite), stackMax: num(r.stack_max, 99), value: num(r.value, 0),
+        slot: str(r.slot), wornSprite: str(r.worn_sprite), defaultTint: str(r.default_tint),
+        stackMax: num(r.stack_max, 99), value: num(r.value, 0),
         atk: num(r.atk, 0), def: num(r.def, 0), heal: num(r.heal, 0), mp: num(r.mp, 0), onUse: str(r.on_use) };
     });
     (tables.Monsters || []).forEach(function (r) {

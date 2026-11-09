@@ -33,7 +33,7 @@ test('a new warrior starts at the start point with class stats and items', () =>
   assert.deepStrictEqual([p.map, p.x, p.y], ['map_3', 9, 15]);
   const st = World.stats(c, p);
   assert.deepStrictEqual([p.hp, st.maxHp, st.atk, st.def], [120, 120, 6, 2]);
-  assert.deepStrictEqual(p.inventory, [{ item: 'potion', qty: 2 }, { item: 'wooden_sword', qty: 1 }, { item: 'leather_armor', qty: 1 }]);
+  assert.deepStrictEqual(p.inventory, [{ item: 'potion', qty: 2 }, { item: 'wooden_sword', qty: 1 }, { item: 'leather_armor', qty: 1 }, { item: 'army_helmet', qty: 1 }]);
 });
 
 test('the hut door is closed, opens on interact, and can then be walked through', () => {

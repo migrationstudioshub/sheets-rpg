@@ -27,17 +27,32 @@
   // Paper-doll stacking order (low = drawn first / behind). The base body sits near the
   // bottom; worn gear draws over it, weapon last. Unknown slots land on top.
   var SLOT_Z = { back: 0, body: 1, legs: 2, armor: 3, head: 4, helm: 5, offhand: 6, weapon: 7 };
-  /** Ordered layer paths for a player: class base body + each equipped item that has a worn
-   *  sprite, lowest slot first. null when the class has no body art (renderer draws the hero). */
+  function maskOf(path) { return path ? path.replace(/\.png$/i, '.tint.png') : ''; }   // sibling grey tint mask
+  /** Ordered layer descriptors for a player, lowest slot first: the class base body, the hair
+   *  (head slot, hidden when anything is worn in `helm`), then each equipped item with a worn
+   *  sprite. A descriptor is { path, mask?, ramp? } — a tintable garment or hair carries its grey
+   *  mask and a 4-colour ramp from Tint.TINTS. Returns null when the class has no body art (the
+   *  renderer then falls back to the drawn hero). */
   function playerLayers(p) {
     var cls = p && content.classes[p['class']];
     if (!cls || !cls.bodySprite) return null;
-    var out = [{ z: SLOT_Z.body, path: cls.bodySprite }], eq = p.equipment || {};
+    var eq = p.equipment || {}, out = [{ z: SLOT_Z.body, path: cls.bodySprite }];
+    if (p.hair && !eq.helm) {                                            // hair is whole-tintable; a helm hides it
+      out.push({ z: SLOT_Z.head, path: p.hair, mask: maskOf(p.hair), ramp: Tint.TINTS[p.hairColor] });
+    }
     Object.keys(eq).forEach(function (slot) {
       var it = content.items[eq[slot]];
-      if (it && it.wornSprite) out.push({ z: SLOT_Z[slot] != null ? SLOT_Z[slot] : 9, path: it.wornSprite });
+      if (!it || !it.wornSprite) return;
+      var ramp = it.defaultTint ? Tint.TINTS[it.defaultTint] : null;     // item is tintable iff it names a default tint
+      out.push({ z: SLOT_Z[slot] != null ? SLOT_Z[slot] : 9, path: it.wornSprite,
+        mask: ramp ? maskOf(it.wornSprite) : '', ramp: ramp });
     });
-    return out.sort(function (a, b) { return a.z - b.z; }).map(function (l) { return l.path; });
+    out.sort(function (a, b) { return a.z - b.z; });
+    out.forEach(function (l) {                                           // make sure late-arriving layers load
+      if (!Assets.get(l.path)) Assets.load(l.path);
+      if (l.mask && !Assets.get(l.mask)) Assets.load(l.mask);
+    });
+    return out;
   }
 
   function setNet(text, bad) { $('hud-net').textContent = text; $('hud-net').className = bad ? 'bad' : ''; }

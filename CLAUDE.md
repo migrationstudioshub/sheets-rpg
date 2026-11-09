@@ -95,9 +95,8 @@ for offline mode by updating `build_gamedata.py` too.
 - The owner's built-in browser can reach the live site and the Apps Script URL (good for checking the real server).
 
 ## Status (8 Nov 2026)
-Just moved to the studio accounts (fresh repository, new Google account; `docs/MIGRATION.md`). `API_URL` is empty
-until the new Apps Script web app has its first deployment; then put its URL in `config.js` (that also lets
-automatic deploys find the deployment id).
+Moved to the studio accounts (fresh repository, new Google account; `docs/MIGRATION.md`); `API_URL` points at
+the studio's Apps Script web app. Old personal setup still to be retired (MIGRATION step 7).
 
 Done: M1 walkabout · M2 map editor · M3 RPG core · M4 skills (6 classes) · mouse controls + lockpicking · online server working.
 `faster-online` (fewer sheet writes, instant spell effects) is merged; the owner was deploying it (by hand, or through the

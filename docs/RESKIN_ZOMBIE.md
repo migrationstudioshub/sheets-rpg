@@ -53,6 +53,12 @@ system on.
 - `thirst` — points of thirst it restores (makes it a drink).
 - An item with `on_use: cure` removes infection (an antidote). `on_use` also still runs any
   action script (`give/take/heal/flag/...`).
+- `grants_skill` — on a `weapon` item, the skill id it lets you use **while equipped** (e.g. a
+  gun grants its `gunshot`). The shot appears on your bar when you equip the weapon and
+  disappears when you put it away. No level gate on the firing itself.
+- `equip_if` — a condition (same syntax as a trigger's `if`: `level:3`, `flag:trained`,
+  `has:manual`) that gates **equipping** the weapon. Leave blank for no gate. This is how you
+  make better guns require a level or a found skill/perk without gating the basic shot.
 
 ### Monsters (new columns)
 - `attack_range` — `0` (or blank) = melee only; `4` = can attack from 4 tiles away with line of sight (a spitter).
@@ -65,6 +71,10 @@ system on.
 - `ammo` — an item id the skill spends per use (e.g. `ammo`). Blank = spends mana as before.
 - `ammo_cost` — how many it spends per shot (default 1).
 
+A **firearm** is therefore a `weapon` item whose `grants_skill` points at an ammo-spending
+skill: loot the gun → equip it (subject to `equip_if`) → you can shoot (spending ammo) →
+unequip and the shot is gone. The skill itself has no level requirement.
+
 ### Statuses (new kind)
 - Give a status `kind: infection`. It never fades on its own and worsens each tick (by
   `infection_escalate`); only an antidote (`on_use: cure`) or death clears it. `amount` is
@@ -73,6 +83,12 @@ system on.
 ## Demo content already in the repo (offline mode)
 
 So you can see each system working, the offline data (`data/tables.json`) now includes:
-`ration`/`water`/`antidote`/`ammo` items, a `walker` (bites can infect) and `spitter`
-(ranged) zombie, an `infection` status, and a `gunshot` skill (spends ammo, taught to the
-warrior at level 5). These are examples to copy/retheme in your live sheet, not final design.
+`ration`/`water`/`antidote`/`ammo` items; a `pistol` (grants `gunshot`, no gate) and a
+`rifle` (grants `rifle_shot`, `equip_if: level:3`); a `walker` (bites can infect) and
+`spitter` (ranged) zombie; an `infection` status; and a **Survivor (gun test)** class that
+starts with both guns + ammo + food/water. Pick that class, open the bag, and equip the
+pistol to test shooting. These are examples to copy/retheme in your live sheet, not final
+design.
+
+To play-test offline: `node tools/serve.js`, then open
+`http://localhost:8765/client/?offline`.

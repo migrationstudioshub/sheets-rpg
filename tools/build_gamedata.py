@@ -259,25 +259,28 @@ def build():
     t['MapEntities'] = ents
 
     sp = lambda n: f'art/sprites/{n}.png'
-    ITEM_COLS = ['id', 'name', 'type', 'slot', 'stack_max', 'value', 'atk', 'def', 'heal', 'mp', 'hunger', 'thirst', 'on_use']
+    ITEM_COLS = ['id', 'name', 'type', 'slot', 'stack_max', 'value', 'atk', 'def', 'heal', 'mp', 'hunger', 'thirst', 'grants_skill', 'equip_if', 'on_use']
     t['Items'] = [dict(zip(ITEM_COLS, r), sprite=sp(r[0]), notes='') for r in [
-        # id, name, type, slot, stack_max, value, atk, def, heal, mp, hunger, thirst, on_use
-        ('potion', 'Potion', 'consumable', '', 20, 10, 0, 0, 40, 0, 0, 0, ''),
-        ('mana_potion', 'Mana potion', 'consumable', '', 20, 12, 0, 0, 0, 40, 0, 0, ''),
-        ('big_potion', 'Big potion', 'consumable', '', 10, 30, 0, 0, 100, 0, 0, 0, ''),
-        ('wooden_sword', 'Wooden sword', 'weapon', 'weapon', 1, 15, 3, 0, 0, 0, 0, 0, ''),
-        ('iron_sword', 'Iron sword', 'weapon', 'weapon', 1, 60, 7, 0, 0, 0, 0, 0, ''),
-        ('leather_armor', 'Leather armor', 'armor', 'armor', 1, 20, 0, 2, 0, 0, 0, 0, ''),
-        ('iron_armor', 'Iron armor', 'armor', 'armor', 1, 80, 0, 5, 0, 0, 0, 0, ''),
-        ('iron_key', 'Iron key', 'key', '', 10, 0, 0, 0, 0, 0, 0, 0, ''),
-        ('lockpick', 'Lockpick', 'tool', '', 20, 5, 0, 0, 0, 0, 0, 0, ''),
-        ('bone', 'Bone', 'material', '', 99, 2, 0, 0, 0, 0, 0, 0, ''),
-        ('slime_gel', 'Slime gel', 'material', '', 99, 1, 0, 0, 0, 0, 0, 0, ''),
+        # id, name, type, slot, stack, value, atk, def, heal, mp, hunger, thirst, grants_skill, equip_if, on_use
+        ('potion', 'Potion', 'consumable', '', 20, 10, 0, 0, 40, 0, 0, 0, '', '', ''),
+        ('mana_potion', 'Mana potion', 'consumable', '', 20, 12, 0, 0, 0, 40, 0, 0, '', '', ''),
+        ('big_potion', 'Big potion', 'consumable', '', 10, 30, 0, 0, 100, 0, 0, 0, '', '', ''),
+        ('wooden_sword', 'Wooden sword', 'weapon', 'weapon', 1, 15, 3, 0, 0, 0, 0, 0, '', '', ''),
+        ('iron_sword', 'Iron sword', 'weapon', 'weapon', 1, 60, 7, 0, 0, 0, 0, 0, '', '', ''),
+        ('leather_armor', 'Leather armor', 'armor', 'armor', 1, 20, 0, 2, 0, 0, 0, 0, '', '', ''),
+        ('iron_armor', 'Iron armor', 'armor', 'armor', 1, 80, 0, 5, 0, 0, 0, 0, '', '', ''),
+        ('iron_key', 'Iron key', 'key', '', 10, 0, 0, 0, 0, 0, 0, 0, '', '', ''),
+        ('lockpick', 'Lockpick', 'tool', '', 20, 5, 0, 0, 0, 0, 0, 0, '', '', ''),
+        ('bone', 'Bone', 'material', '', 99, 2, 0, 0, 0, 0, 0, 0, '', '', ''),
+        ('slime_gel', 'Slime gel', 'material', '', 99, 1, 0, 0, 0, 0, 0, 0, '', '', ''),
         # --- survival demo items (Z1): food/water restore hunger/thirst; antidote cures infection; ammo feeds firearms ---
-        ('ration', 'Ration', 'consumable', '', 20, 8, 0, 0, 0, 0, 60, 0, ''),
-        ('water', 'Water bottle', 'consumable', '', 20, 6, 0, 0, 0, 0, 0, 60, ''),
-        ('antidote', 'Antidote', 'consumable', '', 10, 25, 0, 0, 0, 0, 0, 0, 'cure'),
-        ('ammo', 'Ammo', 'material', '', 99, 3, 0, 0, 0, 0, 0, 0, ''),
+        ('ration', 'Ration', 'consumable', '', 20, 8, 0, 0, 0, 0, 60, 0, '', '', ''),
+        ('water', 'Water bottle', 'consumable', '', 20, 6, 0, 0, 0, 0, 0, 60, '', '', ''),
+        ('antidote', 'Antidote', 'consumable', '', 10, 25, 0, 0, 0, 0, 0, 0, '', '', 'cure'),
+        ('ammo', 'Ammo', 'material', '', 99, 3, 0, 0, 0, 0, 0, 0, '', '', ''),
+        # firearms: equip to gain the shot (grants_skill); equip_if gates equipping, not firing
+        ('pistol', 'Pistol', 'weapon', 'weapon', 1, 40, 2, 0, 0, 0, 0, 0, 'gunshot', '', ''),
+        ('rifle', 'Rifle', 'weapon', 'weapon', 1, 90, 3, 0, 0, 0, 0, 0, 'rifle_shot', 'level:3', ''),
     ]]
     MON_COLS = ['id', 'name', 'hp', 'atk', 'def', 'xp', 'gold_min', 'gold_max', 'loot_table', 'aggro_range',
                 'move_ms', 'respawn_s', 'attack_range', 'ranged_cooldown_ms', 'ranged_projectile', 'ranged_status', 'infect_chance']
@@ -310,12 +313,14 @@ def build():
     CLASS_COLS = ['id', 'name', 'hp', 'atk', 'def', 'mp', 'hp_per_level', 'atk_per_level', 'def_per_level',
                   'mp_per_level', 'mp_regen', 'start_items', 'skills', 'notes', 'lockpicking']
     t['Classes'] = [dict(zip(CLASS_COLS, r)) for r in [
-        ('warrior', 'Warrior', 120, 6, 2, 30, 12, 2, 1, 3, 1.0, 'potion:2', 'charge@1, cleave@1, second_wind@3, gunshot@5', 'Front line', 0),
+        ('warrior', 'Warrior', 120, 6, 2, 30, 12, 2, 1, 3, 1.0, 'potion:2', 'charge@1, cleave@1, second_wind@3', 'Front line', 0),
         ('rogue', 'Rogue', 90, 7, 1, 40, 9, 2, 1, 4, 1.5, 'potion:3, gold:20, lockpick:3', 'throw_dagger@1, poison_strike@1, shadow_step@3', 'Fast, ranged poke', 0.3),
         ('mage', 'Mage', 70, 3, 1, 70, 7, 1, 1, 7, 3.0, 'potion:1, mana_potion:2', 'fireball@1, frost_bolt@1, frost_nova@3', 'Ranged magic, fragile', 0),
         ('paladin', 'Paladin', 110, 5, 3, 45, 11, 2, 1, 4, 1.5, 'potion:2', 'holy_strike@1, blessing@1, lay_on_hands@3', 'Support: protects allies', 0),
         ('priest', 'Priest', 80, 3, 1, 80, 8, 1, 1, 8, 3.0, 'potion:1, mana_potion:2', 'heal@1, smite@1, renew@3', 'Healer', 0),
         ('barbarian', 'Barbarian', 140, 7, 1, 30, 14, 2, 1, 2, 1.0, 'potion:2', 'whirlwind@1, rage@1, leap@3', 'Brute force', 0),
+        # survival demo class (Z1): knows the gun at level 1 and starts with ammo/food/water, for offline testing
+        ('survivor', 'Survivor (gun test)', 100, 5, 1, 0, 10, 2, 1, 0, 0, 'pistol:1, rifle:1, ammo:20, ration:2, water:2, potion:2', '', 'Demo class: equip the pistol to shoot; the rifle needs level 3', 0),
     ]]
     STATUS_COLS = ['id', 'name', 'kind', 'amount', 'tick_ms', 'atk', 'def', 'slow', 'color', 'notes']
     t['Statuses'] = [dict(zip(STATUS_COLS, r)) for r in [
@@ -351,9 +356,12 @@ def build():
         ('rage', 'Rage', '', '#e05050', 10, 15000, 0, 'self', 0, False, 'none', 0, '', 0, 'rage', 8000, False, False, '', 'Hit harder, guard less'),
         ('leap', 'Leap', '', '#e05050', 10, 10000, 4, 'tile', 1, True, 'damage', 4, 'atk', 0.8, 'stun', 1000, True, False, '', 'Jump to a spot, stunning enemies where you land'),
     ]]
-    # survival demo (Z1): a firearm skill that spends one 'ammo' item per shot instead of mana
+    # survival demo (Z1): firearm skills granted by equipping a gun; they spend 'ammo' per shot, not mana
     t['Skills'].append(dict(zip(SKILL_COLS,
-        ('gunshot', 'Gunshot', '', '#d0d0d0', 0, 900, 6, 'enemy', 0, True, 'damage', 8, 'atk', 0.6, '', 0, False, True, '', 'Fire your gun at an enemy; spends one ammo')),
+        ('gunshot', 'Gunshot', '', '#d0d0d0', 0, 900, 6, 'enemy', 0, True, 'damage', 8, 'atk', 0.6, '', 0, False, True, '', 'Fire your pistol at an enemy; spends one ammo')),
+        ammo='ammo', ammo_cost=1))
+    t['Skills'].append(dict(zip(SKILL_COLS,
+        ('rifle_shot', 'Rifle shot', '', '#c9b27a', 0, 1400, 9, 'enemy', 0, True, 'damage', 12, 'atk', 0.8, '', 0, False, True, '', 'A powerful long-range shot; spends one ammo')),
         ammo='ammo', ammo_cost=1))
     for _s in t['Skills']:
         _s.setdefault('ammo', '')

@@ -3190,6 +3190,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/potion.png",
    "notes": ""
@@ -3207,6 +3209,8 @@
    "mp": 40,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/mana_potion.png",
    "notes": ""
@@ -3224,6 +3228,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/big_potion.png",
    "notes": ""
@@ -3241,6 +3247,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/wooden_sword.png",
    "notes": ""
@@ -3258,6 +3266,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/iron_sword.png",
    "notes": ""
@@ -3275,6 +3285,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/leather_armor.png",
    "notes": ""
@@ -3292,6 +3304,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/iron_armor.png",
    "notes": ""
@@ -3309,6 +3323,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/iron_key.png",
    "notes": ""
@@ -3326,6 +3342,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/lockpick.png",
    "notes": ""
@@ -3343,6 +3361,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/bone.png",
    "notes": ""
@@ -3360,6 +3380,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/slime_gel.png",
    "notes": ""
@@ -3377,6 +3399,8 @@
    "mp": 0,
    "hunger": 60,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/ration.png",
    "notes": ""
@@ -3394,6 +3418,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 60,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/water.png",
    "notes": ""
@@ -3411,6 +3437,8 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "cure",
    "sprite": "art/sprites/antidote.png",
    "notes": ""
@@ -3428,8 +3456,48 @@
    "mp": 0,
    "hunger": 0,
    "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/ammo.png",
+   "notes": ""
+  },
+  {
+   "id": "pistol",
+   "name": "Pistol",
+   "type": "weapon",
+   "slot": "weapon",
+   "stack_max": 1,
+   "value": 40,
+   "atk": 2,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
+   "grants_skill": "gunshot",
+   "equip_if": "",
+   "on_use": "",
+   "sprite": "art/sprites/pistol.png",
+   "notes": ""
+  },
+  {
+   "id": "rifle",
+   "name": "Rifle",
+   "type": "weapon",
+   "slot": "weapon",
+   "stack_max": 1,
+   "value": 90,
+   "atk": 3,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
+   "grants_skill": "rifle_shot",
+   "equip_if": "level:3",
+   "on_use": "",
+   "sprite": "art/sprites/rifle.png",
    "notes": ""
   }
  ],
@@ -3752,7 +3820,7 @@
    "mp_per_level": 3,
    "mp_regen": 1,
    "start_items": "potion:2",
-   "skills": "charge@1, cleave@1, second_wind@3, gunshot@5",
+   "skills": "charge@1, cleave@1, second_wind@3",
    "notes": "Front line",
    "lockpicking": 0
   },
@@ -3839,6 +3907,23 @@
    "start_items": "potion:2",
    "skills": "whirlwind@1, rage@1, leap@3",
    "notes": "Brute force",
+   "lockpicking": 0
+  },
+  {
+   "id": "survivor",
+   "name": "Survivor (gun test)",
+   "hp": 100,
+   "atk": 5,
+   "def": 1,
+   "mp": 0,
+   "hp_per_level": 10,
+   "atk_per_level": 2,
+   "def_per_level": 1,
+   "mp_per_level": 0,
+   "mp_regen": 0,
+   "start_items": "pistol:1, rifle:1, ammo:20, ration:2, water:2, potion:2",
+   "skills": "",
+   "notes": "Demo class: equip the pistol to shoot; the rifle needs level 3",
    "lockpicking": 0
   }
  ],
@@ -4393,7 +4478,31 @@
    "dash": false,
    "projectile": true,
    "on_cast": "",
-   "description": "Fire your gun at an enemy; spends one ammo",
+   "description": "Fire your pistol at an enemy; spends one ammo",
+   "ammo": "ammo",
+   "ammo_cost": 1
+  },
+  {
+   "id": "rifle_shot",
+   "name": "Rifle shot",
+   "icon": "",
+   "color": "#c9b27a",
+   "mp": 0,
+   "cooldown_ms": 1400,
+   "range": 9,
+   "target": "enemy",
+   "area": 0,
+   "los": true,
+   "effect": "damage",
+   "power": 12,
+   "stat": "atk",
+   "scale": 0.8,
+   "status": "",
+   "status_ms": 0,
+   "dash": false,
+   "projectile": true,
+   "on_cast": "",
+   "description": "A powerful long-range shot; spends one ammo",
    "ammo": "ammo",
    "ammo_cost": 1
   }
@@ -4440,5 +4549,5 @@
    "xp_needed": 950
   }
  ],
- "_version": "5cbacfa863fa"
+ "_version": "b9a7302784bb"
 }

@@ -102,7 +102,9 @@ var Content = (function () {
       c.items[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), type: str(r.type) || 'material',
         slot: str(r.slot), stackMax: num(r.stack_max, 99), value: num(r.value, 0),
         atk: num(r.atk, 0), def: num(r.def, 0), heal: num(r.heal, 0), mp: num(r.mp, 0),
-        hunger: num(r.hunger, 0), thirst: num(r.thirst, 0), onUse: str(r.on_use) };
+        hunger: num(r.hunger, 0), thirst: num(r.thirst, 0),
+        // a weapon can grant a skill while equipped (e.g. a gun grants its shot); equip_if gates equipping it
+        grantsSkill: str(r.grants_skill), equipIf: str(r.equip_if), onUse: str(r.on_use) };
     });
     (tables.Monsters || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;

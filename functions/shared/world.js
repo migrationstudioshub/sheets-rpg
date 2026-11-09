@@ -135,15 +135,30 @@ var World = (function () {
     return p;
   }
 
-  /** Skills this character knows at their level. */
+  /** Skills this character knows from its class at their level. */
   function knownSkills(c, p) {
     return (classOf(c, p).skills || []).filter(function (s) { return p.level >= s.level && c.skills && c.skills[s.skill]; })
       .map(function (s) { return s.skill; });
   }
-  /** Puts known skills (and a potion) into empty bar slots. */
+  /** Skills granted by currently equipped gear (a gun grants its shot while held). */
+  function equippedSkills(c, p) {
+    var out = [];
+    Object.keys(p.equipment || {}).forEach(function (slot) {
+      var it = c.items[p.equipment[slot]];
+      if (it && it.grantsSkill && c.skills && c.skills[it.grantsSkill] && out.indexOf(it.grantsSkill) < 0) out.push(it.grantsSkill);
+    });
+    return out;
+  }
+  /** Everything the character can cast right now: class skills plus gear-granted ones. */
+  function usableSkills(c, p) {
+    var ks = knownSkills(c, p).slice();
+    equippedSkills(c, p).forEach(function (id) { if (ks.indexOf(id) < 0) ks.push(id); });
+    return ks;
+  }
+  /** Puts usable skills (and a potion) into empty bar slots. */
   function fillLoadout(c, p) {
     var have = p.loadout.join(',');
-    knownSkills(c, p).forEach(function (id) {
+    usableSkills(c, p).forEach(function (id) {
       if (have.indexOf('skill:' + id) >= 0) return;
       var i = p.loadout.indexOf(''); if (i >= 0) { p.loadout[i] = 'skill:' + id; have += ',skill:' + id; }
     });
@@ -153,6 +168,14 @@ var World = (function () {
         if (j >= 0) { p.loadout[j] = 'item:' + it; have += ',item:' + it; }
       }
     });
+  }
+  /** After gear changes: drop bar skills you can no longer use, then add newly usable ones. */
+  function syncLoadout(c, p) {
+    var usable = usableSkills(c, p);
+    p.loadout = (p.loadout || []).map(function (e) {
+      return (e && e.indexOf('skill:') === 0 && usable.indexOf(e.slice(6)) < 0) ? '' : e;
+    });
+    fillLoadout(c, p);
   }
 
   function itemName(c, id) { return id === 'gold' ? 'gold' : (c.items[id] ? c.items[id].name : id); }
@@ -583,7 +606,7 @@ var World = (function () {
   function cast(c, ws, p, a, now, rng, ev, players) {
     function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
     var sk = c.skills && c.skills[a.skill];
-    if (!sk || knownSkills(c, p).indexOf(sk.id) < 0) return say('You don\'t know that skill.');
+    if (!sk || usableSkills(c, p).indexOf(sk.id) < 0) return say('You don\'t know that skill.');
     if (hasStatus(p, 'stun')) return say('You are stunned.');
     if (now < ((p.cooldowns || {})[sk.id] || 0)) return say(sk.name + ' is not ready yet.');
     if ((Number(p.mp) || 0) < sk.mp) return say('Not enough mana for ' + sk.name + '.');
@@ -649,7 +672,7 @@ var World = (function () {
     if (!(slot >= 0 && slot < 5)) return;
     entry = String(entry || '');
     var kind = entry.split(':')[0], id = entry.slice(kind.length + 1);
-    if (entry && !(kind === 'skill' && knownSkills(c, p).indexOf(id) >= 0) && !(kind === 'item' && c.items[id])) {
+    if (entry && !(kind === 'skill' && usableSkills(c, p).indexOf(id) >= 0) && !(kind === 'item' && c.items[id])) {
       ev.push({ type: 'info', to: p.id, text: 'That can\'t go on the bar.' }); return;
     }
     var was = p.loadout.indexOf(entry);
@@ -904,7 +927,15 @@ var World = (function () {
       if (it.onUse) run(c, ws, p, it.onUse, now, ev);
     } else if (it.slot) {
       if (p.equipment[it.slot] === id) { delete p.equipment[it.slot]; ev.push({ type: 'info', to: p.id, text: 'You put away the ' + lower(it.name) + '.' }); }
-      else { p.equipment[it.slot] = id; ev.push({ type: 'info', to: p.id, text: 'You equip the ' + lower(it.name) + '.' }); }
+      else {
+        if (it.equipIf && !check(c, p, it.equipIf)) {
+          var req = /level:(\d+)/.exec(it.equipIf);
+          ev.push({ type: 'info', to: p.id, text: 'You cannot equip the ' + lower(it.name) + ' yet.' + (req ? ' (Requires level ' + req[1] + '.)' : '') });
+          return;
+        }
+        p.equipment[it.slot] = id; ev.push({ type: 'info', to: p.id, text: 'You equip the ' + lower(it.name) + '.' });
+      }
+      syncLoadout(c, p);                                        // a gun grants/removes its shot on the bar
       p.hp = Math.min(p.hp, stats(c, p).maxHp);
     } else ev.push({ type: 'info', to: p.id, text: 'You can\'t use that.' });
   }
@@ -1033,7 +1064,7 @@ var World = (function () {
       hp: p.hp, maxHp: s.maxHp, mp: Math.floor(Number(p.mp) || 0), maxMp: s.maxMp, atk: s.atk, def: s.def, level: p.level, xp: p.xp,
       hunger: Math.round(Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)),
       thirst: Math.round(Number(p.thirst) == null || isNaN(Number(p.thirst)) ? 100 : Number(p.thirst)),
-      skills: knownSkills(c, p), loadout: p.loadout, cooldowns: p.cooldowns || {},
+      skills: usableSkills(c, p), loadout: p.loadout, cooldowns: p.cooldowns || {},
       statuses: (p.statuses || []).map(function (st) { return { id: st.id, until: st.until }; }),
       xpNext: xpFor(c, p.level + 1), xpThis: xpFor(c, p.level) || 0, gold: p.gold,
       inventory: p.inventory, equipment: p.equipment, respawn: p.respawn };

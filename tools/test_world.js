@@ -564,17 +564,33 @@ test('an empty stomach gnaws at your health', () => {
   assert.match(texts(ev), /Starving, you lose 3/);
 });
 
-test('a firearm spends ammo: no shot when empty, one round per shot', () => {
-  const s = hero('warrior', 5);
-  assert.ok(World.knownSkills(s.c, s.p).includes('gunshot'), 'learned at level 5');
+test('equipping a gun grants its shot and spends ammo; the shot vanishes when unequipped', () => {
+  const s = hero('survivor');
   const m = monster(s, 'skeleton', 12, 13);
   s.p.x = 9; s.p.y = 13;
-  assert.match(texts(cast(s, 'gunshot', 12, 13, 0)), /Out of ammo/);
-  assert.strictEqual(m.hp, 32);                                         // nothing fired
-  World.give(s.c, s.p, 'ammo', 2, []);
+  assert.match(texts(cast(s, 'gunshot', 12, 13, 0)), /don't know that skill/);   // not equipped yet
+  act(s, { type: 'use', item: 'pistol' });                                        // equip -> grants gunshot
+  assert.ok(World.publicPlayer(s.c, s.p).skills.includes('gunshot'));
+  assert.ok(s.p.loadout.includes('skill:gunshot'), 'auto-added to the bar');
+  const ammo0 = World.count(s.p, 'ammo');
   cast(s, 'gunshot', 12, 13, 1000);
-  assert.strictEqual(World.count(s.p, 'ammo'), 1);
+  assert.strictEqual(World.count(s.p, 'ammo'), ammo0 - 1);
   assert.ok(m.hp < 32, 'the shot connected');
+  s.p.inventory = s.p.inventory.filter(x => x.item !== 'ammo');                   // run dry
+  assert.match(texts(cast(s, 'gunshot', 12, 13, 2500)), /Out of ammo/);
+  act(s, { type: 'use', item: 'pistol' });                                        // unequip
+  assert.ok(!s.p.loadout.includes('skill:gunshot'));
+  assert.match(texts(cast(s, 'gunshot', 12, 13, 4000)), /don't know that skill/);
+});
+
+test('equipping a gun is gated by level, but firing it is not', () => {
+  const s = hero('survivor');
+  assert.match(texts(act(s, { type: 'use', item: 'rifle' })), /Requires level 3/);
+  assert.strictEqual(s.p.equipment.weapon, undefined);
+  s.p.level = 3;
+  assert.match(texts(act(s, { type: 'use', item: 'rifle' })), /You equip the rifle/);
+  assert.strictEqual(s.p.equipment.weapon, 'rifle');
+  assert.ok(s.p.loadout.includes('skill:rifle_shot'));                            // usable immediately, no skill level gate
 });
 
 test('a spitter attacks from range with line of sight, but walls stop it', () => {

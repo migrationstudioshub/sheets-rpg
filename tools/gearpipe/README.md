@@ -19,14 +19,21 @@ out/gear/              generated scratch (git-ignored): <fname>.png, .tint.png, 
 
 ## Running
 
-Requires Python 3 with Pillow and numpy, and a Gemini API key:
+Requires Python 3 with Pillow and numpy. From the repo root:
 
 ```
-GOOGLE_API=<key> python3 tools/gear_server.py        # from the repo root
+python3 tools/gear_server.py        # or:  py tools/gear_server.py  on Windows
 ```
 
 Then open http://localhost:8765/editor/ and switch to the Gear view. Generated art is reviewed in the
-browser and saved into `art/sprites/paperdoll/`. You can still run the pipeline directly if you prefer:
+browser; each candidate has a **Save as** box so you can keep more than one with real names, and saving
+writes into `art/sprites/paperdoll/` (it won't silently overwrite an existing file).
+
+**The Gemini key** comes from either:
+- the **API key** button in the Gear view, which opens `tools/google_api_key.txt` (git-ignored) for you
+  to paste the key into — this is the default and keeps the key off the browser, or
+- the `GOOGLE_API` environment variable, if you prefer (`setx GOOGLE_API "<key>"` on Windows, then open a
+  new shell). The environment variable wins over the file. You can still run the pipeline directly if you prefer:
 
 ```
 cd tools/gearpipe/tools

@@ -78,7 +78,9 @@ var Gear = (function () {
         field('Description', what),
         tintField, kindField, keepField,
         field('Variants', variants, 'Generate several and keep the best.'),
-        h('button', { className: 'primary', text: 'Generate', onclick: generate }),
+        h('div', { className: 'inline' },
+          h('button', { className: 'primary', text: 'Generate', onclick: generate }),
+          h('button', { text: 'API key…', title: 'Set up the Gemini key (opens a local file)', onclick: showKeySetup })),
         h('div', { id: 'gearstatus', className: 'note' }),
         h('div', { className: 'note sub', text: 'Needs the local gear server running with a Gemini key. Output saves into art/sprites/paperdoll/.' })
       ));
@@ -109,15 +111,40 @@ var Gear = (function () {
     }).catch(function () { serverOk = false; return false; });
   }
 
+  function openKeyFile() {
+    fetch('/gear/open-key-file', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        setStatus(res.opened
+          ? 'Opened ' + res.path + ' — paste your key on its own line, save the file, then click Re-check.'
+          : 'Edit ' + res.path + ' by hand: add your key on its own line, save, then click Re-check.', 'dirty');
+      })
+      .catch(function (e) { setStatus('Could not reach the server: ' + e.message, 'bad'); });
+  }
+
+  function recheckKey() {
+    ping().then(function (ok) {
+      if (!ok) { setStatus('Gear server not found.', 'bad'); return; }
+      if (hasKey) { setStatus('Key found — ready to generate.', 'clean'); outEl.innerHTML = ''; }
+      else { setStatus('Still no key in the file. Paste it, save the file, then Re-check.', 'bad'); }
+    });
+  }
+
   function keyField() {
     var stored = localStorage.getItem(KEY_LS) || '';
     var input = h('input', { type: 'password', value: stored, placeholder: 'Gemini API key', style: 'max-width:320px' });
     return h('div', { className: 'pick' },
-      h('div', { className: 'note', text: 'The server has no GOOGLE_API set. Paste a Gemini key to use from the browser, or (better) set GOOGLE_API in the server environment and restart so the key never leaves your machine.' }),
+      h('div', { className: 'note', text: 'No Gemini key found. Recommended: open the key file, paste your key in it (Notepad), save, then Re-check. The key stays on your machine and out of the browser and git.' }),
+      h('div', { className: 'inline' },
+        h('button', { className: 'primary', text: 'Open key file', onclick: openKeyFile }),
+        h('button', { text: 'Re-check', onclick: recheckKey })),
+      h('div', { className: 'note sub', text: 'Or keep it in this browser instead:' }),
       h('div', { className: 'inline' },
         input,
-        h('button', { text: 'Save key', onclick: function () { localStorage.setItem(KEY_LS, input.value.trim()); setStatus('Key saved in this browser.'); } })));
+        h('button', { text: 'Save in browser', onclick: function () { localStorage.setItem(KEY_LS, input.value.trim()); setStatus('Key saved in this browser.', 'clean'); outEl.innerHTML = ''; } })));
   }
+
+  function showKeySetup() { setStatus(''); outEl.innerHTML = ''; outEl.appendChild(keyField()); }
 
   function show() {
     ensureDom();
@@ -129,8 +156,7 @@ var Gear = (function () {
       if (!ok) {
         setStatus('Gear server not found. Run:  python3 tools/gear_server.py  (with GOOGLE_API set), then reload.', 'bad');
       } else if (!hasKey && !localStorage.getItem(KEY_LS)) {
-        setStatus('');
-        outEl.innerHTML = ''; outEl.appendChild(keyField());
+        showKeySetup();
       } else {
         setStatus('Ready.');
       }
@@ -164,7 +190,7 @@ var Gear = (function () {
     fetch('/gear/make', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function (r) { return r.json(); })
       .then(function (res) {
-        if (res.error === 'no_key') { setStatus('No Gemini key.', 'bad'); outEl.appendChild(keyField()); return; }
+        if (res.error === 'no_key') { setStatus('No Gemini key.', 'bad'); showKeySetup(); return; }
         if (res.error) { setStatus('Failed: ' + res.error, 'bad'); return; }
         setStatus('Done — review below and Save the one you like.', 'clean');
         res.variants.forEach(function (v) { outEl.appendChild(card(v)); });
@@ -179,32 +205,50 @@ var Gear = (function () {
       h('strong', { text: v.fname }), '  ·  ' + v.solid_px + ' fixed px  ·  mask: ' + (v.has_mask ? 'yes' : 'no'));
     var review = h('img', { src: dataUrl(v.review), className: 'gearreview', alt: 'review sheet' });
 
-    // suggested Items-tab row
-    var rowLines = ['worn_sprite: ' + v.fname + '.png', 'slot: ' + v.slot];
-    if (v.has_mask) rowLines.push('default_tint: ' + (v.slot === 'hair' ? 'hair_brown' : CLOTH_TINTS[0]) + '   (pick one)');
-    if (v.hides_hair !== null && v.hides_hair !== undefined) rowLines.push('hides_hair: ' + v.hides_hair);
-    var rowBox = h('pre', { className: 'gearrow', text: rowLines.join('\n') });
-
+    // Save-as: the prefix is fixed by the slot; you choose the rest. Defaults to the name
+    // without the _vN suffix, so keeping one candidate gives a clean name, and keeping both
+    // nudges you to rename the second (the server refuses to silently overwrite).
+    var nameInput = h('input', { value: v.name.replace(/_v\d+$/, ''), style: 'max-width:200px' });
     var saved = h('div', { className: 'note' });
-    var saveBtn = h('button', { className: 'primary', text: 'Save to art/sprites/paperdoll/', onclick: function () {
-      saveBtn.disabled = true; saved.textContent = 'Saving…';
-      fetch('/gear/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fname: v.fname }) })
+    var rowBox = h('pre', { className: 'gearrow' });
+    function destFname() { return v.prefix + '_' + nameInput.value.trim(); }
+    function updateRow() {
+      var lines = ['worn_sprite: ' + destFname() + '.png', 'slot: ' + v.slot];
+      if (v.has_mask) lines.push('default_tint: ' + (v.slot === 'hair' ? 'hair_brown' : CLOTH_TINTS[0]) + '   (pick one)');
+      if (v.hides_hair !== null && v.hides_hair !== undefined) lines.push('hides_hair: ' + v.hides_hair);
+      rowBox.textContent = lines.join('\n');
+    }
+    nameInput.addEventListener('input', updateRow); updateRow();
+
+    function doSave(confirm) {
+      var dest = nameInput.value.trim();
+      if (!/^[a-z0-9_]+$/.test(dest)) { saved.textContent = 'Save-as name must be snake_case.'; saved.className = 'note bad'; return; }
+      saveBtn.disabled = true; saved.textContent = 'Saving…'; saved.className = 'note';
+      fetch('/gear/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fname: v.fname, dest_fname: destFname(), confirm: !!confirm }) })
         .then(function (r) { return r.json(); })
         .then(function (res) {
           saveBtn.disabled = false;
+          if (res.needs_confirm) {
+            if (window.confirm(res.dest + '.png already exists in art/sprites/paperdoll/. Overwrite it?')) return doSave(true);
+            saved.textContent = 'Not saved — ' + res.dest + ' already exists. Rename to keep both.'; saved.className = 'note';
+            return;
+          }
           if (res.error) { saved.textContent = 'Save failed: ' + res.error; saved.className = 'note bad'; }
           else { saved.textContent = 'Saved: ' + res.saved.join(', '); saved.className = 'note clean'; }
         })
         .catch(function (e) { saveBtn.disabled = false; saved.textContent = 'Save failed: ' + e.message; saved.className = 'note bad'; });
-    } });
+    }
+    var saveBtn = h('button', { className: 'primary', text: 'Save', onclick: function () { doSave(false); } });
 
-    var card = h('div', { className: 'gearcard' },
+    return h('div', { className: 'gearcard' },
       head,
       h('div', { className: 'gearprev' }, review),
       v.has_mask ? tintPreview(v) : null,
+      h('div', { className: 'sub', text: 'Save as' }),
+      h('div', { className: 'inline' }, h('span', { className: 'note', text: v.prefix + '_' }), nameInput, h('span', { className: 'note', text: '.png' })),
       h('div', { className: 'sub', text: 'Suggested Items row' }), rowBox,
       h('div', { className: 'inline' }, saveBtn, saved));
-    return card;
   }
 
   // Live recolour across tint presets (reuses the game's Tint.getTintedLayer), for masked items.

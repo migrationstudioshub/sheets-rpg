@@ -33,6 +33,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # repo root
 PIPE = os.path.join(ROOT, "tools", "gearpipe")
 PIPE_TOOLS = os.path.join(PIPE, "tools")
 ART_OUT = os.path.join(ROOT, "art", "sprites", "paperdoll")
+KEY_FILE = os.path.join(ROOT, "tools", "google_api_key.txt")   # git-ignored; local only
+KEY_TEMPLATE = (
+    "# Paste your Google Gemini API key on the line below (just the key, nothing else), then\n"
+    "# save and close this file. It stays on your machine and is git-ignored.\n"
+    "# Get a key at https://aistudio.google.com/apikey\n\n"
+)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
 
 TYPES = {
@@ -58,6 +64,22 @@ def load_pipeline():
         os.makedirs(make_gear.bg.OUT, exist_ok=True)
         _mg = make_gear
     return _mg
+
+
+def read_key():
+    """The Gemini key, from GOOGLE_API if set, else the first real line of the key file."""
+    env = (os.environ.get("GOOGLE_API") or "").strip()
+    if env:
+        return env
+    try:
+        with open(KEY_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                s = line.strip()
+                if s and not s.startswith("#"):
+                    return s
+    except OSError:
+        pass
+    return ""
 
 
 def b64(path):
@@ -92,7 +114,7 @@ def gear_make(req):
     if not what:
         return {"error": "Describe what the item looks like."}
 
-    key = (req.get("google_api") or os.environ.get("GOOGLE_API") or "").strip()
+    key = read_key() or (req.get("google_api") or "").strip()
     if not key:
         return {"error": "no_key"}
     os.environ["GOOGLE_API"] = key
@@ -130,21 +152,48 @@ def gear_make(req):
 
 def gear_save(req):
     mg = load_pipeline()
-    fname = (req.get("fname") or "").strip()
-    if not fname or not NAME_RE.match(fname.replace(".", "_")):
-        return {"error": "Bad file name."}
+    fname = (req.get("fname") or "").strip()            # the generated source in out/gear
+    dest = (req.get("dest_fname") or fname).strip()     # what to call it in art/ (may rename)
+    confirm = bool(req.get("confirm"))                  # overwrite an existing file on purpose
+    if not fname or not NAME_RE.match(fname):
+        return {"error": "Bad source name."}
+    if not NAME_RE.match(dest):
+        return {"error": "Save-as name must be snake_case (lowercase letters, numbers, underscores)."}
     src = os.path.join(mg.bg.OUT, fname + ".png")
     if not os.path.exists(src):
         return {"error": "Nothing generated for " + fname + " yet."}
+    dest_png = os.path.join(ART_OUT, dest + ".png")
+    if os.path.exists(dest_png) and not confirm:
+        return {"needs_confirm": True, "dest": dest}    # don't clobber silently
     os.makedirs(ART_OUT, exist_ok=True)
     written = []
-    shutil.copy2(src, os.path.join(ART_OUT, fname + ".png"))
-    written.append("art/sprites/paperdoll/" + fname + ".png")
+    shutil.copy2(src, dest_png)
+    written.append("art/sprites/paperdoll/" + dest + ".png")
     mask = src[:-4] + ".tint.png"
     if os.path.exists(mask):
-        shutil.copy2(mask, os.path.join(ART_OUT, fname + ".tint.png"))
-        written.append("art/sprites/paperdoll/" + fname + ".tint.png")
+        shutil.copy2(mask, os.path.join(ART_OUT, dest + ".tint.png"))
+        written.append("art/sprites/paperdoll/" + dest + ".tint.png")
     return {"saved": written}
+
+
+def gear_open_key_file(req):
+    """Create the local key file if missing and open it in the OS default editor."""
+    if not os.path.exists(KEY_FILE):
+        with open(KEY_FILE, "w", encoding="utf-8") as f:
+            f.write(KEY_TEMPLATE)
+    opened = True
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(KEY_FILE)   # type: ignore[attr-defined]  # noqa: S606 (local dev tool)
+        elif sys.platform == "darwin":
+            import subprocess
+            subprocess.Popen(["open", KEY_FILE])
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", KEY_FILE])
+    except Exception:                 # noqa: BLE001 -- report the path so the user can open it by hand
+        opened = False
+    return {"path": "tools/google_api_key.txt", "opened": opened}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -172,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = unquote(self.path.split("?")[0])
         if path == "/gear/ping":
-            return self._json({"ok": True, "has_key": bool(os.environ.get("GOOGLE_API"))})
+            return self._json({"ok": True, "has_key": bool(read_key())})
         if path.endswith("/"):
             path += "index.html"
         fp = os.path.normpath(os.path.join(ROOT, path.lstrip("/")))
@@ -203,6 +252,8 @@ class Handler(BaseHTTPRequestHandler):
                 res = gear_make(req)
             elif path == "/gear/save":
                 res = gear_save(req)
+            elif path == "/gear/open-key-file":
+                res = gear_open_key_file(req)
             else:
                 return self.send_error(404, "not found")
         except Exception as e:                  # noqa: BLE001 -- report any pipeline failure to the view
@@ -217,7 +268,7 @@ def main():
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print("Gear maker + static server on http://localhost:%d" % PORT)
     print("  Editor:  http://localhost:%d/editor/   (switch to the Gear view)" % PORT)
-    print("  Key:     GOOGLE_API is %s" % ("set" if os.environ.get("GOOGLE_API") else "NOT set (type it in the view, or set it and restart)"))
+    print("  Key:     Gemini key is %s" % ("set" if read_key() else "NOT set (use the view's 'API key' button, or set GOOGLE_API)"))
     print("  Stop with Ctrl+C")
     try:
         srv.serve_forever()

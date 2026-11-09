@@ -3,6 +3,8 @@ art/inbox/
 tools/gearpipe/out/gear/*
 !tools/gearpipe/out/gear/.gitkeep
 tools/gearpipe/raw/gear/
+# local Gemini API key for the gear maker (never commit this)
+tools/google_api_key.txt
 __pycache__/
 node_modules/
 .clasprc.json

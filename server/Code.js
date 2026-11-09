@@ -38,6 +38,7 @@ function doGet(e) {
     if (action === 'content') return out({ content: getContent() });
     if (action === 'reload') { clearContentCache(); return out({ ok: true, reloaded: true }); }
     if (action === 'tables') return out({ tables: readTables() });
+    if (action === 'firebaseTest') return out(firebaseTest());
     return out({ ok: true, game: 'sheets-rpg', hint: 'use ?action=content' });
   } catch (err) {
     return out({ error: String(err && err.message || err) });
@@ -258,14 +259,57 @@ function firebaseView(content, ws, mapId, players) {
   };
 }
 
-/** Write one map's live view to the Realtime Database. Never lets a failed push break a game step. */
+function firebaseUrl(secret, path) {
+  var base = firebaseBase();
+  return base.replace(/\/+$/, '') + '/world/' + path + '.json' + (secret ? '?auth=' + encodeURIComponent(secret) : '');
+}
+
+/**
+ * Write one map's live view to the Realtime Database. Never lets a failed push break a game step:
+ * if a write errors or runs slow, we log why and switch the push off for a couple of minutes
+ * (a circuit breaker) so the game falls back to plain polling instead of hanging on every move.
+ */
 function pushWorld(mapId, payload) {
   var base = firebaseBase(); if (!base) return;
+  var cache = CacheService.getScriptCache();
+  if (cache.get('fb.off')) return;                          // a recent write failed or was slow: stay off, keep the game fast
   var secret = PropertiesService.getScriptProperties().getProperty('FIREBASE_SECRET') || '';
-  var url = base.replace(/\/+$/, '') + '/world/' + encodeURIComponent(mapId) + '.json' + (secret ? '?auth=' + encodeURIComponent(secret) : '');
+  var started = Date.now();
   try {
-    UrlFetchApp.fetch(url, { method: 'put', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
-  } catch (e) { /* the sheet and cache are still authoritative; a dropped push just means a slightly staler view for others */ }
+    var res = UrlFetchApp.fetch(firebaseUrl(secret, encodeURIComponent(mapId)),
+      { method: 'put', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
+    var code = res.getResponseCode(), ms = Date.now() - started;
+    if (code >= 300 || ms > 3000) {
+      cache.put('fb.off', '1', 120);
+      Logger.log('Firebase push disabled for 120s — HTTP ' + code + ' in ' + ms + 'ms: ' + String(res.getContentText()).slice(0, 200));
+    }
+  } catch (e) {
+    cache.put('fb.off', '1', 120);
+    Logger.log('Firebase push disabled for 120s — ' + String(e && e.message || e) + ' (after ' + (Date.now() - started) + 'ms)');
+  }
+}
+
+/**
+ * One-shot check of the Firebase setup. Open <API_URL>?action=firebaseTest (or Run this in the editor):
+ * it writes a tiny world/_diag node and reports exactly what came back, so a broken URL or secret is
+ * obvious instead of a silent hang. code 200 = working; 401 = wrong/missing FIREBASE_SECRET; a long
+ * ms with an error = wrong FIREBASE_URL (unreachable host).
+ */
+function firebaseTest() {
+  var base = firebaseBase();
+  if (!base) return { ok: false, reason: 'FIREBASE_URL script property is not set on the server' };
+  var secret = PropertiesService.getScriptProperties().getProperty('FIREBASE_SECRET') || '';
+  var host = base.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  var started = Date.now();
+  try {
+    var res = UrlFetchApp.fetch(firebaseUrl(secret, '_diag'),
+      { method: 'put', contentType: 'application/json', payload: JSON.stringify({ at: new Date().toISOString() }), muteHttpExceptions: true });
+    var code = res.getResponseCode();
+    return { ok: code < 300, code: code, ms: Date.now() - started, host: host, secret_set: !!secret,
+      response: String(res.getContentText()).slice(0, 300) };
+  } catch (e) {
+    return { ok: false, ms: Date.now() - started, host: host, secret_set: !!secret, error: String(e && e.message || e) };
+  }
 }
 
 // written to the sheet right away (everything else waits for save_every_s; the cache always has the latest)

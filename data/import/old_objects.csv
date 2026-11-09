@@ -1,0 +1,46 @@
+row,id,name,imgur,unique,pass,kind
+0,obj_0,Wooden Chest,kwn7TqQ,TRUE,0,storage
+1,obj_1,Barrell,2FbGhQE,TRUE,0,storage
+2,obj_2,Wooden Door,cUnIspj,TRUE,0,blocker
+3,obj_3,Burning Torch,JL6vT4Z,FALSE,0,deco
+4,obj_4,Torch,txBKbHP,FALSE,0,deco
+5,obj_5,Spike Trap,ukg7ivm,TRUE,1,trap
+6,obj_6,Spike Trap,llBBp9J,TRUE,1,trap
+7,obj_7,Window,uK43IYH,TRUE,0,deco
+8,obj_8,???,hxWe0EJ,TRUE,0,spawner
+9,obj_9,Cave Door,qpXeel0,TRUE,0,transfer
+10,obj_10,Bars,jni1y60,FALSE,0,deco
+11,obj_11,Vase,ywbQX0O,TRUE,0,storage
+12,obj_12,,j4kcJ3Y,TRUE,1,transfer
+13,obj_13,Tombstone,rOhobNJ,TRUE,0,deco
+14,obj_14,Wooden Table,rS9wHZj,FALSE,0,deco
+15,obj_15,Sign,fYza4Gn,FALSE,0,deco
+16,obj_16,Sign,KfwOlRj,FALSE,0,deco
+17,obj_17,Stool,A6RvCuW,FALSE,1,deco
+18,obj_18,Bed,jXfaJYj,TRUE,0,deco
+19,obj_19,Bed,DnMO6VP,TRUE,0,deco
+20,obj_20,Tree,vIDIahx,FALSE,0,deco
+21,obj_21,Tree,htRuzGj,FALSE,0,deco
+22,obj_22,Tree,rhqzQpI,FALSE,0,deco
+23,obj_23,Rock,3wQ7p4w,FALSE,0,deco
+24,obj_24,Campfire,zdZcDkA,TRUE,0,craft
+25,obj_25,Campfire,2LUJohr,TRUE,0,craft
+26,obj_26,Hole,9mah0Uu,TRUE,0,deco
+27,obj_27,Leaves,tkMWyNl,FALSE,1,deco
+28,obj_28,Flower,sznituG,FALSE,1,deco
+29,obj_29,Trunk,2Fg7QDh,FALSE,0,deco
+30,obj_30,Crate,N4uTBlo,TRUE,0,storage
+31,obj_31,Bedroll,IxHfOq2,TRUE,1,deco
+32,obj_32,Bedroll,GhtC1Pc,TRUE,1,deco
+33,obj_33,Backpack,FhyC6RH,TRUE,0,storage
+34,obj_34,Counter,DTFxzDM,FALSE,0,deco
+35,obj_35,Counter,XpC6xDd,FALSE,0,deco
+36,obj_36,Counter,7TCYaaS,FALSE,0,deco
+37,obj_37,Record Table,GcMzvYj,TRUE,0,save
+38,obj_38,Letter,13fvsJ2,TRUE,0,deco
+39,obj_39,Chest,HTzGNTq,TRUE,0,storage
+40,obj_40,Sign,4HDAqE3,FALSE,0,deco
+41,obj_42,Cell Door,5QqWL2t,TRUE,0,blocker
+42,obj_43,Sign,IJG1VVi,TRUE,0,deco
+43,obj_44,Button,U6OpVaE,TRUE,1,trigger
+44,obj_45,Button,YT4LQBp,TRUE,1,trigger

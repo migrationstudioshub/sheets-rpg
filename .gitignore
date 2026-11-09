@@ -1,0 +1,7 @@
+art/inbox/
+__pycache__/
+node_modules/
+.clasprc.json
+.DS_Store
+~$*.xlsx
+server/.clasp.json

@@ -1,0 +1,5 @@
+# Only these files go to Apps Script
+**/**
+!appsscript.json
+!Code.js
+!shared_*.js

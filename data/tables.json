@@ -1,0 +1,4148 @@
+{
+ "Config": [
+  {
+   "key": "tile_size",
+   "value": 32,
+   "notes": "Pixels per tile in the art"
+  },
+  {
+   "key": "view_w",
+   "value": 15,
+   "notes": "Tiles visible across"
+  },
+  {
+   "key": "view_h",
+   "value": 11,
+   "notes": "Tiles visible down"
+  },
+  {
+   "key": "start_map",
+   "value": "map_3",
+   "notes": "Where new characters appear"
+  },
+  {
+   "key": "start_x",
+   "value": 9,
+   "notes": ""
+  },
+  {
+   "key": "start_y",
+   "value": 15,
+   "notes": ""
+  },
+  {
+   "key": "move_ms",
+   "value": 140,
+   "notes": "Time for one step, in milliseconds"
+  },
+  {
+   "key": "autotile_edge_same",
+   "value": true,
+   "notes": "TRUE: terrain running off the map edge gets no border there"
+  },
+  {
+   "key": "save_every_s",
+   "value": 30,
+   "notes": "How often the server writes players to the sheet (min 10). Level-ups, deaths and map changes are written at once."
+  },
+  {
+   "key": "poll_ms",
+   "value": 1000,
+   "notes": "How often an idle game asks the server what changed"
+  },
+  {
+   "key": "start_class",
+   "value": "warrior",
+   "notes": "Class used when none is chosen"
+  },
+  {
+   "key": "death_gold_loss",
+   "value": 0.1,
+   "notes": "Share of gold lost on death (0.1 = 10%)"
+  },
+  {
+   "key": "attack_ms",
+   "value": 500,
+   "notes": "Minimum time between basic attacks"
+  },
+  {
+   "key": "lockpick_chance",
+   "value": 0.5,
+   "notes": "Base chance to pick a lock (plus the class bonus, minus the lock difficulty)"
+  },
+  {
+   "key": "lockpick_break",
+   "value": 0.3,
+   "notes": "Chance a lockpick breaks on a failed attempt"
+  }
+ ],
+ "Tilesets": [
+  {
+   "id": "fields",
+   "image": "art/tilesets/fields_placeholder.png",
+   "tile_size": 32,
+   "columns": 8,
+   "layout": "blob47_craftpix",
+   "notes": "Placeholder art; swap image for the CraftPix FieldsTileset.png (same layout)"
+  }
+ ],
+ "Autotile": [
+  {
+   "layout": "blob47_craftpix",
+   "mask": 0,
+   "tiles": "47"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 1,
+   "tiles": "44"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 2,
+   "tiles": "41"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 3,
+   "tiles": "22"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 4,
+   "tiles": "43"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 5,
+   "tiles": "32,40,48"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 6,
+   "tiles": "6"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 7,
+   "tiles": "50"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 8,
+   "tiles": "42"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 9,
+   "tiles": "24"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 10,
+   "tiles": "30,31,39"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 11,
+   "tiles": "52"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 12,
+   "tiles": "8"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 13,
+   "tiles": "49"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 14,
+   "tiles": "51"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 15,
+   "tiles": "15"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 19,
+   "tiles": "26"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 23,
+   "tiles": "62"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 27,
+   "tiles": "63"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 31,
+   "tiles": "58"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 38,
+   "tiles": "10"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 39,
+   "tiles": "54"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 46,
+   "tiles": "55"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 47,
+   "tiles": "59"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 55,
+   "tiles": "13,21,29"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 63,
+   "tiles": "14"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 76,
+   "tiles": "12"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 77,
+   "tiles": "53"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 78,
+   "tiles": "56"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 79,
+   "tiles": "60"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 95,
+   "tiles": "46"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 110,
+   "tiles": "34,35,36"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 111,
+   "tiles": "7"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 127,
+   "tiles": "37"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 137,
+   "tiles": "28"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 139,
+   "tiles": "64"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 141,
+   "tiles": "61"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 143,
+   "tiles": "57"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 155,
+   "tiles": "2,3,4"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 159,
+   "tiles": "23"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 175,
+   "tiles": "45"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 191,
+   "tiles": "5"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 205,
+   "tiles": "9,17,25"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 207,
+   "tiles": "16"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 223,
+   "tiles": "1"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 239,
+   "tiles": "33"
+  },
+  {
+   "layout": "blob47_craftpix",
+   "mask": 255,
+   "tiles": "11,18,20,27"
+  }
+ ],
+ "Terrain": [
+  {
+   "id": "til_0",
+   "name": "Void",
+   "color": "#000000",
+   "sprite": "",
+   "autotile": "",
+   "pass_n": 0,
+   "pass_e": 0,
+   "pass_s": 0,
+   "pass_w": 0,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_1",
+   "name": "Stone floor",
+   "color": "#878173",
+   "sprite": "https://i.imgur.com/8EFJwKW.png",
+   "autotile": "",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_2",
+   "name": "Stone wall",
+   "color": "#5d5548",
+   "sprite": "https://i.imgur.com/XqsReYO.png",
+   "autotile": "",
+   "pass_n": 0,
+   "pass_e": 0,
+   "pass_s": 0,
+   "pass_w": 0,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_3",
+   "name": "Grass",
+   "color": "#6d9b1a",
+   "sprite": "https://i.imgur.com/HECTlBE.png",
+   "autotile": "",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_4",
+   "name": "Parquet floor",
+   "color": "#5e3a08",
+   "sprite": "https://i.imgur.com/IQmDvm8.png",
+   "autotile": "",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_5",
+   "name": "Wooden wall",
+   "color": "#492903",
+   "sprite": "https://i.imgur.com/eXjCoQ9.png",
+   "autotile": "",
+   "pass_n": 0,
+   "pass_e": 0,
+   "pass_s": 0,
+   "pass_w": 0,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_6",
+   "name": "Sand",
+   "color": "#bda67e",
+   "sprite": "https://i.imgur.com/8GJB4m8.png",
+   "autotile": "",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_7",
+   "name": "Wooden stairs",
+   "color": "#784d1b",
+   "sprite": "https://i.imgur.com/3gs7WSL.png",
+   "autotile": "",
+   "pass_n": 1,
+   "pass_e": 0,
+   "pass_s": 1,
+   "pass_w": 0,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_8",
+   "name": "Stone stairs",
+   "color": "#454545",
+   "sprite": "https://i.imgur.com/G3aixIu.png",
+   "autotile": "",
+   "pass_n": 1,
+   "pass_e": 0,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_9",
+   "name": "Trapdoor",
+   "color": "#505050",
+   "sprite": "https://i.imgur.com/d4JZy3y.png",
+   "autotile": "",
+   "pass_n": 1,
+   "pass_e": 0,
+   "pass_s": 1,
+   "pass_w": 0,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_10",
+   "name": "Plank floor",
+   "color": "#84592a",
+   "sprite": "https://i.imgur.com/zmadX46.png",
+   "autotile": "",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "til_11",
+   "name": "Cobblestone wall",
+   "color": "#61584f",
+   "sprite": "https://i.imgur.com/dT0cGqM.png",
+   "autotile": "",
+   "pass_n": 0,
+   "pass_e": 0,
+   "pass_s": 0,
+   "pass_w": 0,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported (passability fixed: was walkable)"
+  },
+  {
+   "id": "til_12",
+   "name": "Light grass",
+   "color": "#90cf2c",
+   "sprite": "https://i.imgur.com/ayCqVYr.png",
+   "autotile": "",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "imported"
+  },
+  {
+   "id": "fields",
+   "name": "Fields",
+   "color": "#c99660",
+   "sprite": "",
+   "autotile": "fields",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "Autotiled: edges and corners are picked automatically"
+  }
+ ],
+ "Kinds": [
+  {
+   "kind": "deco",
+   "property": "states",
+   "type": "states",
+   "default": "",
+   "notes": "Scenery; nothing happens on interact"
+  },
+  {
+   "kind": "container",
+   "property": "states",
+   "type": "states",
+   "default": "closed|open|empty|locked",
+   "notes": ""
+  },
+  {
+   "kind": "container",
+   "property": "capacity",
+   "type": "number",
+   "default": 8,
+   "notes": ""
+  },
+  {
+   "kind": "container",
+   "property": "contents",
+   "type": "item_list",
+   "default": "",
+   "notes": "Fixed contents, e.g. potion:2, gold:30"
+  },
+  {
+   "kind": "container",
+   "property": "loot_table",
+   "type": "loot_table",
+   "default": "",
+   "notes": "Rolled when opened, if no contents"
+  },
+  {
+   "kind": "container",
+   "property": "locked_by",
+   "type": "item",
+   "default": "",
+   "notes": "Key item needed to open"
+  },
+  {
+   "kind": "container",
+   "property": "lock_difficulty",
+   "type": "number",
+   "default": 0.2,
+   "notes": "0 = easy to pick, 0.5 = hard; makes it locked even without a key item"
+  },
+  {
+   "kind": "container",
+   "property": "refill_after_s",
+   "type": "number",
+   "default": 0,
+   "notes": "0 = never refills"
+  },
+  {
+   "kind": "container",
+   "property": "per_player",
+   "type": "bool",
+   "default": false,
+   "notes": "TRUE: each player gets their own copy"
+  },
+  {
+   "kind": "container",
+   "property": "locked",
+   "type": "bool",
+   "default": false,
+   "notes": "Locked even without a key item (can only be picked)"
+  },
+  {
+   "kind": "door",
+   "property": "states",
+   "type": "states",
+   "default": "closed|open|locked",
+   "notes": ""
+  },
+  {
+   "kind": "door",
+   "property": "locked_by",
+   "type": "item",
+   "default": "",
+   "notes": ""
+  },
+  {
+   "kind": "door",
+   "property": "lock_difficulty",
+   "type": "number",
+   "default": 0.2,
+   "notes": "0 = easy to pick, 0.5 = hard"
+  },
+  {
+   "kind": "door",
+   "property": "locked",
+   "type": "bool",
+   "default": false,
+   "notes": "Locked even without a key item (can only be picked or opened by a lever)"
+  },
+  {
+   "kind": "door",
+   "property": "target",
+   "type": "map_pos",
+   "default": "",
+   "notes": "Leave empty for a door that just opens"
+  },
+  {
+   "kind": "switch",
+   "property": "states",
+   "type": "states",
+   "default": "off|on",
+   "notes": "Levers, buttons, pressure plates"
+  },
+  {
+   "kind": "switch",
+   "property": "targets",
+   "type": "entity_list",
+   "default": "",
+   "notes": "Entity keys to change"
+  },
+  {
+   "kind": "switch",
+   "property": "mode",
+   "type": "select:toggle|once",
+   "default": "toggle",
+   "notes": ""
+  },
+  {
+   "kind": "trap",
+   "property": "states",
+   "type": "states",
+   "default": "up|down",
+   "notes": "up = dangerous"
+  },
+  {
+   "kind": "trap",
+   "property": "damage",
+   "type": "number",
+   "default": 10,
+   "notes": ""
+  },
+  {
+   "kind": "trap",
+   "property": "trigger",
+   "type": "select:step|timed",
+   "default": "step",
+   "notes": "step: springs when stepped on; timed: goes up and down by itself"
+  },
+  {
+   "kind": "trap",
+   "property": "up_ms",
+   "type": "number",
+   "default": 1000,
+   "notes": "timed: how long it stays up"
+  },
+  {
+   "kind": "trap",
+   "property": "down_ms",
+   "type": "number",
+   "default": 1000,
+   "notes": "timed: how long it stays down"
+  },
+  {
+   "kind": "trap",
+   "property": "offset_ms",
+   "type": "number",
+   "default": 0,
+   "notes": "timed: shift its cycle so neighbouring traps take turns"
+  },
+  {
+   "kind": "trap",
+   "property": "hidden",
+   "type": "bool",
+   "default": false,
+   "notes": "step: invisible until sprung"
+  },
+  {
+   "kind": "trap",
+   "property": "rearm_after_s",
+   "type": "number",
+   "default": 5,
+   "notes": "step: seconds until it is dangerous again"
+  },
+  {
+   "kind": "rest",
+   "property": "states",
+   "type": "states",
+   "default": "",
+   "notes": "Beds and record tables"
+  },
+  {
+   "kind": "rest",
+   "property": "heals",
+   "type": "bool",
+   "default": true,
+   "notes": ""
+  },
+  {
+   "kind": "rest",
+   "property": "sets_respawn",
+   "type": "bool",
+   "default": true,
+   "notes": ""
+  },
+  {
+   "kind": "rest",
+   "property": "cost",
+   "type": "number",
+   "default": 0,
+   "notes": "Gold"
+  },
+  {
+   "kind": "sign",
+   "property": "states",
+   "type": "states",
+   "default": "",
+   "notes": ""
+  },
+  {
+   "kind": "sign",
+   "property": "text",
+   "type": "text",
+   "default": "",
+   "notes": ""
+  },
+  {
+   "kind": "npc",
+   "property": "states",
+   "type": "states",
+   "default": "idle|talking",
+   "notes": ""
+  },
+  {
+   "kind": "npc",
+   "property": "dialogue",
+   "type": "dialogue",
+   "default": "",
+   "notes": ""
+  },
+  {
+   "kind": "npc",
+   "property": "shop",
+   "type": "shop",
+   "default": "",
+   "notes": ""
+  },
+  {
+   "kind": "npc",
+   "property": "wander_radius",
+   "type": "number",
+   "default": 0,
+   "notes": ""
+  },
+  {
+   "kind": "spawn",
+   "property": "states",
+   "type": "states",
+   "default": "active|cleared",
+   "notes": "Place with the Monsters tab of the editor palette"
+  },
+  {
+   "kind": "spawn",
+   "property": "monster",
+   "type": "monster",
+   "default": "",
+   "notes": ""
+  },
+  {
+   "kind": "spawn",
+   "property": "count",
+   "type": "number",
+   "default": 1,
+   "notes": ""
+  },
+  {
+   "kind": "spawn",
+   "property": "radius",
+   "type": "number",
+   "default": 3,
+   "notes": ""
+  },
+  {
+   "kind": "spawn",
+   "property": "respawn_after_s",
+   "type": "number",
+   "default": 60,
+   "notes": ""
+  },
+  {
+   "kind": "teleport",
+   "property": "states",
+   "type": "states",
+   "default": "active|inactive",
+   "notes": "Stairs, cave mouths, map exits"
+  },
+  {
+   "kind": "teleport",
+   "property": "target",
+   "type": "map_pos",
+   "default": "",
+   "notes": "map:x:y"
+  },
+  {
+   "kind": "teleport",
+   "property": "requires",
+   "type": "item",
+   "default": "",
+   "notes": ""
+  },
+  {
+   "kind": "trigger",
+   "property": "states",
+   "type": "states",
+   "default": "ready|fired",
+   "notes": "Invisible zones"
+  },
+  {
+   "kind": "trigger",
+   "property": "once",
+   "type": "bool",
+   "default": true,
+   "notes": ""
+  },
+  {
+   "kind": "trigger",
+   "property": "if",
+   "type": "text",
+   "default": "",
+   "notes": "Condition, e.g. flag:met_mayor"
+  },
+  {
+   "kind": "trigger",
+   "property": "do",
+   "type": "text",
+   "default": "",
+   "notes": "Actions, e.g. give:potion:1; flag:seen_cave"
+  },
+  {
+   "kind": "craft",
+   "property": "states",
+   "type": "states",
+   "default": "lit|unlit",
+   "notes": "Campfires and workbenches"
+  }
+ ],
+ "Objects": [
+  {
+   "id": "obj_0",
+   "name": "Wooden Chest",
+   "kind": "container",
+   "sprite": "https://i.imgur.com/kwn7TqQ.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"loot_table\": \"chest_common\"}",
+   "on_interact": "",
+   "notes": "imported (old kind: storage)"
+  },
+  {
+   "id": "obj_1",
+   "name": "Barrell",
+   "kind": "container",
+   "sprite": "https://i.imgur.com/2FbGhQE.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"loot_table\": \"barrel\", \"refill_after_s\": 300}",
+   "on_interact": "",
+   "notes": "imported (old kind: storage)"
+  },
+  {
+   "id": "obj_2",
+   "name": "Wooden Door",
+   "kind": "door",
+   "sprite": "https://i.imgur.com/cUnIspj.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": true,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: blocker)"
+  },
+  {
+   "id": "obj_3",
+   "name": "Burning Torch",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/JL6vT4Z.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_4",
+   "name": "Torch",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/txBKbHP.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_5",
+   "name": "Spike trap (opposite)",
+   "kind": "trap",
+   "sprite": "https://i.imgur.com/llBBp9J.png",
+   "sprite_top": "",
+   "sprite_states": "down=https://i.imgur.com/ukg7ivm.png",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "{\"trigger\": \"timed\", \"up_ms\": 1000, \"down_ms\": 1000, \"offset_ms\": 1000}",
+   "on_interact": "",
+   "notes": "imported (old kind: trap)"
+  },
+  {
+   "id": "obj_6",
+   "name": "Spike trap",
+   "kind": "trap",
+   "sprite": "https://i.imgur.com/llBBp9J.png",
+   "sprite_top": "",
+   "sprite_states": "down=https://i.imgur.com/ukg7ivm.png",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "{\"trigger\": \"timed\", \"up_ms\": 1000, \"down_ms\": 1000}",
+   "on_interact": "",
+   "notes": "imported (old kind: trap)"
+  },
+  {
+   "id": "obj_7",
+   "name": "Window",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/uK43IYH.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_8",
+   "name": "Monster spawn",
+   "kind": "spawn",
+   "sprite": "https://i.imgur.com/hxWe0EJ.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: spawner)"
+  },
+  {
+   "id": "obj_9",
+   "name": "Cave Door",
+   "kind": "teleport",
+   "sprite": "https://i.imgur.com/qpXeel0.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": true,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: transfer)"
+  },
+  {
+   "id": "obj_10",
+   "name": "Bars",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/jni1y60.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_11",
+   "name": "Vase",
+   "kind": "container",
+   "sprite": "https://i.imgur.com/ywbQX0O.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"loot_table\": \"barrel\", \"refill_after_s\": 300}",
+   "on_interact": "",
+   "notes": "imported (old kind: storage)"
+  },
+  {
+   "id": "obj_12",
+   "name": "obj_12",
+   "kind": "teleport",
+   "sprite": "https://i.imgur.com/j4kcJ3Y.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: transfer)"
+  },
+  {
+   "id": "obj_13",
+   "name": "Tombstone",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/rOhobNJ.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_14",
+   "name": "Wooden Table",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/rS9wHZj.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_15",
+   "name": "Sign",
+   "kind": "sign",
+   "sprite": "https://i.imgur.com/fYza4Gn.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"text\": \"A weathered sign.\"}",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_16",
+   "name": "Sign",
+   "kind": "sign",
+   "sprite": "https://i.imgur.com/KfwOlRj.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"text\": \"A weathered sign.\"}",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_17",
+   "name": "Stool",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/A6RvCuW.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_18",
+   "name": "Bed",
+   "kind": "rest",
+   "sprite": "https://i.imgur.com/jXfaJYj.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_19",
+   "name": "Bed",
+   "kind": "rest",
+   "sprite": "https://i.imgur.com/DnMO6VP.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_20",
+   "name": "Tree",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/vIDIahx.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": true,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_21",
+   "name": "Tree",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/htRuzGj.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": true,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_22",
+   "name": "Tree",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/rhqzQpI.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": true,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_23",
+   "name": "Rock",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/3wQ7p4w.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_24",
+   "name": "Campfire",
+   "kind": "craft",
+   "sprite": "https://i.imgur.com/zdZcDkA.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: craft)"
+  },
+  {
+   "id": "obj_25",
+   "name": "Campfire",
+   "kind": "craft",
+   "sprite": "https://i.imgur.com/2LUJohr.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: craft)"
+  },
+  {
+   "id": "obj_26",
+   "name": "Hole",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/9mah0Uu.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_27",
+   "name": "Leaves",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/tkMWyNl.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_28",
+   "name": "Flower",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/sznituG.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_29",
+   "name": "Trunk",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/2Fg7QDh.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_30",
+   "name": "Crate",
+   "kind": "container",
+   "sprite": "https://i.imgur.com/N4uTBlo.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"loot_table\": \"barrel\", \"refill_after_s\": 300}",
+   "on_interact": "",
+   "notes": "imported (old kind: storage)"
+  },
+  {
+   "id": "obj_31",
+   "name": "Bedroll",
+   "kind": "rest",
+   "sprite": "https://i.imgur.com/IxHfOq2.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_32",
+   "name": "Bedroll",
+   "kind": "rest",
+   "sprite": "https://i.imgur.com/GhtC1Pc.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_33",
+   "name": "Backpack",
+   "kind": "container",
+   "sprite": "https://i.imgur.com/FhyC6RH.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"loot_table\": \"barrel\"}",
+   "on_interact": "",
+   "notes": "imported (old kind: storage)"
+  },
+  {
+   "id": "obj_34",
+   "name": "Counter",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/DTFxzDM.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_35",
+   "name": "Counter",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/XpC6xDd.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_36",
+   "name": "Counter",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/7TCYaaS.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_37",
+   "name": "Record Table",
+   "kind": "rest",
+   "sprite": "https://i.imgur.com/GcMzvYj.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: save)"
+  },
+  {
+   "id": "obj_38",
+   "name": "Letter",
+   "kind": "sign",
+   "sprite": "https://i.imgur.com/13fvsJ2.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"text\": \"A letter. The handwriting is hard to read.\"}",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_39",
+   "name": "Chest",
+   "kind": "container",
+   "sprite": "https://i.imgur.com/HTzGNTq.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"loot_table\": \"chest_common\"}",
+   "on_interact": "",
+   "notes": "imported (old kind: storage)"
+  },
+  {
+   "id": "obj_40",
+   "name": "Sign",
+   "kind": "sign",
+   "sprite": "https://i.imgur.com/4HDAqE3.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"text\": \"A weathered sign.\"}",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_42",
+   "name": "Cell Door",
+   "kind": "door",
+   "sprite": "https://i.imgur.com/5QqWL2t.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: blocker)"
+  },
+  {
+   "id": "obj_43",
+   "name": "Sign",
+   "kind": "sign",
+   "sprite": "https://i.imgur.com/IJG1VVi.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"text\": \"A weathered sign.\"}",
+   "on_interact": "",
+   "notes": "imported (old kind: deco)"
+  },
+  {
+   "id": "obj_44",
+   "name": "Button",
+   "kind": "switch",
+   "sprite": "https://i.imgur.com/U6OpVaE.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: trigger)"
+  },
+  {
+   "id": "obj_45",
+   "name": "Button",
+   "kind": "switch",
+   "sprite": "https://i.imgur.com/YT4LQBp.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "",
+   "on_interact": "",
+   "notes": "imported (old kind: trigger)"
+  },
+  {
+   "id": "obj_tree",
+   "name": "Tree",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/rhqzQpI.png",
+   "sprite_top": "https://i.imgur.com/vIDIahx.png",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": true,
+   "properties": "",
+   "on_interact": "",
+   "notes": "Two tiles tall: trunk (blocks) + crown (drawn above characters)"
+  }
+ ],
+ "Maps": [
+  {
+   "id": "map_0",
+   "name": "Tavern",
+   "width": 16,
+   "height": 16,
+   "terrain": "[[\"til_0\",\"til_2\",\"til_2\",\"til_2\",\"til_0\",\"til_2\",\"til_0\",\"til_0\",\"til_0\",\"til_2\",\"til_2\",\"til_0\",\"til_2\",\"til_0\",\"til_2\",\"til_0\"],[\"til_0\",\"til_2\",\"til_2\",\"til_2\",\"til_0\",\"til_5\",\"til_2\",\"til_2\",\"til_2\",\"til_5\",\"til_5\",\"til_0\",\"til_1\",\"til_0\",\"til_1\",\"til_0\"],[\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_2\",\"til_4\",\"til_5\",\"til_5\",\"til_5\",\"til_4\",\"til_4\",\"til_0\",\"til_1\",\"til_0\",\"til_1\",\"til_0\"],[\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_1\",\"til_0\",\"til_1\",\"til_0\"],[\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_2\",\"til_9\",\"til_2\",\"til_9\",\"til_0\"],[\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_2\",\"til_1\",\"til_2\",\"til_1\",\"til_0\"],[\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\"],[\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\"],[\"til_0\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_4\",\"til_4\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_5\",\"til_4\",\"til_4\",\"til_5\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\"],[\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_4\",\"til_4\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\"]]",
+   "notes": "imported"
+  },
+  {
+   "id": "map_1",
+   "name": "Arena",
+   "width": 16,
+   "height": 16,
+   "terrain": "[[\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_2\",\"til_2\",\"til_2\",\"til_6\",\"til_6\",\"til_2\",\"til_2\",\"til_2\",\"til_0\",\"til_0\",\"til_0\",\"til_0\"],[\"til_0\",\"til_0\",\"til_0\",\"til_2\",\"til_1\",\"til_1\",\"til_1\",\"til_6\",\"til_6\",\"til_1\",\"til_1\",\"til_1\",\"til_2\",\"til_0\",\"til_0\",\"til_0\"],[\"til_0\",\"til_0\",\"til_2\",\"til_1\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_1\",\"til_2\",\"til_0\",\"til_0\"],[\"til_0\",\"til_2\",\"til_1\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_1\",\"til_2\",\"til_0\"],[\"til_0\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_0\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_0\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_0\"],[\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_2\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_2\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_0\"],[\"til_2\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_2\"],[\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_6\"],[\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_6\"],[\"til_0\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_0\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_0\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_0\"],[\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_2\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_2\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_0\"],[\"til_0\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_0\"],[\"til_0\",\"til_0\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_0\",\"til_0\"],[\"til_0\",\"til_0\",\"til_0\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_0\",\"til_0\",\"til_0\"],[\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_6\",\"til_1\",\"til_6\",\"til_6\",\"til_6\",\"til_6\",\"til_1\",\"til_6\",\"til_0\",\"til_0\",\"til_0\",\"til_0\"],[\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_6\",\"til_6\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\"]]",
+   "notes": "imported"
+  },
+  {
+   "id": "map_2",
+   "name": "Test",
+   "width": 16,
+   "height": 16,
+   "terrain": "[[\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\"],[\"til_0\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_0\",\"til_5\",\"til_5\",\"til_5\",\"til_0\",\"til_2\",\"til_2\",\"til_2\",\"til_2\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_8\",\"til_1\",\"til_1\",\"til_1\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_5\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_0\"],[\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_1\",\"til_0\"],[\"til_0\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_2\",\"til_2\",\"til_2\",\"til_1\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_5\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_0\"],[\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_1\",\"til_1\",\"til_1\",\"til_1\",\"til_0\"],[\"til_0\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_1\",\"til_0\",\"til_0\",\"til_0\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_5\",\"til_4\",\"til_5\",\"til_5\",\"til_5\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\"],[\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\"],[\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_4\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\"]]",
+   "notes": "imported"
+  },
+  {
+   "id": "map_3",
+   "name": "Wilderness_0",
+   "width": 16,
+   "height": 16,
+   "terrain": "[[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_4\",\"til_0\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_11\",\"til_11\",\"til_11\",\"til_11\",\"til_11\",\"til_11\",\"til_4\",\"til_11\",\"til_11\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"]]",
+   "notes": "imported"
+  }
+ ],
+ "MapEntities": [
+  {
+   "map": "map_0",
+   "key": "map_0.e1",
+   "x": 3,
+   "y": 0,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e2",
+   "x": 12,
+   "y": 0,
+   "ref": "obj_10",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e3",
+   "x": 14,
+   "y": 0,
+   "ref": "obj_10",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e4",
+   "x": 2,
+   "y": 1,
+   "ref": "obj_8",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e5",
+   "x": 7,
+   "y": 1,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e6",
+   "x": 12,
+   "y": 1,
+   "ref": "obj_11",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e7",
+   "x": 14,
+   "y": 1,
+   "ref": "obj_11",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e8",
+   "x": 1,
+   "y": 2,
+   "ref": "obj_14",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e9",
+   "x": 5,
+   "y": 2,
+   "ref": "obj_0",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e10",
+   "x": 9,
+   "y": 2,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e11",
+   "x": 10,
+   "y": 2,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e12",
+   "x": 4,
+   "y": 3,
+   "ref": "obj_2",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e13",
+   "x": 1,
+   "y": 5,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e14",
+   "x": 5,
+   "y": 5,
+   "ref": "obj_34",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e15",
+   "x": 6,
+   "y": 5,
+   "ref": "obj_35",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e16",
+   "x": 7,
+   "y": 5,
+   "ref": "obj_35",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e17",
+   "x": 8,
+   "y": 5,
+   "ref": "obj_35",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e18",
+   "x": 9,
+   "y": 5,
+   "ref": "obj_36",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e19",
+   "x": 11,
+   "y": 5,
+   "ref": "obj_38",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e20",
+   "x": 12,
+   "y": 5,
+   "ref": "obj_2",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e21",
+   "x": 14,
+   "y": 5,
+   "ref": "obj_2",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e22",
+   "x": 1,
+   "y": 6,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e23",
+   "x": 2,
+   "y": 6,
+   "ref": "obj_30",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e24",
+   "x": 3,
+   "y": 6,
+   "ref": "obj_30",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e25",
+   "x": 5,
+   "y": 6,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e26",
+   "x": 7,
+   "y": 6,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e27",
+   "x": 8,
+   "y": 6,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e28",
+   "x": 3,
+   "y": 8,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e29",
+   "x": 10,
+   "y": 8,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e30",
+   "x": 12,
+   "y": 8,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e31",
+   "x": 2,
+   "y": 9,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e32",
+   "x": 3,
+   "y": 9,
+   "ref": "obj_14",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e33",
+   "x": 4,
+   "y": 9,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e34",
+   "x": 11,
+   "y": 9,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e35",
+   "x": 12,
+   "y": 9,
+   "ref": "obj_14",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e36",
+   "x": 13,
+   "y": 9,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e37",
+   "x": 5,
+   "y": 10,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e38",
+   "x": 14,
+   "y": 10,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e39",
+   "x": 1,
+   "y": 11,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e40",
+   "x": 5,
+   "y": 11,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e41",
+   "x": 13,
+   "y": 11,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e42",
+   "x": 14,
+   "y": 11,
+   "ref": "obj_14",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e43",
+   "x": 1,
+   "y": 12,
+   "ref": "obj_14",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e44",
+   "x": 2,
+   "y": 12,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e45",
+   "x": 5,
+   "y": 12,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e46",
+   "x": 9,
+   "y": 12,
+   "ref": "obj_14",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e47",
+   "x": 10,
+   "y": 12,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e48",
+   "x": 14,
+   "y": 12,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e49",
+   "x": 1,
+   "y": 13,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e50",
+   "x": 9,
+   "y": 13,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e51",
+   "x": 2,
+   "y": 14,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e52",
+   "x": 3,
+   "y": 14,
+   "ref": "obj_14",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e53",
+   "x": 4,
+   "y": 14,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e54",
+   "x": 11,
+   "y": 14,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e55",
+   "x": 13,
+   "y": 14,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e56",
+   "x": 14,
+   "y": 14,
+   "ref": "obj_14",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e57",
+   "x": 7,
+   "y": 15,
+   "ref": "obj_12",
+   "data": ""
+  },
+  {
+   "map": "map_0",
+   "key": "map_0.e58",
+   "x": 8,
+   "y": 15,
+   "ref": "obj_12",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e1",
+   "x": 2,
+   "y": 0,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e2",
+   "x": 7,
+   "y": 0,
+   "ref": "obj_42",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e3",
+   "x": 8,
+   "y": 0,
+   "ref": "obj_42",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e4",
+   "x": 13,
+   "y": 0,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e5",
+   "x": 1,
+   "y": 1,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e6",
+   "x": 5,
+   "y": 1,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e7",
+   "x": 10,
+   "y": 1,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e8",
+   "x": 14,
+   "y": 1,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e9",
+   "x": 0,
+   "y": 2,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e10",
+   "x": 5,
+   "y": 2,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e11",
+   "x": 10,
+   "y": 2,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e12",
+   "x": 15,
+   "y": 2,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e13",
+   "x": 5,
+   "y": 3,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e14",
+   "x": 10,
+   "y": 3,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e15",
+   "x": 5,
+   "y": 4,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e16",
+   "x": 10,
+   "y": 4,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e17",
+   "x": 1,
+   "y": 5,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e18",
+   "x": 2,
+   "y": 5,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e19",
+   "x": 3,
+   "y": 5,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e20",
+   "x": 4,
+   "y": 5,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e21",
+   "x": 6,
+   "y": 5,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e22",
+   "x": 7,
+   "y": 5,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e23",
+   "x": 8,
+   "y": 5,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e24",
+   "x": 9,
+   "y": 5,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e25",
+   "x": 11,
+   "y": 5,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e26",
+   "x": 12,
+   "y": 5,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e27",
+   "x": 13,
+   "y": 5,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e28",
+   "x": 14,
+   "y": 5,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e29",
+   "x": 5,
+   "y": 6,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e30",
+   "x": 10,
+   "y": 6,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e31",
+   "x": 0,
+   "y": 7,
+   "ref": "obj_42",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e32",
+   "x": 5,
+   "y": 7,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e33",
+   "x": 10,
+   "y": 7,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e34",
+   "x": 15,
+   "y": 7,
+   "ref": "obj_42",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e35",
+   "x": 0,
+   "y": 8,
+   "ref": "obj_42",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e36",
+   "x": 5,
+   "y": 8,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e37",
+   "x": 10,
+   "y": 8,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e38",
+   "x": 15,
+   "y": 8,
+   "ref": "obj_42",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e39",
+   "x": 5,
+   "y": 9,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e40",
+   "x": 10,
+   "y": 9,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e41",
+   "x": 1,
+   "y": 10,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e42",
+   "x": 2,
+   "y": 10,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e43",
+   "x": 3,
+   "y": 10,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e44",
+   "x": 4,
+   "y": 10,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e45",
+   "x": 6,
+   "y": 10,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e46",
+   "x": 7,
+   "y": 10,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e47",
+   "x": 8,
+   "y": 10,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e48",
+   "x": 9,
+   "y": 10,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e49",
+   "x": 11,
+   "y": 10,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e50",
+   "x": 12,
+   "y": 10,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e51",
+   "x": 13,
+   "y": 10,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e52",
+   "x": 14,
+   "y": 10,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e53",
+   "x": 5,
+   "y": 11,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e54",
+   "x": 10,
+   "y": 11,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e55",
+   "x": 0,
+   "y": 12,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e56",
+   "x": 5,
+   "y": 12,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e57",
+   "x": 10,
+   "y": 12,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e58",
+   "x": 15,
+   "y": 12,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e59",
+   "x": 1,
+   "y": 13,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e60",
+   "x": 5,
+   "y": 13,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e61",
+   "x": 10,
+   "y": 13,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e62",
+   "x": 14,
+   "y": 13,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e63",
+   "x": 2,
+   "y": 14,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e64",
+   "x": 5,
+   "y": 14,
+   "ref": "obj_6",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e65",
+   "x": 10,
+   "y": 14,
+   "ref": "obj_5",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e66",
+   "x": 13,
+   "y": 14,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e67",
+   "x": 7,
+   "y": 15,
+   "ref": "obj_42",
+   "data": "{\"target\": \"map_3:14:11\"}"
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e68",
+   "x": 8,
+   "y": 15,
+   "ref": "obj_42",
+   "data": "{\"target\": \"map_3:14:11\"}"
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e69",
+   "x": 7,
+   "y": 7,
+   "ref": "obj_8",
+   "data": "{\"monster\": \"skeleton\", \"count\": 2, \"radius\": 3}"
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e70",
+   "x": 3,
+   "y": 3,
+   "ref": "obj_8",
+   "data": "{\"monster\": \"bat\", \"count\": 2, \"radius\": 3}"
+  },
+  {
+   "map": "map_1",
+   "key": "map_1.e71",
+   "x": 11,
+   "y": 2,
+   "ref": "obj_39",
+   "data": "{\"locked_by\": \"iron_key\", \"contents\": \"iron_armor:1, gold:50\", \"per_player\": true}"
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e1",
+   "x": 2,
+   "y": 1,
+   "ref": "obj_7",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e2",
+   "x": 4,
+   "y": 1,
+   "ref": "obj_7",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e3",
+   "x": 8,
+   "y": 1,
+   "ref": "obj_7",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e4",
+   "x": 13,
+   "y": 1,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e5",
+   "x": 1,
+   "y": 2,
+   "ref": "obj_18",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e6",
+   "x": 3,
+   "y": 2,
+   "ref": "obj_37",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e7",
+   "x": 5,
+   "y": 2,
+   "ref": "obj_0",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e8",
+   "x": 13,
+   "y": 2,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e9",
+   "x": 14,
+   "y": 2,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e10",
+   "x": 1,
+   "y": 3,
+   "ref": "obj_19",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e11",
+   "x": 3,
+   "y": 3,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e12",
+   "x": 11,
+   "y": 3,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e13",
+   "x": 6,
+   "y": 4,
+   "ref": "obj_2",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e14",
+   "x": 11,
+   "y": 4,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e15",
+   "x": 3,
+   "y": 6,
+   "ref": "obj_40",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e16",
+   "x": 12,
+   "y": 6,
+   "ref": "obj_8",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e17",
+   "x": 14,
+   "y": 6,
+   "ref": "obj_2",
+   "data": "{\"locked\": true, \"lock_difficulty\": 0.1}"
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e18",
+   "x": 3,
+   "y": 7,
+   "ref": "obj_11",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e19",
+   "x": 4,
+   "y": 7,
+   "ref": "obj_11",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e20",
+   "x": 5,
+   "y": 7,
+   "ref": "obj_11",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e21",
+   "x": 11,
+   "y": 7,
+   "ref": "obj_14",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e22",
+   "x": 11,
+   "y": 8,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e23",
+   "x": 6,
+   "y": 9,
+   "ref": "obj_2",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e24",
+   "x": 13,
+   "y": 10,
+   "ref": "obj_30",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e25",
+   "x": 14,
+   "y": 10,
+   "ref": "obj_30",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e26",
+   "x": 2,
+   "y": 12,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e27",
+   "x": 3,
+   "y": 12,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e28",
+   "x": 4,
+   "y": 12,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e29",
+   "x": 5,
+   "y": 12,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e30",
+   "x": 11,
+   "y": 12,
+   "ref": "obj_2",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e31",
+   "x": 1,
+   "y": 13,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e32",
+   "x": 2,
+   "y": 13,
+   "ref": "obj_35",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e33",
+   "x": 3,
+   "y": 13,
+   "ref": "obj_34",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e34",
+   "x": 4,
+   "y": 13,
+   "ref": "obj_34",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e35",
+   "x": 5,
+   "y": 13,
+   "ref": "obj_36",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e36",
+   "x": 6,
+   "y": 13,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e37",
+   "x": 2,
+   "y": 14,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e38",
+   "x": 3,
+   "y": 14,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e39",
+   "x": 4,
+   "y": 14,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e40",
+   "x": 5,
+   "y": 14,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_2",
+   "key": "map_2.e41",
+   "x": 8,
+   "y": 15,
+   "ref": "obj_12",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e1",
+   "x": 5,
+   "y": 3,
+   "ref": "obj_7",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e2",
+   "x": 9,
+   "y": 3,
+   "ref": "obj_7",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e3",
+   "x": 4,
+   "y": 4,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e4",
+   "x": 5,
+   "y": 4,
+   "ref": "obj_14",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e5",
+   "x": 6,
+   "y": 4,
+   "ref": "obj_17",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e7",
+   "x": 5,
+   "y": 9,
+   "ref": "obj_7",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e8",
+   "x": 7,
+   "y": 9,
+   "ref": "obj_3",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e9",
+   "x": 9,
+   "y": 9,
+   "ref": "obj_2",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e11",
+   "x": 10,
+   "y": 10,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e12",
+   "x": 11,
+   "y": 10,
+   "ref": "obj_1",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e13",
+   "x": 10,
+   "y": 4,
+   "ref": "obj_37",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e14",
+   "x": 10,
+   "y": 7,
+   "ref": "obj_0",
+   "data": "{\"contents\": \"potion:2, wooden_sword:1\", \"per_player\": true}"
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e15",
+   "x": 4,
+   "y": 13,
+   "ref": "obj_8",
+   "data": "{\"monster\": \"slime\", \"count\": 3, \"radius\": 3}"
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e16",
+   "x": 13,
+   "y": 13,
+   "ref": "obj_8",
+   "data": "{\"monster\": \"rat\", \"count\": 2, \"radius\": 2}"
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e17",
+   "x": 14,
+   "y": 10,
+   "ref": "obj_9",
+   "data": "{\"target\": \"map_1:7:14\"}"
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e18",
+   "x": 8,
+   "y": 11,
+   "ref": "obj_15",
+   "data": "{\"text\": \"East: the old arena. Bring a sword.\"}"
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e19",
+   "x": 3,
+   "y": 10,
+   "ref": "obj_tree",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e20",
+   "x": 0,
+   "y": 11,
+   "ref": "obj_tree",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e21",
+   "x": 1,
+   "y": 12,
+   "ref": "obj_tree",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e22",
+   "x": 0,
+   "y": 13,
+   "ref": "obj_tree",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e23",
+   "x": 0,
+   "y": 14,
+   "ref": "obj_tree",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e24",
+   "x": 15,
+   "y": 14,
+   "ref": "obj_tree",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e25",
+   "x": 14,
+   "y": 15,
+   "ref": "obj_tree",
+   "data": ""
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e26",
+   "x": 15,
+   "y": 12,
+   "ref": "obj_tree",
+   "data": ""
+  }
+ ],
+ "Items": [
+  {
+   "id": "potion",
+   "name": "Potion",
+   "sprite": "art/sprites/potion.png",
+   "type": "consumable",
+   "slot": "",
+   "stack_max": 20,
+   "value": 10,
+   "atk": 0,
+   "def": 0,
+   "heal": 40,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  },
+  {
+   "id": "mana_potion",
+   "name": "Mana potion",
+   "sprite": "art/sprites/mana_potion.png",
+   "type": "consumable",
+   "slot": "",
+   "stack_max": 20,
+   "value": 12,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 40,
+   "on_use": "",
+   "notes": ""
+  },
+  {
+   "id": "big_potion",
+   "name": "Big potion",
+   "sprite": "art/sprites/big_potion.png",
+   "type": "consumable",
+   "slot": "",
+   "stack_max": 10,
+   "value": 30,
+   "atk": 0,
+   "def": 0,
+   "heal": 100,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  },
+  {
+   "id": "wooden_sword",
+   "name": "Wooden sword",
+   "sprite": "art/sprites/wooden_sword.png",
+   "type": "weapon",
+   "slot": "weapon",
+   "stack_max": 1,
+   "value": 15,
+   "atk": 3,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  },
+  {
+   "id": "iron_sword",
+   "name": "Iron sword",
+   "sprite": "art/sprites/iron_sword.png",
+   "type": "weapon",
+   "slot": "weapon",
+   "stack_max": 1,
+   "value": 60,
+   "atk": 7,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  },
+  {
+   "id": "leather_armor",
+   "name": "Leather armor",
+   "sprite": "art/sprites/leather_armor.png",
+   "type": "armor",
+   "slot": "armor",
+   "stack_max": 1,
+   "value": 20,
+   "atk": 0,
+   "def": 2,
+   "heal": 0,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  },
+  {
+   "id": "iron_armor",
+   "name": "Iron armor",
+   "sprite": "art/sprites/iron_armor.png",
+   "type": "armor",
+   "slot": "armor",
+   "stack_max": 1,
+   "value": 80,
+   "atk": 0,
+   "def": 5,
+   "heal": 0,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  },
+  {
+   "id": "iron_key",
+   "name": "Iron key",
+   "sprite": "art/sprites/iron_key.png",
+   "type": "key",
+   "slot": "",
+   "stack_max": 10,
+   "value": 0,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  },
+  {
+   "id": "lockpick",
+   "name": "Lockpick",
+   "sprite": "art/sprites/lockpick.png",
+   "type": "tool",
+   "slot": "",
+   "stack_max": 20,
+   "value": 5,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  },
+  {
+   "id": "bone",
+   "name": "Bone",
+   "sprite": "art/sprites/bone.png",
+   "type": "material",
+   "slot": "",
+   "stack_max": 99,
+   "value": 2,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  },
+  {
+   "id": "slime_gel",
+   "name": "Slime gel",
+   "sprite": "art/sprites/slime_gel.png",
+   "type": "material",
+   "slot": "",
+   "stack_max": 99,
+   "value": 1,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "on_use": "",
+   "notes": ""
+  }
+ ],
+ "Monsters": [
+  {
+   "id": "slime",
+   "name": "Slime",
+   "sprite": "art/sprites/slime.png",
+   "hp": 14,
+   "atk": 5,
+   "def": 0,
+   "xp": 6,
+   "gold_min": 1,
+   "gold_max": 3,
+   "loot_table": "slime",
+   "aggro_range": 3,
+   "move_ms": 1000,
+   "respawn_s": 30,
+   "notes": ""
+  },
+  {
+   "id": "rat",
+   "name": "Rat",
+   "sprite": "art/sprites/rat.png",
+   "hp": 9,
+   "atk": 4,
+   "def": 0,
+   "xp": 4,
+   "gold_min": 0,
+   "gold_max": 2,
+   "loot_table": "rat",
+   "aggro_range": 5,
+   "move_ms": 600,
+   "respawn_s": 30,
+   "notes": ""
+  },
+  {
+   "id": "bat",
+   "name": "Bat",
+   "sprite": "art/sprites/bat.png",
+   "hp": 12,
+   "atk": 6,
+   "def": 1,
+   "xp": 10,
+   "gold_min": 1,
+   "gold_max": 4,
+   "loot_table": "bat",
+   "aggro_range": 6,
+   "move_ms": 450,
+   "respawn_s": 40,
+   "notes": ""
+  },
+  {
+   "id": "skeleton",
+   "name": "Skeleton",
+   "sprite": "art/sprites/skeleton.png",
+   "hp": 32,
+   "atk": 11,
+   "def": 3,
+   "xp": 25,
+   "gold_min": 4,
+   "gold_max": 12,
+   "loot_table": "skeleton",
+   "aggro_range": 6,
+   "move_ms": 800,
+   "respawn_s": 60,
+   "notes": ""
+  }
+ ],
+ "LootTables": [
+  {
+   "table": "slime",
+   "item": "slime_gel",
+   "chance": 0.6,
+   "min": 1,
+   "max": 2
+  },
+  {
+   "table": "slime",
+   "item": "potion",
+   "chance": 0.1,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "rat",
+   "item": "potion",
+   "chance": 0.08,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "bat",
+   "item": "big_potion",
+   "chance": 0.05,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "bat",
+   "item": "mana_potion",
+   "chance": 0.2,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "skeleton",
+   "item": "mana_potion",
+   "chance": 0.25,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "chest_common",
+   "item": "mana_potion",
+   "chance": 0.4,
+   "min": 1,
+   "max": 2
+  },
+  {
+   "table": "chest_common",
+   "item": "lockpick",
+   "chance": 0.3,
+   "min": 1,
+   "max": 2
+  },
+  {
+   "table": "barrel",
+   "item": "lockpick",
+   "chance": 0.1,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "skeleton",
+   "item": "bone",
+   "chance": 0.7,
+   "min": 1,
+   "max": 3
+  },
+  {
+   "table": "skeleton",
+   "item": "potion",
+   "chance": 0.3,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "skeleton",
+   "item": "iron_key",
+   "chance": 0.3,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "skeleton",
+   "item": "iron_sword",
+   "chance": 0.08,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "chest_common",
+   "item": "gold",
+   "chance": 1,
+   "min": 5,
+   "max": 20
+  },
+  {
+   "table": "chest_common",
+   "item": "potion",
+   "chance": 0.9,
+   "min": 1,
+   "max": 2
+  },
+  {
+   "table": "chest_common",
+   "item": "wooden_sword",
+   "chance": 0.3,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "chest_common",
+   "item": "leather_armor",
+   "chance": 0.25,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "barrel",
+   "item": "gold",
+   "chance": 0.6,
+   "min": 1,
+   "max": 6
+  },
+  {
+   "table": "barrel",
+   "item": "potion",
+   "chance": 0.15,
+   "min": 1,
+   "max": 1
+  }
+ ],
+ "Classes": [
+  {
+   "id": "warrior",
+   "name": "Warrior",
+   "hp": 120,
+   "atk": 6,
+   "def": 2,
+   "mp": 30,
+   "hp_per_level": 12,
+   "atk_per_level": 2,
+   "def_per_level": 1,
+   "mp_per_level": 3,
+   "mp_regen": 1.0,
+   "start_items": "potion:2",
+   "skills": "charge@1, cleave@1, second_wind@3",
+   "notes": "Front line",
+   "lockpicking": 0
+  },
+  {
+   "id": "rogue",
+   "name": "Rogue",
+   "hp": 90,
+   "atk": 7,
+   "def": 1,
+   "mp": 40,
+   "hp_per_level": 9,
+   "atk_per_level": 2,
+   "def_per_level": 1,
+   "mp_per_level": 4,
+   "mp_regen": 1.5,
+   "start_items": "potion:3, gold:20, lockpick:3",
+   "skills": "throw_dagger@1, poison_strike@1, shadow_step@3",
+   "notes": "Fast, ranged poke",
+   "lockpicking": 0.3
+  },
+  {
+   "id": "mage",
+   "name": "Mage",
+   "hp": 70,
+   "atk": 3,
+   "def": 1,
+   "mp": 70,
+   "hp_per_level": 7,
+   "atk_per_level": 1,
+   "def_per_level": 1,
+   "mp_per_level": 7,
+   "mp_regen": 3.0,
+   "start_items": "potion:1, mana_potion:2",
+   "skills": "fireball@1, frost_bolt@1, frost_nova@3",
+   "notes": "Ranged magic, fragile",
+   "lockpicking": 0
+  },
+  {
+   "id": "paladin",
+   "name": "Paladin",
+   "hp": 110,
+   "atk": 5,
+   "def": 3,
+   "mp": 45,
+   "hp_per_level": 11,
+   "atk_per_level": 2,
+   "def_per_level": 1,
+   "mp_per_level": 4,
+   "mp_regen": 1.5,
+   "start_items": "potion:2",
+   "skills": "holy_strike@1, blessing@1, lay_on_hands@3",
+   "notes": "Support: protects allies",
+   "lockpicking": 0
+  },
+  {
+   "id": "priest",
+   "name": "Priest",
+   "hp": 80,
+   "atk": 3,
+   "def": 1,
+   "mp": 80,
+   "hp_per_level": 8,
+   "atk_per_level": 1,
+   "def_per_level": 1,
+   "mp_per_level": 8,
+   "mp_regen": 3.0,
+   "start_items": "potion:1, mana_potion:2",
+   "skills": "heal@1, smite@1, renew@3",
+   "notes": "Healer",
+   "lockpicking": 0
+  },
+  {
+   "id": "barbarian",
+   "name": "Barbarian",
+   "hp": 140,
+   "atk": 7,
+   "def": 1,
+   "mp": 30,
+   "hp_per_level": 14,
+   "atk_per_level": 2,
+   "def_per_level": 1,
+   "mp_per_level": 2,
+   "mp_regen": 1.0,
+   "start_items": "potion:2",
+   "skills": "whirlwind@1, rage@1, leap@3",
+   "notes": "Brute force",
+   "lockpicking": 0
+  }
+ ],
+ "Statuses": [
+  {
+   "id": "burn",
+   "name": "Burning",
+   "kind": "dot",
+   "amount": 3,
+   "tick_ms": 1000,
+   "atk": 0,
+   "def": 0,
+   "slow": 1,
+   "color": "#ff7a2a",
+   "notes": "Damage every tick"
+  },
+  {
+   "id": "poison",
+   "name": "Poisoned",
+   "kind": "dot",
+   "amount": 3,
+   "tick_ms": 1000,
+   "atk": 0,
+   "def": 0,
+   "slow": 1,
+   "color": "#7ad04a",
+   "notes": "Damage every tick"
+  },
+  {
+   "id": "chill",
+   "name": "Chilled",
+   "kind": "slow",
+   "amount": 0,
+   "tick_ms": 0,
+   "atk": 0,
+   "def": 0,
+   "slow": 2,
+   "color": "#7ad0ff",
+   "notes": "slow = how much longer each step takes"
+  },
+  {
+   "id": "stun",
+   "name": "Stunned",
+   "kind": "stun",
+   "amount": 0,
+   "tick_ms": 0,
+   "atk": 0,
+   "def": 0,
+   "slow": 1,
+   "color": "#ffe680",
+   "notes": "Cannot act"
+  },
+  {
+   "id": "blessed",
+   "name": "Blessed",
+   "kind": "buff",
+   "amount": 0,
+   "tick_ms": 0,
+   "atk": 0,
+   "def": 4,
+   "slow": 1,
+   "color": "#ffe680",
+   "notes": ""
+  },
+  {
+   "id": "rage",
+   "name": "Raging",
+   "kind": "buff",
+   "amount": 0,
+   "tick_ms": 0,
+   "atk": 6,
+   "def": -2,
+   "slow": 1,
+   "color": "#e05050",
+   "notes": ""
+  },
+  {
+   "id": "renew",
+   "name": "Renewing",
+   "kind": "hot",
+   "amount": 5,
+   "tick_ms": 1000,
+   "atk": 0,
+   "def": 0,
+   "slow": 1,
+   "color": "#8aff9a",
+   "notes": "Healing every tick"
+  }
+ ],
+ "Skills": [
+  {
+   "id": "charge",
+   "name": "Charge",
+   "icon": "",
+   "color": "#d9a441",
+   "mp": 5,
+   "cooldown_ms": 6000,
+   "range": 4,
+   "target": "enemy",
+   "area": 0,
+   "los": true,
+   "effect": "damage",
+   "power": 3,
+   "stat": "atk",
+   "scale": 1.0,
+   "status": "stun",
+   "status_ms": 1200,
+   "dash": true,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Rush to an enemy, hit and stun it"
+  },
+  {
+   "id": "cleave",
+   "name": "Cleave",
+   "icon": "",
+   "color": "#d9a441",
+   "mp": 4,
+   "cooldown_ms": 3000,
+   "range": 0,
+   "target": "around",
+   "area": 1,
+   "los": false,
+   "effect": "damage",
+   "power": 0,
+   "stat": "atk",
+   "scale": 1.0,
+   "status": "",
+   "status_ms": 0,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Hit every enemy next to you"
+  },
+  {
+   "id": "second_wind",
+   "name": "Second wind",
+   "icon": "",
+   "color": "#8aff9a",
+   "mp": 8,
+   "cooldown_ms": 20000,
+   "range": 0,
+   "target": "self",
+   "area": 0,
+   "los": false,
+   "effect": "heal",
+   "power": 25,
+   "stat": "level",
+   "scale": 5,
+   "status": "",
+   "status_ms": 0,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Heal yourself"
+  },
+  {
+   "id": "throw_dagger",
+   "name": "Throw dagger",
+   "icon": "",
+   "color": "#c0c8d0",
+   "mp": 2,
+   "cooldown_ms": 1200,
+   "range": 6,
+   "target": "enemy",
+   "area": 0,
+   "los": true,
+   "effect": "damage",
+   "power": 2,
+   "stat": "atk",
+   "scale": 0.8,
+   "status": "",
+   "status_ms": 0,
+   "dash": false,
+   "projectile": true,
+   "on_cast": "",
+   "description": "Cheap ranged attack"
+  },
+  {
+   "id": "poison_strike",
+   "name": "Poison strike",
+   "icon": "",
+   "color": "#7ad04a",
+   "mp": 4,
+   "cooldown_ms": 4000,
+   "range": 1,
+   "target": "enemy",
+   "area": 0,
+   "los": false,
+   "effect": "damage",
+   "power": 0,
+   "stat": "atk",
+   "scale": 1.0,
+   "status": "poison",
+   "status_ms": 5000,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Hit and poison"
+  },
+  {
+   "id": "shadow_step",
+   "name": "Shadow step",
+   "icon": "",
+   "color": "#7a5aa0",
+   "mp": 5,
+   "cooldown_ms": 8000,
+   "range": 4,
+   "target": "tile",
+   "area": 0,
+   "los": true,
+   "effect": "none",
+   "power": 0,
+   "stat": "",
+   "scale": 0,
+   "status": "",
+   "status_ms": 0,
+   "dash": true,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Vanish and reappear nearby"
+  },
+  {
+   "id": "fireball",
+   "name": "Fireball",
+   "icon": "",
+   "color": "#ff7a2a",
+   "mp": 10,
+   "cooldown_ms": 2500,
+   "range": 7,
+   "target": "enemy",
+   "area": 1,
+   "los": true,
+   "effect": "damage",
+   "power": 10,
+   "stat": "level",
+   "scale": 3,
+   "status": "burn",
+   "status_ms": 3000,
+   "dash": false,
+   "projectile": true,
+   "on_cast": "",
+   "description": "Explodes on impact and sets enemies on fire"
+  },
+  {
+   "id": "frost_bolt",
+   "name": "Frost bolt",
+   "icon": "",
+   "color": "#7ad0ff",
+   "mp": 6,
+   "cooldown_ms": 1500,
+   "range": 7,
+   "target": "enemy",
+   "area": 0,
+   "los": true,
+   "effect": "damage",
+   "power": 6,
+   "stat": "level",
+   "scale": 2,
+   "status": "chill",
+   "status_ms": 4000,
+   "dash": false,
+   "projectile": true,
+   "on_cast": "",
+   "description": "Damages and slows"
+  },
+  {
+   "id": "frost_nova",
+   "name": "Frost nova",
+   "icon": "",
+   "color": "#7ad0ff",
+   "mp": 14,
+   "cooldown_ms": 8000,
+   "range": 0,
+   "target": "around",
+   "area": 2,
+   "los": false,
+   "effect": "damage",
+   "power": 6,
+   "stat": "level",
+   "scale": 2,
+   "status": "chill",
+   "status_ms": 3000,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Chill everything around you"
+  },
+  {
+   "id": "holy_strike",
+   "name": "Holy strike",
+   "icon": "",
+   "color": "#ffe680",
+   "mp": 4,
+   "cooldown_ms": 2000,
+   "range": 1,
+   "target": "enemy",
+   "area": 0,
+   "los": false,
+   "effect": "damage",
+   "power": 4,
+   "stat": "atk",
+   "scale": 1.2,
+   "status": "",
+   "status_ms": 0,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "A blessed blow"
+  },
+  {
+   "id": "blessing",
+   "name": "Blessing",
+   "icon": "",
+   "color": "#ffe680",
+   "mp": 10,
+   "cooldown_ms": 12000,
+   "range": 5,
+   "target": "ally",
+   "area": 0,
+   "los": true,
+   "effect": "none",
+   "power": 0,
+   "stat": "",
+   "scale": 0,
+   "status": "blessed",
+   "status_ms": 12000,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "An ally takes less damage"
+  },
+  {
+   "id": "lay_on_hands",
+   "name": "Lay on hands",
+   "icon": "",
+   "color": "#8aff9a",
+   "mp": 15,
+   "cooldown_ms": 15000,
+   "range": 1,
+   "target": "ally",
+   "area": 0,
+   "los": false,
+   "effect": "heal",
+   "power": 40,
+   "stat": "level",
+   "scale": 6,
+   "status": "",
+   "status_ms": 0,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Big heal on an ally next to you"
+  },
+  {
+   "id": "heal",
+   "name": "Heal",
+   "icon": "",
+   "color": "#8aff9a",
+   "mp": 10,
+   "cooldown_ms": 2500,
+   "range": 6,
+   "target": "ally",
+   "area": 0,
+   "los": true,
+   "effect": "heal",
+   "power": 30,
+   "stat": "level",
+   "scale": 6,
+   "status": "",
+   "status_ms": 0,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Heal an ally (or yourself)"
+  },
+  {
+   "id": "smite",
+   "name": "Smite",
+   "icon": "",
+   "color": "#ffe680",
+   "mp": 6,
+   "cooldown_ms": 2000,
+   "range": 6,
+   "target": "enemy",
+   "area": 0,
+   "los": true,
+   "effect": "damage",
+   "power": 8,
+   "stat": "level",
+   "scale": 2,
+   "status": "",
+   "status_ms": 0,
+   "dash": false,
+   "projectile": true,
+   "on_cast": "",
+   "description": "Holy light at range"
+  },
+  {
+   "id": "renew",
+   "name": "Renew",
+   "icon": "",
+   "color": "#8aff9a",
+   "mp": 8,
+   "cooldown_ms": 6000,
+   "range": 6,
+   "target": "ally",
+   "area": 0,
+   "los": true,
+   "effect": "none",
+   "power": 0,
+   "stat": "",
+   "scale": 0,
+   "status": "renew",
+   "status_ms": 8000,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Heals over time"
+  },
+  {
+   "id": "whirlwind",
+   "name": "Whirlwind",
+   "icon": "",
+   "color": "#e05050",
+   "mp": 8,
+   "cooldown_ms": 4000,
+   "range": 0,
+   "target": "around",
+   "area": 1,
+   "los": false,
+   "effect": "damage",
+   "power": 2,
+   "stat": "atk",
+   "scale": 1.0,
+   "status": "",
+   "status_ms": 0,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Spin and hit everything next to you"
+  },
+  {
+   "id": "rage",
+   "name": "Rage",
+   "icon": "",
+   "color": "#e05050",
+   "mp": 10,
+   "cooldown_ms": 15000,
+   "range": 0,
+   "target": "self",
+   "area": 0,
+   "los": false,
+   "effect": "none",
+   "power": 0,
+   "stat": "",
+   "scale": 0,
+   "status": "rage",
+   "status_ms": 8000,
+   "dash": false,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Hit harder, guard less"
+  },
+  {
+   "id": "leap",
+   "name": "Leap",
+   "icon": "",
+   "color": "#e05050",
+   "mp": 10,
+   "cooldown_ms": 10000,
+   "range": 4,
+   "target": "tile",
+   "area": 1,
+   "los": true,
+   "effect": "damage",
+   "power": 4,
+   "stat": "atk",
+   "scale": 0.8,
+   "status": "stun",
+   "status_ms": 1000,
+   "dash": true,
+   "projectile": false,
+   "on_cast": "",
+   "description": "Jump to a spot, stunning enemies where you land"
+  }
+ ],
+ "Levels": [
+  {
+   "level": 1,
+   "xp_needed": 0
+  },
+  {
+   "level": 2,
+   "xp_needed": 20
+  },
+  {
+   "level": 3,
+   "xp_needed": 50
+  },
+  {
+   "level": 4,
+   "xp_needed": 100
+  },
+  {
+   "level": 5,
+   "xp_needed": 170
+  },
+  {
+   "level": 6,
+   "xp_needed": 260
+  },
+  {
+   "level": 7,
+   "xp_needed": 380
+  },
+  {
+   "level": 8,
+   "xp_needed": 530
+  },
+  {
+   "level": 9,
+   "xp_needed": 720
+  },
+  {
+   "level": 10,
+   "xp_needed": 950
+  }
+ ],
+ "_version": "451535ee1437"
+}

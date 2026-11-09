@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sheets RPG</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; background: #14161b; color: #e8e6e3;
+         font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
+         display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px 0; }
+  #frame { position: relative; }
+  canvas { display: block; max-width: 96vw; height: auto; image-rendering: pixelated; border-radius: 6px;
+           box-shadow: 0 6px 30px rgba(0,0,0,.5); touch-action: none; }
+  #hud { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; justify-content: center; color: #b9b6b0; }
+  #hud strong { color: #fff; }
+  #hud-net.bad { color: #ff8a7a; }
+  .tag { padding: 1px 8px; border-radius: 10px; background: #2a2e37; font-size: 12px; }
+  select, button { background: #2a2e37; color: #e8e6e3; border: 1px solid #3a3f4b; border-radius: 6px; padding: 3px 8px; font: inherit; cursor: pointer; }
+  button:hover { border-color: #56607a; }
+  #below { max-width: 96vw; display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: start; }
+  .bars { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .bar { position: relative; width: 180px; height: 16px; background: #2a2e37; border-radius: 8px; overflow: hidden; }
+  .bar .fill { position: absolute; inset: 0 auto 0 0; transition: width .25s; }
+  #hp-fill { background: linear-gradient(#e0574a, #b33a30); }
+  #xp-fill { background: linear-gradient(#e8c14a, #b8901e); }
+  #mp-fill { background: linear-gradient(#4a86e8, #2c5bb8); }
+  .bar { width: 150px; }
+  #hotbar { grid-column: 1 / -1; display: flex; gap: 6px; }
+  .hk { position: relative; width: 58px; height: 58px; border-radius: 8px; background: #262a33; border: 2px solid #3a3f4b;
+        display: grid; place-items: center; cursor: pointer; overflow: hidden; user-select: none; }
+  .hk.armed { border-color: #ffd65a; box-shadow: 0 0 0 2px rgba(255,214,90,.35); }
+  .hk.low { opacity: .45; }
+  .hk .ico { width: 34px; height: 34px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 12px; color: #111; image-rendering: pixelated; }
+  .hk .key { position: absolute; left: 4px; top: 1px; font-size: 11px; color: #b9b6b0; }
+  .hk .cost { position: absolute; right: 4px; bottom: 1px; font-size: 10px; color: #8fb6ff; }
+  .hk .qty { position: absolute; right: 4px; bottom: 1px; font-size: 10px; color: #fff; }
+  .hk .cd { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.6); }
+  .hk .cdt { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; color: #fff; text-shadow: 0 1px 2px #000; }
+  .hk.empty { opacity: .35; cursor: default; }
+  #statuses { grid-column: 1 / -1; display: flex; gap: 6px; min-height: 0; }
+  .st { font-size: 11px; padding: 1px 8px; border-radius: 10px; background: #2a2e37; }
+  .sk { display: grid; grid-template-columns: 36px 1fr; gap: 10px; align-items: center; padding: 4px 6px; border-radius: 6px; background: #262a33; }
+  .sk .ico { width: 32px; height: 32px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 11px; color: #111; }
+  .slots { display: flex; gap: 3px; margin-top: 3px; }
+  .slots button { padding: 0 7px; font-size: 11px; }
+  .slots button.on { background: #3d6fb6; border-color: #3d6fb6; }
+  h4 { margin: 6px 0 0; font-size: 12px; color: #b9b6b0; text-transform: uppercase; letter-spacing: .05em; }
+  .bar span { position: relative; display: block; text-align: center; font-size: 11px; line-height: 16px; color: #fff; text-shadow: 0 1px 1px #000; }
+  #gold { color: #ffd65a; }
+  .actions { display: flex; gap: 6px; }
+  #log { grid-column: 1 / -1; min-height: 6.2em; font-size: 13px; color: #d8d5cf; }
+  #log .msg { transition: opacity 1s; }
+  #log .msg.old { opacity: .45; }
+  #log .hit { color: #ff9a8a; } #log .loot, #log .level { color: #ffd65a; } #log .heal { color: #7fe39a; } #log .death { color: #ff6b5b; font-weight: 600; }
+  .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10,12,16,.75); border-radius: 6px; }
+  .overlay[hidden] { display: none; }
+  .panel { background: #1f232b; padding: 18px 22px; border-radius: 10px; display: grid; gap: 10px; min-width: 260px; max-width: 90%; }
+  #join input, #join select { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid #3a3f4b; background: #14161b; color: #fff; }
+  #join label { display: grid; gap: 4px; color: #b9b6b0; font-size: 12px; }
+  .primary { padding: 8px; background: #3d6fb6; border: 0; color: #fff; }
+  #bag .panel { width: 420px; max-height: 80%; overflow: auto; }
+  #bag-head { display: flex; justify-content: space-between; align-items: center; }
+  #bag-stats { color: #b9b6b0; font-size: 12px; }
+  .slot { display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center; padding: 4px 6px; border-radius: 6px; background: #262a33; }
+  .slot.equipped { outline: 1px solid #e8c14a; }
+  .slot .pic { width: 32px; height: 32px; image-rendering: pixelated; }
+  .slot .name b, .sk .name b { display: block; font-weight: 600; }
+  .sk .name span { color: #9a978f; font-size: 12px; }
+  .slot .name span { color: #9a978f; font-size: 12px; }
+  .empty { color: #9a978f; }
+  .help { color: #7d7a75; font-size: 12px; text-align: center; max-width: 900px; }
+  #tip { position: absolute; pointer-events: none; background: rgba(16,18,22,.9); color: #fff; font-size: 12px;
+         padding: 3px 8px; border-radius: 6px; white-space: nowrap; z-index: 5; }
+  #tip[hidden], #menu[hidden] { display: none; }
+  #menu { position: absolute; z-index: 6; background: #1f232b; border: 1px solid #3a3f4b; border-radius: 8px; padding: 4px;
+          display: grid; gap: 2px; min-width: 160px; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+  #menu button { text-align: left; border: 0; background: transparent; padding: 5px 10px; }
+  #menu button:hover { background: #2f4f7a; }
+  #menu button.def { font-weight: 600; }
+</style>
+</head>
+<body>
+  <div id="hud">
+    <span class="tag" id="hud-mode"></span>
+    <span><strong id="hud-map">…</strong> <span id="hud-pos"></span></span>
+    <span id="hud-net"></span>
+    <select id="map-pick" title="Jump to map (offline testing only)"></select>
+    <button id="reset" title="Forget this browser's character">New character</button>
+  </div>
+  <div id="frame">
+    <canvas id="view" width="480" height="352"></canvas>
+    <div id="join" class="overlay" hidden>
+      <form id="join-form" class="panel">
+        <strong>Create your character</strong>
+        <label>Name <input id="join-name" maxlength="16" autocomplete="off" placeholder="e.g. Tolodan"></label>
+        <label>Class <select id="join-class"></select></label>
+        <button type="submit" class="primary">Play</button>
+      </form>
+    </div>
+    <div id="tip" hidden></div>
+    <div id="menu" hidden></div>
+    <div id="bag" class="overlay" hidden>
+      <div class="panel">
+        <div id="bag-head"><strong>Bag</strong><button id="bag-close">Close (Esc)</button></div>
+        <div id="bag-stats"></div>
+        <div id="bag-items" style="display:grid; gap:6px"></div>
+      </div>
+    </div>
+  </div>
+  <div id="below">
+    <div class="bars">
+      <div class="bar"><div class="fill" id="hp-fill"></div><span id="hp-text">HP</span></div>
+      <div class="bar"><div class="fill" id="mp-fill"></div><span id="mp-text">MP</span></div>
+      <div class="bar"><div class="fill" id="xp-fill"></div><span id="xp-text">Lv</span></div>
+      <span id="gold"></span>
+    </div>
+    <div class="actions">
+      <button id="btn-use" title="Use what you face: doors, chests, levers, signs (E)">Use (E)</button>
+      <button id="btn-bag" title="Bag (I)">Bag (I)</button>
+    </div>
+    <div id="hotbar"></div>
+    <div id="statuses"></div>
+    <div id="log"></div>
+  </div>
+  <div class="help">Click: walk, attack, open, use (right-click: more options, like picking a lock) · Arrows / WASD also move · E: use what you face · I: bag · 1–5: skills and items — aim with the mouse, click to cast, press the key again to cast at the cursor, Esc or right-click to cancel</div>
+
+  <script>
+    // Load the game code without the browser cache, so players always get the latest
+    // version right after an update (GitHub Pages otherwise lets browsers keep files for 10 minutes).
+    (function () {
+      var files = ['../shared/content.js', '../shared/autotile.js', '../shared/rules.js', '../shared/world.js',
+                   'js/config.js', 'js/assets.js', 'js/render.js', 'js/api.js', 'js/main.js'];
+      var v = Date.now();
+      (function next(i) {
+        if (i >= files.length) return;
+        var s = document.createElement('script');
+        s.src = files[i] + '?v=' + v;
+        s.onload = function () { next(i + 1); };
+        s.onerror = function () { document.getElementById('hud-net').textContent = 'could not load ' + files[i]; };
+        document.body.appendChild(s);
+      })(0);
+    })();
+  </script>
+</body>
+</html>

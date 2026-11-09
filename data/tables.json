@@ -74,6 +74,36 @@
    "key": "lockpick_break",
    "value": 0.3,
    "notes": "Chance a lockpick breaks on a failed attempt"
+  },
+  {
+   "key": "hunger_decay_per_min",
+   "value": 0.6,
+   "notes": "Hunger points lost per minute (0-100 scale; 0 = off)"
+  },
+  {
+   "key": "thirst_decay_per_min",
+   "value": 0.9,
+   "notes": "Thirst points lost per minute (0 = off)"
+  },
+  {
+   "key": "starve_damage",
+   "value": 3,
+   "notes": "HP lost per tick while hunger or thirst is at 0 (0 = off)"
+  },
+  {
+   "key": "starve_tick_s",
+   "value": 6,
+   "notes": "Seconds between starvation/dehydration ticks"
+  },
+  {
+   "key": "infection_escalate",
+   "value": 1,
+   "notes": "Extra infection damage added each tick as it worsens"
+  },
+  {
+   "key": "ranged_status_ms",
+   "value": 3000,
+   "notes": "How long a ranged enemy's applied status lasts (e.g. poison spit)"
   }
  ],
  "Tilesets": [
@@ -3150,7 +3180,6 @@
   {
    "id": "potion",
    "name": "Potion",
-   "sprite": "art/sprites/potion.png",
    "type": "consumable",
    "slot": "",
    "stack_max": 20,
@@ -3159,13 +3188,15 @@
    "def": 0,
    "heal": 40,
    "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/potion.png",
    "notes": ""
   },
   {
    "id": "mana_potion",
    "name": "Mana potion",
-   "sprite": "art/sprites/mana_potion.png",
    "type": "consumable",
    "slot": "",
    "stack_max": 20,
@@ -3174,13 +3205,15 @@
    "def": 0,
    "heal": 0,
    "mp": 40,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/mana_potion.png",
    "notes": ""
   },
   {
    "id": "big_potion",
    "name": "Big potion",
-   "sprite": "art/sprites/big_potion.png",
    "type": "consumable",
    "slot": "",
    "stack_max": 10,
@@ -3189,13 +3222,15 @@
    "def": 0,
    "heal": 100,
    "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/big_potion.png",
    "notes": ""
   },
   {
    "id": "wooden_sword",
    "name": "Wooden sword",
-   "sprite": "art/sprites/wooden_sword.png",
    "type": "weapon",
    "slot": "weapon",
    "stack_max": 1,
@@ -3204,13 +3239,15 @@
    "def": 0,
    "heal": 0,
    "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/wooden_sword.png",
    "notes": ""
   },
   {
    "id": "iron_sword",
    "name": "Iron sword",
-   "sprite": "art/sprites/iron_sword.png",
    "type": "weapon",
    "slot": "weapon",
    "stack_max": 1,
@@ -3219,13 +3256,15 @@
    "def": 0,
    "heal": 0,
    "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/iron_sword.png",
    "notes": ""
   },
   {
    "id": "leather_armor",
    "name": "Leather armor",
-   "sprite": "art/sprites/leather_armor.png",
    "type": "armor",
    "slot": "armor",
    "stack_max": 1,
@@ -3234,13 +3273,15 @@
    "def": 2,
    "heal": 0,
    "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/leather_armor.png",
    "notes": ""
   },
   {
    "id": "iron_armor",
    "name": "Iron armor",
-   "sprite": "art/sprites/iron_armor.png",
    "type": "armor",
    "slot": "armor",
    "stack_max": 1,
@@ -3249,13 +3290,15 @@
    "def": 5,
    "heal": 0,
    "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/iron_armor.png",
    "notes": ""
   },
   {
    "id": "iron_key",
    "name": "Iron key",
-   "sprite": "art/sprites/iron_key.png",
    "type": "key",
    "slot": "",
    "stack_max": 10,
@@ -3264,13 +3307,15 @@
    "def": 0,
    "heal": 0,
    "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/iron_key.png",
    "notes": ""
   },
   {
    "id": "lockpick",
    "name": "Lockpick",
-   "sprite": "art/sprites/lockpick.png",
    "type": "tool",
    "slot": "",
    "stack_max": 20,
@@ -3279,13 +3324,15 @@
    "def": 0,
    "heal": 0,
    "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/lockpick.png",
    "notes": ""
   },
   {
    "id": "bone",
    "name": "Bone",
-   "sprite": "art/sprites/bone.png",
    "type": "material",
    "slot": "",
    "stack_max": 99,
@@ -3294,13 +3341,15 @@
    "def": 0,
    "heal": 0,
    "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/bone.png",
    "notes": ""
   },
   {
    "id": "slime_gel",
    "name": "Slime gel",
-   "sprite": "art/sprites/slime_gel.png",
    "type": "material",
    "slot": "",
    "stack_max": 99,
@@ -3309,7 +3358,78 @@
    "def": 0,
    "heal": 0,
    "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
    "on_use": "",
+   "sprite": "art/sprites/slime_gel.png",
+   "notes": ""
+  },
+  {
+   "id": "ration",
+   "name": "Ration",
+   "type": "consumable",
+   "slot": "",
+   "stack_max": 20,
+   "value": 8,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 60,
+   "thirst": 0,
+   "on_use": "",
+   "sprite": "art/sprites/ration.png",
+   "notes": ""
+  },
+  {
+   "id": "water",
+   "name": "Water bottle",
+   "type": "consumable",
+   "slot": "",
+   "stack_max": 20,
+   "value": 6,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 60,
+   "on_use": "",
+   "sprite": "art/sprites/water.png",
+   "notes": ""
+  },
+  {
+   "id": "antidote",
+   "name": "Antidote",
+   "type": "consumable",
+   "slot": "",
+   "stack_max": 10,
+   "value": 25,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
+   "on_use": "cure",
+   "sprite": "art/sprites/antidote.png",
+   "notes": ""
+  },
+  {
+   "id": "ammo",
+   "name": "Ammo",
+   "type": "material",
+   "slot": "",
+   "stack_max": 99,
+   "value": 3,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
+   "on_use": "",
+   "sprite": "art/sprites/ammo.png",
    "notes": ""
   }
  ],
@@ -3317,7 +3437,6 @@
   {
    "id": "slime",
    "name": "Slime",
-   "sprite": "art/sprites/slime.png",
    "hp": 14,
    "atk": 5,
    "def": 0,
@@ -3328,12 +3447,17 @@
    "aggro_range": 3,
    "move_ms": 1000,
    "respawn_s": 30,
+   "attack_range": 0,
+   "ranged_cooldown_ms": 1500,
+   "ranged_projectile": false,
+   "ranged_status": "",
+   "infect_chance": 0,
+   "sprite": "art/sprites/slime.png",
    "notes": ""
   },
   {
    "id": "rat",
    "name": "Rat",
-   "sprite": "art/sprites/rat.png",
    "hp": 9,
    "atk": 4,
    "def": 0,
@@ -3344,12 +3468,17 @@
    "aggro_range": 5,
    "move_ms": 600,
    "respawn_s": 30,
+   "attack_range": 0,
+   "ranged_cooldown_ms": 1500,
+   "ranged_projectile": false,
+   "ranged_status": "",
+   "infect_chance": 0,
+   "sprite": "art/sprites/rat.png",
    "notes": ""
   },
   {
    "id": "bat",
    "name": "Bat",
-   "sprite": "art/sprites/bat.png",
    "hp": 12,
    "atk": 6,
    "def": 1,
@@ -3360,12 +3489,17 @@
    "aggro_range": 6,
    "move_ms": 450,
    "respawn_s": 40,
+   "attack_range": 0,
+   "ranged_cooldown_ms": 1500,
+   "ranged_projectile": false,
+   "ranged_status": "",
+   "infect_chance": 0,
+   "sprite": "art/sprites/bat.png",
    "notes": ""
   },
   {
    "id": "skeleton",
    "name": "Skeleton",
-   "sprite": "art/sprites/skeleton.png",
    "hp": 32,
    "atk": 11,
    "def": 3,
@@ -3376,6 +3510,54 @@
    "aggro_range": 6,
    "move_ms": 800,
    "respawn_s": 60,
+   "attack_range": 0,
+   "ranged_cooldown_ms": 1500,
+   "ranged_projectile": false,
+   "ranged_status": "",
+   "infect_chance": 0,
+   "sprite": "art/sprites/skeleton.png",
+   "notes": ""
+  },
+  {
+   "id": "walker",
+   "name": "Walker",
+   "hp": 24,
+   "atk": 6,
+   "def": 0,
+   "xp": 8,
+   "gold_min": 0,
+   "gold_max": 3,
+   "loot_table": "walker",
+   "aggro_range": 5,
+   "move_ms": 1100,
+   "respawn_s": 45,
+   "attack_range": 0,
+   "ranged_cooldown_ms": 1500,
+   "ranged_projectile": false,
+   "ranged_status": "",
+   "infect_chance": 0.5,
+   "sprite": "art/sprites/walker.png",
+   "notes": ""
+  },
+  {
+   "id": "spitter",
+   "name": "Spitter",
+   "hp": 18,
+   "atk": 7,
+   "def": 0,
+   "xp": 14,
+   "gold_min": 1,
+   "gold_max": 5,
+   "loot_table": "spitter",
+   "aggro_range": 7,
+   "move_ms": 900,
+   "respawn_s": 50,
+   "attack_range": 4,
+   "ranged_cooldown_ms": 1500,
+   "ranged_projectile": true,
+   "ranged_status": "",
+   "infect_chance": 0,
+   "sprite": "art/sprites/spitter.png",
    "notes": ""
   }
  ],
@@ -3512,6 +3694,48 @@
    "chance": 0.15,
    "min": 1,
    "max": 1
+  },
+  {
+   "table": "walker",
+   "item": "ration",
+   "chance": 0.3,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "walker",
+   "item": "ammo",
+   "chance": 0.2,
+   "min": 1,
+   "max": 2
+  },
+  {
+   "table": "walker",
+   "item": "bone",
+   "chance": 0.5,
+   "min": 1,
+   "max": 2
+  },
+  {
+   "table": "spitter",
+   "item": "ammo",
+   "chance": 0.5,
+   "min": 1,
+   "max": 3
+  },
+  {
+   "table": "spitter",
+   "item": "antidote",
+   "chance": 0.15,
+   "min": 1,
+   "max": 1
+  },
+  {
+   "table": "spitter",
+   "item": "water",
+   "chance": 0.3,
+   "min": 1,
+   "max": 1
   }
  ],
  "Classes": [
@@ -3526,9 +3750,9 @@
    "atk_per_level": 2,
    "def_per_level": 1,
    "mp_per_level": 3,
-   "mp_regen": 1.0,
+   "mp_regen": 1,
    "start_items": "potion:2",
-   "skills": "charge@1, cleave@1, second_wind@3",
+   "skills": "charge@1, cleave@1, second_wind@3, gunshot@5",
    "notes": "Front line",
    "lockpicking": 0
   },
@@ -3560,7 +3784,7 @@
    "atk_per_level": 1,
    "def_per_level": 1,
    "mp_per_level": 7,
-   "mp_regen": 3.0,
+   "mp_regen": 3,
    "start_items": "potion:1, mana_potion:2",
    "skills": "fireball@1, frost_bolt@1, frost_nova@3",
    "notes": "Ranged magic, fragile",
@@ -3594,7 +3818,7 @@
    "atk_per_level": 1,
    "def_per_level": 1,
    "mp_per_level": 8,
-   "mp_regen": 3.0,
+   "mp_regen": 3,
    "start_items": "potion:1, mana_potion:2",
    "skills": "heal@1, smite@1, renew@3",
    "notes": "Healer",
@@ -3611,7 +3835,7 @@
    "atk_per_level": 2,
    "def_per_level": 1,
    "mp_per_level": 2,
-   "mp_regen": 1.0,
+   "mp_regen": 1,
    "start_items": "potion:2",
    "skills": "whirlwind@1, rage@1, leap@3",
    "notes": "Brute force",
@@ -3619,6 +3843,18 @@
   }
  ],
  "Statuses": [
+  {
+   "id": "infection",
+   "name": "Infected",
+   "kind": "infection",
+   "amount": 2,
+   "tick_ms": 3000,
+   "atk": 0,
+   "def": 0,
+   "slow": 1,
+   "color": "#9acd32",
+   "notes": "From a zombie bite: worsens each tick and never fades on its own. Cure with an antidote (on_use: cure) or turn."
+  },
   {
    "id": "burn",
    "name": "Burning",
@@ -3719,13 +3955,15 @@
    "effect": "damage",
    "power": 3,
    "stat": "atk",
-   "scale": 1.0,
+   "scale": 1,
    "status": "stun",
    "status_ms": 1200,
    "dash": true,
    "projectile": false,
    "on_cast": "",
-   "description": "Rush to an enemy, hit and stun it"
+   "description": "Rush to an enemy, hit and stun it",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "cleave",
@@ -3741,13 +3979,15 @@
    "effect": "damage",
    "power": 0,
    "stat": "atk",
-   "scale": 1.0,
+   "scale": 1,
    "status": "",
    "status_ms": 0,
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "Hit every enemy next to you"
+   "description": "Hit every enemy next to you",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "second_wind",
@@ -3769,7 +4009,9 @@
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "Heal yourself"
+   "description": "Heal yourself",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "throw_dagger",
@@ -3791,7 +4033,9 @@
    "dash": false,
    "projectile": true,
    "on_cast": "",
-   "description": "Cheap ranged attack"
+   "description": "Cheap ranged attack",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "poison_strike",
@@ -3807,13 +4051,15 @@
    "effect": "damage",
    "power": 0,
    "stat": "atk",
-   "scale": 1.0,
+   "scale": 1,
    "status": "poison",
    "status_ms": 5000,
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "Hit and poison"
+   "description": "Hit and poison",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "shadow_step",
@@ -3835,7 +4081,9 @@
    "dash": true,
    "projectile": false,
    "on_cast": "",
-   "description": "Vanish and reappear nearby"
+   "description": "Vanish and reappear nearby",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "fireball",
@@ -3857,7 +4105,9 @@
    "dash": false,
    "projectile": true,
    "on_cast": "",
-   "description": "Explodes on impact and sets enemies on fire"
+   "description": "Explodes on impact and sets enemies on fire",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "frost_bolt",
@@ -3879,7 +4129,9 @@
    "dash": false,
    "projectile": true,
    "on_cast": "",
-   "description": "Damages and slows"
+   "description": "Damages and slows",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "frost_nova",
@@ -3901,7 +4153,9 @@
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "Chill everything around you"
+   "description": "Chill everything around you",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "holy_strike",
@@ -3923,7 +4177,9 @@
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "A blessed blow"
+   "description": "A blessed blow",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "blessing",
@@ -3945,7 +4201,9 @@
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "An ally takes less damage"
+   "description": "An ally takes less damage",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "lay_on_hands",
@@ -3967,7 +4225,9 @@
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "Big heal on an ally next to you"
+   "description": "Big heal on an ally next to you",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "heal",
@@ -3989,7 +4249,9 @@
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "Heal an ally (or yourself)"
+   "description": "Heal an ally (or yourself)",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "smite",
@@ -4011,7 +4273,9 @@
    "dash": false,
    "projectile": true,
    "on_cast": "",
-   "description": "Holy light at range"
+   "description": "Holy light at range",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "renew",
@@ -4033,7 +4297,9 @@
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "Heals over time"
+   "description": "Heals over time",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "whirlwind",
@@ -4049,13 +4315,15 @@
    "effect": "damage",
    "power": 2,
    "stat": "atk",
-   "scale": 1.0,
+   "scale": 1,
    "status": "",
    "status_ms": 0,
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "Spin and hit everything next to you"
+   "description": "Spin and hit everything next to you",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "rage",
@@ -4077,7 +4345,9 @@
    "dash": false,
    "projectile": false,
    "on_cast": "",
-   "description": "Hit harder, guard less"
+   "description": "Hit harder, guard less",
+   "ammo": "",
+   "ammo_cost": ""
   },
   {
    "id": "leap",
@@ -4099,7 +4369,33 @@
    "dash": true,
    "projectile": false,
    "on_cast": "",
-   "description": "Jump to a spot, stunning enemies where you land"
+   "description": "Jump to a spot, stunning enemies where you land",
+   "ammo": "",
+   "ammo_cost": ""
+  },
+  {
+   "id": "gunshot",
+   "name": "Gunshot",
+   "icon": "",
+   "color": "#d0d0d0",
+   "mp": 0,
+   "cooldown_ms": 900,
+   "range": 6,
+   "target": "enemy",
+   "area": 0,
+   "los": true,
+   "effect": "damage",
+   "power": 8,
+   "stat": "atk",
+   "scale": 0.6,
+   "status": "",
+   "status_ms": 0,
+   "dash": false,
+   "projectile": true,
+   "on_cast": "",
+   "description": "Fire your gun at an enemy; spends one ammo",
+   "ammo": "ammo",
+   "ammo_cost": 1
   }
  ],
  "Levels": [
@@ -4144,5 +4440,5 @@
    "xp_needed": 950
   }
  ],
- "_version": "451535ee1437"
+ "_version": "5cbacfa863fa"
 }

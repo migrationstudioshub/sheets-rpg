@@ -105,6 +105,7 @@ var World = (function () {
     var at = Rl().nearestStandable(c, map, Number(c.config.start_x) || 0, Number(c.config.start_y) || 0);
     p.map = map.id; p.x = at.x; p.y = at.y;
     p.hp = stats(c, p).maxHp; p.mp = stats(c, p).maxMp;
+    p.hunger = 100; p.thirst = 100;
     p.cooldowns = {}; p.statuses = []; p.loadout = ['', '', '', '', ''];
     list(classOf(c, p).startItems).forEach(function (s) { give(c, p, s.item, s.qty, [], true); });
     fillLoadout(c, p);
@@ -126,6 +127,8 @@ var World = (function () {
     p.hp = !hp || hp <= 0 || isNaN(hp) ? mx : Math.min(hp, mx);
     var mm = stats(c, p).maxMp, mp = Number(p.mp);
     p.mp = p.mp === '' || p.mp == null || isNaN(mp) ? mm : Math.max(0, Math.min(mp, mm));
+    var hun = Number(p.hunger); p.hunger = p.hunger === '' || p.hunger == null || isNaN(hun) ? 100 : Math.max(0, Math.min(100, hun));
+    var thi = Number(p.thirst); p.thirst = p.thirst === '' || p.thirst == null || isNaN(thi) ? 100 : Math.max(0, Math.min(100, thi));
     if (p._fill) { delete p._fill; fillLoadout(c, p); }
     if (!c.maps[p.map]) { var np = newPlayer(c, p.id, p.name, p['class']); p.map = np.map; p.x = np.x; p.y = np.y; }
     return p;
@@ -266,10 +269,13 @@ var World = (function () {
       var t = ms.timers[k]; if (now >= t.at) { setState(ws, mapId, k, t.state); delete ms.timers[k]; }
     });
     var here = players.filter(function (p) { return p.map === mapId && p.hp > 0; });
+    var hDecay = Number(c.config.hunger_decay_per_min) || 0, tDecay = Number(c.config.thirst_decay_per_min) || 0;
+    var starveDmg = Number(c.config.starve_damage) || 0, starveMs = Math.max(1000, (Number(c.config.starve_tick_s) || 5) * 1000);
     here.forEach(function (p) {
       var st = stats(c, p);
       if (p.lastRegen && st.mpRegen) p.mp = Math.min(st.maxMp, (Number(p.mp) || 0) + st.mpRegen * Math.max(0, now - p.lastRegen) / 1000);
       p.lastRegen = now;
+      survivalTick(c, ws, p, now, hDecay, tDecay, starveDmg, starveMs, ev);
       tickStatuses(c, ws, mapId, p, false, now, rng, ev, players);
     });
     ms.monsters.forEach(function (m) { if (!m.dead && m.statuses && m.statuses.length) tickStatuses(c, ws, mapId, m, true, now, rng, ev, players); });
@@ -304,12 +310,28 @@ var World = (function () {
           if (d <= def.aggro && d < best) { best = d; target = p; }
         });
         if (target) {
+          if (def.attackRange > 1 && best > 1 && best <= def.attackRange && now >= (m.nextShot || 0) &&
+              canSee(c, map, m.x, m.y, target.x, target.y, function (e) { return stateOf(c, ws, mapId, e); })) {
+            m.nextShot = now + def.rangedMs;
+            m.facing = Math.abs(target.x - m.x) >= Math.abs(target.y - m.y) ? (target.x > m.x ? 'E' : 'W') : (target.y > m.y ? 'S' : 'N');
+            var rdmg = damage(ms2.atk, stats(c, target).def, rng);
+            target.hp -= rdmg;
+            ev.push({ type: 'cast', map: mapId, skill: '_ranged', by: m.id, from: { x: m.x, y: m.y }, to: { x: target.x, y: target.y }, x: target.x, y: target.y, projectile: !!def.rangedProjectile, color: '#8fbf4f' });
+            ev.push({ type: 'hit', map: mapId, x: target.x, y: target.y, amount: rdmg, to: target.id, text: 'The ' + lower(def.name) + ' spits at you for ' + rdmg + '.' });
+            if (target.hp <= 0) die(c, ws, target, ev);
+            else {
+              if (def.rangedStatus && c.statuses && c.statuses[def.rangedStatus]) applyStatus(c, target, def.rangedStatus, Number(c.config.ranged_status_ms) || 3000, now, m.id);
+              if (def.infectChance && rng() < def.infectChance) applyInfection(c, ws, mapId, target, now, ev);
+            }
+            break;
+          }
           if (best === 1) {
             var dmg = damage(ms2.atk, stats(c, target).def, rng);
             target.hp -= dmg;
             m.facing = target.x > m.x ? 'E' : target.x < m.x ? 'W' : target.y > m.y ? 'S' : 'N';
             ev.push({ type: 'hit', map: mapId, x: target.x, y: target.y, amount: dmg, to: target.id, text: 'The ' + lower(def.name) + ' hits you for ' + dmg + '.' });
             if (target.hp <= 0) die(c, ws, target, ev);
+            else if (def.infectChance && rng() < def.infectChance) applyInfection(c, ws, mapId, target, now, ev);
             break;
           }
           var dx = target.x - m.x, dy = target.y - m.y, dirs = [];
@@ -342,6 +364,24 @@ var World = (function () {
     var at = Rl().nearestStandable(c, map, r.x, r.y);
     p.map = map.id; p.x = at.x; p.y = at.y; p.facing = 'S'; p.hp = stats(c, p).maxHp;
   }
+  /** Hunger and thirst drain over time; at zero they gnaw at your health. Set to 0 in Config to disable. */
+  function survivalTick(c, ws, p, now, hDecay, tDecay, starveDmg, starveMs, ev) {
+    if (p.lastSurvival != null) {
+      var secs = Math.max(0, now - p.lastSurvival) / 1000;
+      if (hDecay) p.hunger = Math.max(0, (Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)) - hDecay * secs / 60);
+      if (tDecay) p.thirst = Math.max(0, (Number(p.thirst) == null || isNaN(Number(p.thirst)) ? 100 : Number(p.thirst)) - tDecay * secs / 60);
+    }
+    p.lastSurvival = now;
+    var empty = (Number(p.hunger) || 0) <= 0, dry = (Number(p.thirst) || 0) <= 0;
+    if (!starveDmg || !(empty || dry)) { p.nextStarve = 0; return; }
+    if (!p.nextStarve) p.nextStarve = now + starveMs;
+    while (p.nextStarve <= now && p.hp > 0) {
+      p.nextStarve += starveMs;
+      var why = empty && dry ? 'Starving and parched' : empty ? 'Starving' : 'Dehydrated';
+      hurt(c, ws, p, starveDmg, why + ', you lose ', ev);
+    }
+  }
+
   function gainXp(c, p, xp, ev) {
     p.xp += xp;
     var lv = levelFor(c, p.xp);
@@ -399,11 +439,32 @@ var World = (function () {
     else t.statuses.push({ id: id, until: now + ms, next: now + (d.tickMs || 1000), src: src || '' });
   }
   function hasStatus(t, id) { return (t.statuses || []).some(function (s) { return s.id === id; }); }
+  /** A bite can infect a survivor. Infection does not fade on its own and worsens over time — cure it or turn. */
+  function applyInfection(c, ws, mapId, p, now, ev) {
+    if (!(c.statuses && c.statuses.infection) || hasStatus(p, 'infection')) return;
+    var d = c.statuses.infection;
+    p.statuses = p.statuses || [];
+    p.statuses.push({ id: 'infection', until: 1e15, next: now + Math.max(500, d.tickMs || 3000), stacks: 0, src: '' });
+    ev.push({ type: 'info', to: p.id, text: 'You have been infected!' });
+  }
   /** Damage/healing over time, then expiry. Monsters killed by a status reward whoever applied it. */
   function tickStatuses(c, ws, mapId, t, isMonster, now, rng, ev, players) {
     var keep = [];
     (t.statuses || []).forEach(function (st) {
       var d = c.statuses && c.statuses[st.id]; if (!d) return;
+      if (d.kind === 'infection') {
+        if (isMonster) { keep.push(st); return; }            // only survivors get infected
+        var itick = Math.max(500, d.tickMs || 3000);
+        while (st.next <= now && t.hp > 0) {
+          st.next += itick; st.stacks = (st.stacks || 0) + 1;
+          var idmg = Math.max(1, (d.amount || 1) + Math.floor((st.stacks - 1) * (Number(c.config.infection_escalate) || 0)));
+          t.hp -= idmg;
+          ev.push({ type: 'hit', map: mapId, x: t.x, y: t.y, amount: idmg, to: t.id, text: '' });
+          if (t.hp <= 0) { die(c, ws, t, ev); return; }       // it takes them; they respawn clean
+        }
+        keep.push(st);                                        // never fades on its own — needs a cure
+        return;
+      }
       if (d.kind === 'dot' || d.kind === 'hot') {
         var tick = Math.max(100, d.tickMs || 1000);
         while (st.next <= Math.min(now, st.until) && (isMonster ? !t.dead : t.hp > 0)) {
@@ -525,6 +586,7 @@ var World = (function () {
     if (hasStatus(p, 'stun')) return say('You are stunned.');
     if (now < ((p.cooldowns || {})[sk.id] || 0)) return say(sk.name + ' is not ready yet.');
     if ((Number(p.mp) || 0) < sk.mp) return say('Not enough mana for ' + sk.name + '.');
+    if (sk.ammo && count(p, sk.ammo) < sk.ammoCost) return say('Out of ' + lower(itemName(c, sk.ammo)) + '.');
     var mapId = p.map, map = c.maps[mapId], lk = serverLookup(c, ws, mapId, players);
     var self = sk.target === 'self' || sk.target === 'around';
     var tx = self ? p.x : Math.round(Number(a.x)), ty = self ? p.y : Math.round(Number(a.y));
@@ -554,6 +616,7 @@ var World = (function () {
     targets = targets.filter(Boolean);
 
     p.mp = (Number(p.mp) || 0) - sk.mp;
+    if (sk.ammo) take(p, sk.ammo, sk.ammoCost);
     p.cooldowns = p.cooldowns || {}; p.cooldowns[sk.id] = now + sk.cooldownMs;
     ev.push({ type: 'cast', map: mapId, skill: sk.id, by: p.id, from: from, to: { x: tx, y: ty }, x: tx, y: ty });
 
@@ -622,6 +685,11 @@ var World = (function () {
       else if (verb === 'teleport') teleport(c, p, arg, ev);
       else if (verb === 'set_state') setState(ws, p.map, a[0], a[1] || null);
       else if (verb === 'xp') gainXp(c, p, Number(a[0]) || 0, ev);
+      else if (verb === 'cure') {
+        var which = a[0] || 'infection', before = (p.statuses || []).length;
+        p.statuses = (p.statuses || []).filter(function (s) { return s.id !== which; });
+        if (p.statuses.length < before) ev.push({ type: 'info', to: p.id, text: which === 'infection' ? 'The infection fades.' : 'You feel better.' });
+      }
       else if (verb === 'message') ev.push({ type: 'info', to: p.id, text: arg });
     });
   }
@@ -810,9 +878,12 @@ var World = (function () {
     if (!it || count(p, id) < 1) { ev.push({ type: 'info', to: p.id, text: 'You don\'t have that.' }); return; }
     var mx = stats(c, p).maxHp;
     if (it.type === 'consumable') {
-      var mm = stats(c, p).maxMp;
-      if (!it.onUse && (!it.heal || p.hp >= mx) && (!it.mp || p.mp >= mm)) {
-        ev.push({ type: 'info', to: p.id, text: it.mp && !it.heal ? 'Your mana is already full.' : 'You are already at full health.' }); return;
+      var mm = stats(c, p).maxMp, hun = Number(p.hunger) || 0, thi = Number(p.thirst) || 0;
+      var fullHp = !it.heal || p.hp >= mx, fullMp = !it.mp || p.mp >= mm, fullHun = !it.hunger || hun >= 100, fullThi = !it.thirst || thi >= 100;
+      if (!it.onUse && fullHp && fullMp && fullHun && fullThi) {
+        ev.push({ type: 'info', to: p.id, text: it.hunger && !it.heal && !it.mp ? 'You are not hungry.' :
+          it.thirst && !it.heal && !it.mp && !it.hunger ? 'You are not thirsty.' :
+          it.mp && !it.heal ? 'Your mana is already full.' : 'You are already at full health.' }); return;
       }
       take(p, id, 1);
       if (it.heal) {
@@ -822,6 +893,12 @@ var World = (function () {
       if (it.mp) {
         var g = Math.min(it.mp, mm - p.mp); p.mp += g;
         ev.push({ type: 'mana', to: p.id, map: p.map, x: p.x, y: p.y, amount: Math.round(g), text: 'You use the ' + lower(it.name) + '. +' + Math.round(g) + ' MP' });
+      }
+      if (it.hunger) {
+        var fe = Math.min(it.hunger, 100 - hun); if (fe > 0) { p.hunger = hun + fe; ev.push({ type: 'info', to: p.id, text: 'You eat the ' + lower(it.name) + '.' }); }
+      }
+      if (it.thirst) {
+        var dr = Math.min(it.thirst, 100 - thi); if (dr > 0) { p.thirst = thi + dr; ev.push({ type: 'info', to: p.id, text: 'You drink the ' + lower(it.name) + '.' }); }
       }
       if (it.onUse) run(c, ws, p, it.onUse, now, ev);
     } else if (it.slot) {
@@ -953,6 +1030,8 @@ var World = (function () {
     var s = stats(c, p);
     return { id: p.id, name: p.name, 'class': p['class'], map: p.map, x: p.x, y: p.y, facing: p.facing,
       hp: p.hp, maxHp: s.maxHp, mp: Math.floor(Number(p.mp) || 0), maxMp: s.maxMp, atk: s.atk, def: s.def, level: p.level, xp: p.xp,
+      hunger: Math.round(Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)),
+      thirst: Math.round(Number(p.thirst) == null || isNaN(Number(p.thirst)) ? 100 : Number(p.thirst)),
       skills: knownSkills(c, p), loadout: p.loadout, cooldowns: p.cooldowns || {},
       statuses: (p.statuses || []).map(function (st) { return { id: st.id, until: st.until }; }),
       xpNext: xpFor(c, p.level + 1), xpThis: xpFor(c, p.level) || 0, gold: p.gold,

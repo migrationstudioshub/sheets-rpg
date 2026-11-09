@@ -534,4 +534,83 @@ test('action list: default first, for monsters, chests, keys, signs and empty gr
   assert.deepStrictEqual(World.actionsAt(s.c, arena, lk1, s.p, 11, 2).map(a => a.label), ['Unlock the chest (Iron key)']);
 });
 
+// ---------------------------------------------------------------- survival (M-Zombie Z1)
+test('hunger and thirst drain over time; eating and drinking restore them', () => {
+  const s = fresh();
+  World.advance(s.c, s.ws, 'map_3', [s.p], 0, mid, []);                 // sets the clock, no decay yet
+  World.advance(s.c, s.ws, 'map_3', [s.p], 60000, mid, []);            // one minute later
+  assert.ok(Math.abs(s.p.hunger - 99.4) < 1e-6, 'hunger 0.6/min');     // 100 - 0.6
+  assert.ok(Math.abs(s.p.thirst - 99.1) < 1e-6, 'thirst 0.9/min');     // 100 - 0.9
+  s.p.hunger = 20; World.give(s.c, s.p, 'ration', 1, []);
+  act(s, { type: 'use', item: 'ration' });
+  assert.strictEqual(s.p.hunger, 80);                                   // +60
+  s.p.thirst = 10; World.give(s.c, s.p, 'water', 1, []);
+  act(s, { type: 'use', item: 'water' });
+  assert.strictEqual(s.p.thirst, 70);                                   // +60
+  s.p.hunger = 100; World.give(s.c, s.p, 'ration', 1, []);
+  assert.match(texts(act(s, { type: 'use', item: 'ration' })), /not hungry/);
+});
+
+test('an empty stomach gnaws at your health', () => {
+  const s = fresh();
+  World.advance(s.c, s.ws, 'map_3', [s.p], 60000, mid, []);            // clock now at 60 s
+  s.p.hunger = 0; s.p.nextStarve = 0;
+  const hp0 = s.p.hp;
+  World.advance(s.c, s.ws, 'map_3', [s.p], 66000, mid, []);            // schedules the first tick
+  assert.strictEqual(s.p.hp, hp0);
+  const ev = [];
+  World.advance(s.c, s.ws, 'map_3', [s.p], 72000, mid, ev);            // 6 s later it bites
+  assert.strictEqual(s.p.hp, hp0 - 3);
+  assert.match(texts(ev), /Starving, you lose 3/);
+});
+
+test('a firearm spends ammo: no shot when empty, one round per shot', () => {
+  const s = hero('warrior', 5);
+  assert.ok(World.knownSkills(s.c, s.p).includes('gunshot'), 'learned at level 5');
+  const m = monster(s, 'skeleton', 12, 13);
+  s.p.x = 9; s.p.y = 13;
+  assert.match(texts(cast(s, 'gunshot', 12, 13, 0)), /Out of ammo/);
+  assert.strictEqual(m.hp, 32);                                         // nothing fired
+  World.give(s.c, s.p, 'ammo', 2, []);
+  cast(s, 'gunshot', 12, 13, 1000);
+  assert.strictEqual(World.count(s.p, 'ammo'), 1);
+  assert.ok(m.hp < 32, 'the shot connected');
+});
+
+test('a spitter attacks from range with line of sight, but walls stop it', () => {
+  const s = hero('warrior');
+  const m = monster(s, 'spitter', 13, 13); m.last = 0; m.nextShot = 0;
+  s.p.x = 10; s.p.y = 13; s.p.hp = 120;                                 // three tiles away, clear line
+  const ev = [];
+  World.advance(s.c, s.ws, 'map_3', [s.p], 1000, mid, ev);
+  assert.ok(s.p.hp < 120, 'hit from range');
+  assert.match(texts(ev), /spits at you/);
+  assert.ok(ev.some(e => e.type === 'cast' && e.skill === '_ranged'));
+  const s2 = hero('warrior');
+  const m2 = monster(s2, 'spitter', 5, 7); m2.last = 0; m2.nextShot = 0;   // inside the hut
+  s2.p.x = 5; s2.p.y = 11; s2.p.hp = 120;                              // the hut wall is between them
+  World.advance(s2.c, s2.ws, 'map_3', [s2.p], 1000, mid, []);
+  assert.strictEqual(s2.p.hp, 120, 'the wall blocks the spit');
+});
+
+test('a walker bite can infect; infection worsens each tick until an antidote cures it', () => {
+  const s = hero('warrior');
+  const m = monster(s, 'walker', 10, 13); m.last = 0;                  // infect_chance 0.5
+  s.p.x = 9; s.p.y = 13; s.p.hp = 120;
+  const ev = [];
+  World.advance(s.c, s.ws, 'map_3', [s.p], 1200, dice([0.2]), ev);     // 0.2 < 0.5 -> infected
+  assert.match(texts(ev), /infected/i);
+  assert.ok(s.p.statuses.some(st => st.id === 'infection'));
+  m.dead = true; m.respawnAt = 1e15;                                   // remove the walker to isolate the infection
+  const hpA = s.p.hp;
+  World.advance(s.c, s.ws, 'map_3', [s.p], 4200, mid, []);             // first tick: 2 damage
+  assert.strictEqual(s.p.hp, hpA - 2);
+  World.advance(s.c, s.ws, 'map_3', [s.p], 7200, mid, []);             // worse: 3 damage
+  assert.strictEqual(s.p.hp, hpA - 5);
+  assert.ok(s.p.statuses.some(st => st.id === 'infection'), 'never fades on its own');
+  World.give(s.c, s.p, 'antidote', 1, []);
+  assert.match(texts(act(s, { type: 'use', item: 'antidote' }, 7200)), /infection fades/);
+  assert.ok(!s.p.statuses.some(st => st.id === 'infection'), 'cured');
+});
+
 console.log(`\n${passed} world tests passed`);

@@ -101,6 +101,13 @@ def build():
         {'key': 'attack_ms', 'value': 500, 'notes': 'Minimum time between basic attacks'},
         {'key': 'lockpick_chance', 'value': 0.5, 'notes': 'Base chance to pick a lock (plus the class bonus, minus the lock difficulty)'},
         {'key': 'lockpick_break', 'value': 0.3, 'notes': 'Chance a lockpick breaks on a failed attempt'},
+        # --- survival (M-Zombie Z1): all default to off-ish; set to 0 to disable a system ---
+        {'key': 'hunger_decay_per_min', 'value': 0.6, 'notes': 'Hunger points lost per minute (0-100 scale; 0 = off)'},
+        {'key': 'thirst_decay_per_min', 'value': 0.9, 'notes': 'Thirst points lost per minute (0 = off)'},
+        {'key': 'starve_damage', 'value': 3, 'notes': 'HP lost per tick while hunger or thirst is at 0 (0 = off)'},
+        {'key': 'starve_tick_s', 'value': 6, 'notes': 'Seconds between starvation/dehydration ticks'},
+        {'key': 'infection_escalate', 'value': 1, 'notes': 'Extra infection damage added each tick as it worsens'},
+        {'key': 'ranged_status_ms', 'value': 3000, 'notes': "How long a ranged enemy's applied status lasts (e.g. poison spit)"},
     ]
     t['Tilesets'] = [
         {'id': 'fields', 'image': 'art/tilesets/fields_placeholder.png', 'tile_size': 32, 'columns': 8,
@@ -252,32 +259,38 @@ def build():
     t['MapEntities'] = ents
 
     sp = lambda n: f'art/sprites/{n}.png'
-    t['Items'] = [
-        {'id': i, 'name': n, 'sprite': sp(i), 'type': ty, 'slot': sl, 'stack_max': st, 'value': v,
-         'atk': a, 'def': d, 'heal': hl, 'mp': mp, 'on_use': '', 'notes': ''}
-        for i, n, ty, sl, st, v, a, d, hl, mp in [(*r, 0) if len(r) == 9 else r for r in [
-            ('potion', 'Potion', 'consumable', '', 20, 10, 0, 0, 40),
-            ('mana_potion', 'Mana potion', 'consumable', '', 20, 12, 0, 0, 0, 40),
-            ('big_potion', 'Big potion', 'consumable', '', 10, 30, 0, 0, 100),
-            ('wooden_sword', 'Wooden sword', 'weapon', 'weapon', 1, 15, 3, 0, 0),
-            ('iron_sword', 'Iron sword', 'weapon', 'weapon', 1, 60, 7, 0, 0),
-            ('leather_armor', 'Leather armor', 'armor', 'armor', 1, 20, 0, 2, 0),
-            ('iron_armor', 'Iron armor', 'armor', 'armor', 1, 80, 0, 5, 0),
-            ('iron_key', 'Iron key', 'key', '', 10, 0, 0, 0, 0),
-            ('lockpick', 'Lockpick', 'tool', '', 20, 5, 0, 0, 0),
-            ('bone', 'Bone', 'material', '', 99, 2, 0, 0, 0),
-            ('slime_gel', 'Slime gel', 'material', '', 99, 1, 0, 0, 0),
-        ]]]
-    t['Monsters'] = [
-        {'id': i, 'name': n, 'sprite': sp(i), 'hp': hp, 'atk': a, 'def': d, 'xp': xp,
-         'gold_min': g0, 'gold_max': g1, 'loot_table': lt, 'aggro_range': ag, 'move_ms': mv,
-         'respawn_s': rs, 'notes': ''}
-        for i, n, hp, a, d, xp, g0, g1, lt, ag, mv, rs in [
-            ('slime', 'Slime', 14, 5, 0, 6, 1, 3, 'slime', 3, 1000, 30),
-            ('rat', 'Rat', 9, 4, 0, 4, 0, 2, 'rat', 5, 600, 30),
-            ('bat', 'Bat', 12, 6, 1, 10, 1, 4, 'bat', 6, 450, 40),
-            ('skeleton', 'Skeleton', 32, 11, 3, 25, 4, 12, 'skeleton', 6, 800, 60),
-        ]]
+    ITEM_COLS = ['id', 'name', 'type', 'slot', 'stack_max', 'value', 'atk', 'def', 'heal', 'mp', 'hunger', 'thirst', 'on_use']
+    t['Items'] = [dict(zip(ITEM_COLS, r), sprite=sp(r[0]), notes='') for r in [
+        # id, name, type, slot, stack_max, value, atk, def, heal, mp, hunger, thirst, on_use
+        ('potion', 'Potion', 'consumable', '', 20, 10, 0, 0, 40, 0, 0, 0, ''),
+        ('mana_potion', 'Mana potion', 'consumable', '', 20, 12, 0, 0, 0, 40, 0, 0, ''),
+        ('big_potion', 'Big potion', 'consumable', '', 10, 30, 0, 0, 100, 0, 0, 0, ''),
+        ('wooden_sword', 'Wooden sword', 'weapon', 'weapon', 1, 15, 3, 0, 0, 0, 0, 0, ''),
+        ('iron_sword', 'Iron sword', 'weapon', 'weapon', 1, 60, 7, 0, 0, 0, 0, 0, ''),
+        ('leather_armor', 'Leather armor', 'armor', 'armor', 1, 20, 0, 2, 0, 0, 0, 0, ''),
+        ('iron_armor', 'Iron armor', 'armor', 'armor', 1, 80, 0, 5, 0, 0, 0, 0, ''),
+        ('iron_key', 'Iron key', 'key', '', 10, 0, 0, 0, 0, 0, 0, 0, ''),
+        ('lockpick', 'Lockpick', 'tool', '', 20, 5, 0, 0, 0, 0, 0, 0, ''),
+        ('bone', 'Bone', 'material', '', 99, 2, 0, 0, 0, 0, 0, 0, ''),
+        ('slime_gel', 'Slime gel', 'material', '', 99, 1, 0, 0, 0, 0, 0, 0, ''),
+        # --- survival demo items (Z1): food/water restore hunger/thirst; antidote cures infection; ammo feeds firearms ---
+        ('ration', 'Ration', 'consumable', '', 20, 8, 0, 0, 0, 0, 60, 0, ''),
+        ('water', 'Water bottle', 'consumable', '', 20, 6, 0, 0, 0, 0, 0, 60, ''),
+        ('antidote', 'Antidote', 'consumable', '', 10, 25, 0, 0, 0, 0, 0, 0, 'cure'),
+        ('ammo', 'Ammo', 'material', '', 99, 3, 0, 0, 0, 0, 0, 0, ''),
+    ]]
+    MON_COLS = ['id', 'name', 'hp', 'atk', 'def', 'xp', 'gold_min', 'gold_max', 'loot_table', 'aggro_range',
+                'move_ms', 'respawn_s', 'attack_range', 'ranged_cooldown_ms', 'ranged_projectile', 'ranged_status', 'infect_chance']
+    t['Monsters'] = [dict(zip(MON_COLS, r), sprite=sp(r[0]), notes='') for r in [
+        # id, name, hp, atk, def, xp, gold_min, gold_max, loot, aggro, move_ms, respawn_s, attack_range, ranged_cd_ms, ranged_proj, ranged_status, infect_chance
+        ('slime', 'Slime', 14, 5, 0, 6, 1, 3, 'slime', 3, 1000, 30, 0, 1500, False, '', 0),
+        ('rat', 'Rat', 9, 4, 0, 4, 0, 2, 'rat', 5, 600, 30, 0, 1500, False, '', 0),
+        ('bat', 'Bat', 12, 6, 1, 10, 1, 4, 'bat', 6, 450, 40, 0, 1500, False, '', 0),
+        ('skeleton', 'Skeleton', 32, 11, 3, 25, 4, 12, 'skeleton', 6, 800, 60, 0, 1500, False, '', 0),
+        # --- survival demo zombies (Z1) ---
+        ('walker', 'Walker', 24, 6, 0, 8, 0, 3, 'walker', 5, 1100, 45, 0, 1500, False, '', 0.5),   # slow; its bite can infect
+        ('spitter', 'Spitter', 18, 7, 0, 14, 1, 5, 'spitter', 7, 900, 50, 4, 1500, True, '', 0),    # attacks from 4 tiles with line of sight
+    ]]
     t['LootTables'] = [
         {'table': tb, 'item': it, 'chance': ch, 'min': a, 'max': b}
         for tb, it, ch, a, b in [
@@ -290,11 +303,14 @@ def build():
             ('chest_common', 'gold', 1, 5, 20), ('chest_common', 'potion', 0.9, 1, 2),
             ('chest_common', 'wooden_sword', 0.3, 1, 1), ('chest_common', 'leather_armor', 0.25, 1, 1),
             ('barrel', 'gold', 0.6, 1, 6), ('barrel', 'potion', 0.15, 1, 1),
+            # survival demo drops
+            ('walker', 'ration', 0.3, 1, 1), ('walker', 'ammo', 0.2, 1, 2), ('walker', 'bone', 0.5, 1, 2),
+            ('spitter', 'ammo', 0.5, 1, 3), ('spitter', 'antidote', 0.15, 1, 1), ('spitter', 'water', 0.3, 1, 1),
         ]]
     CLASS_COLS = ['id', 'name', 'hp', 'atk', 'def', 'mp', 'hp_per_level', 'atk_per_level', 'def_per_level',
                   'mp_per_level', 'mp_regen', 'start_items', 'skills', 'notes', 'lockpicking']
     t['Classes'] = [dict(zip(CLASS_COLS, r)) for r in [
-        ('warrior', 'Warrior', 120, 6, 2, 30, 12, 2, 1, 3, 1.0, 'potion:2', 'charge@1, cleave@1, second_wind@3', 'Front line', 0),
+        ('warrior', 'Warrior', 120, 6, 2, 30, 12, 2, 1, 3, 1.0, 'potion:2', 'charge@1, cleave@1, second_wind@3, gunshot@5', 'Front line', 0),
         ('rogue', 'Rogue', 90, 7, 1, 40, 9, 2, 1, 4, 1.5, 'potion:3, gold:20, lockpick:3', 'throw_dagger@1, poison_strike@1, shadow_step@3', 'Fast, ranged poke', 0.3),
         ('mage', 'Mage', 70, 3, 1, 70, 7, 1, 1, 7, 3.0, 'potion:1, mana_potion:2', 'fireball@1, frost_bolt@1, frost_nova@3', 'Ranged magic, fragile', 0),
         ('paladin', 'Paladin', 110, 5, 3, 45, 11, 2, 1, 4, 1.5, 'potion:2', 'holy_strike@1, blessing@1, lay_on_hands@3', 'Support: protects allies', 0),
@@ -303,6 +319,7 @@ def build():
     ]]
     STATUS_COLS = ['id', 'name', 'kind', 'amount', 'tick_ms', 'atk', 'def', 'slow', 'color', 'notes']
     t['Statuses'] = [dict(zip(STATUS_COLS, r)) for r in [
+        ('infection', 'Infected', 'infection', 2, 3000, 0, 0, 1, '#9acd32', 'From a zombie bite: worsens each tick and never fades on its own. Cure with an antidote (on_use: cure) or turn.'),
         ('burn', 'Burning', 'dot', 3, 1000, 0, 0, 1, '#ff7a2a', 'Damage every tick'),
         ('poison', 'Poisoned', 'dot', 3, 1000, 0, 0, 1, '#7ad04a', 'Damage every tick'),
         ('chill', 'Chilled', 'slow', 0, 0, 0, 0, 2, '#7ad0ff', 'slow = how much longer each step takes'),
@@ -334,6 +351,13 @@ def build():
         ('rage', 'Rage', '', '#e05050', 10, 15000, 0, 'self', 0, False, 'none', 0, '', 0, 'rage', 8000, False, False, '', 'Hit harder, guard less'),
         ('leap', 'Leap', '', '#e05050', 10, 10000, 4, 'tile', 1, True, 'damage', 4, 'atk', 0.8, 'stun', 1000, True, False, '', 'Jump to a spot, stunning enemies where you land'),
     ]]
+    # survival demo (Z1): a firearm skill that spends one 'ammo' item per shot instead of mana
+    t['Skills'].append(dict(zip(SKILL_COLS,
+        ('gunshot', 'Gunshot', '', '#d0d0d0', 0, 900, 6, 'enemy', 0, True, 'damage', 8, 'atk', 0.6, '', 0, False, True, '', 'Fire your gun at an enemy; spends one ammo')),
+        ammo='ammo', ammo_cost=1))
+    for _s in t['Skills']:
+        _s.setdefault('ammo', '')
+        _s.setdefault('ammo_cost', '')
     t['Levels'] = [{'level': lv, 'xp_needed': xp} for lv, xp in
                    [(1, 0), (2, 20), (3, 50), (4, 100), (5, 170), (6, 260), (7, 380), (8, 530), (9, 720), (10, 950)]]
 

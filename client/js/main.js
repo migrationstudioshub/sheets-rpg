@@ -72,7 +72,7 @@
       var t0 = now + i * 120;
       if (e.type === 'cast') {
         if (e.by === me.id && performance.now() - lastOwnCast < 6000) return;   // already shown when you cast it
-        var sk = content.skills[e.skill] || { color: '#fff', area: 0 };
+        var sk = content.skills[e.skill] || { color: e.color || '#fff', area: 0, projectile: !!e.projectile };
         var area = sk.target === 'around' ? Math.max(1, sk.area) : sk.area;
         var at = sk.target === 'around' || sk.target === 'self' ? e.from : e.to;
         if (sk.projectile) fx.push({ kind: 'proj', from: e.from, to: e.to, color: sk.color, t0: t0, life: 260 });
@@ -370,6 +370,11 @@
       if (en.kind === 'skill' && content.skills[en.id]) {
         var cost = document.createElement('span'); cost.className = 'cost'; cost.textContent = content.skills[en.id].mp || '';
         b.appendChild(cost);
+        if (content.skills[en.id].ammo) {                        // firearms show their ammo count, not a mana cost
+          var aq = document.createElement('span'); aq.className = 'qty';
+          aq.textContent = '×' + ((me.inventory.filter(function (s) { return s.item === content.skills[en.id].ammo; })[0] || {}).qty || 0);
+          b.appendChild(aq);
+        }
         var cd = document.createElement('div'); cd.className = 'cd'; b.appendChild(cd);
         var cdt = document.createElement('div'); cdt.className = 'cdt'; b.appendChild(cdt);
         b._cd = cd; b._cdt = cdt; b._skill = content.skills[en.id];
@@ -391,7 +396,8 @@
       var left = readyIn(sk.id), frac = sk.cooldownMs ? Math.min(1, left / sk.cooldownMs) : 0;
       b._cd.style.height = (frac * 100) + '%';
       b._cdt.textContent = left > 0 ? (left / 1000).toFixed(left < 1000 ? 1 : 0) : '';
-      b.classList.toggle('low', me.mp < sk.mp);
+      var lowAmmo = sk.ammo && ((me.inventory.filter(function (s) { return s.item === sk.ammo; })[0] || {}).qty || 0) < (sk.ammoCost || 1);
+      b.classList.toggle('low', me.mp < sk.mp || lowAmmo);
     });
   }
   function describeSkill(sk) {
@@ -416,11 +422,19 @@
     $('gold').textContent = me.gold + ' gold';
     $('mp-fill').style.width = me.maxMp ? Math.max(0, 100 * me.mp / me.maxMp) + '%' : '0%';
     $('mp-text').textContent = 'MP ' + me.mp + ' / ' + me.maxMp;
+    var food = me.hunger == null ? 100 : me.hunger, water = me.thirst == null ? 100 : me.thirst;
+    $('food-fill').style.width = Math.max(0, Math.min(100, food)) + '%';
+    $('food-text').textContent = 'Food ' + Math.round(food) + '%';
+    $('food-bar').classList.toggle('low', food <= 25);
+    $('water-fill').style.width = Math.max(0, Math.min(100, water)) + '%';
+    $('water-text').textContent = 'Water ' + Math.round(water) + '%';
+    $('water-bar').classList.toggle('low', water <= 25);
     var sts = $('statuses'); sts.innerHTML = '';
     (me.statuses || []).forEach(function (st) {
       var d = content.statuses[st.id] || { name: st.id, color: '#888' }, el = document.createElement('span');
       el.className = 'st'; el.style.color = d.color;
-      el.textContent = d.name + ' ' + Math.max(0, Math.ceil((st.until - serverNow()) / 1000)) + 's';
+      var perm = d.kind === 'infection' || st.until > serverNow() + 1e10;   // infection has no timer — it just worsens
+      el.textContent = d.name + (perm ? '' : ' ' + Math.max(0, Math.ceil((st.until - serverNow()) / 1000)) + 's');
       sts.appendChild(el);
     });
     hotbar();

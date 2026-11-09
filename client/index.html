@@ -25,6 +25,10 @@
   #hp-fill { background: linear-gradient(#e0574a, #b33a30); }
   #xp-fill { background: linear-gradient(#e8c14a, #b8901e); }
   #mp-fill { background: linear-gradient(#4a86e8, #2c5bb8); }
+  #food-fill { background: linear-gradient(#caa15a, #8a6d2e); }
+  #water-fill { background: linear-gradient(#4ab6c3, #2c7f8f); }
+  .bar.low .fill { filter: saturate(1.4) brightness(1.1); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .55; } }
   .bar { width: 150px; }
   #hotbar { grid-column: 1 / -1; display: flex; gap: 6px; }
   .hk { position: relative; width: 58px; height: 58px; border-radius: 8px; background: #262a33; border: 2px solid #3a3f4b;
@@ -112,6 +116,8 @@
     <div class="bars">
       <div class="bar"><div class="fill" id="hp-fill"></div><span id="hp-text">HP</span></div>
       <div class="bar"><div class="fill" id="mp-fill"></div><span id="mp-text">MP</span></div>
+      <div class="bar" id="food-bar"><div class="fill" id="food-fill"></div><span id="food-text">Food</span></div>
+      <div class="bar" id="water-bar"><div class="fill" id="water-fill"></div><span id="water-text">Water</span></div>
       <div class="bar"><div class="fill" id="xp-fill"></div><span id="xp-text">Lv</span></div>
       <span id="gold"></span>
     </div>

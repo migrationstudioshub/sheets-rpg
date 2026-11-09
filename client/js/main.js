@@ -141,7 +141,7 @@
       queue.shift(); inFlight = false;
       return apply(res);
     }).then(function () {
-      if (api.mode === 'online') setNet('connected');
+      if (api.mode !== 'offline') setNet('connected');
       flush();
     }).catch(function (e) {
       inFlight = false; a.sent = false;
@@ -534,7 +534,7 @@
         var o = content.objects[e.ref]; return o && o.kind === 'trap' && World.props(content, e).trigger === 'timed';
       });
       shown.x = me.x; shown.y = me.y; shownOthers = {};
-      setNet(api.mode === 'online' ? 'connected' : api.usingDraft ? 'offline: playing your editor draft' : 'offline: progress saved in this browser');
+      setNet(api.mode !== 'offline' ? 'connected' : api.usingDraft ? 'offline: playing your editor draft' : 'offline: progress saved in this browser');
       $('map-pick').value = me.map;
     });
   }

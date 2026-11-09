@@ -235,12 +235,46 @@ function saveWorld(ws, force) {
   CacheService.getScriptCache().put('world', JSON.stringify(ws), CACHE_S);
 }
 
+// ---------------------------------------------------------------- live push (Firebase, optional)
+// If the FIREBASE_URL script property is set, after each step we also write the map's live view
+// (monsters and players) to the Realtime Database, so other clients on that map get it pushed in
+// ~100 ms instead of waiting for their next poll. The server stays the referee; this is read-only
+// smoothing. Clients read it (public read rules); only the server writes, using FIREBASE_SECRET.
+function firebaseBase() { return PropertiesService.getScriptProperties().getProperty('FIREBASE_URL'); }
+
+/** The fast-moving, fully-global part of a map's state: all monsters and all players present. */
+function firebaseView(content, ws, mapId, players) {
+  var ms = World.mapState(ws, mapId);
+  return {
+    map: mapId, now: Date.now(), seq: ws.seq || 0,
+    monsters: (ms.monsters || []).filter(function (m) { return !m.dead; }).map(function (m) {
+      var d = content.monsters[m.ref];
+      return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing,
+        statuses: (m.statuses || []).map(function (st) { return st.id; }) };
+    }),
+    players: (players || []).filter(function (q) { return q.map === mapId; }).map(function (q) {
+      return { id: q.id, name: q.name, x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level };
+    })
+  };
+}
+
+/** Write one map's live view to the Realtime Database. Never lets a failed push break a game step. */
+function pushWorld(mapId, payload) {
+  var base = firebaseBase(); if (!base) return;
+  var secret = PropertiesService.getScriptProperties().getProperty('FIREBASE_SECRET') || '';
+  var url = base.replace(/\/+$/, '') + '/world/' + encodeURIComponent(mapId) + '.json' + (secret ? '?auth=' + encodeURIComponent(secret) : '');
+  try {
+    UrlFetchApp.fetch(url, { method: 'put', contentType: 'application/json', payload: JSON.stringify(payload), muteHttpExceptions: true });
+  } catch (e) { /* the sheet and cache are still authoritative; a dropped push just means a slightly staler view for others */ }
+}
+
 // written to the sheet right away (everything else waits for save_every_s; the cache always has the latest)
 var IMPORTANT = { level: 1, death: 1, teleport: 1 };
 
 /** One game step for a player: catch the world up, run their action (if any), report back. */
 function step(token, action, since) {
-  return withLock(function () {
+  var live = null;                                           // what to push to Firebase, sent after the lock is released
+  var result = withLock(function () {
     var content = getContent(), p = requirePlayer(token), ws = getWorld(), now = Date.now();
     ws.presence = ws.presence || {};
     Object.keys(ws.presence).forEach(function (t) { if (now - ws.presence[t].t > 60000) delete ws.presence[t]; });
@@ -262,9 +296,12 @@ function step(token, action, since) {
     savePlayer(p, force, content);
     players.forEach(function (q) { if (q !== p) savePlayer(q, false, content); });
     saveWorld(ws, false);
+    if (firebaseBase()) live = { map: p.map, view: firebaseView(content, ws, p.map, players) };
     return { player: World.publicPlayer(content, p), world: World.view(content, ws, p.map, p, players),
       events: World.eventsFor(ws, since, p), seq: ws.seq };
   });
+  if (live) pushWorld(live.map, live.view);                  // outside the lock: the HTTP write must not block other players
+  return result;
 }
 
 /** Run once from the editor to check the setup: reads both spreadsheets and logs a summary. */

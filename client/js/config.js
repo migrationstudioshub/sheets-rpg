@@ -5,6 +5,10 @@
  */
 var GAME_CONFIG = {
   API_URL: 'https://script.google.com/macros/s/AKfycbwgvNgUbURE4p27Po2XPiBjAorqIxKDv0wJxnC9sxowo9jSbO9o8SyeY0oL5OjbOoYXmA/exec',
+  // Optional. The Firebase Realtime Database URL (e.g. https://<project>.firebaseio.com). When set
+  // (and API_URL is set too), the game listens here for live monster/player positions, pushed in
+  // ~100 ms, instead of waiting for the next poll. Empty = today's poll-only behaviour. See docs/SETUP.md.
+  FIREBASE_URL: 'https://sheets-rpg-73de1-default-rtdb.firebaseio.com/',
   ASSET_BASE: '../',            // repository root, relative to client/
   OFFLINE_TABLES: '../data/tables.json',
   SCALE: 2                      // on-screen pixels per art pixel

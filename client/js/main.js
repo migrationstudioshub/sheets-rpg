@@ -110,6 +110,7 @@
 
   function step(dir) {
     var r = Rules.tryMove(content, mapOf(), me.x, me.y, dir, World.viewOpts(content, mapOf(), view, me.id));
+    if (!r.ok && r.who && r.who.monster) { var d = Rules.DIRS[dir]; attackFx(me.x + d.dx, me.y + d.dy); }   // bumped a monster: the server turns this move into an attack
     me = Object.assign({}, me, { facing: dir }, r.ok ? { x: r.x, y: r.y } : {});
     send({ type: 'move', dirs: [dir] });
   }
@@ -201,7 +202,7 @@
       if (!m) { plan = null; return false; }
       if (near(m.x, m.y)) {
         if (now - lastAttack >= (content.config.attack_ms || 500) && !queue.length) {
-          lastAttack = now; send({ type: 'attack', x: m.x, y: m.y });
+          lastAttack = now; send({ type: 'attack', x: m.x, y: m.y }); attackFx(m.x, m.y);
         }
         return true;
       }
@@ -293,6 +294,16 @@
     disarm();
   }
   function disarm() { armed = null; hotbar(); }
+  /** Your own melee attacks land their swing instantly; the server's damage number follows when it answers. */
+  var lastAttackFx = 0;
+  function attackFx(tx, ty) {
+    var now = performance.now();
+    if (now - lastAttackFx < (content.config.attack_ms || 500) * 0.9) return;   // don't out-flash the real attack rate
+    lastAttackFx = now;
+    var dx = tx - me.x, dy = ty - me.y;
+    if (dx || dy) me.facing = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');   // matches the server's faceTo
+    fx.push({ kind: 'flash', x: tx, y: ty, r: 0, color: '#ffd9a0', t0: now, life: 260 });
+  }
   /** Your own spells animate the moment you cast them; the server's numbers follow when it answers. */
   var lastOwnCast = 0;
   function castFx(id, from, to) {
@@ -496,7 +507,7 @@
       else if (plan && !queue.some(function (a) { return a.type === 'move'; }) && now - lastStep >= moveMs * 0.9) { if (followPlan(now)) lastStep = now; }
       else if (held.length && now - holdSince >= HOLD_MS && now - lastStep >= moveMs) { step(held[held.length - 1]); lastStep = now; }
     }
-    var pollMs = api.mode === 'online' ? (content.config.poll_ms || 1000) : 250;
+    var pollMs = api.mode === 'online' ? (content.config.poll_ms || 500) : 250;
     if (now - lastReply > pollMs) poll();
 
     ease(shown, me, dt / moveMs);

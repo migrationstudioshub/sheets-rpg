@@ -132,6 +132,9 @@ var Api = (function () {
   };
 
   function create() {
+    // Add ?offline to the URL to force offline mode (runs shared/world.js here against
+    // data/tables.json), handy for play-testing changes before the server is updated.
+    if (typeof location !== 'undefined' && /[?&]offline(\b|=)/.test(location.search)) return new Offline();
     if (GAME_CONFIG.FUNCTIONS_URL) return new Functions(GAME_CONFIG.FUNCTIONS_URL);
     return GAME_CONFIG.API_URL ? new Online(GAME_CONFIG.API_URL) : new Offline();
   }

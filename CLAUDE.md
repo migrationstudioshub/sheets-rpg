@@ -94,14 +94,16 @@ for offline mode by updating `build_gamedata.py` too.
   `window.SheetsRPG` exposes `state()`, `camera()`, `aim()`, `plan()` for tests.
 - The owner's built-in browser can reach the live site and the Apps Script URL (good for checking the real server).
 
-## Status (8 Nov 2026)
-Moved to the studio accounts (fresh repository, new Google account; `docs/MIGRATION.md`); `API_URL` points at
-the studio's Apps Script web app. Old personal setup still to be retired (MIGRATION step 7).
+## Status (9 Nov 2026)
+Moved to the studio accounts (`docs/MIGRATION.md`): repo `migrationstudioshub/sheets-rpg` (one fresh commit, author
+"Migration Studios" with the GitHub noreply email — keep personal names/emails out of commits and files), Pages on,
+`production` environment with both secrets, automatic deploy green, `API_URL` = the studio's web app.
+Checked live on 9 Nov: join, move (server-checked), save, load all work. Measured with the current code
+(`faster-online` included): ~1.3–2.9 s per game request, ~8.7 s for the first join (cold start + content load).
+Left for the owner: delete the test character "Tester" in Players; retire the old personal setup (MIGRATION step 7).
 
-Done: M1 walkabout · M2 map editor · M3 RPG core · M4 skills (6 classes) · mouse controls + lockpicking · online server working.
-`faster-online` (fewer sheet writes, instant spell effects) is merged; the owner was deploying it (by hand, or through the
-new automatic deploy) — check the server answers with the new code, then re-measure. Measured online latency: ~1.2 s Apps Script baseline
-per request; ~2–3 s per game request before `faster-online`.
+Done: M1 walkabout · M2 map editor · M3 RPG core · M4 skills (6 classes) · mouse controls + lockpicking · online server ·
+deploy secrets locked to `main` · editor refuses to overwrite sheet edits made after it loaded (asks first).
 
 Next: **M5 multiplayer** (presence and `view.players` already exist; needs other players drawn/animated smoothly,
 chat, party/ally targeting UX, faster polling for nearby action) · **M6 story**: NPC dialogue (Dialogue tab), shops, quests.

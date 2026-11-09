@@ -32,8 +32,9 @@ const World = require('./shared/world.js');
 const CONTENT_URL = process.env.CONTENT_URL ||
   'https://script.google.com/macros/s/AKfycbwgvNgUbURE4p27Po2XPiBjAorqIxKDv0wJxnC9sxowo9jSbO9o8SyeY0oL5OjbOoYXmA/exec';
 let _content = null, _contentAt = 0;
+const _lastView = {};   // per warm instance: last public view written per map, so we skip identical pushes
 async function getContent() {
-  if (_content && Date.now() - _contentAt < 5 * 60 * 1000) return _content;
+  if (_content && Date.now() - _contentAt < 30 * 60 * 1000) return _content;   // content rarely changes; refetch rarely
   const res = await fetch(CONTENT_URL + '?action=content');
   const j = await res.json();
   if (!j || !j.content) throw new Error('could not load content');
@@ -93,11 +94,20 @@ async function step(token, action, since) {
     World.advance(content, ws, p.map, players, now, Math.random, ev);
   }
   World.record(ws, ev);
+  if (ws.log && ws.log.length > 50) ws.log = ws.log.slice(-50);   // keep recent events only, to shrink the stored world
 
-  const updates = { 'state/world': ws };
-  players.forEach(q => { if (q.token) updates['players/' + q.token] = q; });   // advance/act can change others (combat)
+  // Persist the actor and anyone combat touched this step — but NOT idle bystanders, so a simultaneous
+  // action by another player can't overwrite their position. Also writes fewer records.
+  const touched = new Set(ev.filter(e => e.to).map(e => e.to));
+  const updates = { 'state/world': ws, ['players/' + token]: p };
+  players.forEach(q => { if (q.token && q.id !== p.id && touched.has(q.id)) updates['players/' + q.token] = q; });
   await db.ref().update(updates);
-  await db.ref('world/' + p.map).set(firebaseView(content, ws, p.map, players));
+
+  // Only push the public view when the moving things actually changed — an idle heartbeat (no one
+  // moved, no monster stirred) writes nothing, so listeners download nothing.
+  const view = firebaseView(content, ws, p.map, players);
+  const signature = JSON.stringify(view.monsters) + '|' + JSON.stringify(view.players);
+  if (_lastView[p.map] !== signature) { _lastView[p.map] = signature; await db.ref('world/' + p.map).set(view); }
 
   return { player: World.publicPlayer(content, p), world: World.view(content, ws, p.map, p, players),
     events: World.eventsFor(ws, since, p), seq: ws.seq };

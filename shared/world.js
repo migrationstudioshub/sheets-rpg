@@ -914,7 +914,8 @@ var World = (function () {
           statuses: (m.statuses || []).map(function (st) { return st.id; }) };
       }),
       players: (players || []).filter(function (q) { return q.id !== p.id && q.map === mapId; }).map(function (q) {
-        return { id: q.id, name: q.name, x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level };
+        // class + equipment let other clients draw this player's paper-doll (base body + worn gear)
+        return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {}, x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level };
       })
     };
   }

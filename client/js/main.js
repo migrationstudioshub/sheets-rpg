@@ -24,6 +24,22 @@
 
   var KEYS = { ArrowUp: 'N', KeyW: 'N', ArrowRight: 'E', KeyD: 'E', ArrowDown: 'S', KeyS: 'S', ArrowLeft: 'W', KeyA: 'W' };
 
+  // Paper-doll stacking order (low = drawn first / behind). The base body sits near the
+  // bottom; worn gear draws over it, weapon last. Unknown slots land on top.
+  var SLOT_Z = { back: 0, body: 1, legs: 2, armor: 3, head: 4, helm: 5, offhand: 6, weapon: 7 };
+  /** Ordered layer paths for a player: class base body + each equipped item that has a worn
+   *  sprite, lowest slot first. null when the class has no body art (renderer draws the hero). */
+  function playerLayers(p) {
+    var cls = p && content.classes[p['class']];
+    if (!cls || !cls.bodySprite) return null;
+    var out = [{ z: SLOT_Z.body, path: cls.bodySprite }], eq = p.equipment || {};
+    Object.keys(eq).forEach(function (slot) {
+      var it = content.items[eq[slot]];
+      if (it && it.wornSprite) out.push({ z: SLOT_Z[slot] != null ? SLOT_Z[slot] : 9, path: it.wornSprite });
+    });
+    return out.sort(function (a, b) { return a.z - b.z; }).map(function (l) { return l.path; });
+  }
+
   function setNet(text, bad) { $('hud-net').textContent = text; $('hud-net').className = bad ? 'bad' : ''; }
   function mapOf() { return content.maps[me.map]; }
 
@@ -536,7 +552,7 @@
 
     ease(shown, me, dt / moveMs);
     var myst = me.statuses && me.statuses.length && content.statuses[me.statuses[0].id];
-    var actors = [{ x: shown.x, y: shown.y, facing: me.facing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, statusColor: myst ? myst.color : '' }];
+    var actors = [{ x: shown.x, y: shown.y, facing: me.facing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, statusColor: myst ? myst.color : '' }];
     var seen = {};
     view.monsters.forEach(function (m) {
       var d = content.monsters[m.ref] || { name: m.ref, sprite: '' }, s = shownOthers[m.id] || (shownOthers[m.id] = { x: m.x, y: m.y });
@@ -547,7 +563,7 @@
     view.players.forEach(function (q) {
       var s = shownOthers['p:' + q.id] || (shownOthers['p:' + q.id] = { x: q.x, y: q.y });
       ease(s, q, dt / moveMs); seen['p:' + q.id] = 1;
-      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', hp: q.hp, maxHp: q.maxHp });
+      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp });
     });
     Object.keys(shownOthers).forEach(function (k) { if (!seen[k]) delete shownOthers[k]; });
 
@@ -645,6 +661,7 @@
   // read-only peek for tests and debugging in the browser console
   window.SheetsRPG = { state: function () { return { me: me, view: view, queue: queue.length }; },
     plan: function () { return plan; },
+    layers: function () { return me ? playerLayers(me) : null; },
     camera: function () { return lastCam; },
     aim: function () { return { armed: armed, hover: hover, check: armed && hover ? aimCheck(hover) : null }; } };
 })();

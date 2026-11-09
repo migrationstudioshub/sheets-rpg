@@ -33,7 +33,7 @@ test('a new warrior starts at the start point with class stats and items', () =>
   assert.deepStrictEqual([p.map, p.x, p.y], ['map_3', 9, 15]);
   const st = World.stats(c, p);
   assert.deepStrictEqual([p.hp, st.maxHp, st.atk, st.def], [120, 120, 6, 2]);
-  assert.deepStrictEqual(p.inventory, [{ item: 'potion', qty: 2 }]);
+  assert.deepStrictEqual(p.inventory, [{ item: 'potion', qty: 2 }, { item: 'wooden_sword', qty: 1 }, { item: 'leather_armor', qty: 1 }]);
 });
 
 test('the hut door is closed, opens on interact, and can then be walked through', () => {
@@ -53,7 +53,7 @@ test('the hut chest gives its contents once per player, then is empty', () => {
   let ev = act(s, { type: 'interact' });
   assert.match(texts(ev), /You open the wooden chest/);
   assert.strictEqual(World.count(s.p, 'potion'), 4);
-  assert.strictEqual(World.count(s.p, 'wooden_sword'), 1);
+  assert.strictEqual(World.count(s.p, 'wooden_sword'), 2);          // one from the warrior's start kit + one from the chest
   ev = act(s, { type: 'interact' });
   assert.match(texts(ev), /It is empty/);
   const v = World.view(s.c, s.ws, 'map_3', s.p, [s.p]);

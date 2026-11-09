@@ -45,7 +45,10 @@ var Assets = (function () {
       Object.keys(o.spriteStates).forEach(function (s) { paths[o.spriteStates[s]] = 1; });
     });
     Object.keys(content.monsters || {}).forEach(function (k) { if (content.monsters[k].sprite) paths[content.monsters[k].sprite] = 1; });
-    Object.keys(content.items || {}).forEach(function (k) { if (content.items[k].sprite) paths[content.items[k].sprite] = 1; });
+    Object.keys(content.items || {}).forEach(function (k) {
+      var it = content.items[k]; if (it.sprite) paths[it.sprite] = 1; if (it.wornSprite) paths[it.wornSprite] = 1;   // bag icon + worn paper-doll layer
+    });
+    Object.keys(content.classes || {}).forEach(function (k) { if (content.classes[k].bodySprite) paths[content.classes[k].bodySprite] = 1; });   // player base bodies
     return Promise.all(Object.keys(paths).map(load));
   }
 

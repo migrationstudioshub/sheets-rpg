@@ -252,8 +252,12 @@ def build():
     t['MapEntities'] = ents
 
     sp = lambda n: f'art/sprites/{n}.png'
+    # worn_sprite = the paper-doll layer drawn on the body when the item is equipped (see render.js)
+    WORN = {'wooden_sword': 'sword_wooden', 'iron_sword': 'sword_iron',
+            'leather_armor': 'chest_leather', 'iron_armor': 'chest_iron'}
+    worn = lambda n: f'art/sprites/paperdoll/{WORN[n]}.png' if n in WORN else ''
     t['Items'] = [
-        {'id': i, 'name': n, 'sprite': sp(i), 'type': ty, 'slot': sl, 'stack_max': st, 'value': v,
+        {'id': i, 'name': n, 'sprite': sp(i), 'worn_sprite': worn(i), 'type': ty, 'slot': sl, 'stack_max': st, 'value': v,
          'atk': a, 'def': d, 'heal': hl, 'mp': mp, 'on_use': '', 'notes': ''}
         for i, n, ty, sl, st, v, a, d, hl, mp in [(*r, 0) if len(r) == 9 else r for r in [
             ('potion', 'Potion', 'consumable', '', 20, 10, 0, 0, 40),
@@ -294,13 +298,16 @@ def build():
     CLASS_COLS = ['id', 'name', 'hp', 'atk', 'def', 'mp', 'hp_per_level', 'atk_per_level', 'def_per_level',
                   'mp_per_level', 'mp_regen', 'start_items', 'skills', 'notes', 'lockpicking']
     t['Classes'] = [dict(zip(CLASS_COLS, r)) for r in [
-        ('warrior', 'Warrior', 120, 6, 2, 30, 12, 2, 1, 3, 1.0, 'potion:2', 'charge@1, cleave@1, second_wind@3', 'Front line', 0),
+        ('warrior', 'Warrior', 120, 6, 2, 30, 12, 2, 1, 3, 1.0, 'potion:2, wooden_sword:1, leather_armor:1', 'charge@1, cleave@1, second_wind@3', 'Front line', 0),
         ('rogue', 'Rogue', 90, 7, 1, 40, 9, 2, 1, 4, 1.5, 'potion:3, gold:20, lockpick:3', 'throw_dagger@1, poison_strike@1, shadow_step@3', 'Fast, ranged poke', 0.3),
         ('mage', 'Mage', 70, 3, 1, 70, 7, 1, 1, 7, 3.0, 'potion:1, mana_potion:2', 'fireball@1, frost_bolt@1, frost_nova@3', 'Ranged magic, fragile', 0),
         ('paladin', 'Paladin', 110, 5, 3, 45, 11, 2, 1, 4, 1.5, 'potion:2', 'holy_strike@1, blessing@1, lay_on_hands@3', 'Support: protects allies', 0),
         ('priest', 'Priest', 80, 3, 1, 80, 8, 1, 1, 8, 3.0, 'potion:1, mana_potion:2', 'heal@1, smite@1, renew@3', 'Healer', 0),
         ('barbarian', 'Barbarian', 140, 7, 1, 30, 14, 2, 1, 2, 1.0, 'potion:2', 'whirlwind@1, rage@1, leap@3', 'Brute force', 0),
     ]]
+    # Every class shares one placeholder base body for now; swap per-class bodies in later.
+    for _cls in t['Classes']:
+        _cls['body_sprite'] = 'art/sprites/paperdoll/body_base.png'
     STATUS_COLS = ['id', 'name', 'kind', 'amount', 'tick_ms', 'atk', 'def', 'slow', 'color', 'notes']
     t['Statuses'] = [dict(zip(STATUS_COLS, r)) for r in [
         ('burn', 'Burning', 'dot', 3, 1000, 0, 0, 1, '#ff7a2a', 'Damage every tick'),
@@ -368,9 +375,11 @@ README = [
     ('Maps', 'terrain = JSON grid of Terrain ids, row by row. Edited with the map editor, not by hand.'),
     ('MapEntities', 'Objects placed on maps. key is unique; data = JSON of property overrides.'),
     ('Items', 'Everything that goes in a bag. type: consumable, weapon, armor, key, material. heal = HP restored.'),
+    ('', 'worn_sprite (weapons/armor): the paper-doll layer drawn on the body when equipped. 32x48 PNG, transparent, lined up on the base body.'),
     ('Monsters', 'Enemy types. Placed through spawn objects on maps. move_ms = time per step; aggro_range = tiles.'),
     ('LootTables', 'Drops: each row rolls on its own. chance 0-1; item "gold" means money.'),
     ('Classes', 'lockpicking = bonus chance to pick locks (0.3 = +30%). Starting stats and growth per level. start_items like potion:2, gold:20. skills like fireball@1, frost_nova@3 (skill@level learned).'),
+    ('', 'body_sprite: the base paper-doll body (32x48 PNG) drawn for this class; worn gear layers on top of it.'),
     ('Skills', 'target: enemy, ally, self, tile (a spot) or around (centred on the caster). range and area in tiles. los TRUE = walls and blocking objects stop it.'),
     ('', 'effect: damage, heal or none. Amount = power + scale x stat (stat: atk or level); damage then minus the target\'s defence. status + status_ms add a status. dash TRUE = the caster moves there.'),
     ('Statuses', 'kind: dot (damage per tick), hot (healing per tick), buff (atk/def change), slow (steps take slow x longer), stun (cannot act).'),

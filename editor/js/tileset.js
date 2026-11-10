@@ -49,24 +49,27 @@ var Tileset = (function () {
     var what = h('textarea', { rows: 2, placeholder: 'the surface, e.g. "loose grey gravel, small stones, a few weeds"' });
     var decals = h('input', { placeholder: 'six marks, e.g. "a rock, a weed clump, a bolt, a puddle, pebbles, a crushed can"' });
     var material = h('select', {}, [h('option', { value: 'brick', text: 'brick' }), h('option', { value: 'concrete', text: 'concrete' })]);
-    fields = { kind: kind, name: name, what: what, decals: decals, material: material };
+    var pattern = h('input', { type: 'checkbox' });
+    fields = { kind: kind, name: name, what: what, decals: decals, material: material, pattern: pattern };
 
     var whatField = field('Surface', what, 'What the ground is. Fills the tile edge to edge, no borders.');
     var decalsField = field('Decals (optional)', decals, 'Bigger marks scattered on interior cells. One Gemini image.');
     var matField = field('Material', material, 'Walls are procedural (no Gemini key needed).');
+    var patternField = h('div', { className: 'field check' }, pattern,
+      h('label', { text: 'Built surface — keep seams/welds/joints (metal plates, planks, tiles, pavers)' }));
 
     var form = h('div', { className: 'gearform' },
       h('div', { className: 'form' },
         field('Kind', kind),
         field('Name', name, 'Lowercase, numbers, underscores. Becomes the file names.'),
-        whatField, decalsField, matField,
+        whatField, patternField, decalsField, matField,
         h('div', { className: 'inline' },
           h('button', { className: 'primary', text: 'Generate', onclick: generate }),
           h('button', { text: 'API key…', title: 'Set up the Gemini key (opens a local file)', onclick: showKeySetup })),
         h('div', { id: 'tilestatus', className: 'note' }),
         h('div', { className: 'note sub', text: 'Needs the local server running. Saves into art/tilesets/ and merges scatter.json.' })
       ));
-    form._whatField = whatField; form._decalsField = decalsField; form._matField = matField;
+    form._whatField = whatField; form._decalsField = decalsField; form._matField = matField; form._patternField = patternField;
 
     outEl = h('div', { className: 'gearout' });
     root = h('div', { id: 'tilesetview', className: 'makerview' }, form, outEl);
@@ -77,9 +80,11 @@ var Tileset = (function () {
 
   function refreshConditional() {
     var ground = fields.kind.value === 'ground';
-    root.querySelector('.gearform')._whatField.style.display = ground ? '' : 'none';
-    root.querySelector('.gearform')._decalsField.style.display = ground ? '' : 'none';
-    root.querySelector('.gearform')._matField.style.display = ground ? 'none' : '';
+    var f = root.querySelector('.gearform');
+    f._whatField.style.display = ground ? '' : 'none';
+    f._patternField.style.display = ground ? '' : 'none';
+    f._decalsField.style.display = ground ? '' : 'none';
+    f._matField.style.display = ground ? 'none' : '';
   }
 
   // ---- shared key handling (same local server + localStorage key as the Gear view) ----
@@ -118,7 +123,7 @@ var Tileset = (function () {
   function generate() {
     var kind = fields.kind.value;
     var body = { kind: kind, name: fields.name.value.trim() };
-    if (kind === 'ground') { body.what = fields.what.value.trim(); body.decals = fields.decals.value.trim(); }
+    if (kind === 'ground') { body.what = fields.what.value.trim(); body.decals = fields.decals.value.trim(); body.pattern = fields.pattern.checked; }
     else { body.material = fields.material.value; }
     if (!/^[a-z0-9_]+$/.test(body.name)) { setStatus('Name must be snake_case (lowercase letters, numbers, underscores).', 'bad'); return; }
     if (kind === 'ground' && !body.what) { setStatus('Describe the ground surface.', 'bad'); return; }

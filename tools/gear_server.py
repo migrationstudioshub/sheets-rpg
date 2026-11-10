@@ -271,6 +271,8 @@ def tile_make(req):
             if not what:
                 return {"error": "Describe the ground surface."}
             argv = ["ground", "--name", name, "--what", what, "--under", under]
+            if req.get("pattern"):                   # built surfaces: keep seams/welds, small units
+                argv += ["--pattern"]
             decals = (req.get("decals") or "").strip()
             if decals:
                 argv += ["--decals", decals]

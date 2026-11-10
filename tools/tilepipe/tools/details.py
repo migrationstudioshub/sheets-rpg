@@ -84,10 +84,14 @@ def speckle(t, dom, rng, amount=0.08):
     return t
 
 
-def run(src, prefix, contrast=2.5, shift=0.0, joints=0, max_details=24, seed=0):
+def run(src, prefix, contrast=2.5, shift=0.0, joints=0, max_details=24, seed=0, pattern=False):
     S = texture(src, contrast=contrast, shift=shift)
     base_cols = main_colours(S)
     flat, isbase = paint_out(S, base_cols)
+    if pattern:
+        # built surfaces (plates, planks, tiles): the seams and welds ARE the material, so the base keeps
+        # the full texture; only small specks become scatter details
+        flat = S.copy()
 
     # base tile: quilt the painted-out texture so it wraps
     rng = np.random.default_rng(seed)
@@ -99,13 +103,14 @@ def run(src, prefix, contrast=2.5, shift=0.0, joints=0, max_details=24, seed=0):
         if best is None or err < best[1]:
             best = (t, err)
     base = best[0].astype(np.uint8)
-    base = speckle(base, base_cols[0], rng)
+    if not pattern:
+        base = speckle(base, base_cols[0], rng)
     if joints:
         base = mt.add_joints(base, joints)
     Image.fromarray(base).save(prefix + ".png")
 
     # details: blobs of non-base colour, plus a 1px base-colour-free crop
-    comps = [c for c in components(~isbase) if 3 <= len(c) <= 220]
+    comps = [c for c in components(~isbase) if 3 <= len(c) <= (40 if pattern else 220)]
     comps = [c for c in comps if np.ptp(c[:, 0]) < 24 and np.ptp(c[:, 1]) < 24
              and c[:, 0].min() > 0 and c[:, 1].min() > 0 and c[:, 0].max() < S.shape[0] - 1 and c[:, 1].max() < S.shape[1] - 1]
     comps.sort(key=len, reverse=True)

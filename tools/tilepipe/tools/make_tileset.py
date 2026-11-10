@@ -4,7 +4,9 @@ Ground (Nano Banana texture -> plain base + variety layer -> 8x8 autotile sheet)
   python3 make_tileset.py ground --name gravel --what "loose grey gravel, small stones, a few weeds" \
       --decals "six details on gravel: a large rock, a weed clump, a rusty bolt, a puddle, scattered pebbles, a crushed can"
   python3 make_tileset.py ground --name tile_floor --what "plain worn linoleum" --joints 16 --under wood
-  options: --joints N  (slab/tile lines every N px)  --contrast 2.5  --shift -0.2 (darker)
+  python3 make_tileset.py ground --pattern --name steel_floor --what "salvaged steel sheets welded together"
+  options: --pattern  (built surfaces: keeps seams/welds/joints; without it the base is flattened to 2 colours)
+           --joints N  (slab/tile lines every N px)  --contrast 2.5  --shift -0.2 (darker)
            --details-chance 0.4 --decals-chance 0.06  --under <terrain> (what the review sits on)
            --raw <png>  reuse an existing texture image instead of generating one (no credits)
 
@@ -74,8 +76,9 @@ def review_ground(name, under, out):
 
 
 def ground(a):
-    raw = a.raw or make_tile.gen(a.name, a.what)
-    details.run(raw, f"{TILES}/{a.name}", a.contrast, a.shift, a.joints)
+    raw = a.raw or make_tile.gen(a.name, a.what, a.pattern)
+    contrast = a.contrast if a.contrast is not None else (1.3 if a.pattern else 2.5)
+    details.run(raw, f"{TILES}/{a.name}", contrast, a.shift, a.joints, pattern=a.pattern)
     autotile.build(f"{TILES}/{a.name}.png", f"{TILES}/{a.name}_auto.png")
     n_details = json.load(open(f"{TILES}/{a.name}_details.json"))["count"]
     n_decals = 0
@@ -135,7 +138,9 @@ if __name__ == "__main__":
     ap.add_argument("--decals", help="ground: a list of six bigger marks for this surface")
     ap.add_argument("--raw", help="ground: reuse this texture image (skip generation)")
     ap.add_argument("--joints", type=int, default=0)
-    ap.add_argument("--contrast", type=float, default=2.5)
+    ap.add_argument("--contrast", type=float, default=None, help="default 2.5 (natural ground) or 1.3 (--pattern)")
+    ap.add_argument("--pattern", action="store_true",
+                    help="built surfaces (metal plates, planks, tiles, pavers): keep seams/joints in the base tile and ask for small units")
     ap.add_argument("--shift", type=float, default=0.0)
     ap.add_argument("--details-chance", type=float, default=0.4)
     ap.add_argument("--decals-chance", type=float, default=0.06)

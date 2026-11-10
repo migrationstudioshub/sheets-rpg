@@ -9,6 +9,10 @@ Runs locally only (needs a Google Gemini key in `GOOGLE_API` or `tools/google_ap
 Pillow + numpy). It writes scratch into `tools/tilepipe/raw/` and `tools/tilepipe/out/` (git-ignored);
 approved sheets are copied into `art/tilesets/` by the save route.
 
+Making new tilesets: built surfaces (metal plates, planks, tiles, pavers) need `--pattern`; without
+it the base tile is flattened to 2 colours, which erases seams and welds. Natural ground (dirt,
+grass) leaves it off.
+
 - `tools/make_tileset.py` — one terrain (`ground`) or `wall` end to end (the server calls this).
 - `tools/make_tile.py`, `details.py`, `autotile.py`, `make_wall.py`, `tile_preview.py` — its helpers.
 - `tools/make_prop.py`, `nano.py`, `pixelize.py`, `palette.py`, `tint.py` — shared image tools.

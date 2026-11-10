@@ -139,6 +139,33 @@ def build():
                     'notes': 'Autotiled: edges and corners are picked automatically'})
     t['Terrain'] = terrain
 
+    # ---- new tilesets + terrain for the art demo (ground autotiles + RPG-Maker walls) ----
+    # The renderer derives the base tile, variety sheets and wall face from the image filename, so
+    # these rows need nothing special beyond pointing at the <name>_auto.png / wall_<m>_top_auto.png sheets.
+    def _tileset(tid, img):
+        return {'id': tid, 'image': 'art/tilesets/' + img, 'tile_size': 32, 'columns': 8,
+                'layout': 'blob47_craftpix', 'notes': 'from the tileset maker'}
+    t['Tilesets'] += [
+        _tileset('ts_asphalt', 'asphalt_auto.png'), _tileset('ts_sidewalk', 'sidewalk_auto.png'),
+        _tileset('ts_dirt', 'dirt_auto.png'), _tileset('ts_grass', 'grass_dead_auto.png'),
+        _tileset('ts_wood', 'floor_wood_auto.png'),
+        _tileset('ts_wbrick', 'wall_brick_top_auto.png'), _tileset('ts_wconcrete', 'wall_concrete_top_auto.png'),
+    ]
+    def _gterr(tid, nm, color, ats, passable):
+        p = 1 if passable else 0
+        return {'id': tid, 'name': nm, 'color': color, 'sprite': '', 'autotile': ats,
+                'pass_n': p, 'pass_e': p, 'pass_s': p, 'pass_w': p, 'frames': '', 'frame_ms': '',
+                'notes': 'from the tileset maker'}
+    terrain.extend([
+        _gterr('g_asphalt', 'Asphalt', '#26262b', 'ts_asphalt', True),
+        _gterr('g_sidewalk', 'Sidewalk', '#45474b', 'ts_sidewalk', True),
+        _gterr('g_dirt', 'Dirt', '#45392a', 'ts_dirt', True),
+        _gterr('g_grass', 'Dead grass', '#39402b', 'ts_grass', True),
+        _gterr('f_wood', 'Wood floor', '#3a2a1a', 'ts_wood', True),
+        _gterr('w_brick', 'Brick wall', '#2b2320', 'ts_wbrick', False),
+        _gterr('w_concrete', 'Concrete wall', '#2b2b2b', 'ts_wconcrete', False),
+    ])
+
     t['Kinds'] = [
         {'kind': k, 'property': p, 'type': ty, 'default': d, 'notes': n} for k, p, ty, d, n in [
             ('deco', 'states', 'states', '', 'Scenery; nothing happens on interact'),
@@ -227,6 +254,28 @@ def build():
                     'sprite_top': imgur('vIDIahx'), 'sprite_states': '', 'frames': '', 'frame_ms': '',
                     'walkable': False, 'blocks_sight': True, 'properties': '', 'on_interact': '',
                     'notes': 'Two tiles tall: trunk (blocks) + crown (drawn above characters)'})
+    # ---- new map objects from the objects maker (multi-tile footprints, facings, layers) ----
+    _op = lambda n: 'art/sprites/objects/' + n + '.png'
+    DEMO_OBJECTS = [
+        ('table', 'Table', _op('table'), '', False, False, {'width': 2}),
+        ('chair', 'Chair', _op('chair_down'),
+         'down=' + _op('chair_down') + '; up=' + _op('chair_up') + '; side=' + _op('chair_side'), False, False, {'width': 1}),
+        ('crate', 'Crate', _op('chest'), '', False, False, {'width': 1}),
+        ('barrel2', 'Barrel', _op('barrel'), '', False, False, {'width': 1}),
+        ('wardrobe', 'Wardrobe', _op('wardrobe'), '', False, False, {'width': 2}),
+        ('workbench', 'Workbench', _op('workbench'), '', False, False, {'width': 2}),
+        ('kitchen_sink', 'Sink', _op('kitchen_sink'), '', False, False, {'width': 1}),
+        ('kitchen_stove', 'Stove', _op('kitchen_stove'), '', False, False, {'width': 2}),
+        ('car_wreck', 'Car wreck', _op('car_wreck'), '', False, True, {'width': 4}),
+        ('tree_dead', 'Dead tree', _op('tree_dead'), '', False, True, {'width': 2}),
+        ('door_wood', 'Wooden door', _op('door_wood'), '', False, True, {'width': 1, 'layer': 'wall'}),
+        ('blood', 'Blood', _op('blood'), '', True, False, {'width': 1, 'layer': 'ground_decal'}),
+    ]
+    for (oid, nm, spr, states, walk, bsight, props) in DEMO_OBJECTS:
+        objects.append({'id': oid, 'name': nm, 'kind': 'deco', 'sprite': spr, 'sprite_top': '',
+                        'sprite_states': states, 'frames': '', 'frame_ms': '', 'walkable': walk,
+                        'blocks_sight': bsight, 'properties': json.dumps(props), 'on_interact': '',
+                        'notes': 'from the objects maker'})
     t['Objects'] = objects
 
     maps, ents = [], []
@@ -259,6 +308,32 @@ def build():
                          'data': json.dumps(data) if data else ''})
         maps.append({'id': m['id'], 'name': m['name'], 'width': len(grid[0]), 'height': len(grid),
                      'terrain': json.dumps(grid, separators=(',', ':')), 'notes': 'imported'})
+    # ---- art demo map: new autotiles + variety layer + a concrete wall + multi-tile objects ----
+    AW, AH = 18, 12
+    demo = [['g_grass'] * AW for _ in range(AH)]
+    def _rect(x0, y0, x1, y1, tid):
+        for yy in range(y0, y1 + 1):
+            for xx in range(x0, x1 + 1):
+                demo[yy][xx] = tid
+    _rect(0, 6, AW - 1, 7, 'g_asphalt')     # road across the middle
+    _rect(0, 8, AW - 1, 8, 'g_sidewalk')    # kerb
+    _rect(1, 1, 4, 3, 'g_dirt')             # a dirt patch
+    _rect(10, 2, 16, 5, 'f_wood')           # interior floor
+    _rect(10, 1, 16, 1, 'w_concrete')       # north wall: top row (its 2-tile face renders below)
+    demo_ents = [
+        (2, 10, 'table', None), (4, 10, 'chair', {'facing': 'down'}), (6, 10, 'chair', {'facing': 'side'}),
+        (8, 10, 'crate', None), (0, 6, 'car_wreck', None), (14, 9, 'tree_dead', None),
+        (11, 4, 'wardrobe', None), (15, 4, 'barrel2', None), (12, 3, 'door_wood', None),
+        (13, 4, 'blood', {'cell': 2}),
+    ]
+    dn = 0
+    for (x, y, ref, data) in demo_ents:
+        dn += 1
+        ents.append({'map': 'map_art_demo', 'key': 'map_art_demo.e%d' % dn, 'x': x, 'y': y,
+                     'ref': ref, 'data': json.dumps(data) if data else ''})
+    maps.append({'id': 'map_art_demo', 'name': 'Art demo', 'width': AW, 'height': AH,
+                 'terrain': json.dumps(demo, separators=(',', ':')), 'notes': 'demo of the new tileset + object art'})
+
     t['Maps'] = maps
     t['MapEntities'] = ents
 

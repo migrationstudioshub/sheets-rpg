@@ -20,8 +20,9 @@ const content = Content.build(tables);
 const wild = content.maps.map_3;
 
 test('all four old maps imported at 16x16', () => {
-  assert.deepStrictEqual(Object.keys(content.maps), ['map_0', 'map_1', 'map_2', 'map_3']);
-  Object.values(content.maps).forEach(m => { assert.strictEqual(m.width, 16); assert.strictEqual(m.height, 16); });
+  const old = ['map_0', 'map_1', 'map_2', 'map_3'];
+  assert.deepStrictEqual(Object.keys(content.maps).filter(id => old.indexOf(id) >= 0), old);
+  old.forEach(id => { const m = content.maps[id]; assert.strictEqual(m.width, 16); assert.strictEqual(m.height, 16); });
 });
 
 test('every map cell and entity points at existing data', () => {
@@ -270,7 +271,7 @@ test('saveMap replaces one map and its entities, leaving the others alone', () =
     entities: [{ key: 'map_3.e1', x: 2, y: 2, ref: 'obj_0', data: { contents: 'potion:2', per_player: true } }] });
   assert.ok(r.ok, r.error);
   const after = tablesNow();
-  assert.strictEqual(after.Maps.length, 4);
+  assert.strictEqual(after.Maps.length, 5);   // 4 imported + the art demo
   assert.strictEqual(after.Maps.find(r => r.id === 'map_3').name, 'Wilderness');
   assert.strictEqual(after.MapEntities.filter(r => r.map !== 'map_3').length, otherEnts);
   const mine = after.MapEntities.filter(r => r.map === 'map_3');
@@ -285,10 +286,10 @@ test('saveMap can add a new map; deleteMap removes it and its entities', () => {
   const grid = [['til_3', 'til_3'], ['til_3', 'til_3']];
   assert.ok(call({ action: 'saveMap', key: 'secret-key', map: { id: 'map_9', name: 'Tiny', terrain: grid },
     entities: [{ key: 'map_9.e1', x: 1, y: 1, ref: 'obj_20', data: '' }] }).ok);
-  assert.strictEqual(tablesNow().Maps.length, 5);
+  assert.strictEqual(tablesNow().Maps.length, 6);   // 5 + the new map_9
   assert.ok(call({ action: 'deleteMap', key: 'secret-key', id: 'map_9' }).ok);
   const t = tablesNow();
-  assert.strictEqual(t.Maps.length, 4);
+  assert.strictEqual(t.Maps.length, 5);
   assert.strictEqual(t.MapEntities.filter(r => r.map === 'map_9').length, 0);
 });
 

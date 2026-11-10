@@ -3,6 +3,17 @@ art/inbox/
 tools/gearpipe/out/gear/*
 !tools/gearpipe/out/gear/.gitkeep
 tools/gearpipe/raw/gear/
+# tileset / object maker scratch output (generated sheets kept out of git)
+tools/tilepipe/out/
+tools/tilepipe/raw/*
+!tools/tilepipe/raw/props/
+tools/tilepipe/raw/props/*
+!tools/tilepipe/raw/props/chest_o_v2.png
+tools/objpipe/out/
+tools/objpipe/raw/*
+!tools/objpipe/raw/props/
+tools/objpipe/raw/props/*
+!tools/objpipe/raw/props/chest_o_v2.png
 # local Gemini API key for the gear maker (never commit this)
 tools/google_api_key.txt
 __pycache__/

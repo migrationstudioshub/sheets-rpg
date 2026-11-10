@@ -67,9 +67,10 @@
   .help table { border-collapse: collapse; margin-top: 8px; }
   .help td { padding: 2px 6px 2px 0; color: var(--dim); }
   .help td.k { color: var(--text); white-space: nowrap; }
-  /* gear maker view: covers the editing row (left + main + right) */
-  #gearview { grid-area: 2 / 1 / 3 / 4; display: none; min-height: 0; background: var(--bg); z-index: 1; }
-  #gearview.shown, #gearview[style*="flex"] { display: flex; }
+  /* art maker views (gear / tileset / objects): cover the editing row (left + main + right) */
+  #gearview, #tilesetview, #objectsview { grid-area: 2 / 1 / 3 / 4; display: none; min-height: 0; background: var(--bg); z-index: 1; }
+  #gearview[style*="flex"], #tilesetview[style*="flex"], #objectsview[style*="flex"] { display: flex; }
+  .gearprev { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
   .gearform { width: 340px; flex: none; overflow: auto; padding: 12px; border-right: 1px solid var(--line); background: var(--panel); }
   .gearform textarea { resize: vertical; }
   .gearout { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 14px; }
@@ -95,7 +96,8 @@
     // Load the code without the browser cache, so an update shows up on the next reload.
     (function () {
       var files = ['../shared/content.js', '../shared/autotile.js', '../shared/rules.js', '../shared/world.js', '../client/js/config.js',
-                   '../client/js/assets.js', '../client/js/render.js', '../client/js/tint.js', 'js/store.js', 'js/panels.js', 'js/editor.js', 'js/gear.js'];
+                   '../client/js/assets.js', '../client/js/scatter.js', '../client/js/render.js', '../client/js/tint.js',
+                   'js/store.js', 'js/panels.js', 'js/editor.js', 'js/gear.js', 'js/tileset.js', 'js/objects.js'];
       var v = Date.now();
       (function next(i) {
         if (i >= files.length) return;

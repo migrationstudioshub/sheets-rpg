@@ -54,19 +54,32 @@ var Panels = (function () {
     ['fill', 'Fill', 'F'], ['pick', 'Eyedropper', 'I'], ['erase', 'Erase objects', 'E']];
   var ICONS = { select: '⬚', brush: '✎', rect: '▭', fill: '▧', pick: '⊙', erase: '⌫' };
 
+  // Map + the three offline art makers (each a self-contained module that owns the editing row).
+  var SCREENS = [
+    ['map', 'Map', 'Map editor', null],
+    ['gear', 'Gear', 'Make character gear art (needs the local server)', function () { return typeof Gear !== 'undefined' ? Gear : null; }],
+    ['tileset', 'Tileset', 'Make ground terrains and walls (needs the local server)', function () { return typeof Tileset !== 'undefined' ? Tileset : null; }],
+    ['object', 'Objects', 'Make map objects (needs the local server)', function () { return typeof MapObjects !== 'undefined' ? MapObjects : null; }]
+  ];
+  function screenMod(id) { var s = SCREENS.filter(function (x) { return x[0] === id; })[0]; return s && s[3] ? s[3]() : null; }
+  function showScreen(id) {
+    if (E.screen === id) return;
+    var cur = screenMod(E.screen); if (cur) cur.hide();      // back to map, restores the panels
+    var next = screenMod(id); if (next) next.show();          // a maker takes over the row
+  }
   function screenToggle() {
     return h('div', { className: 'group right' }, h('span', { className: 'lbl', text: 'View' }),
-      h('span', { className: 'layer' },
-        h('button', { className: E.screen !== 'gear' ? 'on' : '', title: 'Map editor', text: 'Map',
-          onclick: function () { if (E.screen === 'gear') Gear.hide(); } }),
-        h('button', { className: E.screen === 'gear' ? 'on' : '', title: 'Make character gear art (needs the local gear server)', text: 'Gear',
-          onclick: function () { if (E.screen !== 'gear') Gear.show(); } })));
+      h('span', { className: 'layer' }, SCREENS.map(function (s) {
+        return h('button', { className: E.screen === s[0] ? 'on' : '', title: s[2], text: s[1],
+          onclick: function () { showScreen(s[0]); } });
+      })));
   }
 
   function toolbar() {
     var bar = $('toolbar'); bar.innerHTML = '';
-    if (E.screen === 'gear') {
-      bar.appendChild(h('div', { className: 'group' }, h('strong', { text: 'Gear maker' }),
+    if (E.screen !== 'map') {
+      var titles = { gear: 'Gear maker', tileset: 'Tileset maker', object: 'Objects maker' };
+      bar.appendChild(h('div', { className: 'group' }, h('strong', { text: titles[E.screen] || 'Art maker' }),
         h('span', { className: 'lbl', text: 'offline art pipeline' })));
       bar.appendChild(screenToggle());
       return;

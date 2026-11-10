@@ -453,7 +453,7 @@ var E = {
 
   var KEYS = { b: 'brush', r: 'rect', f: 'fill', i: 'pick', e: 'erase', v: 'select' };
   addEventListener('keydown', function (ev) {
-    if (E.screen === 'gear') return;             // the gear maker owns the screen; no map shortcuts
+    if (E.screen !== 'map') return;              // an art maker owns the screen; no map shortcuts
     var tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     var k = ev.key.toLowerCase();

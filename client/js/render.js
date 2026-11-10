@@ -24,30 +24,56 @@ var Render = (function () {
     return { sx: i * fw, sw: fw, fh: Math.min(img.height, fw) };
   }
 
+  var NT = 32;   // sprites are authored at 32 px per tile; the footprint is the bottom 32 px
+
+  /** The object layer: 'object' (y-sorted, default), 'wall' (over a wall face) or 'ground_decal' (flat). */
+  function layerOf(o) { return (o.properties && o.properties.layer) || 'object'; }
+
+  /** Which sprite to show: an active state (open/empty…) wins, else the facing view, else the base sprite. */
+  function objPath(o, st, facing) {
+    if (st && o.spriteStates[st]) return o.spriteStates[st];
+    if (facing) {
+      var key = (facing === 'left' || facing === 'right' || facing === 'W' || facing === 'E') ? 'side' : facing;
+      if (o.spriteStates[key]) return o.spriteStates[key];
+    }
+    return o.sprite;
+  }
+
   /**
-   * Draws one object at cell (dx, dy). part 'base' = its own tile (the part that can block);
-   * part 'top' = everything above it, drawn after characters so they can walk behind it.
-   * Tall objects either have a sprite_top image (one tile up) or a base image taller than wide.
+   * Draws one object whose footprint is cell (dx, dy). An object is `w` tiles wide (from its image
+   * width) and bottom-anchored on the footprint row; everything above that row overflows upward.
+   * part 'base' = the footprint row (the part that can block); part 'top' = the overflow above it,
+   * drawn after characters so they can walk behind it. `flip` mirrors the whole object (side→left).
    */
-  function drawObject(g, o, path, dx, dy, size, part, now) {
+  function drawObject(g, o, path, dx, dy, size, part, now, flip) {
     var img = path && Assets.get(path);
     if (!img) { if (part === 'base' && path) g.drawImage(Assets.placeholder(o.name, '#7a5a3a', size), dx, dy, size, size); return; }
-    var f = frameOf(img, o.frames, o.frameMs, now), tall = Math.round(img.height / f.sw) || 1;
+    var f = frameOf(img, o.frames, o.frameMs, now), fw = f.sw, ih = img.height;
+    var sc = size / NT, w = Math.max(1, Math.round(fw / NT)), destW = w * size;
+    var baseSrcH = Math.min(NT, ih), baseDstH = baseSrcH * sc, baseDstY = dy + size - baseDstH;
+    var topSrcH = ih - baseSrcH;
+    function blit(srcY, srcH, dstY, dstH) {
+      if (srcH <= 0) return;
+      g.save();
+      if (flip) { g.translate(dx + destW, 0); g.scale(-1, 1); g.drawImage(img, f.sx, srcY, fw, srcH, 0, dstY, destW, dstH); }
+      else g.drawImage(img, f.sx, srcY, fw, srcH, dx, dstY, destW, dstH);
+      g.restore();
+    }
     if (part === 'base') {
-      g.drawImage(img, f.sx, img.height - f.sw * Math.min(1, img.height / f.sw), f.sw, Math.min(img.height, f.sw), dx, dy, size, size);
+      blit(ih - baseSrcH, baseSrcH, baseDstY, baseDstH);
     } else {
-      if (tall > 1) g.drawImage(img, f.sx, 0, f.sw, img.height - f.sw, dx, dy - (tall - 1) * size, size, (tall - 1) * size);
-      var top = o.spriteTop && Assets.get(o.spriteTop);
+      blit(0, topSrcH, baseDstY - topSrcH * sc, topSrcH * sc);
+      var top = o.spriteTop && Assets.get(o.spriteTop);     // legacy: a separate stacked top image
       if (top) {
-        var ft = frameOf(top, o.frames, o.frameMs, now), rows = top.height / ft.sw;   // sprite_top may itself be several tiles tall
-        g.drawImage(top, ft.sx, 0, ft.sw, top.height, dx, dy - (tall - 1) * size - rows * size, size, rows * size);
+        var ft = frameOf(top, o.frames, o.frameMs, now), rows = top.height / ft.sw;
+        g.drawImage(top, ft.sx, 0, ft.sw, top.height, dx, baseDstY - topSrcH * sc - rows * size, destW, rows * size);
       }
     }
   }
   function hasTop(o, path) {
     if (o.spriteTop) return true;
     var img = path && Assets.get(path); if (!img) return false;
-    return img.height > img.width / Math.max(1, o.frames || 1) + 1;
+    return img.height > NT + 1;                             // taller than one footprint tile = overflow above
   }
 
   /**
@@ -76,14 +102,18 @@ var Render = (function () {
     return topY;
   }
 
-  /** Paints base colours and terrain for a whole map once. */
+  /** Paints base colours, terrain, the variety layer, wall faces and flat ground decals once. */
   function bakeGround(content, map) {
-    var T = content.config.tile_size || 32;
+    var T = content.config.tile_size || 32, sc = T / NT;
     var c = document.createElement('canvas');
     c.width = map.width * T; c.height = map.height * T;
     var g = c.getContext('2d');
     g.imageSmoothingEnabled = false;
+    var edgeSame = content.config.autotile_edge_same !== false;
     var auto = Autotile.grid(content, map);
+    var Sc = typeof Scatter !== 'undefined' ? Scatter : null;
+
+    // layers 1-2 + variety: base colour, (base tile underlay +) autotile sheet, then scatter sprites.
     for (var y = 0; y < map.height; y++) {
       for (var x = 0; x < map.width; x++) {
         var t = content.terrain[map.terrain[y][x]];
@@ -94,14 +124,60 @@ var Render = (function () {
         var a = auto[y][x];                                    // layer 2: terrain tile
         if (a) {
           var ts = content.tilesets[a.tileset], img = Assets.get(ts.image);
+          var info = Sc && Sc.tileInfo(ts.image);
+          if (info && info.baseTile) {                         // underlay: texture shows at ragged edges
+            var bimg = Assets.get(info.baseTile);
+            if (bimg) g.drawImage(bimg, 0, 0, bimg.width, bimg.height, dx, dy, T, T);
+          }
           if (img) tileFromSheet(img, ts, a.tile, g, dx, dy, T);
+          if (info && info.scatterKey && Sc) {                 // variety layer (baked, so it's free per frame)
+            var interior = Autotile.mask(map.terrain, x, y, edgeSame) === 255;
+            Sc.scatterFor(info.scatterKey, x, y, interior).forEach(function (s) {
+              var sh = Assets.get(Sc.sheetPath(info.dir, s.sheet)); if (!sh) return;
+              g.save();
+              if (s.flip) { g.translate(dx + T, dy); g.scale(-1, 1); g.drawImage(sh, s.sx, s.sy, NT, NT, 0, 0, T, T); }
+              else g.drawImage(sh, s.sx, s.sy, NT, NT, dx, dy, T, T);
+              g.restore();
+            });
+          }
         } else if (t.sprite) {
           var timg = Assets.get(t.sprite);
           if (timg) { var f0 = frameOf(timg, t.frames, t.frameMs, 0); g.drawImage(timg, 0, 0, f0.sw, f0.fh, dx, dy, T, T); }
         }
       }
     }
+
+    // wall faces: a 2-tile front face under every wall cell whose south neighbour is not the same wall.
+    for (var wy = 0; wy < map.height; wy++) {
+      for (var wx = 0; wx < map.width; wx++) {
+        var tid = map.terrain[wy][wx], wt = content.terrain[tid];
+        if (!wt || !wt.autotile) continue;
+        var wts = content.tilesets[wt.autotile], winfo = Sc && wts && Sc.tileInfo(wts.image);
+        if (!winfo || !winfo.isWall) continue;
+        if (wy + 1 < map.height && map.terrain[wy + 1][wx] === tid) continue;   // wall continues down
+        var face = Assets.get(winfo.face); if (!face) continue;
+        var l = hasFace(content, map, Sc, wx - 1, wy, tid), r = hasFace(content, map, Sc, wx + 1, wy, tid);
+        var col = (!l && !r) ? 0 : (!l && r) ? 1 : (l && r) ? 2 : 3;            // single / left / middle / right
+        g.drawImage(face, col * NT, 0, NT, face.height, wx * T, (wy + 1) * T, T, face.height * sc);
+      }
+    }
+
+    // ground decals (blood etc.): one flat 32x32 cell from the sheet, under objects and characters.
+    map.entities.forEach(function (e) {
+      var o = content.objects[e.ref];
+      if (!o || layerOf(o) !== 'ground_decal') return;
+      var dimg = o.sprite && Assets.get(o.sprite); if (!dimg) return;
+      var cell = (e.data && e.data.cell) | 0, cols = Math.max(1, Math.round(dimg.width / NT));
+      g.drawImage(dimg, (cell % cols) * NT, Math.floor(cell / cols) * NT, NT, NT, e.x * T, e.y * T, T, T);
+    });
     return c;
+  }
+
+  /** A neighbour wall cell that itself shows a face (same wall terrain, its south neighbour is not). */
+  function hasFace(content, map, Sc, x, y, tid) {
+    if (x < 0 || y < 0 || x >= map.width || y >= map.height) return false;
+    if (map.terrain[y][x] !== tid) return false;
+    return !(y + 1 < map.height && map.terrain[y + 1][x] === tid);
   }
 
   function Renderer(canvas, content) {
@@ -148,15 +224,16 @@ var Render = (function () {
       g.drawImage(img, f.sx, 0, f.sw, f.fh, ox + a.x * T, oy + a.y * T, T, T);
     });
 
-    // layer 3: objects (sprite follows the entity's state when the object defines one)
+    // layer 3: objects (sprite follows the entity's state, then its facing; ground decals are baked)
     var tops = [];
     map.entities.forEach(function (e) {
-      if (e.x < x0 || e.x > x1 || e.y < y0 || e.y > y1) return;
-      var o = c.objects[e.ref]; if (!o || (hidden && hidden(e))) return;
-      var st = states[e.key], path = (st && o.spriteStates[st]) || o.sprite;
+      if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
+      var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
+      var st = states[e.key], facing = (e.data && e.data.facing) || null;
+      var path = objPath(o, st, facing), flip = facing === 'left' || facing === 'W';
       var dx = ox + e.x * T, dy = oy + e.y * T;
-      drawObject(g, o, path, dx, dy, T, 'base', now);
-      if (hasTop(o, path)) tops.push({ o: o, path: path, y: e.y, dx: dx, dy: dy });
+      drawObject(g, o, path, dx, dy, T, 'base', now, flip);
+      if (hasTop(o, path)) tops.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
       // no art for this state yet: show it with a simple mark
       if (st && !o.spriteStates[st]) {
         if (st === 'open' && o.kind === 'door') { g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(dx + 4, dy + 2, T - 8, T - 4); }
@@ -198,7 +275,7 @@ var Render = (function () {
 
     // layer 5b: tops of tall objects (tree crowns, roofs) cover characters behind them;
     // lower objects are drawn last, so a tree in front overlaps the one behind it
-    tops.sort(function (a, b) { return a.y - b.y; }).forEach(function (t) { drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now); });
+    tops.sort(function (a, b) { return a.y - b.y; }).forEach(function (t) { drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now, t.flip); });
   };
 
   /** Aiming: cells in range, the line to the cursor, the cell under it (green = can cast) and the area it would hit. */

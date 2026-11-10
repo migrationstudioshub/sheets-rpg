@@ -1,0 +1,22 @@
+{
+ "_about": "One entry per object image. size_tiles = canvas in tiles [w, h]. The footprint is the bottom row: w tiles wide, 1 tile deep. Draw at x = cellX*32, y = (cellY+1)*32 - height, y-sorted with characters by cellY. flip = may be mirrored for the opposite facing. layer: object (y-sorted), wall (drawn on a wall face), ground_decal (flat, on the ground layer).",
+ "objects": [
+  {"id": "table",         "file": "objects/table.png",         "size_tiles": [2, 1.5], "layer": "object", "blocks": true},
+  {"id": "chair",         "views": {"down": "objects/chair_down.png", "up": "objects/chair_up.png", "side": "objects/chair_side.png"},
+                          "size_tiles": [1, 1.5], "layer": "object", "blocks": true, "flip": "side faces right; mirror it for left"},
+  {"id": "kitchen_stove", "file": "objects/kitchen_stove.png", "size_tiles": [2, 1.5], "layer": "object", "blocks": true},
+  {"id": "kitchen_sink",  "file": "objects/kitchen_sink.png",  "size_tiles": [1, 1.5], "layer": "object", "blocks": true},
+  {"id": "chest",         "file": "objects/chest.png",         "size_tiles": [1, 1],   "layer": "object", "blocks": true},
+  {"id": "wardrobe",      "file": "objects/wardrobe.png",      "size_tiles": [2, 2],   "layer": "object", "blocks": true},
+  {"id": "workbench",     "file": "objects/workbench.png",     "size_tiles": [2, 1.5], "layer": "object", "blocks": true},
+  {"id": "barrel",        "file": "objects/barrel.png",        "size_tiles": [1, 1.5], "layer": "object", "blocks": true},
+  {"id": "barrel_hazard", "file": "objects/barrel_hazard.png", "size_tiles": [1, 1.5], "layer": "object", "blocks": true},
+  {"id": "car_wreck",     "file": "objects/car_wreck.png",     "size_tiles": [4, 2],   "layer": "object", "blocks": true, "flip": true},
+  {"id": "tree_dead",     "file": "objects/tree_dead.png",     "size_tiles": [2, 3],   "layer": "object", "blocks": true, "flip": true,
+                          "note": "footprint is the trunk: block only the bottom row's middle if your engine allows"},
+  {"id": "door_wood",     "file": "objects/door_wood.png",     "size_tiles": [1, 2],   "layer": "wall",
+                          "note": "drawn over the 2-tile wall face (top of the door at the face's top row)"},
+  {"id": "blood",         "file": "objects/blood.png",         "size_tiles": [4, 1],   "layer": "ground_decal",
+                          "note": "sheet of 4 cells, 32x32 each: small pool, splatter, large pool, drag mark. Place by hand for story beats"}
+ ]
+}

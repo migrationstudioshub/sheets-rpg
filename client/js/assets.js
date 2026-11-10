@@ -31,11 +31,17 @@ var Assets = (function () {
   /** Loads every image a map needs before it is drawn. */
   function loadForMap(content, map) {
     var paths = {};
+    var tiles = [];                                   // convention tilesets on this map (for scatter sheets)
     map.terrain.forEach(function (row) {
       row.forEach(function (tid) {
         var t = content.terrain[tid]; if (!t) return;
         if (t.sprite) paths[t.sprite] = 1;
-        if (t.autotile && content.tilesets[t.autotile]) paths[content.tilesets[t.autotile].image] = 1;
+        if (t.autotile && content.tilesets[t.autotile]) {
+          var img = content.tilesets[t.autotile].image;
+          paths[img] = 1;
+          var info = (typeof Scatter !== 'undefined') && Scatter.tileInfo(img);  // base tile / wall face / scatter
+          if (info) { tiles.push(info); if (info.baseTile) paths[info.baseTile] = 1; if (info.face) paths[info.face] = 1; }
+        }
       });
     });
     map.entities.forEach(function (e) {
@@ -51,7 +57,17 @@ var Assets = (function () {
         if (it.defaultTint) paths[it.wornSprite.replace(/\.png$/i, '.tint.png')] = 1; }           // + its grey tint mask
     });
     Object.keys(content.classes || {}).forEach(function (k) { if (content.classes[k].bodySprite) paths[content.classes[k].bodySprite] = 1; });   // player base bodies
-    return Promise.all(Object.keys(paths).map(load));
+
+    // Variety layer: load scatter.json once, then the detail/decal sheets each ground terrain needs.
+    var ready = (typeof Scatter !== 'undefined') ? Scatter.load(resolve('art/tilesets/scatter.json')) : Promise.resolve({});
+    return ready.then(function (cfg) {
+      tiles.forEach(function (info) {
+        if (!info.scatterKey) return;
+        var e = (cfg || {})[info.scatterKey]; if (!e) return;
+        ['details', 'decals'].forEach(function (k) { if (e[k] && e[k][0]) paths[Scatter.sheetPath(info.dir, e[k][0])] = 1; });
+      });
+      return Promise.all(Object.keys(paths).map(load));
+    });
   }
 
   /** A labelled square for things that have no art yet. */

@@ -101,7 +101,9 @@ var World = (function () {
 
   function newPlayer(c, id, name, cls) {
     var p = { id: id, name: name, 'class': c.classes[cls] ? cls : (c.config.start_class || Object.keys(c.classes)[0] || ''),
-      map: '', x: 0, y: 0, facing: 'S', level: 1, xp: 0, gold: 0, inventory: [], equipment: {}, flags: {}, respawn: '' };
+      map: '', x: 0, y: 0, facing: 'S', level: 1, xp: 0, gold: 0, inventory: [], equipment: {}, flags: {}, respawn: '',
+      // cosmetic paper-doll choices (character creation will let players pick these)
+      hair: c.config.start_hair || '', hairColor: c.config.start_hair_color || 'hair_brown' };
     var map = c.maps[c.config.start_map] || c.maps[Object.keys(c.maps)[0]];
     var at = Rl().nearestStandable(c, map, Number(c.config.start_x) || 0, Number(c.config.start_y) || 0);
     p.map = map.id; p.x = at.x; p.y = at.y;
@@ -144,6 +146,8 @@ var World = (function () {
     p.level = Number(p.level) || 1; p.xp = Number(p.xp) || 0; p.gold = Number(p.gold) || 0;
     p.x = Number(p.x) || 0; p.y = Number(p.y) || 0; p.facing = p.facing || 'S'; p.respawn = p.respawn || '';
     if (!p['class'] || !c.classes[p['class']]) p['class'] = c.config.start_class || Object.keys(c.classes)[0] || '';
+    if (p.hair == null) p.hair = c.config.start_hair || '';
+    if (!p.hairColor) p.hairColor = c.config.start_hair_color || 'hair_brown';
     var mx = stats(c, p).maxHp, hp = Number(p.hp);
     p.hp = !hp || hp <= 0 || isNaN(hp) ? mx : Math.min(hp, mx);
     var mm = stats(c, p).maxMp, mp = Number(p.mp);
@@ -1161,7 +1165,9 @@ var World = (function () {
           statuses: (m.statuses || []).map(function (st) { return st.id; }) };
       }),
       players: (players || []).filter(function (q) { return q.id !== p.id && q.map === mapId; }).map(function (q) {
-        return { id: q.id, name: q.name, x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level };
+        // class + equipment + hair let other clients draw this player's paper-doll (base body, hair, worn gear)
+        return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {},
+          hair: q.hair || '', hairColor: q.hairColor || '', x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level };
       })
     };
   }
@@ -1199,6 +1205,7 @@ var World = (function () {
   function publicPlayer(c, p) {
     var s = stats(c, p);
     return { id: p.id, name: p.name, 'class': p['class'], map: p.map, x: p.x, y: p.y, facing: p.facing,
+      hair: p.hair || '', hairColor: p.hairColor || '',
       hp: p.hp, maxHp: s.maxHp, mp: Math.floor(Number(p.mp) || 0), maxMp: s.maxMp, atk: s.atk, def: s.def, level: p.level, xp: p.xp,
       hunger: Math.round(Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)),
       thirst: Math.round(Number(p.thirst) == null || isNaN(Number(p.thirst)) ? 100 : Number(p.thirst)),

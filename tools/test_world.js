@@ -32,8 +32,10 @@ test('a new warrior starts at the start point with class stats and items', () =>
   const { c, p } = fresh();
   assert.deepStrictEqual([p.map, p.x, p.y], ['map_3', 9, 15]);
   const st = World.stats(c, p);
-  assert.deepStrictEqual([p.hp, st.maxHp, st.atk, st.def], [120, 120, 6, 2]);
-  assert.deepStrictEqual(p.inventory, [{ item: 'potion', qty: 2 }]);
+  // the warrior auto-equips the weapon/armor/helm in its start kit (wooden_sword +3 atk, leather_armor +2 def, army_helmet +2 def)
+  assert.deepStrictEqual([p.hp, st.maxHp, st.atk, st.def], [120, 120, 9, 6]);
+  assert.deepStrictEqual(p.inventory, [{ item: 'potion', qty: 2 }, { item: 'wooden_sword', qty: 1 }, { item: 'leather_armor', qty: 1 }, { item: 'army_helmet', qty: 1 }]);
+  assert.deepStrictEqual(p.equipment, { weapon: 'wooden_sword', armor: 'leather_armor', helm: 'army_helmet' });
 });
 
 test('the hut door is closed, opens on interact, and can then be walked through', () => {
@@ -53,7 +55,7 @@ test('the hut chest gives its contents once per player, then is empty', () => {
   let ev = act(s, { type: 'interact' });
   assert.match(texts(ev), /You open the wooden chest/);
   assert.strictEqual(World.count(s.p, 'potion'), 4);
-  assert.strictEqual(World.count(s.p, 'wooden_sword'), 1);
+  assert.strictEqual(World.count(s.p, 'wooden_sword'), 2);          // one from the warrior's start kit + one from the chest
   ev = act(s, { type: 'interact' });
   assert.match(texts(ev), /It is empty/);
   const v = World.view(s.c, s.ws, 'map_3', s.p, [s.p]);
@@ -66,8 +68,11 @@ test('the hut chest gives its contents once per player, then is empty', () => {
 
 test('equipping a sword raises attack; using a potion heals and is consumed', () => {
   const s = fresh();
-  World.give(s.c, s.p, 'wooden_sword', 1, []);
-  act(s, { type: 'use', item: 'wooden_sword' });
+  // the warrior auto-equips its starting sword (atk 9); toggle it off and on to exercise equip/unequip
+  assert.strictEqual(World.stats(s.c, s.p).atk, 9);
+  act(s, { type: 'use', item: 'wooden_sword' });      // unequip
+  assert.strictEqual(World.stats(s.c, s.p).atk, 6);
+  act(s, { type: 'use', item: 'wooden_sword' });      // equip again
   assert.strictEqual(World.stats(s.c, s.p).atk, 9);
   let ev = act(s, { type: 'use', item: 'potion' });
   assert.match(texts(ev), /already at full health/);
@@ -242,7 +247,7 @@ test('levelling up raises stats and refills health', () => {
   const ev = [];
   World.run(s.c, s.ws, s.p, 'xp:25', 0, ev);
   assert.strictEqual(s.p.level, 2);
-  assert.deepStrictEqual([s.p.hp, World.stats(s.c, s.p).atk], [132, 8]);
+  assert.deepStrictEqual([s.p.hp, World.stats(s.c, s.p).atk], [132, 11]);   // level-2 base atk 8 + auto-equipped sword +3
   assert.match(texts(ev), /Level up/);
 });
 

@@ -100,7 +100,8 @@ var Content = (function () {
     (tables.Items || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
       c.items[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), type: str(r.type) || 'material',
-        slot: str(r.slot), stackMax: num(r.stack_max, 99), value: num(r.value, 0),
+        slot: str(r.slot), wornSprite: str(r.worn_sprite), defaultTint: str(r.default_tint),
+        stackMax: num(r.stack_max, 99), value: num(r.value, 0),
         atk: num(r.atk, 0), def: num(r.def, 0), heal: num(r.heal, 0), mp: num(r.mp, 0),
         hunger: num(r.hunger, 0), thirst: num(r.thirst, 0),
         // equip_if gates equipping a weapon/armor (e.g. a rifle at level 3)
@@ -133,7 +134,8 @@ var Content = (function () {
     });
     (tables.Classes || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
-      c.classes[id] = { id: id, name: str(r.name) || id, hp: num(r.hp, 100), atk: num(r.atk, 5), def: num(r.def, 1),
+      c.classes[id] = { id: id, name: str(r.name) || id, bodySprite: str(r.body_sprite),
+        hp: num(r.hp, 100), atk: num(r.atk, 5), def: num(r.def, 1),
         hpPerLevel: num(r.hp_per_level, 10), atkPerLevel: num(r.atk_per_level, 1), defPerLevel: num(r.def_per_level, 1),
         mp: num(r.mp, 0), mpPerLevel: num(r.mp_per_level, 0), mpRegen: num(r.mp_regen, 0),
         startItems: str(r.start_items), notes: str(r.notes), lockpicking: num(r.lockpicking, 0),

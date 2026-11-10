@@ -23,6 +23,37 @@
 
   var KEYS = { ArrowUp: 'N', KeyW: 'N', ArrowRight: 'E', KeyD: 'E', ArrowDown: 'S', KeyS: 'S', ArrowLeft: 'W', KeyA: 'W' };
 
+  // Paper-doll stacking order (low = drawn first / behind). The base body sits near the
+  // bottom; worn gear draws over it, weapon last. Unknown slots land on top.
+  var SLOT_Z = { back: 0, body: 1, legs: 2, armor: 3, head: 4, helm: 5, offhand: 6, weapon: 7 };
+  function maskOf(path) { return path ? path.replace(/\.png$/i, '.tint.png') : ''; }   // sibling grey tint mask
+  /** Ordered layer descriptors for a player, lowest slot first: the class base body, the hair
+   *  (head slot, hidden when anything is worn in `helm`), then each equipped item with a worn
+   *  sprite. A descriptor is { path, mask?, ramp? } — a tintable garment or hair carries its grey
+   *  mask and a 4-colour ramp from Tint.TINTS. Returns null when the class has no body art (the
+   *  renderer then falls back to the drawn hero). */
+  function playerLayers(p) {
+    var cls = p && content.classes[p['class']];
+    if (!cls || !cls.bodySprite) return null;
+    var eq = p.equipment || {}, out = [{ z: SLOT_Z.body, path: cls.bodySprite }];
+    if (p.hair && !eq.helm) {                                            // hair is whole-tintable; a helm hides it
+      out.push({ z: SLOT_Z.head, path: p.hair, mask: maskOf(p.hair), ramp: Tint.TINTS[p.hairColor] });
+    }
+    Object.keys(eq).forEach(function (slot) {
+      var it = content.items[eq[slot]];
+      if (!it || !it.wornSprite) return;
+      var ramp = it.defaultTint ? Tint.TINTS[it.defaultTint] : null;     // item is tintable iff it names a default tint
+      out.push({ z: SLOT_Z[slot] != null ? SLOT_Z[slot] : 9, path: it.wornSprite,
+        mask: ramp ? maskOf(it.wornSprite) : '', ramp: ramp });
+    });
+    out.sort(function (a, b) { return a.z - b.z; });
+    out.forEach(function (l) {                                           // make sure late-arriving layers load
+      if (!Assets.get(l.path)) Assets.load(l.path);
+      if (l.mask && !Assets.get(l.mask)) Assets.load(l.mask);
+    });
+    return out;
+  }
+
   function setNet(text, bad) { $('hud-net').textContent = text; $('hud-net').className = bad ? 'bad' : ''; }
   function mapOf() { return content.maps[me.map]; }
 
@@ -120,7 +151,7 @@
       queue.shift(); inFlight = false;
       return apply(res);
     }).then(function () {
-      if (api.mode === 'online') setNet('connected');
+      if (api.mode !== 'offline') setNet('connected');
       flush();
     }).catch(function (e) {
       inFlight = false; a.sent = false;
@@ -565,7 +596,7 @@
         var o = content.objects[e.ref]; return o && o.kind === 'trap' && World.props(content, e).trigger === 'timed';
       });
       shown.x = me.x; shown.y = me.y; shownOthers = {};
-      setNet(api.mode === 'online' ? 'connected' : api.usingDraft ? 'offline: playing your editor draft' : 'offline: progress saved in this browser');
+      setNet(api.mode !== 'offline' ? 'connected' : api.usingDraft ? 'offline: playing your editor draft' : 'offline: progress saved in this browser');
       $('map-pick').value = me.map;
     });
   }
@@ -597,7 +628,7 @@
 
     ease(shown, me, dt / moveMs);
     var myst = me.statuses && me.statuses.length && content.statuses[me.statuses[0].id];
-    var actors = [{ x: shown.x, y: shown.y, facing: me.facing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, statusColor: myst ? myst.color : '' }];
+    var actors = [{ x: shown.x, y: shown.y, facing: me.facing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, statusColor: myst ? myst.color : '' }];
     var seen = {};
     view.monsters.forEach(function (m) {
       var d = content.monsters[m.ref] || { name: m.ref, sprite: '' }, s = shownOthers[m.id] || (shownOthers[m.id] = { x: m.x, y: m.y });
@@ -608,7 +639,7 @@
     view.players.forEach(function (q) {
       var s = shownOthers['p:' + q.id] || (shownOthers['p:' + q.id] = { x: q.x, y: q.y });
       ease(s, q, dt / moveMs); seen['p:' + q.id] = 1;
-      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', hp: q.hp, maxHp: q.maxHp });
+      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp });
     });
     Object.keys(shownOthers).forEach(function (k) { if (!seen[k]) delete shownOthers[k]; });
 
@@ -715,6 +746,7 @@
   // read-only peek for tests and debugging in the browser console
   window.SheetsRPG = { state: function () { return { me: me, view: view, queue: queue.length }; },
     plan: function () { return null; },    // kept for back-compat: there is no click-to-walk plan any more
+    layers: function () { return me ? playerLayers(me) : null; },
     camera: function () { return lastCam; },
     aim: function () { return { armed: armed, throwing: throwing, hover: hover, check: armed && hover ? aimCheck(hover) : null }; } };
 })();

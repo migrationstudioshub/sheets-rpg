@@ -50,6 +50,32 @@ var Render = (function () {
     return img.height > img.width / Math.max(1, o.frames || 1) + 1;
   }
 
+  /**
+   * Paper-doll character: draws an ordered list of layer images (base body first, then
+   * equipment, lowest slot first). Every layer is one tile wide and bottom-anchored on the
+   * character's tile, so busts taller than a tile stand up out of their square. The whole
+   * stack flips together when facing west (the only turn there is). Returns the top y of the
+   * tallest layer, so health bars and names can sit just above the figure, not the tile.
+   */
+  // A layer is { path, mask?, ramp? }: the base sprite, plus an optional tint mask + colour
+  // ramp for recolourable cloth/hair. Every layer shares the 32x48 skeleton, so each is drawn
+  // bottom-anchored at the tile's foot and scaled to the tile width; the whole stack flips as one.
+  function drawLayers(g, layers, ax, ay, T, flip) {
+    var topY = ay;
+    g.save();
+    if (flip) { g.translate(ax + T, 0); g.scale(-1, 1); }
+    var x0 = flip ? 0 : ax;                                 // after the flip, x grows the other way from ax+T
+    layers.forEach(function (l) {
+      var base = Assets.get(l.path); if (!base) return;
+      var img = (l.mask && l.ramp) ? Tint.getTintedLayer(base, Assets.get(l.mask), l.ramp) : base;
+      var h = Math.round(T * base.height / base.width), dy = ay + T - h;
+      if (dy < topY) topY = dy;
+      g.drawImage(img, x0, dy, T, h);
+    });
+    g.restore();
+    return topY;
+  }
+
   /** Paints base colours and terrain for a whole map once. */
   function bakeGround(content, map) {
     var T = content.config.tile_size || 32;
@@ -143,7 +169,10 @@ var Render = (function () {
     // layer 5: characters, back to front so lower ones overlap upper ones
     actors.slice().sort(function (a, b) { return a.y - b.y; }).forEach(function (a) {
       var ax = Math.round(ox + a.x * T), ay = Math.round(oy + a.y * T);
-      if (a.sprite !== undefined) {
+      var top = ay;                                                  // top of the drawn figure (busts rise above the tile)
+      if (a.layers && a.layers.length) {
+        top = drawLayers(g, a.layers, ax, ay, T, a.facing === 'W');
+      } else if (a.sprite !== undefined) {
         var img = a.sprite && Assets.get(a.sprite);
         if (img) {
           g.save();
@@ -153,17 +182,17 @@ var Render = (function () {
         } else g.drawImage(Assets.placeholder(a.name, '#8a2f2f', T), ax, ay);
       } else g.drawImage(Assets.hero(a.facing, a.tint || '#3d6fb6', T), ax, ay);
       if (a.statusColor) {                                           // tinted while burning, chilled, stunned...
-        g.globalAlpha = .35; g.fillStyle = a.statusColor; g.fillRect(ax + 4, ay + 4, T - 8, T - 6); g.globalAlpha = 1;
+        g.globalAlpha = .35; g.fillStyle = a.statusColor; g.fillRect(ax + 4, top + 4, T - 8, ay + T - top - 8); g.globalAlpha = 1;
       }
-      if (a.maxHp && a.hp < a.maxHp && !a.me) {                       // health bar
-        g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(ax + 4, ay - 4, T - 8, 4);
+      if (a.maxHp && a.hp < a.maxHp && !a.me) {                       // health bar, just above the figure
+        g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(ax + 4, top - 4, T - 8, 4);
         g.fillStyle = a.sprite !== undefined ? '#e04a3a' : '#4ec36a';
-        g.fillRect(ax + 5, ay - 3, Math.max(0, (T - 10) * a.hp / a.maxHp), 2);
+        g.fillRect(ax + 5, top - 3, Math.max(0, (T - 10) * a.hp / a.maxHp), 2);
       }
       if (a.name && a.sprite === undefined) {
         g.font = '8px sans-serif'; g.textAlign = 'center';
-        g.fillStyle = 'rgba(0,0,0,.6)'; g.fillText(a.name, ax + T / 2 + 1, ay - 5);
-        g.fillStyle = a.me ? '#fff' : '#bfe0ff'; g.fillText(a.name, ax + T / 2, ay - 6);
+        g.fillStyle = 'rgba(0,0,0,.6)'; g.fillText(a.name, ax + T / 2 + 1, top - 5);
+        g.fillStyle = a.me ? '#fff' : '#bfe0ff'; g.fillText(a.name, ax + T / 2, top - 6);
       }
     });
 

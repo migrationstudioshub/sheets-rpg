@@ -64,7 +64,7 @@ var Api = (function () {
   Offline.prototype.forget = function () { this.p = null; localStorage.removeItem(OFFLINE_KEY); localStorage.removeItem(OLD_OFFLINE_KEY); };
 
   // ---------- online ----------
-  function Online(url) { this.mode = 'online'; this.url = url; }
+  function Online(url) { this.mode = 'online'; this.url = url; this.tokenKey = TOKEN_KEY; }
   Online.prototype.call = function (body) {
     // text/plain keeps this a "simple" request, which Apps Script web apps accept cross-origin
     return fetch(this.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) })
@@ -76,14 +76,14 @@ var Api = (function () {
       .then(function (res) { if (res.error) throw new Error(res.error); return (this.content = res.content); }.bind(this));
   };
   Online.prototype.resume = function () {
-    var token = store(TOKEN_KEY);
+    var token = store(this.tokenKey);
     if (!token) return Promise.resolve(null);
     this.token = token;
     return this.call({ action: 'load', token: token }).catch(function () { return null; });
   };
   Online.prototype.join = function (name, cls) {
     return this.call({ action: 'join', name: name, 'class': cls }).then(function (r) {
-      this.token = r.token; store(TOKEN_KEY, r.token);
+      this.token = r.token; store(this.tokenKey, r.token);
       return this.call({ action: 'load', token: r.token });
     }.bind(this));
   };
@@ -113,7 +113,7 @@ var Api = (function () {
   Online.prototype.leave = function () {
     if (this.token && navigator.sendBeacon) navigator.sendBeacon(this.url, JSON.stringify({ action: 'save', token: this.token }));
   };
-  Online.prototype.forget = function () { localStorage.removeItem(TOKEN_KEY); };
+  Online.prototype.forget = function () { localStorage.removeItem(this.tokenKey); };
 
   // ---------- fast referee (Cloud Functions) ----------
   // Same protocol as Online, but live play goes to a Firebase Cloud Function (~300 ms) instead of
@@ -132,10 +132,30 @@ var Api = (function () {
       .then(function (res) { if (res.error) throw new Error(res.error); return (this.content = res.content); }.bind(this));
   };
 
+  // ---------- LAN host (same room / same WiFi) ----------
+  // Served by host/server.js: one player's computer is the referee. Same protocol as Online, but
+  // same-origin JSON and no Firebase — the host is right there on the network, so we just poll fast
+  // (mode 'lan' keeps the game loop on the quick 250 ms poll, not the Firebase heartbeat). Activated
+  // only by window.GAME_LAN, which the host injects into the page it serves; the live site never sets it.
+  function Lan() { Online.call(this, ''); this.mode = 'lan'; this.tokenKey = 'sheetsrpg.lanToken'; }
+  Lan.prototype = Object.create(Online.prototype);
+  Lan.prototype.constructor = Lan;
+  Lan.prototype.call = function (body) {
+    return fetch('/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) { if (res.error) throw new Error(res.error); return res; });
+  };
+  Lan.prototype.loadContent = function () {
+    return fetch('/?action=content').then(function (r) { return r.json(); })
+      .then(function (res) { if (res.error) throw new Error(res.error); return (this.content = res.content); }.bind(this));
+  };
+  Lan.prototype.watchMap = function () { return function () {}; };   // no Firebase on the LAN; poll sees others
+
   function create() {
     // Add ?offline to the URL to force offline mode (runs shared/world.js here against
     // data/tables.json), handy for play-testing changes before the server is updated.
     if (typeof location !== 'undefined' && /[?&]offline(\b|=)/.test(location.search)) return new Offline();
+    if (typeof window !== 'undefined' && window.GAME_LAN) return new Lan();
     if (GAME_CONFIG.FUNCTIONS_URL) return new Functions(GAME_CONFIG.FUNCTIONS_URL);
     return GAME_CONFIG.API_URL ? new Online(GAME_CONFIG.API_URL) : new Offline();
   }

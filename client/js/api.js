@@ -27,7 +27,7 @@ var Api = (function () {
         return (this.content = Content.build(this.usingDraft ? draft : repo));
       }.bind(this));
   };
-  Offline.prototype.save = function () { store(OFFLINE_KEY, { player: this.p, world: this.ws }); };
+  Offline.prototype.save = function () { if (this.p) store(OFFLINE_KEY, { player: this.p, world: this.ws }); };
   Offline.prototype.step = function (action, since) {
     var c = this.content, p = this.p, ws = this.ws, now = Date.now(), ev = [], from = p.map;
     World.advance(c, ws, p.map, [p], now, Math.random, ev);
@@ -60,7 +60,8 @@ var Api = (function () {
     return this.step(null, -1);
   };
   Offline.prototype.leave = function () { if (this.p) this.save(); };
-  Offline.prototype.forget = function () { localStorage.removeItem(OFFLINE_KEY); localStorage.removeItem(OLD_OFFLINE_KEY); };
+  // drop the in-memory player too, so a save on reload/pagehide can't resurrect the character we just forgot
+  Offline.prototype.forget = function () { this.p = null; localStorage.removeItem(OFFLINE_KEY); localStorage.removeItem(OLD_OFFLINE_KEY); };
 
   // ---------- online ----------
   function Online(url) { this.mode = 'online'; this.url = url; }

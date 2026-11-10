@@ -103,8 +103,18 @@ var Content = (function () {
         slot: str(r.slot), stackMax: num(r.stack_max, 99), value: num(r.value, 0),
         atk: num(r.atk, 0), def: num(r.def, 0), heal: num(r.heal, 0), mp: num(r.mp, 0),
         hunger: num(r.hunger, 0), thirst: num(r.thirst, 0),
-        // a weapon can grant a skill while equipped (e.g. a gun grants its shot); equip_if gates equipping it
-        grantsSkill: str(r.grants_skill), equipIf: str(r.equip_if), onUse: str(r.on_use) };
+        // equip_if gates equipping a weapon/armor (e.g. a rifle at level 3)
+        equipIf: str(r.equip_if),
+        // a ranged weapon: range > 0, spends `ammo` per shot, fires no faster than fire_ms;
+        // clip = magazine size (fire from the loaded mag; press R to refill it from the ammo stack)
+        range: num(r.range, 0), ammo: str(r.ammo), ammoCost: Math.max(1, num(r.ammo_cost, 1)), fireMs: num(r.fire_ms, 0), clip: num(r.clip, 0),
+        tint: str(r.tint),
+        // ammo: how many enemies one shot pierces, losing `falloff` of its damage per extra hit (0..1)
+        penetration: Math.max(1, num(r.penetration, 1)), falloff: Math.max(0, Math.min(1, num(r.falloff, 0))),
+        // type 'throwable' (grenade/molotov): area damage + status at a thrown spot, up to throw_range away
+        throwRange: num(r.throw_range, 0), throwArea: num(r.throw_area, 0), throwPower: num(r.throw_power, 0),
+        throwStatus: str(r.throw_status), throwStatusMs: num(r.throw_status_ms, 0),
+        onUse: str(r.on_use) };
     });
     (tables.Monsters || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;

@@ -106,8 +106,14 @@ var World = (function () {
     p.map = map.id; p.x = at.x; p.y = at.y;
     p.hp = stats(c, p).maxHp; p.mp = stats(c, p).maxMp;
     p.hunger = 100; p.thirst = 100;
-    p.cooldowns = {}; p.statuses = []; p.loadout = ['', '', '', '', ''];
+    p.cooldowns = {}; p.statuses = []; p.mags = {}; p.abilities = ['', '']; p.belt = ['', '', '', '', ''];
     list(classOf(c, p).startItems).forEach(function (s) { give(c, p, s.item, s.qty, [], true); });
+    // equip the first weapon/armor they start with, so e.g. a survivor spawns with the pistol in hand
+    list(classOf(c, p).startItems).forEach(function (s) {
+      var it = c.items[s.item];
+      if (it && it.slot && !p.equipment[it.slot] && (!it.equipIf || check(c, p, it.equipIf))) p.equipment[it.slot] = s.item;
+    });
+    var wep0 = rangedWeapon(c, p); if (wep0) loadMag(c, p, wep0);   // a spawned gun starts with a full magazine
     fillLoadout(c, p);
     return p;
   }
@@ -117,9 +123,23 @@ var World = (function () {
     p.inventory = obj(p.inventory, []); if (!Array.isArray(p.inventory)) p.inventory = [];
     p.equipment = obj(p.equipment, {}); p.flags = obj(p.flags, {});
     p.cooldowns = obj(p.cooldowns, {}); p.statuses = obj(p.statuses, []); if (!Array.isArray(p.statuses)) p.statuses = [];
-    p.loadout = obj(p.loadout, null);
-    if (!Array.isArray(p.loadout)) { p.loadout = ['', '', '', '', '']; p._fill = true; }
-    while (p.loadout.length < 5) p.loadout.push('');
+    p.mags = obj(p.mags, {}); if (!p.mags || typeof p.mags !== 'object' || Array.isArray(p.mags)) p.mags = {};   // rounds loaded per gun
+    p.abilities = obj(p.abilities, null); p.belt = obj(p.belt, null);
+    if (!Array.isArray(p.abilities) || !Array.isArray(p.belt)) {
+      p.abilities = ['', '']; p.belt = ['', '', '', '', ''];
+      var oldBar = obj(p.loadout, null);              // pre-rework: one mixed 5-slot bar of "skill:x"/"item:x"
+      if (Array.isArray(oldBar)) oldBar.forEach(function (e) {
+        var k = String(e || '').split(':')[0], id = String(e || '').slice(k.length + 1); if (!id) return;
+        if (k === 'skill') { var a = p.abilities.indexOf(''); if (a >= 0) p.abilities[a] = id; }
+        else if (k === 'item') { var b = p.belt.indexOf(''); if (b >= 0) p.belt[b] = id; }
+      });
+      p._fill = true;
+    }
+    while (p.abilities.length < 2) p.abilities.push('');
+    while (p.belt.length < 5) p.belt.push('');
+    delete p.loadout;
+    p.abilities = p.abilities.map(function (id) { return id && c.skills && c.skills[id] ? id : ''; });   // drop skills no longer in the data (e.g. the old gunshot)
+    p.belt = p.belt.map(function (id) { return id && c.items[id] ? id : ''; });
     p.level = Number(p.level) || 1; p.xp = Number(p.xp) || 0; p.gold = Number(p.gold) || 0;
     p.x = Number(p.x) || 0; p.y = Number(p.y) || 0; p.facing = p.facing || 'S'; p.respawn = p.respawn || '';
     if (!p['class'] || !c.classes[p['class']]) p['class'] = c.config.start_class || Object.keys(c.classes)[0] || '';
@@ -129,7 +149,7 @@ var World = (function () {
     p.mp = p.mp === '' || p.mp == null || isNaN(mp) ? mm : Math.max(0, Math.min(mp, mm));
     var hun = Number(p.hunger); p.hunger = p.hunger === '' || p.hunger == null || isNaN(hun) ? 100 : Math.max(0, Math.min(100, hun));
     var thi = Number(p.thirst); p.thirst = p.thirst === '' || p.thirst == null || isNaN(thi) ? 100 : Math.max(0, Math.min(100, thi));
-    if (p._fill) { delete p._fill; fillLoadout(c, p); }
+    if (p._fill) { delete p._fill; syncLoadout(c, p); }   // migrated/empty bars: drop stale skills/items, then refill
     if (!c.maps[p.map]) { var np = newPlayer(c, p.id, p.name, p['class']); p.map = np.map; p.x = np.x; p.y = np.y; }
     return p;
   }
@@ -139,41 +159,31 @@ var World = (function () {
     return (classOf(c, p).skills || []).filter(function (s) { return p.level >= s.level && c.skills && c.skills[s.skill]; })
       .map(function (s) { return s.skill; });
   }
-  /** Skills granted by currently equipped gear (a gun grants its shot while held). */
-  function equippedSkills(c, p) {
-    var out = [];
-    Object.keys(p.equipment || {}).forEach(function (slot) {
-      var it = c.items[p.equipment[slot]];
-      if (it && it.grantsSkill && c.skills && c.skills[it.grantsSkill] && out.indexOf(it.grantsSkill) < 0) out.push(it.grantsSkill);
+  /** Everything the character can cast right now (class skills at their level). */
+  function usableSkills(c, p) { return knownSkills(c, p); }
+  /** Items that belong on the quick belt: things you consume or throw. */
+  function beltItems(c, p) {
+    return (p.inventory || []).map(function (s) { return s.item; }).filter(function (id) {
+      var it = c.items[id]; return it && (it.type === 'consumable' || it.type === 'throwable');
     });
-    return out;
   }
-  /** Everything the character can cast right now: class skills plus gear-granted ones. */
-  function usableSkills(c, p) {
-    var ks = knownSkills(c, p).slice();
-    equippedSkills(c, p).forEach(function (id) { if (ks.indexOf(id) < 0) ks.push(id); });
-    return ks;
-  }
-  /** Puts usable skills (and a potion) into empty bar slots. */
+  /** Fills empty ability slots (Q/E) with usable skills, and empty belt slots (1-5) with carried consumables/throwables. */
   function fillLoadout(c, p) {
-    var have = p.loadout.join(',');
+    p.abilities = p.abilities || ['', '']; p.belt = p.belt || ['', '', '', '', ''];
     usableSkills(c, p).forEach(function (id) {
-      if (have.indexOf('skill:' + id) >= 0) return;
-      var i = p.loadout.indexOf(''); if (i >= 0) { p.loadout[i] = 'skill:' + id; have += ',skill:' + id; }
+      if (p.abilities.indexOf(id) >= 0) return;
+      var i = p.abilities.indexOf(''); if (i >= 0) p.abilities[i] = id;
     });
-    ['potion', 'mana_potion'].forEach(function (it) {
-      if (count(p, it) > 0 && have.indexOf('item:' + it) < 0) {
-        var j = p.loadout.lastIndexOf('');
-        if (j >= 0) { p.loadout[j] = 'item:' + it; have += ',item:' + it; }
-      }
+    beltItems(c, p).forEach(function (id) {
+      if (p.belt.indexOf(id) >= 0) return;
+      var j = p.belt.indexOf(''); if (j >= 0) p.belt[j] = id;
     });
   }
-  /** After gear changes: drop bar skills you can no longer use, then add newly usable ones. */
+  /** After gear/level changes: drop abilities you can no longer use and invalid belt items, then refill. */
   function syncLoadout(c, p) {
     var usable = usableSkills(c, p);
-    p.loadout = (p.loadout || []).map(function (e) {
-      return (e && e.indexOf('skill:') === 0 && usable.indexOf(e.slice(6)) < 0) ? '' : e;
-    });
+    p.abilities = (p.abilities || ['', '']).map(function (id) { return id && usable.indexOf(id) < 0 ? '' : id; });
+    p.belt = (p.belt || ['', '', '', '', '']).map(function (id) { return id && c.items[id] ? id : ''; });
     fillLoadout(c, p);
   }
 
@@ -292,6 +302,7 @@ var World = (function () {
       var t = ms.timers[k]; if (now >= t.at) { setState(ws, mapId, k, t.state); delete ms.timers[k]; }
     });
     var here = players.filter(function (p) { return p.map === mapId && p.hp > 0; });
+    var engageRange = Number(c.config.engage_range) || 24;       // how far a hit monster will chase before giving up
     var hDecay = Number(c.config.hunger_decay_per_min) || 0, tDecay = Number(c.config.thirst_decay_per_min) || 0;
     var starveDmg = Number(c.config.starve_damage) || 0, starveMs = Math.max(1000, (Number(c.config.starve_tick_s) || 5) * 1000);
     here.forEach(function (p) {
@@ -327,10 +338,15 @@ var World = (function () {
       steps = Math.min(steps, 2);
       for (var s = 0; s < steps; s++) {
         var target = null, best = 1e9;
-        here.forEach(function (p) {
-          if (p.hp <= 0 || p.map !== mapId) return;
-          var d = Math.abs(p.x - m.x) + Math.abs(p.y - m.y);
-          if (d <= def.aggro && d < best) { best = d; target = p; }
+        var eng = m.engaged ? here.filter(function (q) { return q.id === m.engaged; })[0] : null;   // chase whoever hit it
+        if (eng) {
+          var ed = Math.abs(eng.x - m.x) + Math.abs(eng.y - m.y);
+          if (ed <= engageRange) { target = eng; best = ed; } else m.engaged = null;                // fled too far: give up
+        }
+        if (!target) here.forEach(function (q) {
+          if (q.hp <= 0 || q.map !== mapId) return;
+          var d = Math.abs(q.x - m.x) + Math.abs(q.y - m.y);
+          if (d <= def.aggro && d < best) { best = d; target = q; }
         });
         if (target) {
           if (def.attackRange > 1 && best > 1 && best <= def.attackRange && now >= (m.nextShot || 0) &&
@@ -442,6 +458,7 @@ var World = (function () {
   function hitMonster(c, ws, mapId, p, m, dmg, now, rng, ev, text) {
     var def = c.monsters[m.ref];
     m.hp -= dmg; ws.dirty = true;
+    if (p && m.hp > 0) m.engaged = p.id;                        // being hit (even from range) makes it come after you
     ev.push({ type: 'hit', map: mapId, x: m.x, y: m.y, amount: dmg, to: p ? p.id : undefined, text: p ? text : '' });
     if (m.hp > 0) return;
     m.dead = true; m.statuses = []; m.respawnAt = now + def.respawnS * 1000;
@@ -602,6 +619,35 @@ var World = (function () {
     return sk.power + sk.scale * v;
   }
 
+  // ------------------------------------------------------------ firearms (shooting is the click action, not a skill)
+  /** The equipped weapon if it is a ranged one (range > 0), else null. */
+  function rangedWeapon(c, p) {
+    var it = c.items[(p.equipment || {}).weapon];
+    return it && it.type === 'weapon' && (Number(it.range) || 0) > 0 ? it : null;
+  }
+  /**
+   * Can p fire at cell (tx,ty), and which cells does the shot cross? Used by the server's `shoot`
+   * and by the client (the laser line + the "too far"/"in the way" logs), so both agree.
+   * cells = the ray past the shooter, capped at the weapon's range and stopped at a sight-blocker.
+   */
+  function shotReach(c, map, p, tx, ty, lk) {
+    var w = rangedWeapon(c, p);
+    if (!w) return { ok: false, reason: 'You have no ranged weapon equipped.' };
+    if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return { ok: false, reason: 'Out of the map.' };
+    if (tx === p.x && ty === p.y) return { ok: false, reason: 'Pick a target.' };
+    if (cheb(p.x, p.y, tx, ty) > w.range) return { ok: false, reason: 'Too far away. Move closer with the movement keys.' };
+    var line = lineCells(p.x, p.y, tx, ty).slice(1), cells = [];
+    for (var i = 0; i < line.length; i++) {
+      var cx = line[i].x, cy = line[i].y;
+      if (cheb(p.x, p.y, cx, cy) > w.range) break;
+      cells.push(line[i]);
+      if (blocksSight(c, map, cx, cy, lk.stateOf) && !(cx === tx && cy === ty)) break;   // a wall stops the shot here
+    }
+    var last = cells[cells.length - 1];
+    if (lk.monsterAt(tx, ty) && !(last && last.x === tx && last.y === ty)) return { ok: false, reason: 'Something is in the way.' };
+    return { ok: true, cells: cells, weapon: w };
+  }
+
   function cast(c, ws, p, a, now, rng, ev, players) {
     function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
     var sk = c.skills && c.skills[a.skill];
@@ -666,17 +712,105 @@ var World = (function () {
     if (sk.onCast) run(c, ws, p, sk.onCast, now, ev);
   }
 
-  function setLoadout(c, p, slot, entry, ev) {
-    slot = Number(slot);
-    if (!(slot >= 0 && slot < 5)) return;
-    entry = String(entry || '');
-    var kind = entry.split(':')[0], id = entry.slice(kind.length + 1);
-    if (entry && !(kind === 'skill' && usableSkills(c, p).indexOf(id) >= 0) && !(kind === 'item' && c.items[id])) {
-      ev.push({ type: 'info', to: p.id, text: 'That can\'t go on the bar.' }); return;
+  /** Fill the equipped gun's magazine from the reserve ammo stack; returns the rounds added. */
+  function loadMag(c, p, w) {
+    if (!w || !(Number(w.clip) > 0)) return 0;
+    p.mags = p.mags || {};
+    var loaded = p.mags[w.id] || 0, need = w.clip - loaded;
+    if (need <= 0) return 0;
+    var add = Math.min(need, count(p, w.ammo));
+    if (add <= 0) return 0;
+    take(p, w.ammo, add); p.mags[w.id] = loaded + add;
+    return add;
+  }
+  /** Reload the equipped gun (R): pull rounds from the ammo stack into its magazine. */
+  function reload(c, ws, p, a, now, ev) {
+    function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
+    var w = rangedWeapon(c, p);
+    if (!w) return say('You have no gun to reload.');
+    if (!(Number(w.clip) > 0)) return say('The ' + lower(w.name) + ' has no magazine.');
+    if (((p.mags && p.mags[w.id]) || 0) >= w.clip) return say('The ' + lower(w.name) + ' is already loaded.');
+    var add = loadMag(c, p, w);
+    if (add <= 0) return say('Out of ' + lower(itemName(c, w.ammo)) + '.');
+    say('You reload the ' + lower(w.name) + '. ' + p.mags[w.id] + '/' + w.clip);
+    ev.push({ type: 'reload', to: p.id, map: p.map, x: p.x, y: p.y });
+  }
+
+  /** Fire the equipped ranged weapon toward (x,y): a ray that pierces `penetration` enemies with damage falloff. */
+  function shoot(c, ws, p, a, now, rng, ev, players) {
+    function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
+    var w = rangedWeapon(c, p);
+    if (!w) return say('You have no ranged weapon equipped.');
+    if (hasStatus(p, 'stun')) return say('You are stunned.');
+    var fire = Number(w.fireMs) || Number(c.config.attack_ms) || 0;
+    if (now < ((p.cooldowns || {})._shoot || 0)) return;        // still cycling: ignore quietly
+    var map = c.maps[p.map], lk = serverLookup(c, ws, p.map, players);
+    var tx = Math.round(Number(a.x)), ty = Math.round(Number(a.y));
+    if (isNaN(tx) || isNaN(ty)) return say('Pick a target.');
+    var reach = shotReach(c, map, p, tx, ty, lk);
+    if (!reach.ok) return say(reach.reason);
+    var ammoId = w.ammo, cost = w.ammoCost || 1, ammoIt = ammoId && c.items[ammoId], clip = Number(w.clip) || 0;
+    if (clip > 0) {                                             // magazine: fire from loaded rounds (reload with R)
+      p.mags = p.mags || {};
+      if ((p.mags[w.id] || 0) < cost) return say(count(p, ammoId) >= cost ? 'Out of ammo — press R to reload.' : 'Out of ' + lower(itemName(c, ammoId)) + '.');
+    } else if (ammoId && count(p, ammoId) < cost) return say('Out of ' + lower(itemName(c, ammoId)) + '.');
+    faceTo(p, tx, ty);
+    if (clip > 0) p.mags[w.id] = (p.mags[w.id] || 0) - cost;
+    else if (ammoId) take(p, ammoId, cost);
+    p.cooldowns = p.cooldowns || {}; p.cooldowns._shoot = now + fire;
+    var pen = ammoIt ? (ammoIt.penetration || 1) : 1, fall = ammoIt ? (ammoIt.falloff || 0) : 0;
+    var base = stats(c, p).atk, ms = mapState(ws, p.map), hits = 0, end = { x: p.x, y: p.y };
+    for (var i = 0; i < reach.cells.length; i++) {
+      end = reach.cells[i];
+      if (hits >= pen) break;
+      var m = monsterAt(ms, end.x, end.y); if (!m) continue;
+      var dmg = Math.max(1, Math.round(damage(base, monStats(c, m).def, rng) * Math.pow(1 - fall, hits)));
+      hitMonster(c, ws, p.map, p, m, dmg, now, rng, ev, 'You shoot the ' + lower(c.monsters[m.ref].name) + ' for ' + dmg + '.');
+      hits++;
     }
-    var was = p.loadout.indexOf(entry);
-    if (entry && was >= 0) p.loadout[was] = p.loadout[slot];   // swap if it was already on the bar
-    p.loadout[slot] = entry;
+    ev.push({ type: 'shoot', map: p.map, by: p.id, from: { x: p.x, y: p.y }, to: { x: end.x, y: end.y },
+      aim: { x: tx, y: ty }, color: w.tint || '#ffd36b' });
+  }
+
+  /** Throw a belt item (grenade/molotov) at (x,y): area damage + status, up to throw_range away. */
+  function throwItem(c, ws, p, a, now, rng, ev, players) {
+    function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
+    var id = String(a.item || ''), it = c.items[id];
+    if (!it || it.type !== 'throwable') return say('You can\'t throw that.');
+    if (count(p, id) < 1) return say('Out of ' + lower(it.name) + '.');
+    if (hasStatus(p, 'stun')) return say('You are stunned.');
+    if (now < ((p.cooldowns || {})._throw || 0)) return;
+    var map = c.maps[p.map], tx = Math.round(Number(a.x)), ty = Math.round(Number(a.y));
+    if (isNaN(tx) || isNaN(ty)) return say('Pick a spot.');
+    if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return say('Out of the map.');
+    if (cheb(p.x, p.y, tx, ty) > (it.throwRange || 4)) return say('Too far away. Move closer with the movement keys.');
+    take(p, id, 1);
+    p.cooldowns = p.cooldowns || {}; p.cooldowns._throw = now + (Number(it.fireMs) || 0);
+    faceTo(p, tx, ty);
+    var ms = mapState(ws, p.map), area = Number(it.throwArea) || 0;
+    var mons = (ms.monsters || []).filter(function (m) { return !m.dead && cheb(m.x, m.y, tx, ty) <= area; });
+    ev.push({ type: 'throw', map: p.map, by: p.id, item: id, from: { x: p.x, y: p.y }, to: { x: tx, y: ty },
+      area: area, color: it.tint || '#ff8c3b' });
+    mons.forEach(function (m) {
+      if (Number(it.throwPower) > 0) {
+        var dmg = Math.max(1, Math.round(it.throwPower - monStats(c, m).def) + rint(rng, -1, 1));
+        hitMonster(c, ws, p.map, p, m, dmg, now, rng, ev, 'The ' + lower(it.name) + ' hits the ' + lower(c.monsters[m.ref].name) + ' for ' + dmg + '.');
+      }
+      if (it.throwStatus) applyStatus(c, m, it.throwStatus, Number(it.throwStatusMs) || 3000, now, p.id);
+    });
+    if (!mons.length) say('The ' + lower(it.name) + ' goes off, hitting nothing.');
+  }
+
+  /** Rearrange a bar. bar 'ability' = the 2 Q/E skill slots; 'belt' = the 5 item slots. */
+  function setLoadout(c, p, bar, slot, entry, ev) {
+    slot = Number(slot); entry = String(entry || '');
+    var ab = bar !== 'belt', arr = ab ? p.abilities : p.belt, lim = ab ? 2 : 5;
+    if (!arr || !(slot >= 0 && slot < lim)) return;
+    if (entry && ab && usableSkills(c, p).indexOf(entry) < 0) { ev.push({ type: 'info', to: p.id, text: 'You can\'t use that skill.' }); return; }
+    if (entry && !ab && !c.items[entry]) { ev.push({ type: 'info', to: p.id, text: 'That can\'t go on the belt.' }); return; }
+    var was = arr.indexOf(entry);
+    if (entry && was >= 0) arr[was] = arr[slot];               // swap if it was already on the bar
+    arr[slot] = entry;
   }
 
   // ------------------------------------------------------------ data-driven actions
@@ -933,8 +1067,9 @@ var World = (function () {
           return;
         }
         p.equipment[it.slot] = id; ev.push({ type: 'info', to: p.id, text: 'You equip the ' + lower(it.name) + '.' });
+        if (it.type === 'weapon' && Number(it.clip) > 0 && !((p.mags && p.mags[id]) || 0)) loadMag(c, p, it);   // a freshly drawn gun loads its magazine
       }
-      syncLoadout(c, p);                                        // a gun grants/removes its shot on the bar
+      syncLoadout(c, p);
       p.hp = Math.min(p.hp, stats(c, p).maxHp);
     } else ev.push({ type: 'info', to: p.id, text: 'You can\'t use that.' });
   }
@@ -965,7 +1100,10 @@ var World = (function () {
     else if (action.type === 'use') useItem(c, ws, p, action.item, now, ev);
     else if (action.type === 'face' && Rl().DIRS[action.dir]) p.facing = action.dir;
     else if (action.type === 'cast') cast(c, ws, p, action, now, rng, ev, players);
-    else if (action.type === 'loadout') setLoadout(c, p, action.slot, action.entry, ev);
+    else if (action.type === 'shoot') shoot(c, ws, p, action, now, rng, ev, players);
+    else if (action.type === 'throw') throwItem(c, ws, p, action, now, rng, ev, players);
+    else if (action.type === 'reload') reload(c, ws, p, action, now, ev);
+    else if (action.type === 'loadout') setLoadout(c, p, action.bar, action.slot, action.entry, ev);
     return ev;
   }
 
@@ -977,7 +1115,8 @@ var World = (function () {
     var out = [], m = lk.monsterAt(x, y);
     if (m) {
       var md = c.monsters[m.ref] || { name: m.ref };
-      out.push({ type: 'attack', verb: '', label: 'Attack the ' + lower(md.name) });
+      if (rangedWeapon(c, p)) out.push({ type: 'shoot', verb: '', label: 'Shoot the ' + lower(md.name) });
+      else out.push({ type: 'attack', verb: '', label: 'Attack the ' + lower(md.name) });
       return out;
     }
     var ents = Rl().entitiesAt(map, x, y).filter(function (e) { var o = objOf(c, e); return o && INTERACTIVE[o.kind]; });
@@ -996,8 +1135,7 @@ var World = (function () {
         out.push({ type: 'interact', verb: '', label: (verbs[o.kind] || 'Use') + ' the ' + name });
       }
     }
-    if (lk.free(x, y, p) && !(x === p.x && y === p.y)) out.push({ type: 'walk', verb: '', label: 'Walk here' });
-    return out;
+    return out;                                                 // movement is keyboard-only: no "walk here"
   }
 
   // ------------------------------------------------------------ what a player sees
@@ -1063,7 +1201,7 @@ var World = (function () {
       hp: p.hp, maxHp: s.maxHp, mp: Math.floor(Number(p.mp) || 0), maxMp: s.maxMp, atk: s.atk, def: s.def, level: p.level, xp: p.xp,
       hunger: Math.round(Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)),
       thirst: Math.round(Number(p.thirst) == null || isNaN(Number(p.thirst)) ? 100 : Number(p.thirst)),
-      skills: usableSkills(c, p), loadout: p.loadout, cooldowns: p.cooldowns || {},
+      skills: usableSkills(c, p), abilities: p.abilities, belt: p.belt, mags: p.mags || {}, cooldowns: p.cooldowns || {},
       statuses: (p.statuses || []).map(function (st) { return { id: st.id, until: st.until }; }),
       xpNext: xpFor(c, p.level + 1), xpThis: xpFor(c, p.level) || 0, gold: p.gold,
       inventory: p.inventory, equipment: p.equipment, respawn: p.respawn };
@@ -1073,6 +1211,7 @@ var World = (function () {
     act: act, view: view, viewOpts: viewOpts, record: record, eventsFor: eventsFor, publicPlayer: publicPlayer,
     stateOf: stateOf, mapState: mapState, check: check, run: run, give: give, count: count,
     liveState: liveState, trapPhase: trapPhase, knownSkills: knownSkills, checkTarget: checkTarget,
-    viewLookup: viewLookup, canSee: canSee, snapTarget: snapTarget, actionsAt: actionsAt, lineCells: lineCells, applyStatus: applyStatus };
+    viewLookup: viewLookup, canSee: canSee, snapTarget: snapTarget, actionsAt: actionsAt, lineCells: lineCells, applyStatus: applyStatus,
+    rangedWeapon: rangedWeapon, shotReach: shotReach };
 })();
 if (typeof module !== 'undefined') module.exports = World;

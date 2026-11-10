@@ -203,6 +203,12 @@ var Render = (function () {
         g.globalAlpha = 1; g.beginPath(); g.arc(px, py, 3.5, 0, 7); g.fill();
         continue;
       }
+      if (f.kind === 'tracer') {                                      // a bullet streak that fades fast
+        g.strokeStyle = f.color; g.globalAlpha = .9 * (1 - age); g.lineWidth = 2;
+        g.beginPath(); g.moveTo(f.from.x * T + T / 2 - cam.x, f.from.y * T + T / 2 - cam.y); g.lineTo(f.to.x * T + T / 2 - cam.x, f.to.y * T + T / 2 - cam.y); g.stroke();
+        g.globalAlpha = 1;
+        continue;
+      }
       if (f.kind === 'flash') {
         g.globalAlpha = .45 * (1 - age); g.fillStyle = f.color;
         g.fillRect(Math.round((f.x - f.r) * T - cam.x), Math.round((f.y - f.r) * T - cam.y), (2 * f.r + 1) * T, (2 * f.r + 1) * T);

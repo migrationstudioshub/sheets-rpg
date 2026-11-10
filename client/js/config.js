@@ -16,5 +16,5 @@ var GAME_CONFIG = {
   FUNCTIONS_URL: 'https://us-central1-sheets-rpg-73de1.cloudfunctions.net/game',
   ASSET_BASE: '../',            // repository root, relative to client/
   OFFLINE_TABLES: '../data/tables.json',
-  SCALE: 2                      // on-screen pixels per art pixel
+  SCALE: 1.35                   // on-screen pixels per art pixel (lower = smaller tiles, wider view fits)
 };

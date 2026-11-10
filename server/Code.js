@@ -29,7 +29,7 @@
 var CONTENT_TABS = ['Config', 'Tilesets', 'Autotile', 'Terrain', 'Kinds', 'Objects', 'Maps', 'MapEntities',
   'Items', 'Monsters', 'LootTables', 'Classes', 'Levels', 'Skills', 'Statuses'];
 var PLAYER_COLS = ['id', 'token', 'name', 'class', 'map', 'x', 'y', 'facing', 'hp', 'mp', 'level', 'xp', 'gold',
-  'inventory', 'equipment', 'loadout', 'cooldowns', 'statuses', 'flags', 'respawn', 'created', 'last_seen'];
+  'inventory', 'equipment', 'abilities', 'belt', 'mags', 'cooldowns', 'statuses', 'flags', 'respawn', 'created', 'last_seen'];
 var CACHE_S = 21600; // 6 hours, the CacheService maximum
 
 function doGet(e) {
@@ -113,7 +113,7 @@ function clearContentCache() {
 
 // ---------------------------------------------------------------- players
 
-var JSON_COLS = ['inventory', 'equipment', 'loadout', 'cooldowns', 'statuses', 'flags'];
+var JSON_COLS = ['inventory', 'equipment', 'abilities', 'belt', 'mags', 'cooldowns', 'statuses', 'flags'];
 
 function playersSheet() {
   var ss = SpreadsheetApp.openById(prop('SERVER_ID'));
@@ -173,7 +173,7 @@ function savePlayer(p, force, content) {
     var vals = [];
     Object.keys(idx).forEach(function (k) {
       var v = p[k];
-      if (JSON_COLS.indexOf(k) >= 0) v = JSON.stringify(v || (k === 'inventory' || k === 'loadout' || k === 'statuses' ? [] : {}));
+      if (JSON_COLS.indexOf(k) >= 0) v = JSON.stringify(v || (k === 'inventory' || k === 'abilities' || k === 'belt' || k === 'statuses' ? [] : {}));
       vals[idx[k]] = v == null ? '' : v;
     });
     for (var i = 0; i < vals.length; i++) if (vals[i] === undefined) vals[i] = '';

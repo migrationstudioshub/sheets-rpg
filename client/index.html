@@ -30,12 +30,26 @@
   .bar.low .fill { filter: saturate(1.4) brightness(1.1); animation: pulse 1s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .55; } }
   .bar { width: 150px; }
-  #hotbar { grid-column: 1 / -1; display: flex; gap: 6px; }
-  .hk { position: relative; width: 58px; height: 58px; border-radius: 8px; background: #262a33; border: 2px solid #3a3f4b;
+  #bars { grid-column: 1 / -1; display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+  .barset { display: flex; flex-direction: column; gap: 3px; }
+  .barlabel { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #8a8f99; }
+  #abilities, #belt { display: flex; gap: 6px; }
+  #abilities .hk { border-color: #4a5570; }
+  .weapon { display: flex; align-items: center; gap: 6px; height: 46px; padding: 0 9px; border-radius: 8px;
+            background: #262a33; border: 2px solid #6a5a3a; }
+  .weapon .ico { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 10px; color: #111; image-rendering: pixelated; }
+  .weapon .wname { font-size: 12px; color: #ffd36b; }
+  .weapon .wammo { font-size: 14px; font-weight: 700; color: #fff; }
+  .weapon .wammo.low { color: #ff6b5b; }
+  .weapon .wreserve { font-size: 11px; color: #8a8f99; }
+  .weapon .wreserve::before { content: '+ '; }
+  .weapon .wreload { font-size: 10px; font-weight: 700; color: #111; background: #ffd65a; border-radius: 3px; padding: 1px 4px; }
+  #reset.arm { background: #6a3a3a; border-color: #ff6b5b; color: #fff; }
+  .hk { position: relative; width: 46px; height: 46px; border-radius: 8px; background: #262a33; border: 2px solid #3a3f4b;
         display: grid; place-items: center; cursor: pointer; overflow: hidden; user-select: none; }
   .hk.armed { border-color: #ffd65a; box-shadow: 0 0 0 2px rgba(255,214,90,.35); }
   .hk.low { opacity: .45; }
-  .hk .ico { width: 34px; height: 34px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 12px; color: #111; image-rendering: pixelated; }
+  .hk .ico { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 11px; color: #111; image-rendering: pixelated; }
   .hk .key { position: absolute; left: 4px; top: 1px; font-size: 11px; color: #b9b6b0; }
   .hk .cost { position: absolute; right: 4px; bottom: 1px; font-size: 10px; color: #8fb6ff; }
   .hk .qty { position: absolute; right: 4px; bottom: 1px; font-size: 10px; color: #fff; }
@@ -122,14 +136,18 @@
       <span id="gold"></span>
     </div>
     <div class="actions">
-      <button id="btn-use" title="Use what you face: doors, chests, levers, signs (E)">Use (E)</button>
+      <button id="btn-use" title="Use what you face: doors, chests, levers, signs (F or Space)">Use (F)</button>
       <button id="btn-bag" title="Bag (I)">Bag (I)</button>
     </div>
-    <div id="hotbar"></div>
+    <div id="bars">
+      <div class="barset" id="weapon-set" hidden><span class="barlabel">Weapon</span><div id="weapon" class="weapon"></div></div>
+      <div class="barset"><span class="barlabel">Abilities</span><div id="abilities"></div></div>
+      <div class="barset"><span class="barlabel">Belt</span><div id="belt"></div></div>
+    </div>
     <div id="statuses"></div>
     <div id="log"></div>
   </div>
-  <div class="help">Click: walk, attack, open, use (right-click: more options, like picking a lock) · Arrows / WASD also move · E: use what you face · I: bag · 1–5: skills and items — aim with the mouse, click to cast, press the key again to cast at the cursor, Esc or right-click to cancel</div>
+  <div class="help">Move with WASD / arrows (the mouse never moves you) · left-click aims (crosshair cursor) and fires your gun — it reaches across the screen · R reloads the magazine from your ammo · right-click a tile for its actions (attack, open, pick a lock) · F or Space uses or attacks what you face · Q / E: abilities · 1–5: belt (throwables aim, then left-click to throw; food/meds use at once) · I: bag · Esc / right-click: cancel aiming</div>
 
   <script>
     // Load the game code without the browser cache, so players always get the latest

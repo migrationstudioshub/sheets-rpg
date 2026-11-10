@@ -86,8 +86,8 @@ def build():
     t = {}
     t['Config'] = [
         {'key': 'tile_size', 'value': 32, 'notes': 'Pixels per tile in the art'},
-        {'key': 'view_w', 'value': 15, 'notes': 'Tiles visible across'},
-        {'key': 'view_h', 'value': 11, 'notes': 'Tiles visible down'},
+        {'key': 'view_w', 'value': 22, 'notes': 'Tiles visible across (panoramic)'},
+        {'key': 'view_h', 'value': 13, 'notes': 'Tiles visible down'},
         {'key': 'start_map', 'value': 'map_3', 'notes': 'Where new characters appear'},
         {'key': 'start_x', 'value': 9, 'notes': ''},
         {'key': 'start_y', 'value': 15, 'notes': ''},
@@ -108,6 +108,7 @@ def build():
         {'key': 'starve_tick_s', 'value': 6, 'notes': 'Seconds between starvation/dehydration ticks'},
         {'key': 'infection_escalate', 'value': 1, 'notes': 'Extra infection damage added each tick as it worsens'},
         {'key': 'ranged_status_ms', 'value': 3000, 'notes': "How long a ranged enemy's applied status lasts (e.g. poison spit)"},
+        {'key': 'engage_range', 'value': 24, 'notes': 'How far a monster will chase a player who shot/hit it from beyond its aggro range before giving up'},
     ]
     t['Tilesets'] = [
         {'id': 'fields', 'image': 'art/tilesets/fields_placeholder.png', 'tile_size': 32, 'columns': 8,
@@ -277,11 +278,38 @@ def build():
         ('ration', 'Ration', 'consumable', '', 20, 8, 0, 0, 0, 0, 60, 0, '', '', ''),
         ('water', 'Water bottle', 'consumable', '', 20, 6, 0, 0, 0, 0, 0, 60, '', '', ''),
         ('antidote', 'Antidote', 'consumable', '', 10, 25, 0, 0, 0, 0, 0, 0, '', '', 'cure'),
-        ('ammo', 'Ammo', 'material', '', 99, 3, 0, 0, 0, 0, 0, 0, '', '', ''),
-        # firearms: equip to gain the shot (grants_skill); equip_if gates equipping, not firing
-        ('pistol', 'Pistol', 'weapon', 'weapon', 1, 40, 2, 0, 0, 0, 0, 0, 'gunshot', '', ''),
-        ('rifle', 'Rifle', 'weapon', 'weapon', 1, 90, 3, 0, 0, 0, 0, 0, 'rifle_shot', 'level:3', ''),
+        ('bandage', 'Bandage', 'consumable', '', 20, 5, 0, 0, 25, 0, 0, 0, '', '', ''),
+        ('medkit', 'Medkit', 'consumable', '', 10, 30, 0, 0, 80, 0, 0, 0, '', '', ''),
+        ('ammo_pistol', 'Pistol ammo', 'material', '', 99, 3, 0, 0, 0, 0, 0, 0, '', '', ''),
+        ('ammo_rifle', 'Rifle ammo', 'material', '', 99, 4, 0, 0, 0, 0, 0, 0, '', '', ''),
+        # firearms (ranged weapons): shooting is the default click action, not a skill. Ranged stats are added below.
+        # equip_if gates *equipping* (the rifle needs level 3); firing is ungated.
+        ('pistol', 'Pistol', 'weapon', 'weapon', 1, 40, 5, 0, 0, 0, 0, 0, '', '', ''),
+        ('rifle', 'Rifle', 'weapon', 'weapon', 1, 90, 9, 0, 0, 0, 0, 0, '', 'level:3', ''),
+        # throwables (type 'throwable'): sit on the belt; throw stats are added below.
+        ('grenade', 'Grenade', 'throwable', '', 10, 20, 0, 0, 0, 0, 0, 0, '', '', ''),
+        ('molotov', 'Molotov', 'throwable', '', 10, 16, 0, 0, 0, 0, 0, 0, '', '', ''),
     ]]
+    # --- combat rework: ranged weapon + ammo + throwable columns (kept off the tuple list to stay readable) ---
+    NEW_ITEM_FIELDS = ['range', 'ammo', 'ammo_cost', 'fire_ms', 'clip', 'penetration', 'falloff', 'tint',
+                       'throw_range', 'throw_area', 'throw_power', 'throw_status', 'throw_status_ms']
+    GUNS = {  # range (tiles); each gun takes its own ammo calibre; cost, fire cooldown ms, clip (magazine), tracer tint
+        'pistol': dict(range=16, ammo='ammo_pistol', ammo_cost=1, fire_ms=350, clip=12, tint='#ffd36b'),
+        'rifle':  dict(range=30, ammo='ammo_rifle', ammo_cost=1, fire_ms=700, clip=8, tint='#c9b27a'),
+    }
+    # pistol rounds pierce 2 with falloff; rifle rounds are stronger — pierce 3, less falloff
+    AMMO = {'ammo_pistol': dict(penetration=2, falloff=0.3), 'ammo_rifle': dict(penetration=3, falloff=0.2)}
+    THROW = {
+        'grenade': dict(throw_range=5, throw_area=1, throw_power=18, fire_ms=1200, tint='#8a9a5b'),
+        'molotov': dict(throw_range=5, throw_area=1, throw_power=6, throw_status='burn', throw_status_ms=4000, fire_ms=1500, tint='#ff8c3b'),
+    }
+    for _it in t['Items']:
+        for _f in NEW_ITEM_FIELDS:
+            _it.setdefault(_f, '')
+        _it['grants_skill'] = ''  # guns no longer grant a skill (column kept blank for back-compat)
+        for _src in (GUNS, AMMO, THROW):
+            if _it['id'] in _src:
+                _it.update(_src[_it['id']])
     MON_COLS = ['id', 'name', 'hp', 'atk', 'def', 'xp', 'gold_min', 'gold_max', 'loot_table', 'aggro_range',
                 'move_ms', 'respawn_s', 'attack_range', 'ranged_cooldown_ms', 'ranged_projectile', 'ranged_status', 'infect_chance']
     t['Monsters'] = [dict(zip(MON_COLS, r), sprite=sp(r[0]), notes='') for r in [
@@ -307,8 +335,8 @@ def build():
             ('chest_common', 'wooden_sword', 0.3, 1, 1), ('chest_common', 'leather_armor', 0.25, 1, 1),
             ('barrel', 'gold', 0.6, 1, 6), ('barrel', 'potion', 0.15, 1, 1),
             # survival demo drops
-            ('walker', 'ration', 0.3, 1, 1), ('walker', 'ammo', 0.2, 1, 2), ('walker', 'bone', 0.5, 1, 2),
-            ('spitter', 'ammo', 0.5, 1, 3), ('spitter', 'antidote', 0.15, 1, 1), ('spitter', 'water', 0.3, 1, 1),
+            ('walker', 'ration', 0.3, 1, 1), ('walker', 'ammo_pistol', 0.3, 1, 3), ('walker', 'bone', 0.5, 1, 2),
+            ('spitter', 'ammo_rifle', 0.5, 1, 3), ('spitter', 'ammo_pistol', 0.3, 1, 2), ('spitter', 'antidote', 0.15, 1, 1), ('spitter', 'water', 0.3, 1, 1),
         ]]
     CLASS_COLS = ['id', 'name', 'hp', 'atk', 'def', 'mp', 'hp_per_level', 'atk_per_level', 'def_per_level',
                   'mp_per_level', 'mp_regen', 'start_items', 'skills', 'notes', 'lockpicking']
@@ -319,8 +347,8 @@ def build():
         ('paladin', 'Paladin', 110, 5, 3, 45, 11, 2, 1, 4, 1.5, 'potion:2', 'holy_strike@1, blessing@1, lay_on_hands@3', 'Support: protects allies', 0),
         ('priest', 'Priest', 80, 3, 1, 80, 8, 1, 1, 8, 3.0, 'potion:1, mana_potion:2', 'heal@1, smite@1, renew@3', 'Healer', 0),
         ('barbarian', 'Barbarian', 140, 7, 1, 30, 14, 2, 1, 2, 1.0, 'potion:2', 'whirlwind@1, rage@1, leap@3', 'Brute force', 0),
-        # survival demo class (Z1): knows the gun at level 1 and starts with ammo/food/water, for offline testing
-        ('survivor', 'Survivor (gun test)', 100, 5, 1, 0, 10, 2, 1, 0, 0, 'pistol:1, rifle:1, ammo:20, ration:2, water:2, potion:2', '', 'Demo class: equip the pistol to shoot; the rifle needs level 3', 0),
+        # survival demo class: two abilities on Q/E, a belt of throwables/consumables, a gun to equip-and-shoot
+        ('survivor', 'Survivor (gun test)', 100, 5, 1, 30, 10, 2, 1, 2, 1.0, 'pistol:1, rifle:1, ammo_pistol:40, ammo_rifle:16, grenade:3, bandage:3, ration:2, water:2', 'second_wind@1, cleave@1', 'Demo: left-click to aim+fire the pistol (R reloads from your pistol-ammo reserve); the rifle uses rifle ammo and needs level 3; 1-5 belt; Q/E abilities', 0),
     ]]
     STATUS_COLS = ['id', 'name', 'kind', 'amount', 'tick_ms', 'atk', 'def', 'slow', 'color', 'notes']
     t['Statuses'] = [dict(zip(STATUS_COLS, r)) for r in [
@@ -356,13 +384,8 @@ def build():
         ('rage', 'Rage', '', '#e05050', 10, 15000, 0, 'self', 0, False, 'none', 0, '', 0, 'rage', 8000, False, False, '', 'Hit harder, guard less'),
         ('leap', 'Leap', '', '#e05050', 10, 10000, 4, 'tile', 1, True, 'damage', 4, 'atk', 0.8, 'stun', 1000, True, False, '', 'Jump to a spot, stunning enemies where you land'),
     ]]
-    # survival demo (Z1): firearm skills granted by equipping a gun; they spend 'ammo' per shot, not mana
-    t['Skills'].append(dict(zip(SKILL_COLS,
-        ('gunshot', 'Gunshot', '', '#d0d0d0', 0, 900, 6, 'enemy', 0, True, 'damage', 8, 'atk', 0.6, '', 0, False, True, '', 'Fire your pistol at an enemy; spends one ammo')),
-        ammo='ammo', ammo_cost=1))
-    t['Skills'].append(dict(zip(SKILL_COLS,
-        ('rifle_shot', 'Rifle shot', '', '#c9b27a', 0, 1400, 9, 'enemy', 0, True, 'damage', 12, 'atk', 0.8, '', 0, False, True, '', 'A powerful long-range shot; spends one ammo')),
-        ammo='ammo', ammo_cost=1))
+    # Firearms are no longer skills — shooting is the default click action of an equipped ranged weapon.
+    # (The Skills tab keeps the ammo/ammo_cost columns so a future thrown/charged skill can still use them.)
     for _s in t['Skills']:
         _s.setdefault('ammo', '')
         _s.setdefault('ammo_cost', '')
@@ -379,7 +402,7 @@ def build():
 
 SERVER_HEADERS = {
     'Players': ['id', 'token', 'name', 'class', 'map', 'x', 'y', 'facing', 'hp', 'mp', 'level', 'xp', 'gold',
-                'inventory', 'equipment', 'loadout', 'cooldowns', 'statuses', 'flags', 'respawn', 'created', 'last_seen'],
+                'inventory', 'equipment', 'abilities', 'belt', 'mags', 'cooldowns', 'statuses', 'flags', 'respawn', 'created', 'last_seen'],
     'WorldState': ['map', 'key', 'state', 'updated'],
     'Log': ['time', 'player', 'event', 'detail'],
 }

@@ -14,10 +14,9 @@
   var queue = [], inFlight = false, lastReply = 0;
   var held = [], tap = null, holdSince = 0, lastStep = 0, lastFrame = 0, HOLD_MS = 220;
   var fx = [], bagOpen = false;
-  var armed = null;                      // {slot, skill} while a skill waits for a target
+  var armed = null;                      // {slot, id, skill} while an ability (Q/E) waits for a target
+  var throwing = null;                   // belt item id armed for a throw (click to throw, Esc to cancel)
   var hover = null, lastCam = { x: 0, y: 0 };
-  var plan = null;                       // a walk (and maybe an action) started by clicking: {path, goal, act, chase}
-  var lastAttack = 0;
   var clockOffset = 0;                   // server clock minus ours, for timed traps
   var timed = [];                        // timed traps on this map, drawn from the clock
   var liveUnwatch = null;                // stops the Firebase live-world listener (online, when enabled)
@@ -79,6 +78,17 @@
         fx.push({ kind: 'flash', x: at.x, y: at.y, r: area, color: sk.color, t0: t0 + (sk.projectile ? 240 : 0), life: 450 });
         return;
       }
+      if (e.type === 'shoot') {                                  // a bullet tracer (ours was drawn on click)
+        if (e.by !== me.id) fx.push({ kind: 'tracer', from: e.from, to: e.to, color: e.color || '#ffd36b', t0: t0, life: 160 });
+        return;
+      }
+      if (e.type === 'throw') {                                  // a thrown grenade/molotov arc + blast
+        if (e.by !== me.id) {
+          fx.push({ kind: 'proj', from: e.from, to: e.to, color: e.color || '#ff8c3b', t0: t0, life: 300 });
+          fx.push({ kind: 'flash', x: e.to.x, y: e.to.y, r: e.area || 0, color: e.color || '#ff8c3b', t0: t0 + 280, life: 450 });
+        }
+        return;
+      }
       if (e.type === 'mana' && e.amount) { fx.push({ x: e.x, y: e.y, text: '+' + e.amount + ' MP', color: '#8fb6ff', t0: t0 }); return; }
       if (e.type === 'hit' && e.amount) fx.push({ x: e.x, y: e.y, text: '-' + e.amount, color: e.to === me.id && e.x === me.x && e.y === me.y ? '#ff6b5b' : '#ffffff', t0: t0 });
       else if (e.type === 'heal' && e.amount) fx.push({ x: e.x, y: e.y, text: '+' + e.amount, color: COLORS.heal, t0: t0 });
@@ -135,18 +145,23 @@
   function useItem(id) { send({ type: 'use', item: id }); }
 
   // ---------------------------------------------------------------- input
-  function press(d) { plan = null; held = held.filter(function (h) { return h !== d; }).concat(d); tap = d; holdSince = performance.now(); }
+  function press(d) { held = held.filter(function (h) { return h !== d; }).concat(d); tap = d; holdSince = performance.now(); }
   addEventListener('keydown', function (e) {
     if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT') return;
     var d = KEYS[e.code];
     if (d) { e.preventDefault(); if (!e.repeat) press(d); return; }
     if (e.repeat) return;
-    if (e.code === 'KeyE' || e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); interact(); }
+    if (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyF') { e.preventDefault(); interact(); }
     else if (e.code === 'KeyI' || e.code === 'KeyB') toggleBag();
-    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (plan) plan = null; else if (bagOpen) toggleBag(); }
-    else if (/^Digit[1-5]$/.test(e.code) && me) hotkey(Number(e.code.slice(5)) - 1);
+    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) cancelThrow(); else if (bagOpen) toggleBag(); }
+    else if (e.code === 'KeyQ') ability(0);
+    else if (e.code === 'KeyE') ability(1);
+    else if (e.code === 'KeyR') { if (World.rangedWeapon(content, me)) send({ type: 'reload' }); }
+    else if (/^Digit[1-5]$/.test(e.code) && me) beltKey(Number(e.code.slice(5)) - 1);
   });
-  addEventListener('keyup', function (e) { var d = KEYS[e.code]; if (d) held = held.filter(function (h) { return h !== d; }); });
+  addEventListener('keyup', function (e) {
+    var d = KEYS[e.code]; if (d) held = held.filter(function (h) { return h !== d; });
+  });
   addEventListener('blur', function () { held = []; });
   function cellAt(e) {
     var r = canvas.getBoundingClientRect(), T = content.config.tile_size || 32;
@@ -158,94 +173,77 @@
   canvas.addEventListener('pointerleave', function () { hover = null; $('tip').hidden = true; });
   canvas.addEventListener('pointerdown', function (e) {
     if (!me) return;
-    closeMenu();
     var cell = cellAt(e);
-    if (armed) {                                          // aiming: left click casts, right click cancels
-      if (e.button === 2) disarm(); else { hover = cell; castAt(cell); }
+    if (e.button === 2) {                                 // right-click: cancel aiming, or open the action menu
+      if (armed) { disarm(); return; }
+      if (throwing) { cancelThrow(); return; }
+      closeMenu();
+      var acts = World.actionsAt(content, mapOf(), lookup(), me, cell.x, cell.y);
+      if (acts.length) openMenu(e, cell, acts);
       return;
     }
-    var acts = World.actionsAt(content, mapOf(), lookup(), me, cell.x, cell.y);
-    if (e.button === 2) { if (acts.length) openMenu(e, cell, acts); return; }
-    if (e.button === 0 && acts.length) doAction(acts[0], cell);
+    if (e.button !== 0) return;
+    closeMenu();
+    hover = cell;
+    if (armed) { castAt(cell); return; }                  // left-click: aim + fire/throw/cast only — never walk or act
+    if (throwing) { throwAt(cell); return; }
+    if (World.rangedWeapon(content, me)) { shootAt(cell); return; }
+    log('No ranged weapon equipped — press F to use or attack what you face (right-click for options).', 'info');
   });
 
-  // ---------------------------------------------------------------- mouse: actions, menu, walking there
+  // ---------------------------------------------------------------- mouse: a click acts; it never walks you there
   function lookup() { return World.viewLookup(content, mapOf(), view, me); }
-  function doAction(a, cell) {
-    if (a.type === 'walk') { plan = { goal: cell, exact: true }; return; }
-    if (a.type === 'attack') {
-      var m = view.monsters.filter(function (q) { return q.x === cell.x && q.y === cell.y; })[0];
-      if (m) plan = { chase: m.id }; return;
-    }
-    plan = { goal: cell, act: { type: 'interact', x: cell.x, y: cell.y, verb: a.verb } };
-  }
+  var TOO_FAR = 'Too far away. Move there with the movement keys.';
   function near(x, y) { return Math.abs(me.x - x) + Math.abs(me.y - y) <= 1; }
-
-  /** Shortest walk (4 directions) to the goal cell, or next to it. Monsters and closed doors are in the way. */
-  function findPath(gx, gy, exact) {
-    var map = mapOf(), opts = World.viewOpts(content, map, view, me.id), lk = lookup();
-    var walkable = opts.walkable, occupied = opts.occupied;
-    // monsters move, so they don't block a planned route; one still in the way gets bumped (attacked) on arrival
-    opts.occupied = function (x, y) { var w = occupied(x, y); return w && w.player ? w : null; };
-    opts.walkable = function (e) {                        // plan through doors that are closed but not locked: they get opened on the way
-      var o = content.objects[e.ref];
-      if (o && o.kind === 'door' && !World.props(content, e).target) return lk.stateOf(e) !== 'locked';
-      return walkable(e);
-    };
-    var key = function (x, y) { return x + ',' + y; }, from = {}, q = [[me.x, me.y]], seen = {};
-    seen[key(me.x, me.y)] = 1;
-    var done = function (x, y) { return exact ? x === gx && y === gy : Math.abs(x - gx) + Math.abs(y - gy) <= 1; };
-    for (var n = 0; q.length && n < 4000; n++) {
-      var cur = q.shift();
-      if (done(cur[0], cur[1])) {
-        var path = [], k = key(cur[0], cur[1]);
-        while (from[k]) { path.unshift(from[k].dir); k = from[k].prev; }
-        return path;
-      }
-      ['N', 'E', 'S', 'W'].forEach(function (d) {
-        var r = Rules.tryMove(content, map, cur[0], cur[1], d, opts);
-        if (!r.ok || seen[key(r.x, r.y)]) return;
-        seen[key(r.x, r.y)] = 1; from[key(r.x, r.y)] = { prev: key(cur[0], cur[1]), dir: d };
-        q.push([r.x, r.y]);
-      });
-    }
-    return null;
+  function cheb(ax, ay, bx, by) { return Math.max(Math.abs(ax - bx), Math.abs(ay - by)); }
+  function count(id) { var s = me.inventory.filter(function (x) { return x.item === id; })[0]; return s ? s.qty : 0; }
+  function facingToward(x, y) {
+    var dx = x - me.x, dy = y - me.y;
+    if (!dx && !dy) return me.facing;
+    return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
   }
-  /** One step of the current click-plan; called every frame when the character is standing still. */
-  function followPlan(now) {
-    if (!plan) return false;
-    if (plan.chase) {                                     // keep attacking the clicked monster until it is gone
-      var m = view.monsters.filter(function (q) { return q.id === plan.chase; })[0];
-      if (!m) { plan = null; return false; }
-      if (near(m.x, m.y)) {
-        if (now - lastAttack >= (content.config.attack_ms || 500) && !queue.length) {
-          lastAttack = now; send({ type: 'attack', x: m.x, y: m.y }); attackFx(m.x, m.y);
-        }
-        return true;
-      }
-      var p1 = findPath(m.x, m.y, false);
-      if (!p1 || !p1.length) { plan = null; log('You can\'t reach it.', 'info'); return false; }
-      return walkStep(p1[0], now);
+  /** A click acts on the cell if it is in range; otherwise it tells you to walk there. Shooting is handled separately. */
+  function doAction(a, cell) {
+    if (a.type === 'shoot') return shootAt(cell);
+    if (a.type === 'attack') {
+      if (!near(cell.x, cell.y)) { log(TOO_FAR, 'info'); return; }
+      me.facing = facingToward(cell.x, cell.y);
+      send({ type: 'attack', x: cell.x, y: cell.y }); attackFx(cell.x, cell.y);
+      return;
     }
-    if (!plan.exact && near(plan.goal.x, plan.goal.y)) { send(plan.act); plan = null; return true; }
-    if (plan.exact && me.x === plan.goal.x && me.y === plan.goal.y) { plan = null; return false; }
-    var path = findPath(plan.goal.x, plan.goal.y, plan.exact);
-    if (!path && plan.exact) { plan.exact = false; path = findPath(plan.goal.x, plan.goal.y, false); }   // occupied: get next to it
-    if (!path || !path.length) { plan = null; log('You can\'t get there.', 'info'); return false; }
-    return walkStep(path[0], now);
+    if (a.type === 'interact') {
+      if (!near(cell.x, cell.y)) { log(TOO_FAR, 'info'); return; }
+      send({ type: 'interact', x: cell.x, y: cell.y, verb: a.verb });
+    }
   }
-  /** Takes one step of a path; a closed door in the way is opened first. */
-  function walkStep(dir, now) {
-    var d = Rules.DIRS[dir], nx = me.x + d.dx, ny = me.y + d.dy, lk = lookup();
-    var door = Rules.entitiesAt(mapOf(), nx, ny).filter(function (e) {
-      var o = content.objects[e.ref]; return o && o.kind === 'door' && lk.stateOf(e) !== 'open';
-    })[0];
-    if (door) {
-      if (!plan.opening || now - plan.opening > 1500) { plan.opening = now; send({ type: 'interact', x: nx, y: ny }); }
-      return true;
-    }
-    step(dir);
-    return true;
+  /** Fire the equipped ranged weapon at a cell (an enemy, or anywhere). */
+  function shootAt(cell) {
+    var map = mapOf(), reach = World.shotReach(content, map, me, cell.x, cell.y, lookup());
+    if (!reach.ok) { log(reach.reason, 'info'); return; }
+    var w = reach.weapon, cost = w.ammoCost || 1, ammoName = content.items[w.ammo] ? content.items[w.ammo].name.toLowerCase() : w.ammo;
+    if (Number(w.clip) > 0) {                                   // fire from the loaded magazine, not the reserve
+      if (((me.mags && me.mags[w.id]) || 0) < cost) { log(count(w.ammo) >= cost ? 'Out of ammo — press R to reload.' : 'Out of ' + ammoName + '.', 'info'); return; }
+    } else if (w.ammo && count(w.ammo) < cost) { log('Out of ' + ammoName + '.', 'info'); return; }
+    me.facing = facingToward(cell.x, cell.y);
+    send({ type: 'shoot', x: cell.x, y: cell.y });
+    var end = reach.cells[reach.cells.length - 1] || me;
+    fx.push({ kind: 'tracer', from: { x: me.x, y: me.y }, to: { x: end.x, y: end.y }, color: w.tint || '#ffd36b', t0: performance.now(), life: 160 });
+  }
+  /** Throw the armed belt item (grenade/molotov) at a cell within its range. */
+  function throwAt(cell) {
+    var it = content.items[throwing]; if (!it) { cancelThrow(); return; }
+    if (count(throwing) < 1) { log('Out of ' + it.name.toLowerCase() + '.', 'info'); cancelThrow(); return; }
+    if (cheb(me.x, me.y, cell.x, cell.y) > (it.throwRange || 4)) { log(TOO_FAR, 'info'); return; }
+    me.facing = facingToward(cell.x, cell.y);
+    send({ type: 'throw', item: throwing, x: cell.x, y: cell.y });
+    var t0 = performance.now();
+    fx.push({ kind: 'proj', from: { x: me.x, y: me.y }, to: { x: cell.x, y: cell.y }, color: it.tint || '#ff8c3b', t0: t0, life: 300 });
+    fx.push({ kind: 'flash', x: cell.x, y: cell.y, r: it.throwArea || 0, color: it.tint || '#ff8c3b', t0: t0 + 280, life: 450 });
+    cancelThrow();
+  }
+  function cancelThrow() { if (throwing) { throwing = null; updateCursor(); hotbar(); } }
+  function updateCursor() {
+    canvas.style.cursor = (armed || throwing || (me && World.rangedWeapon(content, me))) ? 'crosshair' : '';
   }
 
   function openMenu(e, cell, acts) {
@@ -266,34 +264,48 @@
   function closeMenu() { $('menu').hidden = true; }
   addEventListener('pointerdown', function (e) { if (!$('menu').contains(e.target) && e.target !== canvas) closeMenu(); });
 
-  /** What a click would do, next to the cursor; the cursor shape says it too. */
+  /** Aiming a weapon → crosshair, no tip. Otherwise show what right-click (or F) would do here. */
   function hoverLabel(e) {
     var tip = $('tip');
-    if (!me || armed || !hover) { tip.hidden = true; canvas.style.cursor = armed ? 'crosshair' : ''; return; }
+    if (!me || armed || throwing || World.rangedWeapon(content, me)) { tip.hidden = true; updateCursor(); return; }
+    if (!hover) { tip.hidden = true; canvas.style.cursor = ''; return; }
     var acts = World.actionsAt(content, mapOf(), lookup(), me, hover.x, hover.y), a = acts[0];
-    canvas.style.cursor = !a ? 'default' : a.type === 'attack' ? 'crosshair' : a.type === 'interact' ? 'pointer' : 'default';
-    if (!a || a.type === 'walk') { tip.hidden = true; return; }
+    canvas.style.cursor = a ? 'pointer' : 'default';
+    if (!a) { tip.hidden = true; return; }
     var r = $('frame').getBoundingClientRect();
-    tip.textContent = a.label + (acts.length > (acts[acts.length - 1].type === 'walk' ? 2 : 1) ? '  · right-click for more' : '');
+    tip.textContent = a.label + ' — right-click, or F if you face it';
     tip.style.left = (e.clientX - r.left + 14) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
     tip.hidden = false;
   }
 
-  // ---------------------------------------------------------------- skills and the bar
+  // ---------------------------------------------------------------- abilities (Q/E) and the belt (1-5)
   function serverNow() { return Date.now() + clockOffset; }
-  function slotEntry(i) { var e = (me.loadout || [])[i] || '', k = e.split(':')[0]; return { kind: k, id: e.slice(k.length + 1) }; }
   function readyIn(id) { return Math.max(0, ((me.cooldowns || {})[id] || 0) - serverNow()); }
-  function hotkey(i) {
-    var en = slotEntry(i);
-    if (en.kind === 'item') { if (me.inventory.some(function (s) { return s.item === en.id; })) useItem(en.id); else log('You have no ' + (content.items[en.id] || { name: en.id }).name.toLowerCase() + ' left.', 'info'); return; }
-    if (en.kind !== 'skill') return;
-    var sk = content.skills[en.id]; if (!sk) return;
+  /** Q/E: arm an ability, or fire it now if it needs no aim (or is already armed). */
+  function ability(i) {
+    if (!me) return;
+    var id = (me.abilities || [])[i], sk = id && content.skills[id];
+    if (!sk) { log('No ability on ' + (i === 0 ? 'Q' : 'E') + ' yet — set one from the bag (I).', 'info'); return; }
     if (readyIn(sk.id) > 0) { log(sk.name + ' is not ready yet.', 'info'); return; }
-    if (me.mp < sk.mp) { log('Not enough mana for ' + sk.name + '.', 'info'); return; }
+    if (me.mp < sk.mp) { log('Not enough energy for ' + sk.name + '.', 'info'); return; }
+    cancelThrow();
     if (sk.target === 'self' || sk.target === 'around') { disarm(); send({ type: 'cast', skill: sk.id, x: me.x, y: me.y }); castFx(sk.id, me, me); return; }
-    if (armed && armed.slot === i) { if (hover) castAt(hover); return; }   // second press: cast at the cursor
-    armed = { slot: i, skill: sk.id };
-    hotbar();
+    if (armed && armed.id === sk.id) { if (hover) castAt(hover); return; }    // second press: cast at the cursor
+    armed = { slot: i, id: sk.id, skill: sk.id }; updateCursor(); hotbar();
+  }
+  /** 1-5: a throwable arms throw-aim; anything else (food/bandage/medkit) is used at once. */
+  function beltKey(i) {
+    if (!me) return;
+    var id = (me.belt || [])[i];
+    if (!id) { log('Belt slot ' + (i + 1) + ' is empty — set an item from the bag (I).', 'info'); return; }
+    var it = content.items[id]; if (!it) return;
+    if (count(id) < 1) { log('No ' + it.name.toLowerCase() + ' left.', 'info'); return; }
+    if (it.type === 'throwable') {
+      disarm();
+      throwing = throwing === id ? null : id;                                 // toggle throw-aim
+      if (throwing) log('Aim the ' + it.name.toLowerCase() + ' and click to throw (Esc to cancel).', 'info');
+      updateCursor(); hotbar();
+    } else useItem(id);
   }
   function aimCheck(cell) {
     var sk = content.skills[armed.skill], map = mapOf(), lk = World.viewLookup(content, map, view, me);
@@ -310,7 +322,7 @@
     castFx(armed.skill, { x: me.x, y: me.y }, { x: chk.x, y: chk.y });
     disarm();
   }
-  function disarm() { armed = null; hotbar(); }
+  function disarm() { armed = null; updateCursor(); hotbar(); }
   /** Your own melee attacks land their swing instantly; the server's damage number follows when it answers. */
   var lastAttackFx = 0;
   function attackFx(tx, ty) {
@@ -332,7 +344,7 @@
     fx.push({ kind: 'flash', x: at.x, y: at.y, r: area, color: sk.color, t0: t0 + (sk.projectile ? 240 : 0), life: 450 });
   }
 
-  /** Cells to light up while aiming: in range and in sight. */
+  /** Cells to light up while aiming an ability: in range and in sight. */
   function aimOverlay() {
     var sk = content.skills[armed.skill], map = mapOf(), lk = World.viewLookup(content, map, view, me), cells = [];
     var reach = Object.assign({}, sk, { target: 'tile', dash: false });
@@ -342,7 +354,21 @@
     var hc = hover && aimCheck(hover), h = hc && { x: hc.x, y: hc.y, ok: hc.ok };
     return { cells: cells, hover: h, area: sk.area, from: me, color: sk.color };
   }
-
+  /** Cells within a square range of the player (the throw/shoot reach ring). */
+  function ringCells(range) {
+    var map = mapOf(), cells = [];
+    for (var y = me.y - range; y <= me.y + range; y++) for (var x = me.x - range; x <= me.x + range; x++) {
+      if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue;
+      if (cheb(me.x, me.y, x, y) <= range) cells.push({ x: x, y: y });
+    }
+    return cells;
+  }
+  /** Throw-aim overlay: reach ring + the blast area under the cursor. */
+  function throwOverlay() {
+    var it = content.items[throwing], rng = it.throwRange || 4;
+    var h = hover ? { x: hover.x, y: hover.y, ok: cheb(me.x, me.y, hover.x, hover.y) <= rng } : null;
+    return { cells: ringCells(rng), hover: h, area: it.throwArea || 0, from: me, color: it.tint || '#ff8c3b' };
+  }
   function icon(entry) {
     var el = document.createElement('div'); el.className = 'ico';
     if (entry.kind === 'skill') {
@@ -358,46 +384,49 @@
     return el;
   }
   function hotbar() {
-    var bar = $('hotbar'); if (!me) return;
-    bar.innerHTML = '';
-    for (var i = 0; i < 5; i++) (function (i) {
-      var en = slotEntry(i), b = document.createElement('div');
-      b.className = 'hk' + (armed && armed.slot === i ? ' armed' : '') + (en.kind ? '' : ' empty');
-      b.title = en.kind === 'skill' ? describeSkill(content.skills[en.id]) : en.kind === 'item' ? (content.items[en.id] || { name: en.id }).name : 'Empty: fill it from the bag (I)';
-      var key = document.createElement('span'); key.className = 'key'; key.textContent = i + 1;
-      b.appendChild(key);
-      if (en.kind) b.appendChild(icon(en));
-      if (en.kind === 'skill' && content.skills[en.id]) {
-        var cost = document.createElement('span'); cost.className = 'cost'; cost.textContent = content.skills[en.id].mp || '';
-        b.appendChild(cost);
-        if (content.skills[en.id].ammo) {                        // firearms show their ammo count, not a mana cost
-          var aq = document.createElement('span'); aq.className = 'qty';
-          aq.textContent = '×' + ((me.inventory.filter(function (s) { return s.item === content.skills[en.id].ammo; })[0] || {}).qty || 0);
-          b.appendChild(aq);
-        }
+    if (!me) return;
+    var ab = $('abilities'); ab.innerHTML = '';
+    ['Q', 'E'].forEach(function (lab, i) {
+      var id = (me.abilities || [])[i], sk = id && content.skills[id], b = document.createElement('div');
+      b.className = 'hk' + (armed && armed.slot === i && armed.id === id ? ' armed' : '') + (sk ? '' : ' empty');
+      b.title = sk ? describeSkill(sk) : 'Empty: assign an ability from the bag (I)';
+      var key = document.createElement('span'); key.className = 'key'; key.textContent = lab; b.appendChild(key);
+      if (sk) {
+        b.appendChild(icon({ kind: 'skill', id: id }));
+        var cost = document.createElement('span'); cost.className = 'cost'; cost.textContent = sk.mp || ''; b.appendChild(cost);
         var cd = document.createElement('div'); cd.className = 'cd'; b.appendChild(cd);
         var cdt = document.createElement('div'); cdt.className = 'cdt'; b.appendChild(cdt);
-        b._cd = cd; b._cdt = cdt; b._skill = content.skills[en.id];
-      } else if (en.kind === 'item') {
+        b._cd = cd; b._cdt = cdt; b._skill = sk;
+      }
+      b.onclick = function () { ability(i); };
+      ab.appendChild(b);
+    });
+    var belt = $('belt'); belt.innerHTML = '';
+    for (var i = 0; i < 5; i++) (function (i) {
+      var id = (me.belt || [])[i], it = id && content.items[id], b = document.createElement('div');
+      b.className = 'hk' + (throwing && throwing === id ? ' armed' : '') + (it ? '' : ' empty');
+      b.title = it ? it.name + (it.type === 'throwable' ? ' (throw)' : ' (use)') : 'Empty: assign an item from the bag (I)';
+      var key = document.createElement('span'); key.className = 'key'; key.textContent = i + 1; b.appendChild(key);
+      if (it) {
+        b.appendChild(icon({ kind: 'item', id: id }));
         var q = document.createElement('span'); q.className = 'qty';
-        var st = me.inventory.filter(function (s) { return s.item === en.id; })[0];
+        var st = me.inventory.filter(function (s) { return s.item === id; })[0];
         q.textContent = st ? '×' + st.qty : '0'; b.appendChild(q);
         if (!st) b.classList.add('low');
       }
-      b.onclick = function () { hotkey(i); };
-      bar.appendChild(b);
+      b.onclick = function () { beltKey(i); };
+      belt.appendChild(b);
     })(i);
     tickHotbar();
   }
-  /** Cooldown shading and "not enough mana", every frame. */
+  /** Cooldown shading and "not enough energy" on the ability bar, every frame. */
   function tickHotbar() {
-    Array.prototype.forEach.call($('hotbar').children, function (b) {
+    Array.prototype.forEach.call($('abilities').children, function (b) {
       var sk = b._skill; if (!sk) return;
       var left = readyIn(sk.id), frac = sk.cooldownMs ? Math.min(1, left / sk.cooldownMs) : 0;
       b._cd.style.height = (frac * 100) + '%';
       b._cdt.textContent = left > 0 ? (left / 1000).toFixed(left < 1000 ? 1 : 0) : '';
-      var lowAmmo = sk.ammo && ((me.inventory.filter(function (s) { return s.item === sk.ammo; })[0] || {}).qty || 0) < (sk.ammoCost || 1);
-      b.classList.toggle('low', me.mp < sk.mp || lowAmmo);
+      b.classList.toggle('low', me.mp < sk.mp);
     });
   }
   function describeSkill(sk) {
@@ -429,6 +458,22 @@
     $('water-fill').style.width = Math.max(0, Math.min(100, water)) + '%';
     $('water-text').textContent = 'Water ' + Math.round(water) + '%';
     $('water-bar').classList.toggle('low', water <= 25);
+    var rw = World.rangedWeapon(content, me), wset = $('weapon-set');          // equipped gun: magazine + reserve
+    if (rw) {
+      var reserve = (me.inventory.filter(function (s) { return s.item === rw.ammo; })[0] || {}).qty || 0;
+      var clip = Number(rw.clip) || 0, loaded = (me.mags && me.mags[rw.id]) || 0;
+      var wl = $('weapon'); wl.innerHTML = '';
+      wl.appendChild(icon({ kind: 'item', id: me.equipment.weapon }));
+      var nm = document.createElement('span'); nm.className = 'wname'; nm.textContent = rw.name; wl.appendChild(nm);
+      if (clip > 0) {
+        var mag = document.createElement('span'); mag.className = 'wammo' + (loaded < (rw.ammoCost || 1) ? ' low' : ''); mag.textContent = loaded + '/' + clip; wl.appendChild(mag);
+        var rv = document.createElement('span'); rv.className = 'wreserve'; rv.textContent = reserve; wl.appendChild(rv);
+        if (loaded < (rw.ammoCost || 1)) { var rl = document.createElement('span'); rl.className = 'wreload'; rl.textContent = 'R'; wl.appendChild(rl); }
+      } else {
+        var am = document.createElement('span'); am.className = 'wammo' + (reserve < (rw.ammoCost || 1) ? ' low' : ''); am.textContent = '×' + reserve; wl.appendChild(am);
+      }
+      wset.hidden = false;
+    } else wset.hidden = true;
     var sts = $('statuses'); sts.innerHTML = '';
     (me.statuses || []).forEach(function (st) {
       var d = content.statuses[st.id] || { name: st.id, color: '#888' }, el = document.createElement('span');
@@ -438,24 +483,27 @@
       sts.appendChild(el);
     });
     hotbar();
+    updateCursor();                 // keep the canvas cursor (crosshair when a gun is ready) in step with gear changes
   }
   function toggleBag() { bagOpen = !bagOpen; $('bag').hidden = !bagOpen; if (bagOpen) bag(); }
   function bag() {
     var box = $('bag-items'); box.innerHTML = '';
     $('bag-stats').textContent = (content.classes[me['class']] ? content.classes[me['class']].name + ' · ' : '') +
       'Attack ' + me.atk + ' · Defence ' + me.def + ' · ' + me.gold + ' gold';
-    function slots(entry) {
+    // bar 'ability' = the two Q/E skill slots; bar 'belt' = the five 1-5 item slots
+    function slots(id, bar) {
+      var arr = bar === 'ability' ? (me.abilities || []) : (me.belt || []), labels = bar === 'ability' ? ['Q', 'E'] : ['1', '2', '3', '4', '5'];
       var wrap = document.createElement('div'); wrap.className = 'slots';
-      [0, 1, 2, 3, 4].forEach(function (i) {
-        var b = document.createElement('button'); b.textContent = i + 1;
-        b.title = 'Put in slot ' + (i + 1);
-        if (me.loadout[i] === entry) b.className = 'on';
-        b.onclick = function () { send({ type: 'loadout', slot: i, entry: me.loadout[i] === entry ? '' : entry }); };
+      labels.forEach(function (lab, i) {
+        var b = document.createElement('button'); b.textContent = lab;
+        b.title = 'Put in slot ' + lab;
+        if (arr[i] === id) b.className = 'on';
+        b.onclick = function () { send({ type: 'loadout', bar: bar, slot: i, entry: arr[i] === id ? '' : id }); };
         wrap.appendChild(b);
       });
       return wrap;
     }
-    var h1 = document.createElement('h4'); h1.textContent = 'Skills (numbers = put on the bar)'; box.appendChild(h1);
+    var h1 = document.createElement('h4'); h1.textContent = 'Abilities (Q / E)'; box.appendChild(h1);
     (me.skills || []).forEach(function (id) {
       var sk = content.skills[id]; if (!sk) return;
       var row = document.createElement('div'); row.className = 'sk';
@@ -463,7 +511,7 @@
       var info = document.createElement('div'); info.className = 'name';
       info.innerHTML = '<b></b><span></span>';
       info.firstChild.textContent = sk.name; info.lastChild.textContent = describeSkill(sk).split('\n')[1];
-      info.appendChild(slots('skill:' + id));
+      info.appendChild(slots(id, 'ability'));
       row.title = describeSkill(sk);
       row.appendChild(info); box.appendChild(row);
     });
@@ -484,7 +532,7 @@
       name.firstChild.textContent = it.name + (s.qty > 1 ? ' ×' + s.qty : '');
       name.lastChild.textContent = describe(it) + (equipped ? ' · equipped' : '');
       row.appendChild(pic); row.appendChild(name);
-      if (it.type === 'consumable') name.appendChild(slots('item:' + s.item));
+      if (it.type === 'consumable' || it.type === 'throwable') name.appendChild(slots(s.item, 'belt'));
       if (it.type === 'consumable' || it.slot) {
         var b = document.createElement('button');
         b.textContent = it.slot ? (equipped ? 'Unequip' : 'Equip') : 'Use';
@@ -507,7 +555,7 @@
 
   // ---------------------------------------------------------------- map and loop
   function enterMap() {
-    plan = null;
+    armed = null; throwing = null;
     watchLive();                          // (re)subscribe to live monster/player pushes for this map
     hud();
     setNet('loading art…');
@@ -536,7 +584,6 @@
     var moving = Math.abs(shown.x - me.x) > 0.01 || Math.abs(shown.y - me.y) > 0.01;
     if (!moving && !bagOpen) {
       if (tap) { step(tap); tap = null; lastStep = now; }
-      else if (plan && !queue.some(function (a) { return a.type === 'move'; }) && now - lastStep >= moveMs * 0.9) { if (followPlan(now)) lastStep = now; }
       else if (held.length && now - holdSince >= HOLD_MS && now - lastStep >= moveMs) { step(held[held.length - 1]); lastStep = now; }
     }
     // When the live world is pushed over Firebase, polling is just a heartbeat (advance idle monsters,
@@ -581,6 +628,8 @@
     lastCam = cam;
     renderer.draw(cam, actors, { states: states, hidden: hiddenEntity });
     if (armed) renderer.drawAim(cam, aimOverlay());
+    else if (throwing) renderer.drawAim(cam, throwOverlay());
+    // a ready gun shows no on-canvas aim — the crosshair cursor is the aim (see updateCursor)
     renderer.drawFx(cam, fx, now);
     tickHotbar();
     $('hud-pos').textContent = '(' + me.x + ', ' + me.y + ')';
@@ -624,7 +673,14 @@
     sel.value = me.map;
     sel.onchange = function () { api.warp(sel.value).then(apply); sel.blur(); };
   }
-  $('reset').onclick = function () { if (confirm('Start over with a new character?')) { api.forget(); location.reload(); } };
+  // In-page confirm (the in-app browser pane swallows native confirm() dialogs): click once to arm, again to reset.
+  var resetArmed = 0;
+  $('reset').onclick = function () {
+    var b = $('reset'), now = Date.now();
+    if (now - resetArmed < 4000) { me = null; api.forget(); location.reload(); return; }   // me=null stops the loop/poll from re-saving
+    resetArmed = now; b.textContent = 'Click again to reset'; b.classList.add('arm');
+    setTimeout(function () { if (Date.now() - resetArmed >= 4000) { b.textContent = 'New character'; b.classList.remove('arm'); } }, 4000);
+  };
 
   $('hud-mode').textContent = api.mode;
   setNet('loading game data…');
@@ -647,7 +703,7 @@
     return res;
   }).then(apply).then(function () {
     setupDebug();
-    log('Arrow keys / WASD to move, E to use, I for your bag.', 'info');
+    log('WASD / arrows move · left-click aims + fires your gun (R to reload) · right-click for actions · F/Space to use or attack what you face · Q/E abilities · 1-5 belt · I bag.', 'info');
     if (api.staleDraft) log('Your map editor draft was made from older game data, so the game is using the latest data instead. Open the editor to update or discard the draft.', 'death');
     requestAnimationFrame(frame);
   }).catch(function (e) {
@@ -658,7 +714,7 @@
   addEventListener('pagehide', function () { api.leave(); });
   // read-only peek for tests and debugging in the browser console
   window.SheetsRPG = { state: function () { return { me: me, view: view, queue: queue.length }; },
-    plan: function () { return plan; },
+    plan: function () { return null; },    // kept for back-compat: there is no click-to-walk plan any more
     camera: function () { return lastCam; },
-    aim: function () { return { armed: armed, hover: hover, check: armed && hover ? aimCheck(hover) : null }; } };
+    aim: function () { return { armed: armed, throwing: throwing, hover: hover, check: armed && hover ? aimCheck(hover) : null }; } };
 })();

@@ -102,14 +102,31 @@ var Content = (function () {
       c.items[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), type: str(r.type) || 'material',
         slot: str(r.slot), wornSprite: str(r.worn_sprite), defaultTint: str(r.default_tint),
         stackMax: num(r.stack_max, 99), value: num(r.value, 0),
-        atk: num(r.atk, 0), def: num(r.def, 0), heal: num(r.heal, 0), mp: num(r.mp, 0), onUse: str(r.on_use) };
+        atk: num(r.atk, 0), def: num(r.def, 0), heal: num(r.heal, 0), mp: num(r.mp, 0),
+        hunger: num(r.hunger, 0), thirst: num(r.thirst, 0),
+        // equip_if gates equipping a weapon/armor (e.g. a rifle at level 3)
+        equipIf: str(r.equip_if),
+        // a ranged weapon: range > 0, spends `ammo` per shot, fires no faster than fire_ms;
+        // clip = magazine size (fire from the loaded mag; press R to refill it from the ammo stack)
+        range: num(r.range, 0), ammo: str(r.ammo), ammoCost: Math.max(1, num(r.ammo_cost, 1)), fireMs: num(r.fire_ms, 0), clip: num(r.clip, 0),
+        tint: str(r.tint),
+        // ammo: how many enemies one shot pierces, losing `falloff` of its damage per extra hit (0..1)
+        penetration: Math.max(1, num(r.penetration, 1)), falloff: Math.max(0, Math.min(1, num(r.falloff, 0))),
+        // type 'throwable' (grenade/molotov): area damage + status at a thrown spot, up to throw_range away
+        throwRange: num(r.throw_range, 0), throwArea: num(r.throw_area, 0), throwPower: num(r.throw_power, 0),
+        throwStatus: str(r.throw_status), throwStatusMs: num(r.throw_status_ms, 0),
+        onUse: str(r.on_use) };
     });
     (tables.Monsters || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
       c.monsters[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), hp: num(r.hp, 10),
         atk: num(r.atk, 3), def: num(r.def, 0), xp: num(r.xp, 1), goldMin: num(r.gold_min, 0), goldMax: num(r.gold_max, 0),
         lootTable: str(r.loot_table), aggro: num(r.aggro_range, 4), moveMs: Math.max(150, num(r.move_ms, 800)),
-        respawnS: num(r.respawn_s, 60) };
+        respawnS: num(r.respawn_s, 60),
+        // 0 = melee only; >1 = can attack from that many tiles away (with line of sight)
+        attackRange: num(r.attack_range, 0), rangedMs: Math.max(250, num(r.ranged_cooldown_ms, 1500)),
+        rangedProjectile: bool(r.ranged_projectile), rangedStatus: str(r.ranged_status),
+        infectChance: num(r.infect_chance, 0) };
     });
     (tables.LootTables || []).forEach(function (r) {
       var t = str(r.table), it = str(r.item); if (!t || !it) return;
@@ -134,7 +151,10 @@ var Content = (function () {
         mp: num(r.mp, 0), cooldownMs: num(r.cooldown_ms, 1000), range: num(r.range, 1), target: str(r.target) || 'enemy',
         area: num(r.area, 0), los: bool(r.los), effect: str(r.effect) || 'damage', power: num(r.power, 0),
         stat: str(r.stat), scale: num(r.scale, 0), status: str(r.status), statusMs: num(r.status_ms, 0),
-        dash: bool(r.dash), projectile: bool(r.projectile), onCast: str(r.on_cast), description: str(r.description) };
+        dash: bool(r.dash), projectile: bool(r.projectile),
+        // optional: this skill is a firearm/thrown item that spends an inventory item instead of (or besides) MP
+        ammo: str(r.ammo), ammoCost: Math.max(1, num(r.ammo_cost, 1)),
+        onCast: str(r.on_cast), description: str(r.description) };
     });
     (tables.Statuses || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;

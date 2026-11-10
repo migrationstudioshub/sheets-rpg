@@ -32,8 +32,10 @@ test('a new warrior starts at the start point with class stats and items', () =>
   const { c, p } = fresh();
   assert.deepStrictEqual([p.map, p.x, p.y], ['map_3', 9, 15]);
   const st = World.stats(c, p);
-  assert.deepStrictEqual([p.hp, st.maxHp, st.atk, st.def], [120, 120, 6, 2]);
+  // the warrior auto-equips the weapon/armor/helm in its start kit (wooden_sword +3 atk, leather_armor +2 def, army_helmet +2 def)
+  assert.deepStrictEqual([p.hp, st.maxHp, st.atk, st.def], [120, 120, 9, 6]);
   assert.deepStrictEqual(p.inventory, [{ item: 'potion', qty: 2 }, { item: 'wooden_sword', qty: 1 }, { item: 'leather_armor', qty: 1 }, { item: 'army_helmet', qty: 1 }]);
+  assert.deepStrictEqual(p.equipment, { weapon: 'wooden_sword', armor: 'leather_armor', helm: 'army_helmet' });
 });
 
 test('the hut door is closed, opens on interact, and can then be walked through', () => {
@@ -66,8 +68,11 @@ test('the hut chest gives its contents once per player, then is empty', () => {
 
 test('equipping a sword raises attack; using a potion heals and is consumed', () => {
   const s = fresh();
-  World.give(s.c, s.p, 'wooden_sword', 1, []);
-  act(s, { type: 'use', item: 'wooden_sword' });
+  // the warrior auto-equips its starting sword (atk 9); toggle it off and on to exercise equip/unequip
+  assert.strictEqual(World.stats(s.c, s.p).atk, 9);
+  act(s, { type: 'use', item: 'wooden_sword' });      // unequip
+  assert.strictEqual(World.stats(s.c, s.p).atk, 6);
+  act(s, { type: 'use', item: 'wooden_sword' });      // equip again
   assert.strictEqual(World.stats(s.c, s.p).atk, 9);
   let ev = act(s, { type: 'use', item: 'potion' });
   assert.match(texts(ev), /already at full health/);
@@ -242,7 +247,7 @@ test('levelling up raises stats and refills health', () => {
   const ev = [];
   World.run(s.c, s.ws, s.p, 'xp:25', 0, ev);
   assert.strictEqual(s.p.level, 2);
-  assert.deepStrictEqual([s.p.hp, World.stats(s.c, s.p).atk], [132, 8]);
+  assert.deepStrictEqual([s.p.hp, World.stats(s.c, s.p).atk], [132, 11]);   // level-2 base atk 8 + auto-equipped sword +3
   assert.match(texts(ev), /Level up/);
 });
 
@@ -304,15 +309,15 @@ function monster(s, ref, x, y) {
 }
 function cast(s, skill, x, y, now) { return World.act(s.c, s.ws, s.p, { type: 'cast', skill, x, y }, now || 1000, mid, [s.p]); }
 
-test('each class starts with its skills, mana and a filled bar', () => {
+test('each class starts with its abilities on Q/E, a potion on the belt, and full mana', () => {
   const c = Content.build(tables);
   const want = { warrior: ['charge', 'cleave'], rogue: ['throw_dagger', 'poison_strike'], mage: ['fireball', 'frost_bolt'],
     paladin: ['holy_strike', 'blessing'], priest: ['heal', 'smite'], barbarian: ['whirlwind', 'rage'] };
   Object.entries(want).forEach(([cls, skills]) => {
     const p = World.newPlayer(c, 'x', 'X', cls);
     assert.deepStrictEqual(World.knownSkills(c, p), skills, cls);
-    assert.deepStrictEqual(p.loadout.slice(0, 2), skills.map(k => 'skill:' + k), cls);
-    assert.ok(p.loadout.includes('item:potion'), cls + ' has a potion on the bar');
+    assert.deepStrictEqual(p.abilities.slice(0, 2), skills, cls);        // first two known skills on Q and E
+    assert.ok(p.belt.includes('potion'), cls + ' has a potion on the belt');
     assert.strictEqual(p.mp, World.stats(c, p).maxMp);
   });
 });
@@ -453,17 +458,19 @@ test('mana comes back over time; mana potions restore it', () => {
   assert.strictEqual(Math.round(s.p.mp), 70);
 });
 
-test('reaching level 3 teaches the third skill and puts it on the bar; the bar can be rearranged', () => {
+test('reaching level 3 teaches the third skill; the ability bar (Q/E) holds two and can be rearranged', () => {
   const s = hero('mage');
   const ev = [];
   World.run(s.c, s.ws, s.p, 'xp:60', 0, ev);
   assert.strictEqual(s.p.level, 3);
   assert.match(texts(ev), /You learned Frost nova/);
-  assert.ok(s.p.loadout.includes('skill:frost_nova'));
-  World.act(s.c, s.ws, s.p, { type: 'loadout', slot: 0, entry: 'item:potion' }, 0, mid, [s.p]);
-  assert.strictEqual(s.p.loadout[0], 'item:potion');
-  assert.ok(s.p.loadout.includes('skill:fireball'), 'swapped, not lost');
-  assert.match(texts(World.act(s.c, s.ws, s.p, { type: 'loadout', slot: 1, entry: 'skill:heal' }, 0, mid, [s.p])), /can't go on the bar/);
+  assert.ok(World.knownSkills(s.c, s.p).includes('frost_nova'));
+  assert.deepStrictEqual(s.p.abilities, ['fireball', 'frost_bolt']);          // two slots, the first two known
+  World.act(s.c, s.ws, s.p, { type: 'loadout', bar: 'ability', slot: 0, entry: 'frost_nova' }, 0, mid, [s.p]);
+  assert.strictEqual(s.p.abilities[0], 'frost_nova');                         // the new skill now on Q
+  assert.match(texts(World.act(s.c, s.ws, s.p, { type: 'loadout', bar: 'ability', slot: 1, entry: 'heal' }, 0, mid, [s.p])), /can't use that skill/);
+  World.act(s.c, s.ws, s.p, { type: 'loadout', bar: 'belt', slot: 0, entry: 'potion' }, 0, mid, [s.p]);
+  assert.strictEqual(s.p.belt[0], 'potion');                                  // consumables go on the belt
 });
 
 // ---------------------------------------------------------------- mouse interactions
@@ -523,15 +530,182 @@ test('action list: default first, for monsters, chests, keys, signs and empty gr
   s.p.x = 9; s.p.y = 13;
   const map = s.c.maps.map_3, v = World.view(s.c, s.ws, 'map_3', s.p, [s.p]), lk = World.viewLookup(s.c, map, v, s.p);
   const labels = (x, y) => World.actionsAt(s.c, map, lk, s.p, x, y).map(a => a.label);
-  assert.deepStrictEqual(labels(5, 13), ['Attack the slime']);
+  assert.deepStrictEqual(labels(5, 13), ['Attack the slime']);   // no ranged weapon: melee
   assert.deepStrictEqual(labels(10, 7), ['Open the wooden chest']);
-  assert.deepStrictEqual(labels(8, 11), ['Read the sign', 'Walk here'].slice(0, 1));
+  assert.deepStrictEqual(labels(8, 11), ['Read the sign']);
   assert.deepStrictEqual(labels(9, 9), ['Open the wooden door']);
-  assert.deepStrictEqual(labels(12, 12), ['Walk here']);
+  assert.deepStrictEqual(labels(12, 12), []);                    // empty ground: nothing to do (movement is keyboard-only)
   const arena = s.c.maps.map_1, lk1 = World.viewLookup(s.c, arena, { states: {}, monsters: [], players: [] }, s.p);
   assert.deepStrictEqual(World.actionsAt(s.c, arena, lk1, s.p, 11, 2).map(a => a.label), ['Locked: needs Iron key']);
   World.give(s.c, s.p, 'iron_key', 1, []);
   assert.deepStrictEqual(World.actionsAt(s.c, arena, lk1, s.p, 11, 2).map(a => a.label), ['Unlock the chest (Iron key)']);
+});
+
+// ---------------------------------------------------------------- survival (M-Zombie Z1)
+test('hunger and thirst drain over time; eating and drinking restore them', () => {
+  const s = fresh();
+  World.advance(s.c, s.ws, 'map_3', [s.p], 0, mid, []);                 // sets the clock, no decay yet
+  World.advance(s.c, s.ws, 'map_3', [s.p], 60000, mid, []);            // one minute later
+  assert.ok(Math.abs(s.p.hunger - 99.4) < 1e-6, 'hunger 0.6/min');     // 100 - 0.6
+  assert.ok(Math.abs(s.p.thirst - 99.1) < 1e-6, 'thirst 0.9/min');     // 100 - 0.9
+  s.p.hunger = 20; World.give(s.c, s.p, 'ration', 1, []);
+  act(s, { type: 'use', item: 'ration' });
+  assert.strictEqual(s.p.hunger, 80);                                   // +60
+  s.p.thirst = 10; World.give(s.c, s.p, 'water', 1, []);
+  act(s, { type: 'use', item: 'water' });
+  assert.strictEqual(s.p.thirst, 70);                                   // +60
+  s.p.hunger = 100; World.give(s.c, s.p, 'ration', 1, []);
+  assert.match(texts(act(s, { type: 'use', item: 'ration' })), /not hungry/);
+});
+
+test('an empty stomach gnaws at your health', () => {
+  const s = fresh();
+  World.advance(s.c, s.ws, 'map_3', [s.p], 60000, mid, []);            // clock now at 60 s
+  s.p.hunger = 0; s.p.nextStarve = 0;
+  const hp0 = s.p.hp;
+  World.advance(s.c, s.ws, 'map_3', [s.p], 66000, mid, []);            // schedules the first tick
+  assert.strictEqual(s.p.hp, hp0);
+  const ev = [];
+  World.advance(s.c, s.ws, 'map_3', [s.p], 72000, mid, ev);            // 6 s later it bites
+  assert.strictEqual(s.p.hp, hp0 - 3);
+  assert.match(texts(ev), /Starving, you lose 3/);
+});
+
+test('a survivor spawns gun-in-hand with a loaded magazine; firing draws from the clip', () => {
+  const s = hero('survivor');
+  assert.strictEqual(s.p.equipment.weapon, 'pistol');                             // auto-equipped from start_items
+  assert.strictEqual(s.p.mags.pistol, 12);                                        // clip loaded on spawn
+  assert.strictEqual(World.count(s.p, 'ammo_pistol'), 28);                        // 40 pistol rounds - 12 in the mag
+  const m = monster(s, 'skeleton', 12, 13);
+  s.p.x = 9; s.p.y = 13;                                                          // 3 tiles away, clear line
+  const map = s.c.maps.map_3, lk = World.viewLookup(s.c, map, World.view(s.c, s.ws, 'map_3', s.p, [s.p]), s.p);
+  assert.match(World.actionsAt(s.c, map, lk, s.p, 12, 13)[0].label, /^Shoot/);     // shooting is the default
+  const hp0 = m.hp;
+  act(s, { type: 'shoot', x: 12, y: 13 }, 1000);
+  assert.strictEqual(s.p.mags.pistol, 11);                                        // spent from the clip
+  assert.strictEqual(World.count(s.p, 'ammo_pistol'), 28);                        // reserve untouched
+  assert.ok(m.hp < hp0, 'the shot connected');
+  const w = hero('warrior');                                                      // no ranged weapon: shooting is refused
+  assert.match(texts(act(w, { type: 'shoot', x: 0, y: 0 })), /no ranged weapon/i);
+});
+
+test('an empty clip must be reloaded with R, drawing from the reserve ammo', () => {
+  const s = hero('survivor');                                                     // pistol: clip 12, reserve 28
+  s.p.x = 9; s.p.y = 13; monster(s, 'skeleton', 12, 13);
+  s.p.mags.pistol = 0;                                                            // empty the magazine
+  assert.match(texts(act(s, { type: 'shoot', x: 12, y: 13 }, 1000)), /press R to reload/);
+  act(s, { type: 'reload' });
+  assert.strictEqual(s.p.mags.pistol, 12);                                        // refilled to the clip
+  assert.strictEqual(World.count(s.p, 'ammo_pistol'), 16);                        // 28 - 12
+  assert.match(texts(act(s, { type: 'reload' })), /already loaded/);              // a full clip can't reload
+  s.p.inventory = s.p.inventory.filter(x => x.item !== 'ammo_pistol');            // no reserve left
+  s.p.mags.pistol = 0;
+  assert.match(texts(act(s, { type: 'reload' })), /Out of pistol ammo/);          // nothing to load
+  assert.match(texts(act(s, { type: 'shoot', x: 12, y: 13 }, 5000)), /Out of pistol ammo\./);
+});
+
+test('equipping a gun is gated by level, but firing it is not', () => {
+  const s = hero('survivor');                                                     // spawns with the pistol equipped
+  assert.match(texts(act(s, { type: 'use', item: 'rifle' })), /Requires level 3/);
+  assert.strictEqual(s.p.equipment.weapon, 'pistol');                             // rifle refused: still the pistol
+  s.p.level = 3;
+  assert.match(texts(act(s, { type: 'use', item: 'rifle' })), /You equip the rifle/);
+  assert.strictEqual(s.p.equipment.weapon, 'rifle');
+  const m = monster(s, 'skeleton', 12, 13); s.p.x = 9; s.p.y = 13; s.p.level = 1;  // drop back to level 1
+  const hp0 = m.hp;
+  act(s, { type: 'shoot', x: 12, y: 13 }, 1000);
+  assert.ok(m.hp < hp0, 'fires regardless of level');
+});
+
+test('a shot pierces with damage falloff; a wall blocks it; off-map shots are refused', () => {
+  const s = hero('survivor');                                                     // pistol equipped; ammo pierces 2, falloff 0.3
+  s.p.x = 9; s.p.y = 13;
+  const a = monster(s, 'skeleton', 11, 13), b = monster(s, 'skeleton', 12, 13);
+  const ha = a.hp, hb = b.hp;
+  act(s, { type: 'shoot', x: 13, y: 13 }, 1000);                                   // the ray passes through both
+  assert.ok(a.hp < ha && b.hp < hb, 'both were hit');
+  assert.ok((ha - a.hp) > (hb - b.hp), 'the second takes less (falloff)');
+  assert.match(texts(act(s, { type: 'shoot', x: 9, y: 20 }, 3000)), /Out of the map/);  // beyond the map edge
+  // a wall between shooter and target stops the shot (the hut on map_3)
+  const s2 = hero('survivor');
+  const w = monster(s2, 'skeleton', 5, 7); s2.p.x = 5; s2.p.y = 11;                // the hut wall is between them
+  const hw = w.hp;
+  assert.match(texts(act(s2, { type: 'shoot', x: 5, y: 7 }, 1000)), /in the way/);
+  assert.strictEqual(w.hp, hw, 'the wall saved it');
+});
+
+test('shooting a monster from beyond its aggro range makes it engage and chase you', () => {
+  const s = hero('survivor');
+  s.p.x = 2; s.p.y = 13;
+  const m = monster(s, 'skeleton', 12, 13); m.last = 0;          // 10 tiles off: past aggro (6), within pistol range (16)
+  World.advance(s.c, s.ws, 'map_3', [s.p], 0, mid, []);          // baseline clock; too far to aggro, so it stays put
+  const dist0 = Math.abs(m.x - s.p.x);
+  act(s, { type: 'shoot', x: 12, y: 13 }, 100);                  // hit it from range
+  assert.strictEqual(m.engaged, s.p.id, 'the hit marks it engaged');
+  World.advance(s.c, s.ws, 'map_3', [s.p], 1000, mid, []);       // now it chases
+  assert.ok(Math.abs(m.x - s.p.x) < dist0, 'the skeleton closed in after being shot');
+});
+
+test('throwing a grenade hits an area and a molotov sets the area burning', () => {
+  const s = hero('survivor');
+  s.p.x = 9; s.p.y = 13;
+  const a = monster(s, 'skeleton', 10, 13), b = monster(s, 'skeleton', 11, 13);   // both within the blast (area 1) at (10,13)
+  const ha = a.hp, hb = b.hp;
+  act(s, { type: 'throw', item: 'grenade', x: 10, y: 13 }, 1000);
+  assert.ok(a.hp < ha && b.hp < hb, 'both in the blast took damage');
+  assert.strictEqual(World.count(s.p, 'grenade'), 2);                             // started with 3
+  const c = monster(s, 'walker', 10, 15);
+  World.give(s.c, s.p, 'molotov', 1, []);
+  act(s, { type: 'throw', item: 'molotov', x: 10, y: 15 }, 3000);
+  assert.ok(c.statuses.some(st => st.id === 'burn'), 'set on fire');
+});
+
+test('a click never walks you: a far target just warns; belt consumables use at once', () => {
+  const s = hero('survivor');
+  s.p.x = 9; s.p.y = 13;
+  monster(s, 'skeleton', 12, 13);
+  const before = [s.p.x, s.p.y];
+  assert.match(texts(act(s, { type: 'attack', x: 12, y: 13 })), /Too far away/);   // melee a monster 3 tiles off
+  assert.deepStrictEqual([s.p.x, s.p.y], before, 'did not move toward it');
+  s.p.hp = 50; World.give(s.c, s.p, 'bandage', 1, []);
+  act(s, { type: 'use', item: 'bandage' });
+  assert.strictEqual(s.p.hp, 75);                                                 // +25, immediately
+});
+
+test('a spitter attacks from range with line of sight, but walls stop it', () => {
+  const s = hero('warrior');
+  const m = monster(s, 'spitter', 13, 13); m.last = 0; m.nextShot = 0;
+  s.p.x = 10; s.p.y = 13; s.p.hp = 120;                                 // three tiles away, clear line
+  const ev = [];
+  World.advance(s.c, s.ws, 'map_3', [s.p], 1000, mid, ev);
+  assert.ok(s.p.hp < 120, 'hit from range');
+  assert.match(texts(ev), /spits at you/);
+  assert.ok(ev.some(e => e.type === 'cast' && e.skill === '_ranged'));
+  const s2 = hero('warrior');
+  const m2 = monster(s2, 'spitter', 5, 7); m2.last = 0; m2.nextShot = 0;   // inside the hut
+  s2.p.x = 5; s2.p.y = 11; s2.p.hp = 120;                              // the hut wall is between them
+  World.advance(s2.c, s2.ws, 'map_3', [s2.p], 1000, mid, []);
+  assert.strictEqual(s2.p.hp, 120, 'the wall blocks the spit');
+});
+
+test('a walker bite can infect; infection worsens each tick until an antidote cures it', () => {
+  const s = hero('warrior');
+  const m = monster(s, 'walker', 10, 13); m.last = 0;                  // infect_chance 0.5
+  s.p.x = 9; s.p.y = 13; s.p.hp = 120;
+  const ev = [];
+  World.advance(s.c, s.ws, 'map_3', [s.p], 1200, dice([0.2]), ev);     // 0.2 < 0.5 -> infected
+  assert.match(texts(ev), /infected/i);
+  assert.ok(s.p.statuses.some(st => st.id === 'infection'));
+  m.dead = true; m.respawnAt = 1e15;                                   // remove the walker to isolate the infection
+  const hpA = s.p.hp;
+  World.advance(s.c, s.ws, 'map_3', [s.p], 4200, mid, []);             // first tick: 2 damage
+  assert.strictEqual(s.p.hp, hpA - 2);
+  World.advance(s.c, s.ws, 'map_3', [s.p], 7200, mid, []);             // worse: 3 damage
+  assert.strictEqual(s.p.hp, hpA - 5);
+  assert.ok(s.p.statuses.some(st => st.id === 'infection'), 'never fades on its own');
+  World.give(s.c, s.p, 'antidote', 1, []);
+  assert.match(texts(act(s, { type: 'use', item: 'antidote' }, 7200)), /infection fades/);
+  assert.ok(!s.p.statuses.some(st => st.id === 'infection'), 'cured');
 });
 
 console.log(`\n${passed} world tests passed`);

@@ -238,12 +238,12 @@ test('casting through the server: mana, cooldown and the bar are saved', () => {
   assert.ok(r.events.length === 0 || true);
   const before = r.player.mp;
   const mon = r.world.monsters[0];
-  r = call({ action: 'act', token, do: { type: 'loadout', slot: 4, entry: 'skill:throw_dagger' }, since: r.seq });
-  assert.strictEqual(r.player.loadout[4], 'skill:throw_dagger');
+  r = call({ action: 'act', token, do: { type: 'loadout', bar: 'ability', slot: 1, entry: 'throw_dagger' }, since: r.seq });
+  assert.strictEqual(r.player.abilities[1], 'throw_dagger');
   call({ action: 'save', token });
   const rows = g.sheets.SV._sheets.Players.rows, head = rows[0];
-  ['mp', 'loadout', 'cooldowns', 'statuses'].forEach(c => assert.ok(head.includes(c), c));
-  assert.strictEqual(JSON.parse(rows[1][head.indexOf('loadout')])[4], 'skill:throw_dagger');
+  ['mp', 'abilities', 'belt', 'cooldowns', 'statuses'].forEach(c => assert.ok(head.includes(c), c));
+  assert.strictEqual(JSON.parse(rows[1][head.indexOf('abilities')])[1], 'throw_dagger');
   assert.ok(typeof before === 'number' && mon);
 });
 

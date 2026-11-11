@@ -90,7 +90,14 @@ var Panels = (function () {
       onclick: function () { E.show[what] = !E.show[what]; toolbar(); E.redraw(); } });
   }
   function playtest() {
-    var go = function () { window.open('../client/?map=' + encodeURIComponent(E.mapId), 'sheetsrpg-play'); };
+    // Play-test runs the game OFFLINE against the editor's current content, so you play the map you're
+    // editing (online, your saved character stays on its own map and the ?map warp is disabled). The
+    // editor's tables (maps included) are handed to the offline game through the shared content draft.
+    var go = function () {
+      E.syncAll();
+      try { localStorage.setItem('sheetsrpg.contentDraft', JSON.stringify(E.tables)); } catch (e) {}
+      window.open('../client/?offline&map=' + encodeURIComponent(E.mapId), 'sheetsrpg-play');
+    };
     if (!E.isDirty()) return go();
     if (Store.online() && !confirm('Save your changes to Game Data first, then play?')) return;
     E.save().then(go);

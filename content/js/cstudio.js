@@ -156,6 +156,7 @@ var CStudio = (function () {
   function renderForm() {
     if (type === 'loot') return lootForm();
     if (type === 'objects') return objForm();
+    if (type === 'appearances') return appearanceForm();
     var form = $('form'); form.innerHTML = '';
     if (curIndex < 0 || !rows(type)[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select a ' + (Schema.get(type).singular || Schema.get(type).label.toLowerCase().replace(/s$/, '')) + ', or click New.' })); return; }
     var r = rows(type)[curIndex], def = Schema.get(type);
@@ -316,6 +317,145 @@ var CStudio = (function () {
         k.notes ? h('div', { className: 'help', text: k.notes }) : null));
     });
     return box;
+  }
+
+  // ---------------------------------------------------------------- appearances (paper-doll look sets)
+  function layersOf(r) {
+    if (typeof r.layers === 'string') { try { return JSON.parse(r.layers || '[]'); } catch (e) { return []; } }
+    return Array.isArray(r.layers) ? r.layers : [];
+  }
+  function setLayers(r, layers) { r.layers = layers; persist(); }   // array; content.js json() passes arrays through
+  function maskPath(p) { return p ? p.replace(/\.png$/i, '.tint.png') : ''; }
+  function tintNames() { return (typeof Tint !== 'undefined' && Tint.TINTS) ? Object.keys(Tint.TINTS) : []; }
+  // A convenience list for the sprite picker: the paper-doll art shipped with the game, plus any sprite
+  // already referenced in content (so newly generated art shows up once it is used somewhere).
+  function paperdollSprites() {
+    var s = {};
+    ['body_zombie', 'body_zombie_female', 'body_survivor', 'body_survivor_female',
+     'hair_bob', 'hair_buzz', 'hair_long', 'hair_messy', 'hair_metal_mohawk_v1', 'hair_metal_mohawk_v2',
+     'hair_pony', 'hair_shaggy', 'hair_slick', 'hair_under',
+     'chest_leather_jacket', 'chest_riot_vest', 'helm_army', 'gun_pistol', 'sword_machete'
+    ].forEach(function (n) { s['art/sprites/paperdoll/' + n + '.png'] = 1; });
+    (T.Classes || []).forEach(function (r) { if (r.body_sprite) s[r.body_sprite] = 1; });
+    (T.Items || []).forEach(function (r) { if (r.worn_sprite) s[r.worn_sprite] = 1; });
+    (T.Appearances || []).forEach(function (r) { layersOf(r).forEach(function (L) { (L.options || []).forEach(function (o) { if (o.sprite) s[o.sprite] = 1; }); }); });
+    return Object.keys(s).sort();
+  }
+
+  function tintSelect(value, onchange) {
+    return h('select', { title: 'Recolour ramp (recolours the sprite’s .tint.png mask)', onchange: function (e) { onchange(e.target.value); } },
+      [h('option', { value: '', text: '— no tint —' })].concat(tintNames().map(function (t) { return h('option', { value: t, text: t, selected: t === value }); })));
+  }
+  function weightInput(value, onchange) {
+    return h('input', { type: 'number', min: 0, step: 0.1, value: value == null ? 1 : value, style: 'width:58px', title: 'Relative weight', oninput: function (e) { onchange(Number(e.target.value) || 0); } });
+  }
+
+  function layerCard(r, layers, L, li) {
+    L.options = L.options || []; L.tints = L.tints || [];
+    var card = h('div', { className: 'layer' });
+    card.appendChild(h('div', { className: 'lhead' },
+      h('input', { value: L.name || '', placeholder: 'layer name (body, hair…)', style: 'flex:1', oninput: function (e) { L.name = e.target.value; setLayers(r, layers); } }),
+      h('span', { className: 'lootlbl', text: 'none %' }),
+      h('input', { type: 'number', min: 0, step: 0.1, value: L.empty == null ? 0 : L.empty, style: 'width:58px', title: 'Weight of rolling NO sprite for this layer (0 = always present)', oninput: function (e) { L.empty = Number(e.target.value) || 0; setLayers(r, layers); } }),
+      h('button', { title: 'Move up', text: '↑', disabled: li === 0, onclick: function () { layers.splice(li - 1, 0, layers.splice(li, 1)[0]); setLayers(r, layers); appearanceForm(); } }),
+      h('button', { title: 'Move down', text: '↓', disabled: li === layers.length - 1, onclick: function () { layers.splice(li + 1, 0, layers.splice(li, 1)[0]); setLayers(r, layers); appearanceForm(); } }),
+      h('button', { title: 'Remove layer', text: '✕', onclick: function () { layers.splice(li, 1); setLayers(r, layers); appearanceForm(); } })));
+    // sprite options
+    card.appendChild(h('div', { className: 'lsub', text: 'Sprites — one is picked per spawn' }));
+    L.options.forEach(function (o, oi) {
+      card.appendChild(h('div', { className: 'lootrow' },
+        h('input', { value: o.sprite || '', list: 'dl_pd', placeholder: 'sprite path', style: 'flex:2', oninput: function (e) { o.sprite = e.target.value; setLayers(r, layers); } }),
+        tintSelect(o.tint || '', function (v) { o.tint = v; setLayers(r, layers); }),
+        weightInput(o.weight, function (v) { o.weight = v; setLayers(r, layers); }),
+        h('button', { title: 'Remove', text: '✕', onclick: function () { L.options.splice(oi, 1); setLayers(r, layers); appearanceForm(); } })));
+    });
+    card.appendChild(h('button', { style: 'margin:2px 0 6px', text: '+ sprite', onclick: function () { L.options.push({ sprite: '', tint: '', weight: 1 }); setLayers(r, layers); appearanceForm(); } }));
+    // colour pool
+    card.appendChild(h('div', { className: 'lsub', text: 'Colour pool — optional; recolours the chosen sprite' }));
+    L.tints.forEach(function (t, ti) {
+      card.appendChild(h('div', { className: 'lootrow' },
+        tintSelect(t.tint || '', function (v) { t.tint = v; setLayers(r, layers); }),
+        weightInput(t.weight, function (v) { t.weight = v; setLayers(r, layers); }),
+        h('button', { title: 'Remove', text: '✕', onclick: function () { L.tints.splice(ti, 1); setLayers(r, layers); appearanceForm(); } })));
+    });
+    card.appendChild(h('button', { style: 'margin:2px 0 2px', text: '+ colour', onclick: function () { L.tints.push({ tint: '', weight: 1 }); setLayers(r, layers); appearanceForm(); } }));
+    return card;
+  }
+
+  // ---- preview: roll sample looks and compose them with the tint system (same as the game's renderer) ----
+  var pvCache = {};
+  function pvImg(path) {
+    if (pvCache[path]) return pvCache[path];
+    var im = new Image(); im.src = spritePath(path); pvCache[path] = im; return im;
+  }
+  function pickW(items, extra) {
+    var total = Math.max(0, Number(extra) || 0), i;
+    for (i = 0; i < items.length; i++) total += Math.max(0, Number(items[i].weight) || 0);
+    if (total <= 0) return -1;
+    var p = Math.random() * total; p -= Math.max(0, Number(extra) || 0); if (p < 0) return -1;
+    for (i = 0; i < items.length; i++) { p -= Math.max(0, Number(items[i].weight) || 0); if (p < 0) return i; }
+    return items.length - 1;
+  }
+  function rollOne(layers) {                                   // mirrors World.rollLook, standalone for the studio
+    var look = [];
+    layers.forEach(function (L) {
+      var opts = L.options || [];
+      var i = pickW(opts, L.empty); if (i < 0 || !opts[i].sprite) return;
+      var tint = opts[i].tint || '';
+      if (L.tints && L.tints.length) { var ti = pickW(L.tints, 0); if (ti >= 0) tint = L.tints[ti].tint; }
+      look.push({ path: opts[i].sprite, tint: tint });
+    });
+    return look;
+  }
+  function composeLook(look) {
+    var c = document.createElement('canvas'); c.width = 64; c.height = 96; c.className = 'pv';
+    var g = c.getContext('2d'); g.imageSmoothingEnabled = false;
+    function draw() {
+      g.clearRect(0, 0, c.width, c.height);
+      look.forEach(function (l) {
+        var base = pvImg(l.path); if (!base.complete || !base.width) return;
+        var layer = base;
+        if (l.tint && typeof Tint !== 'undefined' && Tint.TINTS[l.tint]) {
+          var mask = pvImg(maskPath(l.path));
+          if (mask.complete && mask.width) layer = Tint.getTintedLayer(base, mask, Tint.TINTS[l.tint]);
+        }
+        try { g.drawImage(layer, 0, 0, c.width, c.height); } catch (e) { /* image still loading */ }
+      });
+    }
+    draw();
+    look.forEach(function (l) {                               // redraw as each sprite/mask finishes loading
+      [pvImg(l.path), l.tint ? pvImg(maskPath(l.path)) : null].forEach(function (im) { if (im && !im.complete) im.addEventListener('load', draw, { once: true }); });
+    });
+    return c;
+  }
+  function renderPreview(strip, layers) {
+    strip.innerHTML = '';
+    if (!layers.length || !layers.some(function (L) { return (L.options || []).some(function (o) { return o.sprite; }); })) {
+      strip.appendChild(h('span', { className: 'note', text: 'Add a layer with at least one sprite to preview.' })); return;
+    }
+    for (var n = 0; n < 8; n++) strip.appendChild(composeLook(rollOne(layers)));
+  }
+
+  function appearanceForm() {
+    var form = $('form'); form.innerHTML = '';
+    if (curIndex < 0 || !rows('appearances')[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select an appearance set, or click New.' })); return; }
+    var r = rows('appearances')[curIndex], layers = layersOf(r);
+    form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: rowLabel('appearances', r) }), h('span', { className: 'pill', text: 'Appearances' }),
+      h('button', { title: 'Delete this set', text: '🗑 Delete', style: 'margin-left:auto', onclick: function () {
+        if (!confirm('Delete this appearance set?')) return; rows('appearances').splice(curIndex, 1); curIndex = -1; persist(); renderNav(); renderList(); renderForm();
+      } })));
+    Schema.get('appearances').fields.forEach(function (fl) { if (fl.key !== 'layers') form.appendChild(fieldEl(r, fl)); });
+    // the shared sprite datalist for every layer's picker
+    form.appendChild(h('datalist', { id: 'dl_pd' }, paperdollSprites().map(function (p) { return h('option', { value: p }); })));
+    form.appendChild(h('div', { className: 'sub', text: 'Layers — listed bottom to top (base body first)' }));
+    layers.forEach(function (L, li) { form.appendChild(layerCard(r, layers, L, li)); });
+    form.appendChild(h('button', { className: 'primary', style: 'margin:4px 0 8px', text: '+ Add layer', onclick: function () { layers.push({ name: '', empty: 0, options: [], tints: [] }); setLayers(r, layers); appearanceForm(); } }));
+    // preview strip
+    form.appendChild(h('div', { className: 'sub', text: 'Preview — sample rolls' }));
+    var strip = h('div', { className: 'preview' });
+    form.appendChild(h('button', { text: '🎲 Roll samples', onclick: function () { renderPreview(strip, layersOf(r)); } }));
+    form.appendChild(strip);
+    renderPreview(strip, layers);
   }
 
   // ---------------------------------------------------------------- loot tables (grouped by table name)

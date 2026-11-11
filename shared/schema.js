@@ -100,7 +100,13 @@ var Schema = (function () {
       f('aggro_range', 'number', 4), f('move_ms', 'number', 800), f('respawn_s', 'number', 60),
       f('attack_range', 'number', 0, '0 = melee; >1 = ranged'), f('ranged_cooldown_ms', 'number', 1500),
       f('ranged_projectile', 'bool', false), f('ranged_status', 'ref', '', '', { ref: 'statuses' }),
-      f('infect_chance', 'number', 0, 'Chance a hit infects (0–1)')
+      f('infect_chance', 'number', 0, 'Chance a hit infects (0–1)'),
+      f('appearance', 'ref', '', 'Paper-doll look rolled per spawn (leave blank to use the flat sprite)', { ref: 'appearances' })
+    ] },
+    appearances: { collection: 'appearances', id: 'id', label: 'Appearances', singular: 'appearance set', authored: 'studio', fields: [
+      f('id', 'text', ''), f('name', 'text', ''),
+      // layers are edited by the Content Studio's dedicated appearance editor, not a raw field
+      f('layers', 'json', '', 'Ordered paper-doll layers, each a weighted pool of sprites')
     ] },
     loot: { collection: 'loot', id: null, label: 'Loot tables', singular: 'drop', authored: 'studio', fields: [
       f('table', 'text', '', 'Table name a monster/chest references'),
@@ -155,7 +161,8 @@ var Schema = (function () {
   var TAB = {
     config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', kinds: 'Kinds',
     objects: 'Objects', items: 'Items', monsters: 'Monsters', loot: 'LootTables', classes: 'Classes',
-    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', maps: 'Maps', mapEntities: 'MapEntities'
+    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances',
+    maps: 'Maps', mapEntities: 'MapEntities'
   };
 
   function get(type) { return TYPES[type]; }

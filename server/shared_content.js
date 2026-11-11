@@ -103,7 +103,7 @@ var Content = (function () {
       m.entities.push({ key: str(r.key), x: num(r.x, 0), y: num(r.y, 0), ref: str(r.ref), data: json(r.data, {}) });
     });
 
-    c.items = {}; c.monsters = {}; c.loot = {}; c.classes = {}; c.levels = [];
+    c.items = {}; c.monsters = {}; c.loot = {}; c.classes = {}; c.levels = []; c.appearances = {};
     (tables.Items || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
       c.items[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), type: str(r.type) || 'material',
@@ -133,7 +133,28 @@ var Content = (function () {
         // 0 = melee only; >1 = can attack from that many tiles away (with line of sight)
         attackRange: num(r.attack_range, 0), rangedMs: Math.max(250, num(r.ranged_cooldown_ms, 1500)),
         rangedProjectile: bool(r.ranged_projectile), rangedStatus: str(r.ranged_status),
-        infectChance: num(r.infect_chance, 0) };
+        infectChance: num(r.infect_chance, 0),
+        // paper-doll monsters: name an Appearance set and the server rolls a random layered look per spawn
+        appearance: str(r.appearance) };
+    });
+    // Appearance sets: an ordered list of layers (bottom->top = draw order); each layer weighted-picks
+    // one option per spawn (or none, by `empty` weight). An option is { sprite, tint, weight }; tint is a
+    // Tint ramp name (recolours the sprite's sibling .tint.png mask). Lets many monsters share a look pool.
+    (tables.Appearances || []).forEach(function (r) {
+      var id = str(r.id); if (!id) return;
+      var layers = json(r.layers, []).map(function (L) {
+        return { name: str(L.name), empty: num(L.empty, 0),
+          // sprite options for this layer (one is picked per spawn)
+          options: (L.options || []).map(function (o) {
+            return { sprite: str(o.sprite), tint: str(o.tint), weight: num(o.weight, 1) };
+          }),
+          // optional colour pool: when set, the chosen sprite is recoloured with one of these ramps
+          // (picked independently), so e.g. 9 hairstyles x 8 hair colours come from a short list
+          tints: (L.tints || []).map(function (t) {
+            return { tint: str(t.tint), weight: num(t.weight, 1) };
+          }) };
+      });
+      c.appearances[id] = { id: id, name: str(r.name) || id, layers: layers };
     });
     (tables.LootTables || []).forEach(function (r) {
       var t = str(r.table), it = str(r.item); if (!t || !it) return;

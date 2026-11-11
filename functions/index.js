@@ -134,7 +134,7 @@ function firebaseView(content, ws, mapId, players) {
     monsters: (ms.monsters || []).filter(m => !m.dead).map(m => {
       const d = content.monsters[m.ref];
       return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing,
-        statuses: (m.statuses || []).map(st => st.id) };
+        statuses: (m.statuses || []).map(st => st.id), look: m.look || undefined };
     }),
     players: (players || []).filter(q => q.map === mapId).map(q => ({
       id: q.id, name: q.name, x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level

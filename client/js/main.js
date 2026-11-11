@@ -54,6 +54,22 @@
     return out;
   }
 
+  /** Paper-doll layers for a monster, from the look the server rolled for this instance. `m.look` is
+   *  [{path, tint}] already in draw order (base body first); tint is a Tint ramp name recolouring the
+   *  sprite's sibling .tint.png mask. Returns null for plain-sprite monsters (slimes, rats...). */
+  function monsterLayers(m) {
+    if (!m.look || !m.look.length) return null;
+    var out = m.look.map(function (l) {
+      var ramp = l.tint ? Tint.TINTS[l.tint] : null;
+      return { path: l.path, mask: ramp ? maskOf(l.path) : '', ramp: ramp };
+    });
+    out.forEach(function (l) {                                           // make sure late-arriving layers load
+      if (!Assets.get(l.path)) Assets.load(l.path);
+      if (l.mask && !Assets.get(l.mask)) Assets.load(l.mask);
+    });
+    return out;
+  }
+
   function setNet(text, bad) { $('hud-net').textContent = text; $('hud-net').className = bad ? 'bad' : ''; }
   function mapOf() { return content.maps[me.map]; }
 
@@ -634,7 +650,10 @@
       var d = content.monsters[m.ref] || { name: m.ref, sprite: '' }, s = shownOthers[m.id] || (shownOthers[m.id] = { x: m.x, y: m.y });
       ease(s, m, dt / 250); seen[m.id] = 1;
       var stc = m.statuses && m.statuses.length && content.statuses[m.statuses[0]];
-      actors.push({ x: s.x, y: s.y, facing: m.facing, name: d.name, sprite: d.sprite || '', hp: m.hp, maxHp: m.maxHp, statusColor: stc ? stc.color : '' });
+      var lay = monsterLayers(m);                                        // paper-doll zombies carry a rolled look
+      // sprite '' (not undefined) keeps the monster health-bar colour + no name label even when layered
+      actors.push({ x: s.x, y: s.y, facing: m.facing, name: d.name, sprite: lay ? '' : (d.sprite || ''),
+        layers: lay || undefined, hp: m.hp, maxHp: m.maxHp, statusColor: stc ? stc.color : '' });
     });
     view.players.forEach(function (q) {
       var s = shownOthers['p:' + q.id] || (shownOthers['p:' + q.id] = { x: q.x, y: q.y });

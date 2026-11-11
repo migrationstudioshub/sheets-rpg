@@ -82,6 +82,30 @@ test('a container with several weighted loot tables picks one per open, by weigh
   assert.strictEqual(World.pickLootTable({ loot: [], loot_table: 'legacy' }, dice([0.5])), 'legacy');
 });
 
+test('a paper-doll monster rolls a random layered look from its appearance set', () => {
+  const { c } = fresh();
+  // the walker references the seeded zombie_plain set
+  assert.strictEqual(c.monsters.walker.appearance, 'zombie_plain');
+  const set = c.appearances.zombie_plain;
+  assert.ok(set && set.layers.length >= 2, 'zombie_plain has layers');
+  // a roll yields layers in draw order, body first, with a path on each; tints map to Tint ramp names
+  const look = World.rollLook(c, c.monsters.walker, dice([0.5]));
+  assert.ok(Array.isArray(look) && look.length, 'rolled a look');
+  assert.match(look[0].path, /body_zombie/, 'body layer first');
+  look.forEach(l => assert.ok(l.path, 'every layer has a sprite path'));
+  // a monster with no appearance set rolls nothing (keeps its flat sprite)
+  assert.strictEqual(World.rollLook(c, c.monsters.slime, dice([0.5])), null);
+  // an always-empty layer is skipped; a single-option layer is deterministic
+  const toy = { appearance: 'toy' };
+  const c2 = { appearances: { toy: { layers: [
+    { name: 'body', empty: 0, options: [{ sprite: 'b.png', weight: 1 }], tints: [] },
+    { name: 'hat', empty: 1, options: [], tints: [] },                       // nothing to pick -> skipped
+    { name: 'coat', empty: 0, options: [{ sprite: 'c.png', weight: 1 }], tints: [{ tint: 'navy', weight: 1 }] }
+  ] } } };
+  assert.deepStrictEqual(World.rollLook(c2, toy, dice([0.5])),
+    [{ path: 'b.png', tint: '' }, { path: 'c.png', tint: 'navy' }]);
+});
+
 test('equipping a sword raises attack; using a potion heals and is consumed', () => {
   const s = fresh();
   // the warrior auto-equips its starting sword (atk 9); toggle it off and on to exercise equip/unequip

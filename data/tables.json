@@ -4486,7 +4486,8 @@
    "ranged_status": "",
    "infect_chance": 0,
    "sprite": "art/sprites/slime.png",
-   "notes": ""
+   "notes": "",
+   "appearance": ""
   },
   {
    "id": "rat",
@@ -4507,7 +4508,8 @@
    "ranged_status": "",
    "infect_chance": 0,
    "sprite": "art/sprites/rat.png",
-   "notes": ""
+   "notes": "",
+   "appearance": ""
   },
   {
    "id": "bat",
@@ -4528,7 +4530,8 @@
    "ranged_status": "",
    "infect_chance": 0,
    "sprite": "art/sprites/bat.png",
-   "notes": ""
+   "notes": "",
+   "appearance": ""
   },
   {
    "id": "skeleton",
@@ -4549,7 +4552,8 @@
    "ranged_status": "",
    "infect_chance": 0,
    "sprite": "art/sprites/skeleton.png",
-   "notes": ""
+   "notes": "",
+   "appearance": ""
   },
   {
    "id": "walker",
@@ -4570,7 +4574,8 @@
    "ranged_status": "",
    "infect_chance": 0.5,
    "sprite": "art/sprites/walker.png",
-   "notes": ""
+   "notes": "",
+   "appearance": "zombie_plain"
   },
   {
    "id": "spitter",
@@ -4591,7 +4596,8 @@
    "ranged_status": "",
    "infect_chance": 0,
    "sprite": "art/sprites/spitter.png",
-   "notes": ""
+   "notes": "",
+   "appearance": ""
   }
  ],
  "LootTables": [
@@ -4790,7 +4796,7 @@
    "atk_per_level": 2,
    "def_per_level": 1,
    "mp_per_level": 3,
-   "mp_regen": 1.0,
+   "mp_regen": 1,
    "start_items": "potion:2, wooden_sword:1, leather_armor:1, army_helmet:1",
    "skills": "charge@1, cleave@1, second_wind@3",
    "notes": "Front line",
@@ -4826,7 +4832,7 @@
    "atk_per_level": 1,
    "def_per_level": 1,
    "mp_per_level": 7,
-   "mp_regen": 3.0,
+   "mp_regen": 3,
    "start_items": "potion:1, mana_potion:2",
    "skills": "fireball@1, frost_bolt@1, frost_nova@3",
    "notes": "Ranged magic, fragile",
@@ -4862,7 +4868,7 @@
    "atk_per_level": 1,
    "def_per_level": 1,
    "mp_per_level": 8,
-   "mp_regen": 3.0,
+   "mp_regen": 3,
    "start_items": "potion:1, mana_potion:2",
    "skills": "heal@1, smite@1, renew@3",
    "notes": "Healer",
@@ -4880,7 +4886,7 @@
    "atk_per_level": 2,
    "def_per_level": 1,
    "mp_per_level": 2,
-   "mp_regen": 1.0,
+   "mp_regen": 1,
    "start_items": "potion:2",
    "skills": "whirlwind@1, rage@1, leap@3",
    "notes": "Brute force",
@@ -4898,7 +4904,7 @@
    "atk_per_level": 2,
    "def_per_level": 1,
    "mp_per_level": 2,
-   "mp_regen": 1.0,
+   "mp_regen": 1,
    "start_items": "pistol:1, rifle:1, ammo_pistol:40, ammo_rifle:16, grenade:3, bandage:3, ration:2, water:2",
    "skills": "second_wind@1, cleave@1",
    "notes": "Demo: left-click to aim+fire the pistol (R reloads from your pistol-ammo reserve); the rifle uses rifle ammo and needs level 3; 1-5 belt; Q/E abilities",
@@ -5019,7 +5025,7 @@
    "effect": "damage",
    "power": 3,
    "stat": "atk",
-   "scale": 1.0,
+   "scale": 1,
    "status": "stun",
    "status_ms": 1200,
    "dash": true,
@@ -5043,7 +5049,7 @@
    "effect": "damage",
    "power": 0,
    "stat": "atk",
-   "scale": 1.0,
+   "scale": 1,
    "status": "",
    "status_ms": 0,
    "dash": false,
@@ -5115,7 +5121,7 @@
    "effect": "damage",
    "power": 0,
    "stat": "atk",
-   "scale": 1.0,
+   "scale": 1,
    "status": "poison",
    "status_ms": 5000,
    "dash": false,
@@ -5379,7 +5385,7 @@
    "effect": "damage",
    "power": 2,
    "stat": "atk",
-   "scale": 1.0,
+   "scale": 1,
    "status": "",
    "status_ms": 0,
    "dash": false,
@@ -5480,5 +5486,12 @@
    "xp_needed": 950
   }
  ],
- "_version": "4899d096caa6"
+ "_version": "4899d096caa6",
+ "Appearances": [
+  {
+   "id": "zombie_plain",
+   "name": "Plain zombie",
+   "layers": "[{\"name\":\"body\",\"empty\":0,\"options\":[{\"sprite\":\"art/sprites/paperdoll/body_zombie.png\",\"weight\":3},{\"sprite\":\"art/sprites/paperdoll/body_zombie_female.png\",\"weight\":2}],\"tints\":[]},{\"name\":\"hair\",\"empty\":1.5,\"options\":[{\"sprite\":\"art/sprites/paperdoll/hair_bob.png\",\"weight\":1},{\"sprite\":\"art/sprites/paperdoll/hair_buzz.png\",\"weight\":1},{\"sprite\":\"art/sprites/paperdoll/hair_long.png\",\"weight\":1},{\"sprite\":\"art/sprites/paperdoll/hair_messy.png\",\"weight\":1},{\"sprite\":\"art/sprites/paperdoll/hair_pony.png\",\"weight\":1},{\"sprite\":\"art/sprites/paperdoll/hair_shaggy.png\",\"weight\":1},{\"sprite\":\"art/sprites/paperdoll/hair_slick.png\",\"weight\":1},{\"sprite\":\"art/sprites/paperdoll/hair_under.png\",\"weight\":1},{\"sprite\":\"art/sprites/paperdoll/hair_metal_mohawk_v1.png\",\"weight\":0.3},{\"sprite\":\"art/sprites/paperdoll/hair_metal_mohawk_v2.png\",\"weight\":0.3}],\"tints\":[{\"tint\":\"hair_grey\",\"weight\":3},{\"tint\":\"hair_dark\",\"weight\":2},{\"tint\":\"hair_black\",\"weight\":2},{\"tint\":\"hair_brown\",\"weight\":2},{\"tint\":\"hair_white\",\"weight\":1.5},{\"tint\":\"hair_blonde\",\"weight\":1},{\"tint\":\"hair_auburn\",\"weight\":0.7},{\"tint\":\"hair_ginger\",\"weight\":0.7}]},{\"name\":\"clothes\",\"empty\":2,\"options\":[{\"sprite\":\"art/sprites/paperdoll/chest_leather_jacket.png\",\"weight\":1}],\"tints\":[{\"tint\":\"brown\",\"weight\":2},{\"tint\":\"olive\",\"weight\":2},{\"tint\":\"charcoal\",\"weight\":2},{\"tint\":\"maroon\",\"weight\":1},{\"tint\":\"navy\",\"weight\":1},{\"tint\":\"khaki\",\"weight\":1}]}]"
+  }
+ ]
 }

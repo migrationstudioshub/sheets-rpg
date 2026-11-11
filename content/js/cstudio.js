@@ -49,6 +49,7 @@ var CStudio = (function () {
   function init() {
     if (!FUN) { $('top').textContent = 'No FUNCTIONS_URL in client/js/config.js — cannot reach the content server.'; return; }
     renderTop('Loading…');
+    loadManifest().then(function () { if (type === 'appearances') renderForm(); });   // paper-doll art list for the picker
     var draft = ContentStore.getDraft();
     (draft && Object.keys(draft).length
       ? Promise.resolve(draft)
@@ -328,15 +329,25 @@ var CStudio = (function () {
   function setLayers(r, layers) { r.layers = layers; persist(); }   // array; content.js json() passes arrays through
   function maskPath(p) { return p ? p.replace(/\.png$/i, '.tint.png') : ''; }
   function tintNames() { return (typeof Tint !== 'undefined' && Tint.TINTS) ? Object.keys(Tint.TINTS) : []; }
-  // A convenience list for the sprite picker: the paper-doll art shipped with the game, plus any sprite
-  // already referenced in content (so newly generated art shows up once it is used somewhere).
+  // The paper-doll art the sprite picker offers. Primary source is the generated manifest
+  // (art/sprites/paperdoll/manifest.json, rebuilt by tools/build_paperdoll_manifest.js) so new art
+  // appears automatically; a built-in list is the fallback when the manifest can't be fetched. Either
+  // way we also fold in any sprite already referenced in content.
+  var pdManifest = null;
+  var PD_FALLBACK = ['body_zombie', 'body_zombie_female', 'body_survivor', 'body_survivor_female',
+    'hair_bob', 'hair_buzz', 'hair_long', 'hair_messy', 'hair_metal_mohawk_v1', 'hair_metal_mohawk_v2',
+    'hair_pony', 'hair_shaggy', 'hair_slick', 'hair_under',
+    'chest_leather_jacket', 'chest_riot_vest', 'helm_army', 'gun_pistol', 'sword_machete'
+  ].map(function (n) { return 'art/sprites/paperdoll/' + n + '.png'; });
+  function loadManifest() {
+    return fetch('../art/sprites/paperdoll/manifest.json', { cache: 'no-cache' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { if (j && Array.isArray(j.sprites)) pdManifest = j.sprites; })
+      .catch(function () { /* keep the built-in fallback */ });
+  }
   function paperdollSprites() {
     var s = {};
-    ['body_zombie', 'body_zombie_female', 'body_survivor', 'body_survivor_female',
-     'hair_bob', 'hair_buzz', 'hair_long', 'hair_messy', 'hair_metal_mohawk_v1', 'hair_metal_mohawk_v2',
-     'hair_pony', 'hair_shaggy', 'hair_slick', 'hair_under',
-     'chest_leather_jacket', 'chest_riot_vest', 'helm_army', 'gun_pistol', 'sword_machete'
-    ].forEach(function (n) { s['art/sprites/paperdoll/' + n + '.png'] = 1; });
+    (pdManifest && pdManifest.length ? pdManifest : PD_FALLBACK).forEach(function (p) { s[p] = 1; });
     (T.Classes || []).forEach(function (r) { if (r.body_sprite) s[r.body_sprite] = 1; });
     (T.Items || []).forEach(function (r) { if (r.worn_sprite) s[r.worn_sprite] = 1; });
     (T.Appearances || []).forEach(function (r) { layersOf(r).forEach(function (L) { (L.options || []).forEach(function (o) { if (o.sprite) s[o.sprite] = 1; }); }); });

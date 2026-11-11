@@ -1,0 +1,24 @@
+{
+  "sprites": [
+    "art/sprites/paperdoll/body_survivor.png",
+    "art/sprites/paperdoll/body_survivor_female.png",
+    "art/sprites/paperdoll/body_zombie.png",
+    "art/sprites/paperdoll/body_zombie_female.png",
+    "art/sprites/paperdoll/chest_leather_jacket.png",
+    "art/sprites/paperdoll/chest_lumberjack_shirt.png",
+    "art/sprites/paperdoll/chest_riot_vest.png",
+    "art/sprites/paperdoll/gun_pistol.png",
+    "art/sprites/paperdoll/hair_bob.png",
+    "art/sprites/paperdoll/hair_buzz.png",
+    "art/sprites/paperdoll/hair_long.png",
+    "art/sprites/paperdoll/hair_messy.png",
+    "art/sprites/paperdoll/hair_metal_mohawk_v1.png",
+    "art/sprites/paperdoll/hair_metal_mohawk_v2.png",
+    "art/sprites/paperdoll/hair_pony.png",
+    "art/sprites/paperdoll/hair_shaggy.png",
+    "art/sprites/paperdoll/hair_slick.png",
+    "art/sprites/paperdoll/hair_under.png",
+    "art/sprites/paperdoll/helm_army.png",
+    "art/sprites/paperdoll/sword_machete.png"
+  ]
+}

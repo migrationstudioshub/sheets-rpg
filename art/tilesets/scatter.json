@@ -1,0 +1,58 @@
+{
+ "asphalt": {
+  "details": [
+   "asphalt_details.png",
+   8,
+   8,
+   0.4
+  ],
+  "decals": [
+   "asphalt_decals.png",
+   4,
+   4,
+   0.06
+  ]
+ },
+ "grass_dead": {
+  "details": [
+   "grass_dead_details.png",
+   24,
+   8,
+   0.6
+  ],
+  "decals": [
+   "grass_dead_decals.png",
+   6,
+   6,
+   0.08
+  ]
+ },
+ "dirt": {
+  "details": [
+   "dirt_details.png",
+   13,
+   8,
+   0.45
+  ],
+  "decals": [
+   "dirt_decals.png",
+   5,
+   5,
+   0.06
+  ]
+ },
+ "sidewalk": {
+  "details": [
+   "sidewalk_details.png",
+   10,
+   8,
+   0.35
+  ],
+  "decals": [
+   "sidewalk_decals.png",
+   5,
+   5,
+   0.05
+  ]
+ }
+}

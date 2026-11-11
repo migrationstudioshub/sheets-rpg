@@ -154,7 +154,7 @@ var Gear = (function () {
     Panels.toolbar();
     ping().then(function (ok) {
       if (!ok) {
-        setStatus('Gear server not found. Run:  python3 tools/gear_server.py  (with GOOGLE_API set), then reload.', 'bad');
+        setStatus('Asset server not found. Run:  python3 tools/asset_server.py  (with GOOGLE_API set), then reload.', 'bad');
       } else if (!hasKey && !localStorage.getItem(KEY_LS)) {
         showKeySetup();
       } else {

@@ -129,6 +129,62 @@
    "columns": 8,
    "layout": "blob47_craftpix",
    "notes": "Placeholder art; swap image for the CraftPix FieldsTileset.png (same layout)"
+  },
+  {
+   "id": "ts_asphalt",
+   "image": "art/tilesets/asphalt_auto.png",
+   "tile_size": 32,
+   "columns": 8,
+   "layout": "blob47_craftpix",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "ts_sidewalk",
+   "image": "art/tilesets/sidewalk_auto.png",
+   "tile_size": 32,
+   "columns": 8,
+   "layout": "blob47_craftpix",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "ts_dirt",
+   "image": "art/tilesets/dirt_auto.png",
+   "tile_size": 32,
+   "columns": 8,
+   "layout": "blob47_craftpix",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "ts_grass",
+   "image": "art/tilesets/grass_dead_auto.png",
+   "tile_size": 32,
+   "columns": 8,
+   "layout": "blob47_craftpix",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "ts_wood",
+   "image": "art/tilesets/floor_wood_auto.png",
+   "tile_size": 32,
+   "columns": 8,
+   "layout": "blob47_craftpix",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "ts_wbrick",
+   "image": "art/tilesets/wall_brick_top_auto.png",
+   "tile_size": 32,
+   "columns": 8,
+   "layout": "blob47_craftpix",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "ts_wconcrete",
+   "image": "art/tilesets/wall_concrete_top_auto.png",
+   "tile_size": 32,
+   "columns": 8,
+   "layout": "blob47_craftpix",
+   "notes": "from the tileset maker"
   }
  ],
  "Autotile": [
@@ -564,6 +620,104 @@
    "frames": "",
    "frame_ms": "",
    "notes": "Autotiled: edges and corners are picked automatically"
+  },
+  {
+   "id": "g_asphalt",
+   "name": "Asphalt",
+   "color": "#26262b",
+   "sprite": "",
+   "autotile": "ts_asphalt",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "g_sidewalk",
+   "name": "Sidewalk",
+   "color": "#45474b",
+   "sprite": "",
+   "autotile": "ts_sidewalk",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "g_dirt",
+   "name": "Dirt",
+   "color": "#45392a",
+   "sprite": "",
+   "autotile": "ts_dirt",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "g_grass",
+   "name": "Dead grass",
+   "color": "#39402b",
+   "sprite": "",
+   "autotile": "ts_grass",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "f_wood",
+   "name": "Wood floor",
+   "color": "#3a2a1a",
+   "sprite": "",
+   "autotile": "ts_wood",
+   "pass_n": 1,
+   "pass_e": 1,
+   "pass_s": 1,
+   "pass_w": 1,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "w_brick",
+   "name": "Brick wall",
+   "color": "#2b2320",
+   "sprite": "",
+   "autotile": "ts_wbrick",
+   "pass_n": 0,
+   "pass_e": 0,
+   "pass_s": 0,
+   "pass_w": 0,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "from the tileset maker"
+  },
+  {
+   "id": "w_concrete",
+   "name": "Concrete wall",
+   "color": "#2b2b2b",
+   "sprite": "",
+   "autotile": "ts_wconcrete",
+   "pass_n": 0,
+   "pass_e": 0,
+   "pass_s": 0,
+   "pass_w": 0,
+   "frames": "",
+   "frame_ms": "",
+   "notes": "from the tileset maker"
   }
  ],
  "Kinds": [
@@ -1601,6 +1755,231 @@
    "properties": "",
    "on_interact": "",
    "notes": "Two tiles tall: trunk (blocks) + crown (drawn above characters)"
+  },
+  {
+   "id": "table",
+   "name": "Table",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/table.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 2}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "chair",
+   "name": "Chair",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/chair_down.png",
+   "sprite_top": "",
+   "sprite_states": "down=art/sprites/objects/chair_down.png; up=art/sprites/objects/chair_up.png; side=art/sprites/objects/chair_side.png",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 1}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "crate",
+   "name": "Crate",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/chest.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 1}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "barrel2",
+   "name": "Barrel",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/barrel.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 1}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "wardrobe",
+   "name": "Wardrobe",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/wardrobe.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 2}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "workbench",
+   "name": "Workbench",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/workbench.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 2}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "kitchen_sink",
+   "name": "Sink",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/kitchen_sink.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 1}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "kitchen_stove",
+   "name": "Stove",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/kitchen_stove.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 2}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "car_wreck",
+   "name": "Car wreck",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/car_wreck.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": true,
+   "properties": "{\"width\": 4}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "tree_dead",
+   "name": "Dead tree",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/tree_dead.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": true,
+   "properties": "{\"width\": 2}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "barrel_hazard",
+   "name": "Hazard barrel",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/barrel_hazard.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 1}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "fridge",
+   "name": "Fridge",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/fridge.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 1}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "door_wood",
+   "name": "Wooden door",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/door_wood.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": true,
+   "properties": "{\"width\": 1, \"layer\": \"wall\"}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "window_wood",
+   "name": "Window",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/window_wood.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 1, \"layer\": \"wall\"}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "blood",
+   "name": "Blood",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/blood.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "{\"width\": 1, \"layer\": \"ground_decal\"}",
+   "on_interact": "",
+   "notes": "from the objects maker"
   }
  ],
  "Maps": [
@@ -1635,6 +2014,14 @@
    "height": 16,
    "terrain": "[[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_5\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_4\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_0\",\"til_4\",\"til_0\",\"til_0\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_11\",\"til_11\",\"til_11\",\"til_11\",\"til_11\",\"til_11\",\"til_4\",\"til_11\",\"til_11\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"],[\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"fields\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\",\"til_3\"]]",
    "notes": "imported"
+  },
+  {
+   "id": "map_art_demo",
+   "name": "Art demo",
+   "width": 18,
+   "height": 12,
+   "terrain": "[[\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\"],[\"g_grass\",\"g_dirt\",\"g_dirt\",\"g_dirt\",\"g_dirt\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"w_concrete\",\"w_concrete\",\"w_concrete\",\"w_concrete\",\"w_concrete\",\"w_concrete\",\"w_concrete\",\"g_grass\"],[\"g_grass\",\"g_dirt\",\"g_dirt\",\"g_dirt\",\"g_dirt\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"g_grass\"],[\"g_grass\",\"g_dirt\",\"g_dirt\",\"g_dirt\",\"g_dirt\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"g_grass\"],[\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"g_grass\"],[\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"f_wood\",\"g_grass\"],[\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\"],[\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\",\"g_asphalt\"],[\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\",\"g_sidewalk\"],[\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\"],[\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\"],[\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\",\"g_grass\"]]",
+   "notes": "demo of the new tileset + object art"
   }
  ],
  "MapEntities": [
@@ -3189,6 +3576,110 @@
    "y": 12,
    "ref": "obj_tree",
    "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e1",
+   "x": 2,
+   "y": 10,
+   "ref": "table",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e2",
+   "x": 4,
+   "y": 10,
+   "ref": "chair",
+   "data": "{\"facing\": \"down\"}"
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e3",
+   "x": 6,
+   "y": 10,
+   "ref": "chair",
+   "data": "{\"facing\": \"side\"}"
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e4",
+   "x": 8,
+   "y": 10,
+   "ref": "crate",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e5",
+   "x": 0,
+   "y": 6,
+   "ref": "car_wreck",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e6",
+   "x": 14,
+   "y": 9,
+   "ref": "tree_dead",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e7",
+   "x": 11,
+   "y": 4,
+   "ref": "wardrobe",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e8",
+   "x": 15,
+   "y": 4,
+   "ref": "barrel2",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e9",
+   "x": 12,
+   "y": 3,
+   "ref": "door_wood",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e10",
+   "x": 14,
+   "y": 3,
+   "ref": "window_wood",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e11",
+   "x": 16,
+   "y": 5,
+   "ref": "fridge",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e12",
+   "x": 3,
+   "y": 8,
+   "ref": "barrel_hazard",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e13",
+   "x": 13,
+   "y": 4,
+   "ref": "blood",
+   "data": "{\"cell\": 2}"
   }
  ],
  "Items": [
@@ -4989,5 +5480,5 @@
    "xp_needed": 950
   }
  ],
- "_version": "83d92460804a"
+ "_version": "4899d096caa6"
 }

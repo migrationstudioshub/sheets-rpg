@@ -54,23 +54,8 @@ var Panels = (function () {
     ['fill', 'Fill', 'F'], ['pick', 'Eyedropper', 'I'], ['erase', 'Erase objects', 'E']];
   var ICONS = { select: '⬚', brush: '✎', rect: '▭', fill: '▧', pick: '⊙', erase: '⌫' };
 
-  function screenToggle() {
-    return h('div', { className: 'group right' }, h('span', { className: 'lbl', text: 'View' }),
-      h('span', { className: 'layer' },
-        h('button', { className: E.screen !== 'gear' ? 'on' : '', title: 'Map editor', text: 'Map',
-          onclick: function () { if (E.screen === 'gear') Gear.hide(); } }),
-        h('button', { className: E.screen === 'gear' ? 'on' : '', title: 'Make character gear art (needs the local gear server)', text: 'Gear',
-          onclick: function () { if (E.screen !== 'gear') Gear.show(); } })));
-  }
-
   function toolbar() {
     var bar = $('toolbar'); bar.innerHTML = '';
-    if (E.screen === 'gear') {
-      bar.appendChild(h('div', { className: 'group' }, h('strong', { text: 'Gear maker' }),
-        h('span', { className: 'lbl', text: 'offline art pipeline' })));
-      bar.appendChild(screenToggle());
-      return;
-    }
     var tools = h('div', { className: 'group' }, TOOLS.map(function (t) {
       return h('button', { className: 'tool' + (E.tool === t[0] ? ' on' : ''), title: t[1] + ' (' + t[2] + ')',
         onclick: function () { E.setTool(t[0]); } }, h('span', { className: 'ico', text: ICONS[t[0]] }), ' ' + t[1].split(' ')[0]);
@@ -92,7 +77,6 @@ var Panels = (function () {
       h('button', { className: 'primary', title: Store.online() ? 'Save to the Game Data spreadsheet (Ctrl+S)' : 'Save a draft in this browser (Ctrl+S)',
         text: Store.online() ? 'Save to Game Data' : 'Save draft', onclick: E.save }));
     bar.appendChild(tools); bar.appendChild(layers); bar.appendChild(view); bar.appendChild(save);
-    bar.appendChild(screenToggle());
   }
   function layerBtn(id, label, key) {
     return h('span', { className: 'layer' + (E.layer === id ? ' on' : '') },

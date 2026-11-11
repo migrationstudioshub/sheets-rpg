@@ -369,6 +369,7 @@ var Panels = (function () {
     return h('div', { className: 'help' }, h('h3', { text: 'Map editor' }),
       h('p', { text: 'Pick terrain or an object on the left, then paint. Use Select (V) and click an object to set its properties, such as a chest\'s contents or where a door leads.' }),
       h('table', {}, [['B', 'brush'], ['R', 'rectangle'], ['F', 'fill'], ['I', 'eyedropper'], ['E', 'erase objects'], ['V', 'select / drag to move'],
+        ['Shift', 'turn object (spin if it has views, else flip)'],
         ['1 / 2 / 3', 'terrain / objects / monsters'], ['G', 'grid'], ['0', 'fit map'], ['Space + drag', 'pan (or right-drag)'], ['Wheel', 'zoom'],
         ['Ctrl+Z / Ctrl+Y', 'undo / redo'], ['Ctrl+S', 'save'], ['Del', 'delete selected object'], ['Esc', 'cancel']].map(function (r) {
           return h('tr', {}, h('td', { className: 'k', text: r[0] }), h('td', { text: r[1] }));

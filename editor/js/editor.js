@@ -5,7 +5,7 @@
 var E = {
   tables: null, content: null, mapId: null,
   layer: 'terrain', tool: 'brush', paletteTab: 'terrain',
-  brush: { terrain: 'til_3', object: null, monster: null },
+  brush: { terrain: 'til_3', object: null, monster: null, facing: 'down' },
   view: { zoom: 2, x: 40, y: 40 },
   show: { terrain: true, objects: true, grid: true },
   selected: null, hover: null, mode: null,
@@ -108,6 +108,23 @@ var E = {
     if (!E.inside(x, y) || m.terrain[y][x] === id) return false;
     m.terrain[y][x] = id; return true;
   }
+  // Object facing (same model the game renderer uses): down/up/side via sprite_states, left = side mirrored.
+  var FACINGS = ['down', 'right', 'up', 'left'];
+  function brushFacingSprite(o, facing) {        // -> {path, flip} for a facing
+    var ss = (o && o.spriteStates) || {};
+    var key = (facing === 'left' || facing === 'right') ? 'side' : facing;   // down | up | side
+    return { path: ss[key] || (o && o.sprite), flip: facing === 'left' };
+  }
+  // Shift turns the object brush: a 90° spin through its views if it has all of them, else a flip.
+  function rotateBrush() {
+    if (E.layer !== 'objects' || E.paletteTab === 'monsters' || !E.brush.object) return;
+    var o = E.content.objects[E.brush.object]; if (!o) return;
+    var ss = o.spriteStates || {}, full = !!(ss.up && ss.side);   // front + back + side = a real 4-way spin
+    var cur = E.brush.facing || 'down';
+    E.brush.facing = full ? FACINGS[(FACINGS.indexOf(cur) + 1) % 4] || 'down'
+                          : (cur === 'left' ? 'down' : 'left');            // otherwise just flip horizontally
+    E.redraw();
+  }
   function placeObject(x, y, ref) {
     if (!E.inside(x, y) || !ref) return false;
     var m = E.map(), old = E.entityAt(x, y);
@@ -146,7 +163,15 @@ var E = {
   function paint(x, y) {
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
     if (E.paletteTab === 'monsters') return placeMonster(x, y, E.brush.monster);
-    return placeObject(x, y, E.brush.object);
+    var fc = E.brush.facing && E.brush.facing !== 'down' ? E.brush.facing : null;
+    var e = placeObject(x, y, E.brush.object);
+    if (e) { if (fc) e.data.facing = fc; return e; }
+    var cur = E.entityAt(x, y);                 // same object already here: just re-face it if that changed
+    if (cur && cur.ref === E.brush.object && (cur.data.facing || null) !== fc) {
+      if (fc) cur.data.facing = fc; else delete cur.data.facing;
+      return cur;
+    }
+    return false;
   }
   function line(a, b, fn) {  // every cell between a and b, so fast strokes leave no gaps
     var dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y), sx = a.x < b.x ? 1 : -1, sy = a.y < b.y ? 1 : -1, err = dx - dy;
@@ -185,7 +210,7 @@ var E = {
     var e = E.entityAt(x, y);
     var eo = e && E.content.objects[e.ref];
     if (E.layer === 'objects' && e && eo && eo.kind === 'spawn' && e.data.monster) { E.brush.monster = e.data.monster; E.setPaletteTab('monsters'); }
-    else if (E.layer === 'objects' && e) { E.brush.object = e.ref; E.setPaletteTab('objects'); }
+    else if (E.layer === 'objects' && e) { E.brush.object = e.ref; E.brush.facing = (e.data && e.data.facing) || 'down'; E.setPaletteTab('objects'); }
     else { E.brush.terrain = E.map().terrain[y][x]; E.setPaletteTab('terrain'); }
     E.setTool('brush'); Panels.palette();
   }
@@ -287,12 +312,14 @@ var E = {
         var o = c.objects[e.ref], dx = vx + e.x * s, dy = vy + e.y * s;
         if (!o) { g.drawImage(Assets.placeholder('?', '#a33', t), dx, dy, s, s); return; }
         if (o.kind === 'spawn') { drawSpawn(e, o, dx, dy, s); return; }
-        var path = (e.data && e.data.state && o.spriteStates[e.data.state]) || o.sprite;
-        Render.drawObject(g, o, path, dx, dy, s, 'base', 0);
-        tops.push({ o: o, path: path, y: e.y, dx: dx, dy: dy });
+        var stated = e.data && e.data.state && o.spriteStates[e.data.state];
+        var ef = (!stated && e.data && e.data.facing) ? brushFacingSprite(o, e.data.facing) : null;
+        var path = stated || (ef ? ef.path : o.sprite), flip = ef ? ef.flip : false;
+        Render.drawObject(g, o, path, dx, dy, s, 'base', 0, flip);
+        tops.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
       });
       // tall objects' upper parts, lower rows last so they overlap correctly (as in the game)
-      tops.sort(function (a, b) { return a.y - b.y; }).forEach(function (q) { Render.drawObject(g, q.o, q.path, q.dx, q.dy, s, 'top', 0); });
+      tops.sort(function (a, b) { return a.y - b.y; }).forEach(function (q) { Render.drawObject(g, q.o, q.path, q.dx, q.dy, s, 'top', 0, q.flip); });
       g.globalAlpha = 1;
     }
 
@@ -341,10 +368,11 @@ var E = {
           if (bmi) g.drawImage(bmi, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
         } else if (E.layer === 'objects' && E.brush.object) {
           var bo = c.objects[E.brush.object];
-          if (bo) {                                              // ghost at the object's real footprint, as it lands
+          if (bo) {                                              // ghost at the object's real footprint + facing, as it lands
+            var bf = brushFacingSprite(bo, E.brush.facing || 'down');
             var bdx = vx + E.hover.x * s, bdy = vy + E.hover.y * s;
-            Render.drawObject(g, bo, bo.sprite, bdx, bdy, s, 'base', 0);
-            Render.drawObject(g, bo, bo.sprite, bdx, bdy, s, 'top', 0);
+            Render.drawObject(g, bo, bf.path, bdx, bdy, s, 'base', 0, bf.flip);
+            Render.drawObject(g, bo, bf.path, bdx, bdy, s, 'top', 0, bf.flip);
           }
         } else if (E.layer === 'terrain') {
           var tt = c.terrain[E.brush.terrain];
@@ -465,6 +493,7 @@ var E = {
     if ((ev.ctrlKey || ev.metaKey) && k === 's') { ev.preventDefault(); E.save(); return; }
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     if (k === ' ') { spaceDown = true; canvas.style.cursor = 'grab'; ev.preventDefault(); return; }
+    if (k === 'shift') { if (!ev.repeat) rotateBrush(); return; }   // turn the object brush (spin / flip)
     if (KEYS[k]) { E.setTool(KEYS[k]); return; }
     if (k === 'g') { E.show.grid = !E.show.grid; Panels.toolbar(); E.redraw(); return; }
     if (k === '1') { E.setPaletteTab('terrain'); Panels.all(); E.redraw(); return; }

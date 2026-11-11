@@ -155,6 +155,7 @@ var CStudio = (function () {
   // ---------------------------------------------------------------- the form
   function renderForm() {
     if (type === 'loot') return lootForm();
+    if (type === 'objects') return objForm();
     var form = $('form'); form.innerHTML = '';
     if (curIndex < 0 || !rows(type)[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select a ' + (Schema.get(type).singular || Schema.get(type).label.toLowerCase().replace(/s$/, '')) + ', or click New.' })); return; }
     var r = rows(type)[curIndex], def = Schema.get(type);
@@ -198,6 +199,123 @@ var CStudio = (function () {
     }
     return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key + (fl.type === 'ref' ? '  → ' + fl.ref : '') }), control,
       fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+  }
+
+  // ---------------------------------------------------------------- objects (structured editor)
+  function propsObj(o) {
+    if (typeof o.properties === 'string') { try { return JSON.parse(o.properties || '{}'); } catch (e) { return {}; } }
+    return o.properties || {};
+  }
+  function setProp(o, key, val) {
+    var p = propsObj(o);
+    if (val === undefined || val === '' || (Array.isArray(val) && !val.length)) delete p[key]; else p[key] = val;
+    o.properties = Object.keys(p).length ? JSON.stringify(p) : '';
+    persist();
+  }
+  // The properties the Kinds tab defines for a kind (type/default/notes), excluding `states`.
+  function kindRows(kindName) {
+    return (T.Kinds || []).filter(function (r) { return String(r.kind) === String(kindName) && String(r.property) !== 'states'; })
+      .map(function (r) { return { property: String(r.property || ''), type: String(r.type || ''), def: r['default'], notes: String(r.notes || '') }; });
+  }
+  function propInput(k, value, onchange) {
+    var type = k.type || 'text';
+    if (type === 'bool') return h('input', { type: 'checkbox', checked: !!value, onchange: function (e) { onchange(e.target.checked); } });
+    if (type === 'number') return h('input', { type: 'number', value: value == null ? '' : value, placeholder: k.def == null ? '' : String(k.def), oninput: function (e) { onchange(e.target.value === '' ? undefined : Number(e.target.value)); } });
+    if (type.indexOf('select:') === 0) {
+      var opts = type.slice(7).split('|');
+      return h('select', { onchange: function (e) { onchange(e.target.value); } },
+        [h('option', { value: '', text: '—' })].concat(opts.map(function (o) { return h('option', { value: o, text: o, selected: o === value }); })));
+    }
+    if (type === 'item' || type === 'loot_table' || type === 'monster') {
+      var ids = type === 'item' ? (T.Items || []).map(function (x) { return x.id; })
+              : type === 'loot_table' ? lootTableNames() : (T.Monsters || []).map(function (x) { return x.id; });
+      var lid = 'dl_kp_' + k.property;
+      return h('span', { className: 'row', style: 'flex:1' },
+        h('input', { value: value == null ? '' : value, list: lid, oninput: function (e) { onchange(e.target.value); } }),
+        h('datalist', { id: lid }, ids.filter(Boolean).map(function (o) { return h('option', { value: o }); })));
+    }
+    return h('input', { value: value == null ? '' : value, oninput: function (e) { onchange(e.target.value); } });
+  }
+
+  function objForm() {
+    var form = $('form'); form.innerHTML = '';
+    if (curIndex < 0 || !rows('objects')[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select an object, or click New.' })); return; }
+    var o = rows('objects')[curIndex], p = propsObj(o);
+    form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: rowLabel('objects', o) }), h('span', { className: 'pill', text: 'Objects' }),
+      h('button', { title: 'Delete this object', text: '🗑 Delete', style: 'margin-left:auto', onclick: function () {
+        if (!confirm('Delete this object?')) return; rows('objects').splice(curIndex, 1); curIndex = -1; persist(); renderNav(); renderList(); renderForm();
+      } })));
+    // base fields (the raw `properties` blob is replaced by the structured sections below)
+    Schema.get('objects').fields.forEach(function (fl) {
+      if (fl.key === 'properties') return;
+      var el = fieldEl(o, fl);
+      if (fl.key === 'kind') { var sel = el.querySelector('select'); if (sel) sel.addEventListener('change', function () { setTimeout(objForm, 0); }); }
+      form.appendChild(el);
+    });
+    // Footprint
+    form.appendChild(h('div', { className: 'sub', text: 'Footprint — tiles, from the sprite’s bottom-left' }));
+    form.appendChild(h('div', { className: 'lootrow' },
+      h('span', { className: 'lootlbl', text: 'w' }), h('input', { type: 'number', min: 1, value: p.width == null ? '' : p.width, style: 'width:70px', title: 'Width in tiles', oninput: function (e) { setProp(o, 'width', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+      h('span', { className: 'lootlbl', text: 'h' }), h('input', { type: 'number', min: 1, value: p.height == null ? '' : p.height, style: 'width:70px', title: 'Height in tiles', oninput: function (e) { setProp(o, 'height', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+      h('span', { className: 'note', text: '(blank = the sprite’s own size)' })));
+    // Container loot
+    if (o.kind === 'container') form.appendChild(containerLoot(o));
+    // All kind properties, collapsible
+    form.appendChild(kindPropsSection(o));
+  }
+
+  // Save the weighted loot list, and retire the legacy single `loot_table` so there's one source of truth.
+  function saveLoot(o, list) {
+    setProp(o, 'loot', list.filter(function (e) { return e.table; }));
+    if (propsObj(o).loot_table) setProp(o, 'loot_table', undefined);
+  }
+  function containerLoot(o) {
+    var p = propsObj(o);
+    // Seed from the legacy single loot_table so an older chest shows its table as one weighted row;
+    // this is display-only until the user edits (then saveLoot upgrades it and drops loot_table).
+    var list = Array.isArray(p.loot) ? p.loot : (p.loot_table ? [{ table: p.loot_table, weight: 1 }] : []);
+    var tables = lootTableNames();
+    var box = h('div', {});
+    box.appendChild(h('div', { className: 'sub', text: 'Loot — on open, one table is picked by weight, then rolled' }));
+    if (p.contents) box.appendChild(h('div', { className: 'note', style: 'margin-bottom:6px', text: 'This chest has a fixed "contents" list (set below), which overrides loot tables.' }));
+    list.forEach(function (entry, i) {
+      box.appendChild(h('div', { className: 'lootrow' },
+        h('select', { style: 'flex:2', onchange: function (e) { entry.table = e.target.value; saveLoot(o, list); } },
+          [h('option', { value: '', text: '(loot table…)' })].concat(tables.map(function (t) { return h('option', { value: t, text: t, selected: t === entry.table }); }))),
+        h('span', { className: 'lootlbl', text: 'weight' }),
+        h('input', { type: 'number', min: 0, value: entry.weight == null ? 1 : entry.weight, style: 'width:64px', title: 'Relative weight for the pick', oninput: function (e) { entry.weight = Number(e.target.value) || 0; saveLoot(o, list); } }),
+        h('button', { title: 'Remove', text: '✕', onclick: function () { list.splice(i, 1); saveLoot(o, list); objForm(); } })));
+    });
+    box.appendChild(h('button', { className: 'primary', style: 'margin:2px 0 8px', text: '+ Add loot table', onclick: function () { list.push({ table: '', weight: 1 }); saveLoot(o, list); objForm(); } }));
+    var refillOn = p.refill_after_s != null && Number(p.refill_after_s) > 0;
+    box.appendChild(h('div', { className: 'lootrow' },
+      h('label', { className: 'row' }, h('input', { type: 'checkbox', checked: refillOn, onchange: function (e) { setProp(o, 'refill_after_s', e.target.checked ? (Number(p.refill_after_s) || 300) : undefined); objForm(); } }), h('span', { text: ' refills after' })),
+      h('input', { type: 'number', min: 1, value: p.refill_after_s || 300, style: 'width:80px', disabled: !refillOn, oninput: function (e) { setProp(o, 'refill_after_s', Number(e.target.value) || 0); } }),
+      h('span', { className: 'lootlbl', text: 'seconds' })));
+    return box;
+  }
+
+  function kindPropsSection(o) {
+    var p = propsObj(o);
+    var handled = { width: 1, height: 1 };
+    if (o.kind === 'container') { handled.loot = 1; handled.loot_table = 1; handled.refill_after_s = 1; }
+    var kprops = kindRows(o.kind).filter(function (k) { return !handled[k.property]; });
+    var box = h('details', { open: false });
+    box.appendChild(h('summary', { text: 'All ' + (o.kind || '?') + ' properties (' + kprops.length + ')' }));
+    if (!kprops.length) { box.appendChild(h('div', { className: 'note', style: 'padding:6px', text: 'This kind has no extra properties.' })); return box; }
+    kprops.forEach(function (k) {
+      var has = p[k.property] !== undefined;
+      box.appendChild(h('div', { className: 'kprop', title: k.notes || '' },
+        h('label', { className: 'row' },
+          h('input', { type: 'checkbox', checked: has, title: 'Include this property (off = use the default)', onchange: function (e) {
+            if (e.target.checked) setProp(o, k.property, k.def !== undefined && k.def !== '' ? k.def : ''); else setProp(o, k.property, undefined);
+            objForm();
+          } }),
+          h('span', { text: ' ' + k.property.replace(/_/g, ' ') }), k.type ? h('span', { className: 'lootlbl', text: '(' + k.type + ')' }) : null),
+        propInput(k, p[k.property], function (v) { setProp(o, k.property, v); }),
+        k.notes ? h('div', { className: 'help', text: k.notes }) : null));
+    });
+    return box;
   }
 
   // ---------------------------------------------------------------- loot tables (grouped by table name)

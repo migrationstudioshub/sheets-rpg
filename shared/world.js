@@ -221,6 +221,19 @@ var World = (function () {
     (c.loot[table] || []).forEach(function (r) { if (rng() < r.chance) out.push({ item: r.item, qty: rint(rng, r.min, r.max) }); });
     return out;
   }
+  // A container may list several loot tables each with a weight; one is picked per open, then rolled.
+  // `loot` is [{table, weight}]; falls back to the legacy single `loot_table` when there's no list.
+  function pickLootTable(pr, rng) {
+    var list = pr.loot;
+    if (typeof list === 'string') { try { list = JSON.parse(list); } catch (e) { list = null; } }
+    if (!Array.isArray(list) || !list.length) return pr.loot_table;
+    var total = 0, i;
+    for (i = 0; i < list.length; i++) total += Math.max(0, Number(list[i].weight) || 0);
+    if (total <= 0) return list[0].table;                 // all zero/blank weights: just use the first
+    var pick = rng() * total;
+    for (i = 0; i < list.length; i++) { pick -= Math.max(0, Number(list[i].weight) || 0); if (pick < 0) return list[i].table; }
+    return list[list.length - 1].table;
+  }
 
   // ------------------------------------------------------------ space
   function walkableEntity(c, ws, mapId, e) {
@@ -924,7 +937,7 @@ var World = (function () {
       setState(ws, p.map, e.key, 'empty');
       if (refill) mapState(ws, p.map).timers[e.key] = { at: now + refill * 1000, state: null };
     }
-    var got = pr.contents ? list(pr.contents) : roll(c, pr.loot_table, rng);
+    var got = pr.contents ? list(pr.contents) : roll(c, pickLootTable(pr, rng), rng);
     ev.push({ type: 'info', to: p.id, text: 'You open the ' + name + '.' + (got.length ? '' : ' Nothing inside.') });
     got.forEach(function (g) { give(c, p, g.item, g.qty, ev); });
   }
@@ -1219,6 +1232,6 @@ var World = (function () {
     stateOf: stateOf, mapState: mapState, check: check, run: run, give: give, count: count,
     liveState: liveState, trapPhase: trapPhase, knownSkills: knownSkills, checkTarget: checkTarget,
     viewLookup: viewLookup, canSee: canSee, snapTarget: snapTarget, actionsAt: actionsAt, lineCells: lineCells, applyStatus: applyStatus,
-    rangedWeapon: rangedWeapon, shotReach: shotReach };
+    rangedWeapon: rangedWeapon, shotReach: shotReach, pickLootTable: pickLootTable };
 })();
 if (typeof module !== 'undefined') module.exports = World;

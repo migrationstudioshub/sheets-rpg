@@ -66,6 +66,22 @@ test('the hut chest gives its contents once per player, then is empty', () => {
   assert.strictEqual(World.count(q, 'wooden_sword'), 1);
 });
 
+test('a container with several weighted loot tables picks one per open, by weight', () => {
+  // zero-weight tables are never picked; a single positive weight is always picked
+  assert.strictEqual(World.pickLootTable({ loot: [{ table: 'a', weight: 0 }, { table: 'b', weight: 1 }] }, dice([0.5])), 'b');
+  assert.strictEqual(World.pickLootTable({ loot: [{ table: 'a', weight: 1 }, { table: 'b', weight: 0 }] }, dice([0.5])), 'a');
+  // weight splits the 0..1 roll: 1:3 → first table below 0.25, second above
+  const two = [{ table: 'a', weight: 1 }, { table: 'b', weight: 3 }];
+  assert.strictEqual(World.pickLootTable({ loot: two }, dice([0.1])), 'a');
+  assert.strictEqual(World.pickLootTable({ loot: two }, dice([0.9])), 'b');
+  // a JSON-string list (as stored in object properties) is parsed; all-zero weights fall back to the first
+  assert.strictEqual(World.pickLootTable({ loot: '[{"table":"x","weight":2}]' }, dice([0.5])), 'x');
+  assert.strictEqual(World.pickLootTable({ loot: [{ table: 'a', weight: 0 }, { table: 'b', weight: 0 }] }, dice([0.5])), 'a');
+  // no list: the legacy single loot_table still wins
+  assert.strictEqual(World.pickLootTable({ loot_table: 'legacy' }, dice([0.5])), 'legacy');
+  assert.strictEqual(World.pickLootTable({ loot: [], loot_table: 'legacy' }, dice([0.5])), 'legacy');
+});
+
 test('equipping a sword raises attack; using a potion heals and is consumed', () => {
   const s = fresh();
   // the warrior auto-equips its starting sword (atk 9); toggle it off and on to exercise equip/unequip

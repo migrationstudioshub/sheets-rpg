@@ -268,7 +268,10 @@ def build():
         ('kitchen_stove', 'Stove', _op('kitchen_stove'), '', False, False, {'width': 2}),
         ('car_wreck', 'Car wreck', _op('car_wreck'), '', False, True, {'width': 4}),
         ('tree_dead', 'Dead tree', _op('tree_dead'), '', False, True, {'width': 2}),
+        ('barrel_hazard', 'Hazard barrel', _op('barrel_hazard'), '', False, False, {'width': 1}),
+        ('fridge', 'Fridge', _op('fridge'), '', False, False, {'width': 1}),
         ('door_wood', 'Wooden door', _op('door_wood'), '', False, True, {'width': 1, 'layer': 'wall'}),
+        ('window_wood', 'Window', _op('window_wood'), '', False, False, {'width': 1, 'layer': 'wall'}),
         ('blood', 'Blood', _op('blood'), '', True, False, {'width': 1, 'layer': 'ground_decal'}),
     ]
     for (oid, nm, spr, states, walk, bsight, props) in DEMO_OBJECTS:
@@ -324,6 +327,7 @@ def build():
         (2, 10, 'table', None), (4, 10, 'chair', {'facing': 'down'}), (6, 10, 'chair', {'facing': 'side'}),
         (8, 10, 'crate', None), (0, 6, 'car_wreck', None), (14, 9, 'tree_dead', None),
         (11, 4, 'wardrobe', None), (15, 4, 'barrel2', None), (12, 3, 'door_wood', None),
+        (14, 3, 'window_wood', None), (16, 5, 'fridge', None), (3, 8, 'barrel_hazard', None),
         (13, 4, 'blood', {'cell': 2}),
     ]
     dn = 0

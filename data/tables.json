@@ -1907,6 +1907,36 @@
    "notes": "from the objects maker"
   },
   {
+   "id": "barrel_hazard",
+   "name": "Hazard barrel",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/barrel_hazard.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 1}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "fridge",
+   "name": "Fridge",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/fridge.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"width\": 1}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
    "id": "door_wood",
    "name": "Wooden door",
    "kind": "deco",
@@ -1917,6 +1947,21 @@
    "frame_ms": "",
    "walkable": false,
    "blocks_sight": true,
+   "properties": "{\"width\": 1, \"layer\": \"wall\"}",
+   "on_interact": "",
+   "notes": "from the objects maker"
+  },
+  {
+   "id": "window_wood",
+   "name": "Window",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/window_wood.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
    "properties": "{\"width\": 1, \"layer\": \"wall\"}",
    "on_interact": "",
    "notes": "from the objects maker"
@@ -3607,6 +3652,30 @@
   {
    "map": "map_art_demo",
    "key": "map_art_demo.e10",
+   "x": 14,
+   "y": 3,
+   "ref": "window_wood",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e11",
+   "x": 16,
+   "y": 5,
+   "ref": "fridge",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e12",
+   "x": 3,
+   "y": 8,
+   "ref": "barrel_hazard",
+   "data": ""
+  },
+  {
+   "map": "map_art_demo",
+   "key": "map_art_demo.e13",
    "x": 13,
    "y": 4,
    "ref": "blood",
@@ -5411,5 +5480,5 @@
    "xp_needed": 950
   }
  ],
- "_version": "e2e9772bcc99"
+ "_version": "4899d096caa6"
 }

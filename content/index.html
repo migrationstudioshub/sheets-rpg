@@ -38,6 +38,9 @@
   .status .dirty { color: var(--warn); } .status .clean { color: var(--good); } .status .bad { color: var(--bad); }
   .empty { color: var(--dim); padding: 24px; }
   .pill { font-size: 11px; color: var(--dim); border: 1px solid var(--line); border-radius: 10px; padding: 1px 7px; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+  .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: 360px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  .modal .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 </style>
 </head>
 <body>

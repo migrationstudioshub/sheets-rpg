@@ -85,16 +85,34 @@ var CStudio = (function () {
       curIndex = -1; renderAll(); setStatus('Loaded live content.', 'clean');
     });
   }
+  // A masked key prompt (the native prompt() shows the key in plain text). Resolves to the key or null.
+  function promptKey() {
+    return new Promise(function (resolve) {
+      var done = false;
+      function close(val) { if (done) return; done = true; document.body.removeChild(bg); resolve(val); }
+      var input = h('input', { type: 'password', autocomplete: 'off', value: localStorage.getItem(KEY_LS) || '', placeholder: 'Editor key' });
+      input.addEventListener('keydown', function (e) { if (e.key === 'Enter') close(input.value.trim() || null); if (e.key === 'Escape') close(null); });
+      var modal = h('div', { className: 'modal' },
+        h('div', { className: 'note', style: 'margin-bottom:8px', text: 'Editor key (the EDITOR_KEY set on the function). It stays in this browser.' }),
+        input,
+        h('div', { className: 'buttons' },
+          h('button', { text: 'Cancel', onclick: function () { close(null); } }),
+          h('button', { className: 'primary', text: 'Publish', onclick: function () { close(input.value.trim() || null); } })));
+      var bg = h('div', { className: 'modal-bg', onclick: function (e) { if (e.target === bg) close(null); } }, modal);
+      document.body.appendChild(bg); input.focus(); input.select();
+    });
+  }
   function publish() {
-    var key = localStorage.getItem(KEY_LS) || prompt('Editor key (the EDITOR_KEY set on the function):');
-    if (!key) return;
-    localStorage.setItem(KEY_LS, key);
-    setStatus('Publishing…', 'dirty');
-    ContentStore.publish(FUN, key, T).then(function (res) {
-      setStatus('Published ✓ (version ' + res.version + ', ' + res.tabs + ' tabs). Live within ~30 min, or reload to force.', 'clean');
-    }).catch(function (e) {
-      if (/editor key/i.test(e.message)) localStorage.removeItem(KEY_LS);
-      setStatus('Publish failed: ' + e.message, 'bad');
+    promptKey().then(function (key) {
+      if (!key) return;
+      localStorage.setItem(KEY_LS, key);
+      setStatus('Publishing…', 'dirty');
+      return ContentStore.publish(FUN, key, T).then(function (res) {
+        setStatus('Published ✓ (version ' + res.version + ', ' + res.tabs + ' tabs). Live within ~30 min, or reload to force.', 'clean');
+      }).catch(function (e) {
+        if (/editor key/i.test(e.message)) localStorage.removeItem(KEY_LS);
+        setStatus('Publish failed: ' + e.message, 'bad');
+      });
     });
   }
 

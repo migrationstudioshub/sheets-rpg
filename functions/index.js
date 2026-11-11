@@ -6,10 +6,10 @@
  * (functions/shared/*.js = copies of /shared), keeps game state in the Realtime Database, and
  * writes the live world that clients already listen to.
  *
- *   Content now lives in Firestore (doc published/current); this function serves it (?action=content),
- *   returns raw records for the Content Studio (?action=records), and accepts key-gated writes (publish).
- *   It also handles live play: join | load | poll | act | save. Before the first publish it falls back
- *   to the Apps Script sheet, so the cutover is zero-downtime.
+ *   Content lives in Firestore (doc published/current + maps/<id> docs); this function serves it
+ *   (?action=content), returns raw records for the Content Studio (?action=records / ?action=maps),
+ *   and accepts key-gated writes (publish / publishMap / deleteMap). It also handles live play:
+ *   join | load | poll | act | save. Apps Script is no longer in the loop.
  *
  * Realtime Database layout:
  *   players/<token>   full player state (private; only this function reads/writes it)
@@ -32,11 +32,8 @@ const Rules = require('./shared/rules.js'); global.Rules = Rules;   // world.js 
 const World = require('./shared/world.js');
 const MapCode = require('./shared/mapcode.js');                     // compact terrain encode/decode
 
-// Content now lives in Firestore (doc published/current = the full tables). The editor key gates writes.
+// Content lives in Firestore (doc published/current = the full tables). The editor key gates writes.
 const EDITOR_KEY = defineSecret('EDITOR_KEY');
-// Legacy fallback: before the first publish (Firestore empty), still read content from the Game Data sheet.
-const CONTENT_URL = process.env.CONTENT_URL ||
-  'https://script.google.com/macros/s/AKfycbwgvNgUbURE4p27Po2XPiBjAorqIxKDv0wJxnC9sxowo9jSbO9o8SyeY0oL5OjbOoYXmA/exec';
 let _content = null, _contentAt = 0;
 const _lastView = {};   // per warm instance: last public view written per map, so we skip identical pushes
 
@@ -59,15 +56,8 @@ async function mergeMaps(content) {
 async function getContent() {
   if (_content && Date.now() - _contentAt < 30 * 60 * 1000) return _content;   // content rarely changes; refetch rarely
   const pub = await getPublished();
-  let content;
-  if (pub && pub.tables) content = Content.build(pub.tables);
-  else {
-    // not seeded yet: fall back to the Apps Script sheet so nothing breaks before the first publish
-    const res = await fetch(CONTENT_URL + '?action=content');
-    const j = await res.json();
-    if (!j || !j.content) throw new Error('could not load content');
-    content = j.content;
-  }
+  if (!pub || !pub.tables) throw new Error('no published content — seed it with tools/seed_firestore.js');
+  const content = Content.build(pub.tables);
   await mergeMaps(content);
   _content = content; _contentAt = Date.now();
   return _content;

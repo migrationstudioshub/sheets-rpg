@@ -160,7 +160,7 @@ var Api = (function () {
     if (typeof location !== 'undefined' && /[?&]offline(\b|=)/.test(location.search)) return new Offline();
     if (typeof window !== 'undefined' && window.GAME_LAN) return new Lan();
     if (GAME_CONFIG.FUNCTIONS_URL) return new Functions(GAME_CONFIG.FUNCTIONS_URL);
-    return GAME_CONFIG.API_URL ? new Online(GAME_CONFIG.API_URL) : new Offline();
+    return new Offline();   // the referee is the Cloud Function; Apps Script is retired
   }
   return { create: create };
 })();

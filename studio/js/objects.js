@@ -189,7 +189,7 @@ var MapObjects = (function () {
     ['left', 'right', 'cellinfo'].forEach(function (id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
     Panels.toolbar();
     ping().then(function (ok) {
-      if (!ok) setStatus('Server not found. Run:  python3 tools/gear_server.py  (with GOOGLE_API set), then reload.', 'bad');
+      if (!ok) setStatus('Server not found. Run:  python3 tools/asset_server.py  (with GOOGLE_API set), then reload.', 'bad');
       else if (!hasKey && !localStorage.getItem(KEY_LS)) showKeySetup();
       else setStatus('Ready.');
     });

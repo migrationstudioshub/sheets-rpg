@@ -54,36 +54,8 @@ var Panels = (function () {
     ['fill', 'Fill', 'F'], ['pick', 'Eyedropper', 'I'], ['erase', 'Erase objects', 'E']];
   var ICONS = { select: '⬚', brush: '✎', rect: '▭', fill: '▧', pick: '⊙', erase: '⌫' };
 
-  // Map + the three offline art makers (each a self-contained module that owns the editing row).
-  var SCREENS = [
-    ['map', 'Map', 'Map editor', null],
-    ['gear', 'Gear', 'Make character gear art (needs the local server)', function () { return typeof Gear !== 'undefined' ? Gear : null; }],
-    ['tileset', 'Tileset', 'Make ground terrains and walls (needs the local server)', function () { return typeof Tileset !== 'undefined' ? Tileset : null; }],
-    ['object', 'Objects', 'Make map objects (needs the local server)', function () { return typeof MapObjects !== 'undefined' ? MapObjects : null; }]
-  ];
-  function screenMod(id) { var s = SCREENS.filter(function (x) { return x[0] === id; })[0]; return s && s[3] ? s[3]() : null; }
-  function showScreen(id) {
-    if (E.screen === id) return;
-    var cur = screenMod(E.screen); if (cur) cur.hide();      // back to map, restores the panels
-    var next = screenMod(id); if (next) next.show();          // a maker takes over the row
-  }
-  function screenToggle() {
-    return h('div', { className: 'group right' }, h('span', { className: 'lbl', text: 'View' }),
-      h('span', { className: 'layer' }, SCREENS.map(function (s) {
-        return h('button', { className: E.screen === s[0] ? 'on' : '', title: s[2], text: s[1],
-          onclick: function () { showScreen(s[0]); } });
-      })));
-  }
-
   function toolbar() {
     var bar = $('toolbar'); bar.innerHTML = '';
-    if (E.screen !== 'map') {
-      var titles = { gear: 'Gear maker', tileset: 'Tileset maker', object: 'Objects maker' };
-      bar.appendChild(h('div', { className: 'group' }, h('strong', { text: titles[E.screen] || 'Art maker' }),
-        h('span', { className: 'lbl', text: 'offline art pipeline' })));
-      bar.appendChild(screenToggle());
-      return;
-    }
     var tools = h('div', { className: 'group' }, TOOLS.map(function (t) {
       return h('button', { className: 'tool' + (E.tool === t[0] ? ' on' : ''), title: t[1] + ' (' + t[2] + ')',
         onclick: function () { E.setTool(t[0]); } }, h('span', { className: 'ico', text: ICONS[t[0]] }), ' ' + t[1].split(' ')[0]);
@@ -105,7 +77,6 @@ var Panels = (function () {
       h('button', { className: 'primary', title: Store.online() ? 'Save to the Game Data spreadsheet (Ctrl+S)' : 'Save a draft in this browser (Ctrl+S)',
         text: Store.online() ? 'Save to Game Data' : 'Save draft', onclick: E.save }));
     bar.appendChild(tools); bar.appendChild(layers); bar.appendChild(view); bar.appendChild(save);
-    bar.appendChild(screenToggle());
   }
   function layerBtn(id, label, key) {
     return h('span', { className: 'layer' + (E.layer === id ? ' on' : '') },

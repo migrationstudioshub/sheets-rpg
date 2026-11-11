@@ -1,9 +1,9 @@
 # tilepipe — vendored tileset art pipeline
 
-Vendored copy of the owner's `tileset-art-handoff` pipeline, driven by the Map Editor's **Tileset**
-view through `tools/gear_server.py` (routes `/tile/make`, `/tile/save`). Do not edit these files —
-they are the upstream generators, kept here so one `python3 tools/gear_server.py` process can author
-ground terrains and walls as well as gear.
+Vendored copy of the owner's `tileset-art-handoff` pipeline, driven by the **Asset Studio**'s Tileset
+maker (`/studio/`) through `tools/asset_server.py` (routes `/tile/make`, `/tile/save`). Do not edit
+these files — they are the upstream generators, kept here so one `python3 tools/asset_server.py`
+process can author ground terrains and walls as well as gear and objects.
 
 Runs locally only (needs a Google Gemini key in `GOOGLE_API` or `tools/google_api_key.txt`, plus
 Pillow + numpy). It writes scratch into `tools/tilepipe/raw/` and `tools/tilepipe/out/` (git-ignored);

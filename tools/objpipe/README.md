@@ -1,9 +1,9 @@
 # objpipe — vendored map-object art pipeline
 
-Vendored copy of the owner's `objects-art-handoff` pipeline, driven by the Map Editor's **Objects**
-view through `tools/gear_server.py` (routes `/object/make`, `/object/save`). Do not edit these files —
-they are the upstream generators, kept here so one `python3 tools/gear_server.py` process can author
-map objects (furniture, props, vehicles, trees, doors) as well as gear and tilesets.
+Vendored copy of the owner's `objects-art-handoff` pipeline, driven by the **Asset Studio**'s Objects
+maker (`/studio/`) through `tools/asset_server.py` (routes `/object/make`, `/object/save`). Do not edit
+these files — they are the upstream generators, kept here so one `python3 tools/asset_server.py`
+process can author map objects (furniture, props, vehicles, trees, doors) as well as gear and tilesets.
 
 Runs locally only (needs a Google Gemini key in `GOOGLE_API` or `tools/google_api_key.txt`, plus
 Pillow + numpy). Scratch goes to `tools/objpipe/raw/` and `tools/objpipe/out/` (git-ignored);

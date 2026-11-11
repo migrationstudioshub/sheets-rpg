@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// Content lives in Firestore but is never read or written directly by clients — everything goes
+// through the Cloud Function (functions/index.js), which uses the Admin SDK and bypasses these rules.
+// So the database is fully locked to the outside world: content reads come from the function's
+// /content endpoint, and writes come from its key-gated /publish. No public access.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

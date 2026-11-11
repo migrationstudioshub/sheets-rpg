@@ -127,8 +127,8 @@ var Api = (function () {
       .then(function (r) { return r.json(); })
       .then(function (res) { if (res.error) throw new Error(res.error); return res; });
   };
-  Functions.prototype.loadContent = function () {        // content still lives in the Game Data sheet
-    return fetch(GAME_CONFIG.API_URL + '?action=content').then(function (r) { return r.json(); })
+  Functions.prototype.loadContent = function () {        // content now comes from the function (Firestore)
+    return fetch(this.url + '?action=content').then(function (r) { return r.json(); })
       .then(function (res) { if (res.error) throw new Error(res.error); return (this.content = res.content); }.bind(this));
   };
 

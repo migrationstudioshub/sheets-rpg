@@ -6,8 +6,10 @@
  * (functions/shared/*.js = copies of /shared), keeps game state in the Realtime Database, and
  * writes the live world that clients already listen to.
  *
- *   Apps Script still serves content (?action=content) and the map editor — unchanged.
- *   This function handles live play: join | load | poll | act | save.
+ *   Content now lives in Firestore (doc published/current); this function serves it (?action=content),
+ *   returns raw records for the Content Studio (?action=records), and accepts key-gated writes (publish).
+ *   It also handles live play: join | load | poll | act | save. Before the first publish it falls back
+ *   to the Apps Script sheet, so the cutover is zero-downtime.
  *
  * Realtime Database layout:
  *   players/<token>   full player state (private; only this function reads/writes it)
@@ -18,6 +20,7 @@
  * taking turns; proper concurrency comes in Phase 2).
  */
 const { onRequest } = require('firebase-functions/v2/https');
+const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 
@@ -28,18 +31,48 @@ const Content = require('./shared/content.js');
 const Rules = require('./shared/rules.js'); global.Rules = Rules;   // world.js looks Rules up lazily
 const World = require('./shared/world.js');
 
-// Content still lives in the Game Data sheet; fetch it from the Apps Script endpoint and cache it.
+// Content now lives in Firestore (doc published/current = the full tables). The editor key gates writes.
+const EDITOR_KEY = defineSecret('EDITOR_KEY');
+// Legacy fallback: before the first publish (Firestore empty), still read content from the Game Data sheet.
 const CONTENT_URL = process.env.CONTENT_URL ||
   'https://script.google.com/macros/s/AKfycbwgvNgUbURE4p27Po2XPiBjAorqIxKDv0wJxnC9sxowo9jSbO9o8SyeY0oL5OjbOoYXmA/exec';
 let _content = null, _contentAt = 0;
 const _lastView = {};   // per warm instance: last public view written per map, so we skip identical pushes
+
+async function getPublished() {           // the raw tables as last published to Firestore, or null
+  const snap = await admin.firestore().doc('published/current').get();
+  return snap.exists ? snap.data() : null;
+}
 async function getContent() {
   if (_content && Date.now() - _contentAt < 30 * 60 * 1000) return _content;   // content rarely changes; refetch rarely
+  const pub = await getPublished();
+  if (pub && pub.tables) { _content = Content.build(pub.tables); _contentAt = Date.now(); return _content; }
+  // not seeded yet: fall back to the Apps Script sheet so nothing breaks before the first publish
   const res = await fetch(CONTENT_URL + '?action=content');
   const j = await res.json();
   if (!j || !j.content) throw new Error('could not load content');
   _content = j.content; _contentAt = Date.now();
   return _content;
+}
+
+function requireEditor(key) {
+  const want = EDITOR_KEY.value();
+  if (!want) throw new Error('publishing is off: set the EDITOR_KEY secret on the function');
+  if (!key || key !== want) throw new Error('wrong editor key');
+}
+/** Write a new content snapshot (the whole tables object) and bust the cache. Key-gated. */
+async function publish(tables, key) {
+  requireEditor(key);
+  if (!tables || typeof tables !== 'object' || Array.isArray(tables)) throw new Error('publish needs a tables object');
+  const version = Date.now().toString(36);
+  await admin.firestore().doc('published/current').set({ tables, version, updatedAt: Date.now() });
+  _content = null; _contentAt = 0;                 // next read rebuilds from Firestore
+  return { ok: true, version, tabs: Object.keys(tables).length };
+}
+/** Raw records (the tables), for the Content Studio to load and edit. */
+async function records() {
+  const pub = await getPublished();
+  return { tables: pub ? pub.tables : null, version: pub ? pub.version : null };
 }
 
 // The world and player records are stored as JSON strings, because their keys (entity ids like
@@ -139,10 +172,17 @@ function cors(res) {
   res.set('Access-Control-Allow-Headers', 'Content-Type');
 }
 
-exports.game = onRequest({ region: 'us-central1', cors: true }, async (req, res) => {
+exports.game = onRequest({ region: 'us-central1', cors: true, secrets: [EDITOR_KEY] }, async (req, res) => {
   cors(res);
   if (req.method === 'OPTIONS') { res.status(204).end(); return; }
   try {
+    // Content reads are allowed over GET too, so the client loads them with a simple fetch(url?action=content).
+    if (req.method === 'GET') {
+      const qa = (req.query && req.query.action) || '';
+      if (qa === 'content') { res.json({ content: await getContent() }); return; }
+      if (qa === 'records') { res.json(await records()); return; }
+      res.json({ error: 'unknown action' }); return;
+    }
     const body = req.body || {};
     let out;
     switch (body.action) {
@@ -151,6 +191,9 @@ exports.game = onRequest({ region: 'us-central1', cors: true }, async (req, res)
       case 'poll': out = await step(body.token, null, body.since); break;
       case 'act':  out = await step(body.token, body['do'], body.since); break;
       case 'save': out = { ok: true }; break;                 // state is persisted every step already
+      case 'content': out = { content: await getContent() }; break;
+      case 'records': out = await records(); break;
+      case 'publish': out = await publish(body.tables, body.key); break;
       default: out = { error: 'unknown action' };
     }
     res.json(out);

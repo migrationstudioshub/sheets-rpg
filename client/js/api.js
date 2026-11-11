@@ -17,7 +17,10 @@ var Api = (function () {
   // ---------- offline ----------
   function Offline() { this.mode = 'offline'; }
   Offline.prototype.loadContent = function () {
-    // A draft saved by the map editor in this browser wins over the repository data, so you can play-test edits.
+    // The Content Studio's draft wins over everything, so Play-test runs the real rules on your edits.
+    var cdraft = (typeof ContentStore !== 'undefined') ? ContentStore.getDraft() : null;
+    if (cdraft && Object.keys(cdraft).length) { this.usingDraft = true; return Promise.resolve(this.content = Content.build(cdraft)); }
+    // Otherwise a draft saved by the map editor in this browser wins over the repository data.
     // A draft made from older data (missing newer maps, monsters...) is ignored, and the game says so.
     var draft = store('sheetsrpg.editorDraft');
     return fetch(GAME_CONFIG.OFFLINE_TABLES, { cache: 'no-cache' }).then(function (r) { return r.json(); })

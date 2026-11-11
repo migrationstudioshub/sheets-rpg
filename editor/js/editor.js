@@ -340,8 +340,12 @@ var E = {
           var bm = c.monsters[E.brush.monster], bmi = bm && Assets.get(bm.sprite);
           if (bmi) g.drawImage(bmi, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
         } else if (E.layer === 'objects' && E.brush.object) {
-          var bo = c.objects[E.brush.object], bi = bo && Assets.get(bo.sprite);
-          if (bi) g.drawImage(bi, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
+          var bo = c.objects[E.brush.object];
+          if (bo) {                                              // ghost at the object's real footprint, as it lands
+            var bdx = vx + E.hover.x * s, bdy = vy + E.hover.y * s;
+            Render.drawObject(g, bo, bo.sprite, bdx, bdy, s, 'base', 0);
+            Render.drawObject(g, bo, bo.sprite, bdx, bdy, s, 'top', 0);
+          }
         } else if (E.layer === 'terrain') {
           var tt = c.terrain[E.brush.terrain];
           if (tt) { g.fillStyle = tt.color; g.fillRect(vx + E.hover.x * s, vy + E.hover.y * s, s, s); }

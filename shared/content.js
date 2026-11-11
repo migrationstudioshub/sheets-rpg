@@ -28,6 +28,12 @@ var Content = (function () {
     try { return JSON.parse(v); } catch (e) { return d; }
   }
   function str(v) { return v == null ? '' : String(v).trim(); }
+  // Terrain may be stored compact-encoded (palette + RLE); decode it to a plain grid. Look MapCode up
+  // lazily so content.js keeps no load-order dependency (global in the browser, require() in Node).
+  function decodeGrid(v) {
+    var MC = (typeof MapCode !== 'undefined') ? MapCode : (typeof require !== 'undefined' ? require('./mapcode.js') : null);
+    return MC ? MC.decode(v) : v;
+  }
   function byId(rows, key) {
     var out = {};
     (rows || []).forEach(function (r) { var k = str(r[key || 'id']); if (k) out[k] = r; });
@@ -86,7 +92,7 @@ var Content = (function () {
 
     (tables.Maps || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
-      var grid = json(r.terrain, []);
+      var grid = decodeGrid(json(r.terrain, []));
       c.maps[id] = { id: id, name: str(r.name) || id, width: num(r.width, grid[0] ? grid[0].length : 0),
         height: num(r.height, grid.length), terrain: grid, entities: [] };
     });

@@ -30,6 +30,7 @@ const db = admin.database();
 const Content = require('./shared/content.js');
 const Rules = require('./shared/rules.js'); global.Rules = Rules;   // world.js looks Rules up lazily
 const World = require('./shared/world.js');
+const MapCode = require('./shared/mapcode.js');                     // compact terrain encode/decode
 
 // Content now lives in Firestore (doc published/current = the full tables). The editor key gates writes.
 const EDITOR_KEY = defineSecret('EDITOR_KEY');
@@ -43,15 +44,32 @@ async function getPublished() {           // the raw tables as last published to
   const snap = await admin.firestore().doc('published/current').get();
   return snap.exists ? snap.data() : null;
 }
+// Maps live in their own Firestore docs (maps/<id>) so big ones aren't capped by anything; each is
+// the map row + its entities, terrain compact-encoded. They override whatever the content blob holds.
+async function mergeMaps(content) {
+  const snap = await admin.firestore().collection('maps').get();
+  if (snap.empty) return;
+  content.maps = content.maps || {};
+  snap.forEach(doc => {
+    const m = doc.data(); if (!m || !m.id) return;
+    content.maps[m.id] = { id: m.id, name: m.name || m.id, width: m.width, height: m.height,
+      terrain: MapCode.decode(m.terrain), entities: m.entities || [] };
+  });
+}
 async function getContent() {
   if (_content && Date.now() - _contentAt < 30 * 60 * 1000) return _content;   // content rarely changes; refetch rarely
   const pub = await getPublished();
-  if (pub && pub.tables) { _content = Content.build(pub.tables); _contentAt = Date.now(); return _content; }
-  // not seeded yet: fall back to the Apps Script sheet so nothing breaks before the first publish
-  const res = await fetch(CONTENT_URL + '?action=content');
-  const j = await res.json();
-  if (!j || !j.content) throw new Error('could not load content');
-  _content = j.content; _contentAt = Date.now();
+  let content;
+  if (pub && pub.tables) content = Content.build(pub.tables);
+  else {
+    // not seeded yet: fall back to the Apps Script sheet so nothing breaks before the first publish
+    const res = await fetch(CONTENT_URL + '?action=content');
+    const j = await res.json();
+    if (!j || !j.content) throw new Error('could not load content');
+    content = j.content;
+  }
+  await mergeMaps(content);
+  _content = content; _contentAt = Date.now();
   return _content;
 }
 
@@ -73,6 +91,32 @@ async function publish(tables, key) {
 async function records() {
   const pub = await getPublished();
   return { tables: pub ? pub.tables : null, version: pub ? pub.version : null };
+}
+/** Every map doc as stored (terrain encoded), for the map editor to load. */
+async function readMaps() {
+  const snap = await admin.firestore().collection('maps').get();
+  return { maps: snap.docs.map(d => d.data()) };
+}
+/** Save one map to maps/<id> (key-gated). `map` carries terrain (encoded) + its entities. */
+async function publishMap(map, key) {
+  requireEditor(key);
+  if (!map || !/^[a-z0-9_]+$/i.test(String(map.id || ''))) throw new Error('bad map id');
+  const doc = {
+    id: String(map.id), name: String(map.name || map.id),
+    width: Number(map.width) || 0, height: Number(map.height) || 0,
+    terrain: map.terrain, entities: Array.isArray(map.entities) ? map.entities : [],
+    updatedAt: Date.now()
+  };
+  await admin.firestore().doc('maps/' + doc.id).set(doc);
+  _content = null; _contentAt = 0;
+  return { ok: true, id: doc.id };
+}
+async function deleteMap(id, key) {
+  requireEditor(key);
+  if (!/^[a-z0-9_]+$/i.test(String(id || ''))) throw new Error('bad map id');
+  await admin.firestore().doc('maps/' + id).delete();
+  _content = null; _contentAt = 0;
+  return { ok: true, id: id };
 }
 
 // The world and player records are stored as JSON strings, because their keys (entity ids like
@@ -181,6 +225,7 @@ exports.game = onRequest({ region: 'us-central1', cors: true, secrets: [EDITOR_K
       const qa = (req.query && req.query.action) || '';
       if (qa === 'content') { res.json({ content: await getContent() }); return; }
       if (qa === 'records') { res.json(await records()); return; }
+      if (qa === 'maps') { res.json(await readMaps()); return; }
       res.json({ error: 'unknown action' }); return;
     }
     const body = req.body || {};
@@ -193,7 +238,10 @@ exports.game = onRequest({ region: 'us-central1', cors: true, secrets: [EDITOR_K
       case 'save': out = { ok: true }; break;                 // state is persisted every step already
       case 'content': out = { content: await getContent() }; break;
       case 'records': out = await records(); break;
+      case 'maps': out = await readMaps(); break;
       case 'publish': out = await publish(body.tables, body.key); break;
+      case 'publishMap': out = await publishMap(body.map, body.key); break;
+      case 'deleteMap': out = await deleteMap(body.id, body.key); break;
       default: out = { error: 'unknown action' };
     }
     res.json(out);

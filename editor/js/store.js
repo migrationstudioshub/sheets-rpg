@@ -8,9 +8,10 @@
 var Store = (function () {
   var DRAFT_KEY = 'sheetsrpg.editorDraft', EDITOR_KEY = 'sheetsrpg.editorKey';
 
-  function online() { return !!GAME_CONFIG.API_URL; }
+  function online() { return !!(GAME_CONFIG.FUNCTIONS_URL || GAME_CONFIG.API_URL); }
 
   function load() {
+    if (GAME_CONFIG.FUNCTIONS_URL) return loadFromFunction(GAME_CONFIG.FUNCTIONS_URL);
     if (online()) {
       return fetch(GAME_CONFIG.API_URL + '?action=tables').then(function (r) { return r.json(); })
         .then(function (res) { if (res.error) throw new Error(res.error); return { tables: res.tables, source: 'server' }; });
@@ -73,6 +74,7 @@ var Store = (function () {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(tables));
       return Promise.resolve({ where: 'draft' });
     }
+    if (GAME_CONFIG.FUNCTIONS_URL) return saveToFunction(GAME_CONFIG.FUNCTIONS_URL, changes, tables);
     var k = key();
     if (!k) return Promise.reject(new Error('no editor key'));
     base = base || { tabs: {}, maps: {} };
@@ -110,6 +112,61 @@ var Store = (function () {
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = 'tables.json';
     document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  // ---- Firestore via the Cloud Function (the migrated path) ----
+  // Content (definitions) comes from the function's records; maps come from their own Firestore docs
+  // (maps/<id>, terrain compact-encoded) and overlay the blob maps.
+  function loadFromFunction(FUN) {
+    return Promise.all([
+      fetch(FUN + '?action=records').then(function (r) { return r.json(); }),
+      fetch(FUN + '?action=maps').then(function (r) { return r.json(); })
+    ]).then(function (res) {
+      var rec = res[0], mp = res[1];
+      if (rec.error) throw new Error(rec.error);
+      var tables = rec.tables || {};
+      var docs = (mp && mp.maps) || [];
+      if (docs.length) {
+        var ids = {}; docs.forEach(function (m) { ids[m.id] = 1; });
+        tables.Maps = (tables.Maps || []).filter(function (r) { return !ids[r.id]; });
+        tables.MapEntities = (tables.MapEntities || []).filter(function (r) { return !ids[r.map]; });
+        docs.forEach(function (m) {
+          tables.Maps.push({ id: m.id, name: m.name, width: m.width, height: m.height, terrain: JSON.stringify(m.terrain), notes: '' });
+          (m.entities || []).forEach(function (e) {
+            tables.MapEntities.push({ map: m.id, key: e.key, x: e.x, y: e.y, ref: e.ref,
+              data: e.data == null ? '' : (typeof e.data === 'string' ? e.data : JSON.stringify(e.data)) });
+          });
+        });
+      }
+      return { tables: tables, source: 'server' };
+    });
+  }
+  function callFun(FUN, body) {
+    return fetch(FUN, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) { if (res.error) { if (/editor key/i.test(res.error)) localStorage.removeItem(EDITOR_KEY); throw new Error(res.error); } return res; });
+  }
+  function saveToFunction(FUN, changes, tables) {
+    var k = key();
+    if (!k) return Promise.reject(new Error('no editor key'));
+    var jobs = [];
+    Object.keys(changes.maps).forEach(function (id) {
+      var mc = changes.maps[id];                              // { row:{...,terrain: JSON string of the grid}, entities }
+      var grid = typeof mc.row.terrain === 'string' ? JSON.parse(mc.row.terrain) : mc.row.terrain;
+      var enc = (typeof MapCode !== 'undefined' && MapCode.isEncoded(grid)) ? grid
+              : (typeof MapCode !== 'undefined' ? MapCode.encode(grid) : grid);
+      jobs.push({ action: 'publishMap', key: k, map: {
+        id: mc.row.id, name: mc.row.name, width: mc.row.width, height: mc.row.height, terrain: enc,
+        entities: (mc.entities || []).map(function (e) { return { key: e.key, x: e.x, y: e.y, ref: e.ref, data: e.data }; }) } });
+    });
+    changes.deletedMaps.forEach(function (id) { jobs.push({ action: 'deleteMap', key: k, id: id }); });
+    if (Object.keys(changes.tabs).length) {                  // a definition tab changed → re-publish the content blob
+      // Publish the whole tables (maps included) so no map is lost during the transition; the per-map
+      // Firestore docs still override the blob, so edited big maps stay authoritative.
+      jobs.push({ action: 'publish', key: k, tables: tables });
+    }
+    return jobs.reduce(function (p, body) { return p.then(function () { return callFun(FUN, body); }); }, Promise.resolve())
+      .then(function () { return { where: 'server' }; });
   }
 
   return { load: load, save: save, baseOf: baseOf, online: online, discardDraft: discardDraft, hasDraft: hasDraft,

@@ -101,7 +101,7 @@ var Schema = (function () {
       f('attack_range', 'number', 0, '0 = melee; >1 = ranged'), f('ranged_cooldown_ms', 'number', 1500),
       f('ranged_projectile', 'bool', false), f('ranged_status', 'ref', '', '', { ref: 'statuses' }),
       f('infect_chance', 'number', 0, 'Chance a hit infects (0–1)'),
-      f('appearance', 'ref', '', 'Paper-doll look rolled per spawn (leave blank to use the flat sprite)', { ref: 'appearances' })
+      f('appearance', 'looks', '', 'Paper-doll sets rolled per spawn — add more than one (e.g. male/female) and one is picked by weight (blank = use the flat sprite)', { ref: 'appearances' })
     ] },
     appearances: { collection: 'appearances', id: 'id', label: 'Appearances', singular: 'appearance set', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''),

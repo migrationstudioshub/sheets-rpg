@@ -175,6 +175,7 @@ var CStudio = (function () {
 
   function fieldEl(r, fl) {
     var control, val = r[fl.key];
+    if (fl.type === 'looks') return looksField(r, fl);
     function change(v) { r[fl.key] = v; persist(); if (fl.key === idField(type) || fl.key === 'name') { renderNav(); renderList(); } }
     if (fl.type === 'bool') {
       control = h('input', { type: 'checkbox', checked: !!val, onchange: function (e) { change(e.target.checked); } });
@@ -322,6 +323,26 @@ var CStudio = (function () {
   }
 
   // ---------------------------------------------------------------- appearances (paper-doll look sets)
+  // The monster `appearance` field: one or more Appearance sets, "set" or "set:weight" comma-separated.
+  // One is picked per spawn — add a male and a female set (say) without duplicating the monster's stats.
+  function looksField(r, fl) {
+    var sets = (rows('appearances') || []).map(function (x) { return x[idField('appearances')]; }).filter(Boolean);
+    var list = String(r[fl.key] || '').split(',').map(function (x) { var a = x.trim().split(':'); return a[0].trim() ? { set: a[0].trim(), weight: Number(a[1]) || 1 } : null; }).filter(Boolean);
+    var save = function () { r[fl.key] = list.map(function (e) { return e.weight === 1 ? e.set : e.set + ':' + e.weight; }).join(', '); persist(); };
+    var box = h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }));
+    list.forEach(function (e, i) {
+      box.appendChild(h('div', { className: 'lootrow' },
+        h('select', { style: 'flex:2', onchange: function (ev) { e.set = ev.target.value; save(); } },
+          [h('option', { value: '', text: '(appearance set…)' })].concat(sets.map(function (s) { return h('option', { value: s, text: s, selected: s === e.set }); }))),
+        list.length > 1 ? h('span', { className: 'lootlbl', text: 'weight' }) : null,
+        list.length > 1 ? h('input', { type: 'number', min: 0, max: 100, step: 1, value: e.weight, style: 'width:56px', title: 'Relative chance (0–100%) of this set', oninput: function (ev) { e.weight = Number(ev.target.value) || 0; save(); } }) : null,
+        list.length > 1 ? h('span', { className: 'lootlbl', text: '%' }) : null,
+        h('button', { title: 'Remove', text: '✕', onclick: function () { list.splice(i, 1); save(); renderForm(); } })));
+    });
+    box.appendChild(h('button', { className: 'primary', style: 'margin:2px 0', text: list.length ? '+ add another set (one is picked per spawn)' : '+ add appearance set', onclick: function () { list.push({ set: sets[0] || '', weight: 1 }); save(); renderForm(); } }));
+    box.appendChild(h('div', { className: 'help', text: fl.help }));
+    return box;
+  }
   function layersOf(r) {
     if (typeof r.layers === 'string') { try { return JSON.parse(r.layers || '[]'); } catch (e) { return []; } }
     return Array.isArray(r.layers) ? r.layers : [];

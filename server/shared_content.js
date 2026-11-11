@@ -29,6 +29,15 @@ var Content = (function () {
     try { return JSON.parse(v); } catch (e) { return d; }
   }
   function str(v) { return v == null ? '' : String(v).trim(); }
+  // A monster's `appearance` lists one or more Appearance sets ("set" or "set:weight", comma-separated);
+  // one is picked per spawn. Accepts an already-parsed array too (drafts may store it structured).
+  function parseLooks(v) {
+    if (Array.isArray(v)) return v.map(function (e) { return { set: str(e.set || e), weight: num(e.weight, 1) }; }).filter(function (e) { return e.set; });
+    return str(v).split(',').map(function (x) {
+      var a = x.trim().split(':'), id = (a[0] || '').trim();
+      return id ? { set: id, weight: num(a[1], 1) } : null;
+    }).filter(Boolean);
+  }
   // Terrain may be stored compact-encoded (palette + RLE); decode it to a plain grid. Look MapCode up
   // lazily so content.js keeps no load-order dependency (global in the browser, require() in Node).
   function decodeGrid(v) {
@@ -134,8 +143,8 @@ var Content = (function () {
         attackRange: num(r.attack_range, 0), rangedMs: Math.max(250, num(r.ranged_cooldown_ms, 1500)),
         rangedProjectile: bool(r.ranged_projectile), rangedStatus: str(r.ranged_status),
         infectChance: num(r.infect_chance, 0),
-        // paper-doll monsters: name an Appearance set and the server rolls a random layered look per spawn
-        appearance: str(r.appearance) };
+        // paper-doll monsters: one or more Appearance sets; the server picks one per spawn and rolls a look
+        appearance: parseLooks(r.appearance) };
     });
     // Appearance sets: an ordered list of layers (bottom->top = draw order); each layer weighted-picks
     // one option per spawn (or none, by `empty` weight). An option is { sprite, tint, weight }; tint is a

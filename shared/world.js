@@ -244,10 +244,9 @@ var World = (function () {
     if (i < 0) return list[0].table;                      // all zero/blank weights: just use the first
     return list[i].table;
   }
-  // Roll a random paper-doll look for a monster from its Appearance set: for each layer, weighted-pick
-  // one option (or none, by the layer's `empty` weight). Returns [{path, tint}] in draw order, or null.
-  function rollLook(c, def, rng) {
-    var set = def && def.appearance && c.appearances && c.appearances[def.appearance];
+  // Roll one Appearance set's layers into a look: for each layer, weighted-pick one option (or none,
+  // by the layer's `empty` weight), plus an independent colour. Returns [{path, tint}] in draw order.
+  function rollSetLayers(set, rng) {
     if (!set || !set.layers || !set.layers.length) return null;
     var look = [];
     set.layers.forEach(function (L) {
@@ -262,6 +261,15 @@ var World = (function () {
       look.push({ path: opts[i].sprite, tint: tint });
     });
     return look.length ? look : null;
+  }
+  // A monster may list several Appearance sets (e.g. a male and a female variant), each with a weight;
+  // one is picked per spawn, then rolled. `def.appearance` is [{set, weight}] (content.js parses it).
+  function rollLook(c, def, rng) {
+    var list = def && def.appearance;
+    if (!Array.isArray(list) || !list.length || !c.appearances) return null;
+    var i = list.length === 1 ? 0 : pickWeighted(list, wOf, rng);
+    if (i < 0) i = 0;
+    return rollSetLayers(c.appearances[list[i].set], rng);
   }
 
   // ------------------------------------------------------------ space

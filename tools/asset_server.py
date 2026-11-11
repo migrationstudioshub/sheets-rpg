@@ -164,6 +164,20 @@ def gear_make(req):
     return {"variants": out_variants}
 
 
+def rebuild_paperdoll_manifest():
+    """Keep art/sprites/paperdoll/manifest.json in step after saving paper-doll art, so the Content
+    Studio's sprite picker lists new sprites automatically (same output as tools/build_paperdoll_manifest.js)."""
+    try:
+        names = sorted(f for f in os.listdir(ART_OUT)
+                       if f.lower().endswith(".png") and not f.lower().endswith(".tint.png"))
+        sprites = ["art/sprites/paperdoll/" + f for f in names]
+        with open(os.path.join(ART_OUT, "manifest.json"), "w", encoding="utf-8") as fh:
+            json.dump({"sprites": sprites}, fh, indent=2)
+            fh.write("\n")
+    except Exception:
+        traceback.print_exc()   # a manifest hiccup must never fail the save itself
+
+
 def gear_save(req):
     mg = load_pipeline()
     fname = (req.get("fname") or "").strip()            # the generated source in out/gear
@@ -187,6 +201,7 @@ def gear_save(req):
     if os.path.exists(mask):
         shutil.copy2(mask, os.path.join(ART_OUT, dest + ".tint.png"))
         written.append("art/sprites/paperdoll/" + dest + ".tint.png")
+    rebuild_paperdoll_manifest()                        # the picker's sprite list stays current on every save
     return {"saved": written}
 
 

@@ -13,6 +13,7 @@ var CStudio = (function () {
   var T = {};            // working tables (the draft)
   var type = null;       // current content type
   var curIndex = -1;     // index into T[tab] of the record being edited
+  var curLoot = null;    // selected loot-table name (loot is edited grouped by table)
   var filter = '';
 
   function h(tag, props) {
@@ -41,6 +42,8 @@ var CStudio = (function () {
     var k = Object.keys(r)[0];
     return k ? k + ': ' + r[k] : '(row)';
   }
+  // Resolve a sprite path for display (the Studio lives in /content/, like /client/, one level deep).
+  function spritePath(s) { return /^(https?:|data:)/.test(s) ? s : '../' + String(s).replace(/^\//, ''); }
 
   // ---------------------------------------------------------------- load / persist
   function init() {
@@ -121,23 +124,26 @@ var CStudio = (function () {
   function renderNav() {
     var nav = $('nav'); nav.innerHTML = '';
     Schema.authored('studio').forEach(function (t) {
-      nav.appendChild(h('button', { className: t === type ? 'on' : '', onclick: function () { type = t; curIndex = -1; filter = ''; renderList(); renderForm(); renderNav(); } },
-        h('span', { text: Schema.get(t).label }), h('span', { className: 'n', text: String(rows(t).length) })));
+      var count = t === 'loot' ? lootTableNames().length : rows(t).length;
+      nav.appendChild(h('button', { className: t === type ? 'on' : '', onclick: function () { type = t; curIndex = -1; curLoot = null; filter = ''; renderList(); renderForm(); renderNav(); } },
+        h('span', { text: Schema.get(t).label }), h('span', { className: 'n', text: String(count) })));
     });
   }
   function renderList() {
+    if (type === 'loot') return lootList();
     var list = $('list'); list.innerHTML = '';
     var search = h('input', { placeholder: 'Search ' + Schema.get(type).label.toLowerCase() + '…', value: filter,
       oninput: function (e) { filter = e.target.value; renderList(); } });
     list.appendChild(h('div', { className: 'head' }, search,
       h('button', { className: 'primary', title: 'New', text: '+ New', onclick: addRecord })));
-    var all = rows(type), q = filter.toLowerCase();
+    var all = rows(type), q = filter.toLowerCase(), idf = idField(type);
     all.forEach(function (r, i) {
       var lbl = rowLabel(type, r);
       if (q && lbl.toLowerCase().indexOf(q) < 0) return;
-      var idf = idField(type);
-      list.appendChild(h('button', { className: 'rec' + (i === curIndex ? ' on' : ''), onclick: function () { curIndex = i; renderList(); renderForm(); } },
-        h('div', { text: lbl }), r.name && idf && r[idf] !== r.name ? h('small', { text: r.name }) : null));
+      var thumb = r.sprite ? h('img', { className: 'rthumb', src: spritePath(r.sprite), alt: '',
+        onerror: function () { this.style.visibility = 'hidden'; } }) : null;
+      var body = h('div', { className: 'rbody' }, h('div', { text: lbl }), r.name && idf && r[idf] !== r.name ? h('small', { text: r.name }) : null);
+      list.appendChild(h('button', { className: 'rec' + (i === curIndex ? ' on' : ''), onclick: function () { curIndex = i; renderList(); renderForm(); } }, thumb, body));
     });
     if (!list.querySelector('.rec')) list.appendChild(h('div', { className: 'note', style: 'padding:8px', text: all.length ? 'No match.' : 'Nothing here yet — click New.' }));
   }
@@ -148,6 +154,7 @@ var CStudio = (function () {
 
   // ---------------------------------------------------------------- the form
   function renderForm() {
+    if (type === 'loot') return lootForm();
     var form = $('form'); form.innerHTML = '';
     if (curIndex < 0 || !rows(type)[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select a ' + (Schema.get(type).singular || Schema.get(type).label.toLowerCase().replace(/s$/, '')) + ', or click New.' })); return; }
     var r = rows(type)[curIndex], def = Schema.get(type);
@@ -167,7 +174,7 @@ var CStudio = (function () {
     function change(v) { r[fl.key] = v; persist(); if (fl.key === idField(type) || fl.key === 'name') { renderNav(); renderList(); } }
     if (fl.type === 'bool') {
       control = h('input', { type: 'checkbox', checked: !!val, onchange: function (e) { change(e.target.checked); } });
-      return h('div', { className: 'field' }, h('label', { className: 'row' }, control, h('span', { text: '  ' + fl.key }), fl.help ? h('span', { className: 'help', text: '— ' + fl.help }) : null));
+      return h('div', { className: 'field', title: fl.help || '' }, h('label', { className: 'row' }, control, h('span', { text: '  ' + fl.key }), fl.help ? h('span', { className: 'help', text: '— ' + fl.help }) : null));
     } else if (fl.type === 'number') {
       control = h('input', { type: 'number', value: val == null ? '' : val, oninput: function (e) { change(e.target.value === '' ? '' : Number(e.target.value)); } });
     } else if (fl.type === 'textarea' || fl.type === 'json') {
@@ -189,8 +196,68 @@ var CStudio = (function () {
     } else {
       control = h('input', { type: 'text', value: val == null ? '' : val, oninput: function (e) { change(e.target.value); } });
     }
-    return h('div', { className: 'field' }, h('label', { text: fl.key + (fl.type === 'ref' ? '  → ' + fl.ref : '') }), control,
+    return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key + (fl.type === 'ref' ? '  → ' + fl.ref : '') }), control,
       fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+  }
+
+  // ---------------------------------------------------------------- loot tables (grouped by table name)
+  function lootTableNames() {
+    var seen = {}, out = [];
+    rows('loot').forEach(function (r) { var t = String(r.table || ''); if (t && !seen[t]) { seen[t] = 1; out.push(t); } });
+    return out;
+  }
+  function lootList() {
+    var list = $('list'); list.innerHTML = '';
+    var search = h('input', { placeholder: 'Search loot tables…', value: filter, oninput: function (e) { filter = e.target.value; lootList(); } });
+    list.appendChild(h('div', { className: 'head' }, search, h('button', { className: 'primary', text: '+ New', onclick: newLootTable })));
+    var q = filter.toLowerCase();
+    lootTableNames().forEach(function (name) {
+      if (q && name.toLowerCase().indexOf(q) < 0) return;
+      var n = rows('loot').filter(function (r) { return String(r.table) === name; }).length;
+      list.appendChild(h('button', { className: 'rec' + (name === curLoot ? ' on' : ''), onclick: function () { curLoot = name; lootList(); lootForm(); } },
+        h('div', { className: 'rbody' }, h('div', { text: name }), h('small', { text: n + ' item' + (n !== 1 ? 's' : '') }))));
+    });
+    if (!list.querySelector('.rec')) list.appendChild(h('div', { className: 'note', style: 'padding:8px', text: lootTableNames().length ? 'No match.' : 'No loot tables yet — click New.' }));
+  }
+  function newLootTable() {
+    var base = 'new_table', name = base, i = 1, names = lootTableNames();
+    while (names.indexOf(name) >= 0) name = base + '_' + (i++);
+    rows('loot').push({ table: name, item: '', chance: 1, min: 1, max: 1 });
+    curLoot = name; persist(); renderNav(); lootList(); lootForm();
+  }
+  function lootForm() {
+    var form = $('form'); form.innerHTML = '';
+    if (!curLoot) { form.appendChild(h('div', { className: 'empty', text: 'Select a loot table, or click New.' })); return; }
+    var entries = rows('loot').filter(function (r) { return String(r.table) === curLoot; });
+    var nameInput = h('input', { value: curLoot, style: 'max-width:240px', onchange: function (e) {
+      var nn = e.target.value.trim(); if (!nn || nn === curLoot) return;
+      entries.forEach(function (r) { r.table = nn; }); curLoot = nn; persist(); renderNav(); lootList();
+    } });
+    form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: 'Loot table' }), nameInput,
+      h('span', { className: 'pill', text: entries.length + ' items' }),
+      h('button', { title: 'Delete this loot table', text: '🗑 Delete', style: 'margin-left:auto', onclick: function () {
+        if (!confirm('Delete loot table "' + curLoot + '" and its ' + entries.length + ' entries?')) return;
+        T[tab('loot')] = rows('loot').filter(function (r) { return String(r.table) !== curLoot; });
+        curLoot = null; persist(); renderNav(); lootList(); lootForm();
+      } })));
+    form.appendChild(h('div', { className: 'note', style: 'margin-bottom:8px', text: 'Items that can drop from this table, each with a drop chance (0–100%) and a quantity range.' }));
+    var ids = rows('items').map(function (x) { return x.id; }).filter(Boolean);
+    form.appendChild(h('datalist', { id: 'dl_lootitem' }, ids.map(function (o) { return h('option', { value: o }); })));
+    entries.forEach(function (r) { form.appendChild(lootEntry(r)); });
+    form.appendChild(h('button', { className: 'primary', style: 'margin-top:8px', text: '+ Add item', onclick: function () {
+      rows('loot').push({ table: curLoot, item: '', chance: 1, min: 1, max: 1 }); persist(); lootForm();
+    } }));
+  }
+  function lootEntry(r) {
+    var item = h('input', { value: r.item || '', list: 'dl_lootitem', placeholder: 'item…', style: 'flex:2', oninput: function (e) { r.item = e.target.value; persist(); } });
+    var chance = h('input', { type: 'number', min: 0, max: 100, step: 1, value: Math.round((Number(r.chance) || 0) * 100), style: 'width:64px',
+      title: 'Drop chance (%)', oninput: function (e) { r.chance = e.target.value === '' ? 0 : Number(e.target.value) / 100; persist(); } });
+    var mn = h('input', { type: 'number', min: 1, value: r.min == null ? 1 : r.min, style: 'width:52px', title: 'Min quantity', oninput: function (e) { r.min = Number(e.target.value) || 1; persist(); } });
+    var mx = h('input', { type: 'number', min: 1, value: r.max == null ? 1 : r.max, style: 'width:52px', title: 'Max quantity', oninput: function (e) { r.max = Number(e.target.value) || 1; persist(); } });
+    var del = h('button', { title: 'Remove this item', text: '✕', onclick: function () { var a = rows('loot'); a.splice(a.indexOf(r), 1); persist(); lootForm(); } });
+    return h('div', { className: 'lootrow' }, item,
+      h('span', { className: 'lootlbl', text: '%' }), chance,
+      h('span', { className: 'lootlbl', text: 'qty' }), mn, h('span', { className: 'lootlbl', text: '–' }), mx, del);
   }
 
   return { init: init };

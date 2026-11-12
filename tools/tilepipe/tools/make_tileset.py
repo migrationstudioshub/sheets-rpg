@@ -75,10 +75,26 @@ def review_ground(name, under, out):
     s.save(out)
 
 
+def plain_review(name, out):
+    """Show a plain (non-autotiled) tile repeated, so you can see how it tiles."""
+    base = Image.open(f"{TILES}/{name}.png").convert("RGBA")
+    rep = Image.new("RGBA", (base.width * 4, base.height * 4))
+    for yy in range(4):
+        for xx in range(4):
+            rep.alpha_composite(base, (xx * base.width, yy * base.height))
+    rep.resize((rep.width * 2, rep.height * 2), Image.NEAREST).save(out)
+
+
 def ground(a):
     raw = a.raw or make_tile.gen(a.name, a.what, a.pattern)
     contrast = a.contrast if a.contrast is not None else (1.3 if a.pattern else 2.5)
     details.run(raw, f"{TILES}/{a.name}", contrast, a.shift, a.joints, pattern=a.pattern)
+    if a.plain:                                       # a plain, non-autotiled ground tile (a sprite terrain)
+        out = f"{TILES}/review_{a.name}.png"
+        plain_review(a.name, out)
+        print(f"done {a.name} (plain tile)\n  Terrain  id={a.name}  name={a.name.replace('_', ' ')}  "
+              f"sprite=art/tilesets/{a.name}.png  (no autotile)  pass_n/e/s/w=1\n  review: {out}")
+        return
     autotile.build(f"{TILES}/{a.name}.png", f"{TILES}/{a.name}_auto.png")
     n_details = json.load(open(f"{TILES}/{a.name}_details.json"))["count"]
     n_decals = 0
@@ -139,6 +155,8 @@ if __name__ == "__main__":
     ap.add_argument("--raw", help="ground: reuse this texture image (skip generation)")
     ap.add_argument("--joints", type=int, default=0)
     ap.add_argument("--contrast", type=float, default=None, help="default 2.5 (natural ground) or 1.3 (--pattern)")
+    ap.add_argument("--plain", action="store_true",
+                    help="ground: a plain non-autotiled tile (a sprite terrain for the base layer); skips the autotile sheet")
     ap.add_argument("--pattern", action="store_true",
                     help="built surfaces (metal plates, planks, tiles, pavers): keep seams/joints in the base tile and ask for small units")
     ap.add_argument("--shift", type=float, default=0.0)

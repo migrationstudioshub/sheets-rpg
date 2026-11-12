@@ -30,8 +30,7 @@ var Panels = (function () {
     g.imageSmoothingEnabled = false;
     if (type === 'terrain') {
       var t = E.content.terrain[id]; if (!t) return c;
-      g.fillStyle = t.color; g.fillRect(0, 0, T(), T());
-      var ts = t.autotile && E.content.tilesets[t.autotile], img;
+      var ts = t.autotile && E.content.tilesets[t.autotile], img;   // no art → empty thumb (shows what needs art)
       if (ts && (img = Assets.get(ts.image))) {
         var full = (E.content.autotile[ts.layout] || {})[255], n = full ? full[0] : 1, i = n - 1;
         g.drawImage(img, (i % ts.columns) * ts.tileSize, Math.floor(i / ts.columns) * ts.tileSize, ts.tileSize, ts.tileSize, 0, 0, T(), T());
@@ -51,7 +50,7 @@ var Panels = (function () {
 
   // ------------------------------------------------------------ toolbar
   var TOOLS = [['select', 'Select / move', 'V'], ['brush', 'Brush', 'B'], ['rect', 'Rectangle', 'R'],
-    ['fill', 'Fill', 'F'], ['pick', 'Eyedropper', 'I'], ['erase', 'Erase objects', 'E']];
+    ['fill', 'Fill', 'F'], ['pick', 'Eyedropper', 'I'], ['erase', 'Erase', 'E']];
   var ICONS = { select: '⬚', brush: '✎', rect: '▭', fill: '▧', pick: '⊙', erase: '⌫' };
 
   function toolbar() {
@@ -63,6 +62,8 @@ var Panels = (function () {
     var layers = h('div', { className: 'group' },
       h('span', { className: 'lbl', text: 'Layer' }),
       layerBtn('terrain', 'Terrain', '1'), layerBtn('objects', 'Objects', '2'));
+    var sub = E.layer === 'terrain' ? h('div', { className: 'group' },
+      h('span', { className: 'lbl', text: 'Paint' }), subBtn('base', 'Base'), subBtn('overlay', 'Overlay')) : null;
     var view = h('div', { className: 'group' },
       toggle('grid', 'Grid (G)'),
       h('button', { title: 'Fit map in view (0)', onclick: E.fitView, text: 'Fit' }),
@@ -72,11 +73,23 @@ var Panels = (function () {
       Store.online() ? null : h('button', { title: 'Download tables.json to commit to the repository', text: 'Export',
         onclick: function () { E.syncAll(); Store.exportFile(E.tables); } }),
       Store.online() ? null : h('button', { title: 'Throw away this browser\'s draft and reload the repository data', text: 'Discard draft',
-        onclick: function () { if (confirm('Discard all draft changes in this browser?')) { Store.discardDraft(); E.dirty = { maps: {}, tabs: {}, deleted: [] }; location.reload(); } } }),
+        onclick: function () { if (confirm('Discard all draft changes in this browser?')) { Store.discardDraft(); Store.clearWip(); E.dirty = { maps: {}, tabs: {}, deleted: [] }; location.reload(); } } }),
       h('button', { title: 'Open the game on this map in a new tab', text: '▶ Play-test', onclick: playtest }),
       h('button', { className: 'primary', title: Store.online() ? 'Save to the Game Data spreadsheet (Ctrl+S)' : 'Save a draft in this browser (Ctrl+S)',
         text: Store.online() ? 'Save to Game Data' : 'Save draft', onclick: E.save }));
-    bar.appendChild(tools); bar.appendChild(layers); bar.appendChild(view); bar.appendChild(save);
+    bar.appendChild(tools); bar.appendChild(layers); if (sub) bar.appendChild(sub);
+    bar.appendChild(view); bar.appendChild(save);
+  }
+  // Base = the opaque ground layer; Overlay = autotiles drawn on top (transparent outside their shape).
+  function subBtn(id, label) {
+    return h('button', { className: 'tool' + (E.terrainLayer === id ? ' on' : ''),
+      title: id === 'base' ? 'Paint the ground layer (opaque)' : 'Paint autotiles on top of the ground (transparent outside their shape); the eraser clears them',
+      text: label,
+      onclick: function () {
+        E.terrainLayer = id;
+        if (id === 'base' && E.tool === 'erase') E.tool = 'brush';   // the ground can't be erased
+        toolbar(); E.redraw();
+      } });
   }
   function layerBtn(id, label, key) {
     return h('span', { className: 'layer' + (E.layer === id ? ' on' : '') },
@@ -118,14 +131,19 @@ var Panels = (function () {
       h('span', { text: m.id + ' · ' + m.width + ' × ' + m.height + ' · ' + m.entities.length + ' objects' })));
     box.appendChild(h('div', { className: 'row buttons' },
       h('button', { text: 'New', onclick: function () {
-        var name = prompt('Name of the new map:', 'New map'); if (!name) return;
-        var size = prompt('Size (width × height):', '24 x 18'); if (!size) return;
-        var wh = size.match(/\d+/g) || []; var w = Math.min(128, Number(wh[0]) || 16), hh = Math.min(128, Number(wh[1]) || w);
-        E.newMap(name, w, hh); } }),
+        Dialogs.prompt('Name of the new map:', 'New map').then(function (name) {
+          if (!name) return;
+          Dialogs.prompt('Size (width × height):', '24 x 18').then(function (size) {
+            if (!size) return;
+            var wh = size.match(/\d+/g) || []; var w = Math.min(128, Number(wh[0]) || 16), hh = Math.min(128, Number(wh[1]) || w);
+            E.newMap(name, w, hh);
+          });
+        }); } }),
       h('button', { text: 'Resize', onclick: function () {
-        var size = prompt('New size (width × height). New cells are filled with the selected terrain; rows/columns are added or cut at the right and bottom.', m.width + ' x ' + m.height);
-        if (!size) return; var wh = size.match(/\d+/g) || [];
-        E.resizeMap(Math.max(1, Math.min(128, Number(wh[0]) || m.width)), Math.max(1, Math.min(128, Number(wh[1]) || m.height))); } }),
+        Dialogs.prompt('New size (width × height). New cells are filled with the selected terrain; rows/columns are added or cut at the right and bottom.', m.width + ' x ' + m.height).then(function (size) {
+          if (!size) return; var wh = size.match(/\d+/g) || [];
+          E.resizeMap(Math.max(1, Math.min(128, Number(wh[0]) || m.width)), Math.max(1, Math.min(128, Number(wh[1]) || m.height)));
+        }); } }),
       h('button', { text: 'Duplicate', onclick: E.duplicateMap }),
       h('button', { text: 'Delete', className: 'danger', onclick: function () {
         if (confirm('Delete "' + m.name + '"? You can still undo by not saving (reload the page).')) E.deleteMap(); } })));
@@ -160,7 +178,12 @@ var Panels = (function () {
       function item(type, d, on) {
         return h('button', { className: 'item' + (on ? ' on' : ''), title: d.name + ' (' + d.id + ')' + (d.kind ? ' · ' + d.kind : '') + '\nDouble-click to edit',
           onclick: function () {
-            if (type === 'terrain') { E.brush.terrain = d.id; E.layer = 'terrain'; }
+            if (type === 'terrain') { E.brush.terrain = d.id; E.layer = 'terrain';
+              if (d.layer === 'overlay' || d.layer === 'base') {   // only jump when this terrain has a default set; else keep the current layer
+                E.terrainLayer = d.layer;
+                if (d.layer === 'base' && E.tool === 'erase') E.tool = 'brush';   // the ground can't be erased
+              }
+              if (E.clearStamp) E.clearStamp(); }
             else if (type === 'monster') { E.brush.monster = d.id; E.layer = 'objects'; }
             else { E.brush.object = d.id; E.layer = 'objects'; }
             if (E.tool === 'select' || E.tool === 'pick' || E.tool === 'erase') E.tool = 'brush';
@@ -169,8 +192,13 @@ var Panels = (function () {
           ondblclick: function () { editDef(type, d.id); } }, thumb(type, d.id), h('span', { text: d.name }));
       }
       if (paletteTab === 'terrain') {
-        Object.keys(E.content.terrain).map(function (k) { return E.content.terrain[k]; }).filter(match)
-          .forEach(function (t) { listBox.appendChild(item('terrain', t, E.brush.terrain === t.id)); });
+        var terrains = Object.keys(E.content.terrain).map(function (k) { return E.content.terrain[k]; }).filter(match);
+        [['Tiles', function (t) { return !t.autotile; }], ['Autotiles', function (t) { return !!t.autotile; }]].forEach(function (grp) {
+          var members = terrains.filter(grp[1]);
+          if (!members.length) return;
+          listBox.appendChild(h('div', { className: 'kind', text: grp[0] }));
+          members.forEach(function (t) { listBox.appendChild(item('terrain', t, E.brush.terrain === t.id)); });
+        });
       } else if (paletteTab === 'monsters') {
         Object.keys(E.content.monsters).map(function (k) { return E.content.monsters[k]; }).filter(match)
           .forEach(function (m) { listBox.appendChild(item('monster', m, E.brush.monster === m.id)); });
@@ -275,7 +303,7 @@ var Panels = (function () {
     if (!e) return;
     E.checkpoint();
     if (value === undefined || value === '') delete e.data[prop]; else e.data[prop] = value;
-    E.dirty.maps[mapId] = true; E.groundDirty = true; status();
+    E.dirty.maps[mapId] = true; E.groundDirty = true; status(); if (E.scheduleWip) E.scheduleWip();
   }
   function pickAt(cell) {
     var mode = E.mode;
@@ -375,8 +403,11 @@ var Panels = (function () {
   function help() {
     return h('div', { className: 'help' }, h('h3', { text: 'Map editor' }),
       h('p', { text: 'Pick terrain or an object on the left, then paint. Use Select (V) and click an object to set its properties, such as a chest\'s contents or where a door leads.' }),
-      h('table', {}, [['B', 'brush'], ['R', 'rectangle'], ['F', 'fill'], ['I', 'eyedropper'], ['E', 'erase objects'], ['V', 'select / drag to move'],
-        ['1 / 2 / 3', 'terrain / objects / monsters'], ['G', 'grid'], ['0', 'fit map'], ['Space + drag', 'pan (or right-drag)'], ['Wheel', 'zoom'],
+      h('p', { text: 'Terrain has two layers: paint a plain ground on Base, then autotiles (grass, roads) on Overlay. Right-drag copies tiles into a stamp; Shift+Left stamps them (or an autotile\'s plain centre tile).' }),
+      h('table', {}, [['B', 'brush'], ['R', 'rectangle'], ['F', 'fill'], ['I', 'eyedropper'], ['E', 'erase'], ['V', 'select / drag to move'],
+        ['1 / 2 / 3', 'terrain / objects / monsters'], ['G', 'grid'], ['0', 'fit map'], ['Space / middle-drag', 'pan'], ['Wheel', 'zoom'],
+        ['Right-drag', 'copy tiles to the stamp (both layers)'], ['Shift+Right-drag', 'also copy exact autotile shapes'],
+        ['Shift+Left', 'stamp the copy, or an autotile\'s centre tile'],
         ['Ctrl+Z / Ctrl+Y', 'undo / redo'], ['Ctrl+S', 'save'], ['Del', 'delete selected object'], ['Esc', 'cancel']].map(function (r) {
           return h('tr', {}, h('td', { className: 'k', text: r[0] }), h('td', { text: r[1] }));
         })));
@@ -387,7 +418,8 @@ var Panels = (function () {
 
   var DEF_TAB = { terrain: 'Terrain', object: 'Objects', monster: 'Monsters' };
   function newDef(type) {
-    var name = prompt('Name of the new ' + type + ':'); if (!name) return;
+    Dialogs.prompt('Name of the new ' + type + ':').then(function (name) {
+    if (!name) return;
     var slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'new';
     var tab = DEF_TAB[type], pre = type === 'terrain' ? 'ter_' : type === 'monster' ? '' : 'obj_', id = pre + slug, n = 2;
     E.tables[tab] = E.tables[tab] || [];
@@ -402,6 +434,7 @@ var Panels = (function () {
     E.dirty.tabs[tab] = true;
     if (type === 'terrain') E.brush.terrain = id; else if (type === 'monster') E.brush.monster = id; else E.brush.object = id;
     E.rebuild().then(function () { editDef(type, id); });
+    });
   }
 
   function defForm(type, id) {
@@ -440,9 +473,6 @@ var Panels = (function () {
       wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'loot table' }), lt));
     } else if (type === 'terrain') {
       wrap.appendChild(text('name', 'name'));
-      var col = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(draft.color) ? draft.color : '#808080',
-        oninput: function () { draft.color = col.value; } });
-      wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'base colour' }), col));
       var sp = text('sprite', 'sprite', 'image URL or art/… path'); sp.appendChild(preview('sprite')); wrap.appendChild(sp);
       var at = h('select', { onchange: function () { draft.autotile = at.value; } },
         [h('option', { value: '', text: '(none: use the sprite)' })].concat(Object.keys(E.content.tilesets).map(function (k) {

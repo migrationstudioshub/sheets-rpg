@@ -164,18 +164,43 @@ def gear_make(req):
     return {"variants": out_variants}
 
 
-def rebuild_paperdoll_manifest():
-    """Keep art/sprites/paperdoll/manifest.json in step after saving paper-doll art, so the Content
-    Studio's sprite picker lists new sprites automatically (same output as tools/build_paperdoll_manifest.js)."""
+def rebuild_art_manifest():
+    """Rebuild art/manifest.json (every image under art/, minus .tint masks and art/inbox) so the Content
+    Studio's image picker lists new art automatically. Same output as tools/build_art_manifest.js."""
     try:
-        names = sorted(f for f in os.listdir(ART_OUT)
-                       if f.lower().endswith(".png") and not f.lower().endswith(".tint.png"))
-        sprites = ["art/sprites/paperdoll/" + f for f in names]
-        with open(os.path.join(ART_OUT, "manifest.json"), "w", encoding="utf-8") as fh:
-            json.dump({"sprites": sprites}, fh, indent=2)
+        art = os.path.join(ROOT, "art")
+        images = []
+        for dirpath, dirnames, filenames in os.walk(art):
+            if "inbox" in dirnames:
+                dirnames.remove("inbox")                       # scratch drop folder, not published art
+            for fn in filenames:
+                low = fn.lower()
+                if low.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")) and not low.endswith(".tint.png"):
+                    rel = os.path.relpath(os.path.join(dirpath, fn), art).replace(os.sep, "/")
+                    images.append("art/" + rel)
+        images.sort()
+        with open(os.path.join(art, "manifest.json"), "w", encoding="utf-8") as fh:
+            json.dump({"images": images}, fh, indent=2)
             fh.write("\n")
     except Exception:
         traceback.print_exc()   # a manifest hiccup must never fail the save itself
+
+
+# Route saved paper-doll art into type subfolders by filename prefix (matches the paperdoll/ layout:
+# base/ hair/ head/ chest/ hands/ back/ face/). An unknown prefix saves at the paperdoll root.
+PD_FOLDERS = {
+    "body": "base", "hair": "hair",
+    "helm": "head", "hat": "head", "hood": "head",
+    "chest": "chest", "shirt": "chest", "jacket": "chest", "vest": "chest", "armor": "chest", "coat": "chest",
+    "back": "back", "cape": "back", "pack": "back", "bag": "back",
+    "sword": "hands", "gun": "hands", "axe": "hands", "bat": "hands", "knife": "hands", "weapon": "hands",
+    "pistol": "hands", "rifle": "hands", "machete": "hands", "offhand": "hands", "shield": "hands", "torch": "hands",
+    "face": "face", "mask": "face", "beard": "face", "glasses": "face",
+}
+
+
+def pd_subdir(name):
+    return PD_FOLDERS.get(name.split("_", 1)[0], "")
 
 
 def gear_save(req):
@@ -190,18 +215,21 @@ def gear_save(req):
     src = os.path.join(mg.bg.OUT, fname + ".png")
     if not os.path.exists(src):
         return {"error": "Nothing generated for " + fname + " yet."}
-    dest_png = os.path.join(ART_OUT, dest + ".png")
+    sub = pd_subdir(dest)                               # e.g. helm_army -> head, chest_* -> chest
+    dest_dir = os.path.join(ART_OUT, sub) if sub else ART_OUT
+    rel = "art/sprites/paperdoll/" + (sub + "/" if sub else "") + dest
+    dest_png = os.path.join(dest_dir, dest + ".png")
     if os.path.exists(dest_png) and not confirm:
         return {"needs_confirm": True, "dest": dest}    # don't clobber silently
-    os.makedirs(ART_OUT, exist_ok=True)
+    os.makedirs(dest_dir, exist_ok=True)
     written = []
     shutil.copy2(src, dest_png)
-    written.append("art/sprites/paperdoll/" + dest + ".png")
+    written.append(rel + ".png")
     mask = src[:-4] + ".tint.png"
     if os.path.exists(mask):
-        shutil.copy2(mask, os.path.join(ART_OUT, dest + ".tint.png"))
-        written.append("art/sprites/paperdoll/" + dest + ".tint.png")
-    rebuild_paperdoll_manifest()                        # the picker's sprite list stays current on every save
+        shutil.copy2(mask, os.path.join(dest_dir, dest + ".tint.png"))
+        written.append(rel + ".tint.png")
+    rebuild_art_manifest()                              # the picker's list stays current on every save
     return {"saved": written}
 
 
@@ -244,8 +272,13 @@ def _img(path):
     return {"file": os.path.basename(path), "b64": b64(path), "w": im.width, "h": im.height}
 
 
-def tile_suggest(kind, name):
+def tile_suggest(kind, name, plain=False):
     """Copyable Tilesets + Terrain rows for the owner's sheet (or data/tables.json)."""
+    if plain:
+        return ("Terrain  id=%s  name=%s  sprite=art/tilesets/%s.png  (no autotile)  pass_n/e/s/w = 1\n"
+                "A plain ground tile: paint it on the map editor's BASE layer; put autotiles "
+                "(grass, road, water) on the OVERLAY layer above it."
+                % (name, name.replace("_", " "), name))
     if kind == "wall":
         return ("Tilesets  id=%s  image=art/tilesets/%s_top_auto.png  columns=8  layout=blob47_craftpix\n"
                 "Terrain   id=%s  autotile=%s  color=#2b2b2b  pass_n/e/s/w = 0 (walls block)\n"
@@ -260,6 +293,7 @@ def tile_suggest(kind, name):
 def tile_make(req):
     kind = (req.get("kind") or "ground").strip()
     name = (req.get("name") or "").strip()
+    plain = bool(req.get("plain"))               # a plain non-autotiled ground tile (sprite terrain)
     if kind not in ("ground", "wall"):
         return {"error": "kind must be ground or wall"}
     if not NAME_RE.match(name):
@@ -287,15 +321,20 @@ def tile_make(req):
             if not what:
                 return {"error": "Describe the ground surface."}
             argv = ["ground", "--name", name, "--what", what, "--under", under]
+            if plain:
+                argv += ["--plain"]
             if req.get("pattern"):                   # built surfaces: keep seams/welds, small units
                 argv += ["--pattern"]
             decals = (req.get("decals") or "").strip()
-            if decals:
+            if decals and not plain:
                 argv += ["--decals", decals]
             run_pipe(TILE_TOOLS, "make_tileset.py", argv)
-            want = {"base": name + ".png", "auto": name + "_auto.png",
-                    "details": name + "_details.png", "decals": name + "_decals.png",
-                    "review": "review_" + name + ".png"}
+            if plain:
+                want = {"base": name + ".png", "review": "review_" + name + ".png"}
+            else:
+                want = {"base": name + ".png", "auto": name + "_auto.png",
+                        "details": name + "_details.png", "decals": name + "_decals.png",
+                        "review": "review_" + name + ".png"}
         else:
             material = (req.get("material") or "brick").strip()
             if not re.match(r"^[a-z_]+$", material):
@@ -317,17 +356,19 @@ def tile_make(req):
             scatter = json.load(open(sj)).get(name, {})
         except ValueError:
             pass
-    return {"kind": kind, "name": name, "images": images, "scatter": scatter,
-            "suggest": tile_suggest(kind, name)}
+    return {"kind": kind, "name": name, "plain": plain, "images": images, "scatter": scatter,
+            "suggest": tile_suggest(kind, name, plain)}
 
 
 def tile_save(req):
     name = (req.get("name") or "").strip()
     kind = (req.get("kind") or "ground").strip()
+    plain = bool(req.get("plain"))
     confirm = bool(req.get("confirm"))
     if not NAME_RE.match(name):
         return {"error": "Bad name."}
-    suffixes = (("_top_auto.png", "_face.png") if kind == "wall"
+    suffixes = ((".png",) if plain
+                else ("_top_auto.png", "_face.png") if kind == "wall"
                 else (".png", "_auto.png", "_details.png", "_decals.png"))
     present = [name + s for s in suffixes if os.path.exists(os.path.join(TILE_OUT, name + s))]
     if not present:
@@ -340,7 +381,7 @@ def tile_save(req):
     for n in present:
         shutil.copy2(os.path.join(TILE_OUT, n), os.path.join(ART_TILES, n))
         written.append("art/tilesets/" + n)
-    if kind == "ground":                             # merge this terrain into the live scatter config
+    if kind == "ground" and not plain:               # merge this terrain into the live scatter config
         src = os.path.join(TILE_OUT, "scatter.json")
         dst = os.path.join(ART_TILES, "scatter.json")
         if os.path.exists(src):
@@ -358,6 +399,7 @@ def tile_save(req):
                 pass
             json.dump(cfg, open(dst, "w"), indent=1)
             written.append("art/tilesets/scatter.json")
+    rebuild_art_manifest()                               # new tiles show up in the Content Studio picker
     return {"saved": written}
 
 
@@ -434,6 +476,7 @@ def object_save(req):
         return {"needs_confirm": True, "dest": dest}
     os.makedirs(ART_OBJ, exist_ok=True)
     shutil.copy2(src, dst)
+    rebuild_art_manifest()                               # new objects show up in the Content Studio picker
     return {"saved": ["art/sprites/objects/" + dest + ".png"]}
 
 

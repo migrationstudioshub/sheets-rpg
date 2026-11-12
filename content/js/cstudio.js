@@ -131,6 +131,25 @@ var CStudio = (function () {
         h('span', { text: Schema.get(t).label }), h('span', { className: 'n', text: String(count) })));
     });
   }
+  // The thumbnail for a list card: the row's art. Terrain shows its sprite (or its autotile's tileset
+  // image); everything else shows the first image-typed field that has a value.
+  function rowThumbSrc(t, r) {
+    if (t === 'terrain') {
+      if (r.sprite) return spritePath(r.sprite);
+      if (r.autotile) { var ts = (rows('tilesets') || []).filter(function (x) { return x[idField('tilesets')] === r.autotile; })[0]; return ts && ts.image ? spritePath(ts.image) : ''; }
+      return '';
+    }
+    var imgs = (Schema.get(t).fields || []).filter(function (f) { return f.type === 'image'; });
+    for (var i = 0; i < imgs.length; i++) if (r[imgs[i].key]) return spritePath(r[imgs[i].key]);
+    return '';
+  }
+  function recCard(t, r, i, idf) {
+    var src = rowThumbSrc(t, r);
+    var thumb = src ? hoverZoom(h('img', { className: 'rthumb', src: src, alt: '', onerror: function () { this.style.visibility = 'hidden'; } }), src)
+      : h('span', { className: 'rthumb ph' });   // empty thumb = no art yet (stays visible)
+    var body = h('div', { className: 'rbody' }, h('div', { text: rowLabel(t, r) }), r.name && idf && r[idf] !== r.name ? h('small', { text: r.name }) : null);
+    return h('button', { className: 'rec' + (i === curIndex ? ' on' : ''), onclick: function () { curIndex = i; renderList(); renderForm(); } }, thumb, body);
+  }
   function renderList() {
     if (type === 'loot') return lootList();
     var list = $('list'); list.innerHTML = '';
@@ -139,14 +158,18 @@ var CStudio = (function () {
     list.appendChild(h('div', { className: 'head' }, search,
       h('button', { className: 'primary', title: 'New', text: '+ New', onclick: addRecord })));
     var all = rows(type), q = filter.toLowerCase(), idf = idField(type);
-    all.forEach(function (r, i) {
-      var lbl = rowLabel(type, r);
-      if (q && lbl.toLowerCase().indexOf(q) < 0) return;
-      var thumb = r.sprite ? h('img', { className: 'rthumb', src: spritePath(r.sprite), alt: '',
-        onerror: function () { this.style.visibility = 'hidden'; } }) : null;
-      var body = h('div', { className: 'rbody' }, h('div', { text: lbl }), r.name && idf && r[idf] !== r.name ? h('small', { text: r.name }) : null);
-      list.appendChild(h('button', { className: 'rec' + (i === curIndex ? ' on' : ''), onclick: function () { curIndex = i; renderList(); renderForm(); } }, thumb, body));
-    });
+    function matches(r) { return !q || rowLabel(type, r).toLowerCase().indexOf(q) >= 0; }
+    if (type === 'terrain') {                      // group plain tiles vs autotiles, like the map editor palette
+      [['Tiles', function (r) { return !r.autotile; }], ['Autotiles', function (r) { return !!r.autotile; }]].forEach(function (grp) {
+        var members = [];
+        all.forEach(function (r, i) { if (grp[1](r) && matches(r)) members.push([r, i]); });
+        if (!members.length) return;
+        list.appendChild(h('div', { className: 'listgroup', text: grp[0] }));
+        members.forEach(function (ri) { list.appendChild(recCard(type, ri[0], ri[1], idf)); });
+      });
+    } else {
+      all.forEach(function (r, i) { if (matches(r)) list.appendChild(recCard(type, r, i, idf)); });
+    }
     if (!list.querySelector('.rec')) list.appendChild(h('div', { className: 'note', style: 'padding:8px', text: all.length ? 'No match.' : 'Nothing here yet — click New.' }));
   }
   function addRecord() {
@@ -170,7 +193,13 @@ var CStudio = (function () {
         if (!confirm('Delete this ' + (def.singular || 'record') + '?')) return;
         rows(type).splice(curIndex, 1); curIndex = -1; persist(); renderNav(); renderList(); renderForm();
       } })));
-    def.fields.forEach(function (fl) { form.appendChild(fieldEl(r, fl)); });
+    def.fields.forEach(function (fl) {
+      if (type === 'terrain' && (fl.key === 'sprite' || fl.key === 'autotile')) {
+        if (fl.key === 'sprite') form.appendChild(tileModeField(r));   // a Base Tile / Autotile toggle replaces both
+        return;
+      }
+      form.appendChild(fieldEl(r, fl));
+    });
   }
 
   function fieldEl(r, fl) {
@@ -193,6 +222,8 @@ var CStudio = (function () {
       var opts = fl.options.slice(); if (val && opts.indexOf(val) < 0) opts.unshift(val);
       control = h('select', { onchange: function (e) { change(e.target.value); } },
         h('option', { value: '', text: '—' }), opts.map(function (o) { return h('option', { value: o, text: o, selected: o === val }); }));
+    } else if (fl.type === 'image') {
+      control = imageControl(r, fl, val, change);
     } else if (fl.type === 'ref') {
       var refType = fl.ref, lid = 'dl_' + fl.key, ids = (rows(refType) || []).map(function (x) { return x[idField(refType)]; }).filter(Boolean);
       control = h('span', { className: 'row' },
@@ -203,6 +234,39 @@ var CStudio = (function () {
     }
     return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key + (fl.type === 'ref' ? '  → ' + fl.ref : '') }), control,
       fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+  }
+
+  // Terrain is EITHER a plain sprite OR an autotile; a segmented toggle shows only the matching field and
+  // clears the other, so a row is never ambiguous.
+  function fieldDef(t, key) { return (Schema.get(t).fields || []).filter(function (f) { return f.key === key; })[0]; }
+  function tileModeField(r) {
+    var wrap = h('div', { className: 'field' });
+    var mode = r.autotile ? 'autotile' : 'base';
+    function render() {
+      wrap.innerHTML = '';
+      wrap.appendChild(h('label', { text: 'Tile type' }));
+      wrap.appendChild(h('div', { className: 'seg' },
+        h('button', { type: 'button', className: 'segbtn' + (mode === 'base' ? ' on' : ''), text: 'Base Tile',
+          onclick: function () { if (mode === 'base') return; mode = 'base'; r.autotile = ''; persist(); render(); } }),
+        h('button', { type: 'button', className: 'segbtn' + (mode === 'autotile' ? ' on' : ''), text: 'Autotile',
+          onclick: function () { if (mode === 'autotile') return; mode = 'autotile'; r.sprite = ''; persist(); render(); } })));
+      if (mode === 'base') {
+        wrap.appendChild(fieldEl(r, fieldDef('terrain', 'sprite')));
+      } else {
+        var af = fieldEl(r, fieldDef('terrain', 'autotile'));
+        wrap.appendChild(af);
+        // show the whole autotile sheet below the picker, same idea as the Base Tile preview
+        var prev = h('img', { className: 'autoprev', alt: '', onerror: function () { this.style.display = 'none'; } });
+        function tsImage(id) { var ts = (rows('tilesets') || []).filter(function (x) { return x[idField('tilesets')] === id; })[0]; return ts && ts.image ? spritePath(ts.image) : ''; }
+        function showAuto(id) { var s = tsImage(id); if (s) { prev.src = s; prev.style.display = ''; } else { prev.removeAttribute('src'); prev.style.display = 'none'; } }
+        var inp = af.querySelector('input');
+        if (inp) inp.addEventListener('input', function (e) { showAuto(e.target.value); });
+        showAuto(r.autotile);
+        wrap.appendChild(prev);
+      }
+    }
+    render();
+    return wrap;
   }
 
   // ---------------------------------------------------------------- objects (structured editor)
@@ -350,41 +414,67 @@ var CStudio = (function () {
   function setLayers(r, layers) { r.layers = layers; persist(); }   // array; content.js json() passes arrays through
   function maskPath(p) { return p ? p.replace(/\.png$/i, '.tint.png') : ''; }
   function tintNames() { return (typeof Tint !== 'undefined' && Tint.TINTS) ? Object.keys(Tint.TINTS) : []; }
-  // The paper-doll art the sprite picker offers. Primary source is the generated manifest
-  // (art/sprites/paperdoll/manifest.json, rebuilt by tools/build_paperdoll_manifest.js) so new art
-  // appears automatically; a built-in list is the fallback when the manifest can't be fetched. Either
-  // way we also fold in any sprite already referenced in content.
-  var pdManifest = null;
+  // The paper-doll art the sprite picker offers. Primary source is the generated art manifest (below);
+  // a built-in list is the fallback when the manifest can't be fetched. Paths follow the type subfolders
+  // (base/ hair/ head/ chest/ hands/). We also fold in any sprite already referenced in content.
+  var pdManifest = null, artManifest = null;
+  var PD_SUBDIR = { body: 'base', hair: 'hair', helm: 'head', chest: 'chest', gun: 'hands', sword: 'hands' };
   var PD_FALLBACK = ['body_zombie', 'body_zombie_female', 'body_survivor', 'body_survivor_female',
     'hair_bob', 'hair_buzz', 'hair_long', 'hair_messy', 'hair_metal_mohawk_v1', 'hair_metal_mohawk_v2',
     'hair_pony', 'hair_shaggy', 'hair_slick', 'hair_under',
     'chest_leather_jacket', 'chest_riot_vest', 'helm_army', 'gun_pistol', 'sword_machete'
-  ].map(function (n) { return 'art/sprites/paperdoll/' + n + '.png'; });
+  ].map(function (n) { var f = PD_SUBDIR[n.split('_')[0]] || ''; return 'art/sprites/paperdoll/' + (f ? f + '/' : '') + n + '.png'; });
+  // One manifest of every image under art/ (built by tools/build_art_manifest.js, auto-rebuilt by the Asset
+  // Studio on save). Feeds the "Browse /art" picker; the paper-doll list is the same manifest filtered.
   function loadManifest() {
-    return fetch('../art/sprites/paperdoll/manifest.json', { cache: 'no-cache' })
+    return fetch('../art/manifest.json', { cache: 'no-cache' })
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) { if (j && Array.isArray(j.sprites)) pdManifest = j.sprites; })
+      .then(function (j) {
+        if (j && Array.isArray(j.images)) {
+          artManifest = j.images;
+          pdManifest = j.images.filter(function (p) { return /\/paperdoll\//.test(p) && !/\.tint\.png$/i.test(p); });
+        }
+      })
       .catch(function () { /* keep the built-in fallback */ });
   }
-  function paperdollSprites() {
+  function artSprites() {
     var s = {};
-    (pdManifest && pdManifest.length ? pdManifest : PD_FALLBACK).forEach(function (p) { s[p] = 1; });
-    (T.Classes || []).forEach(function (r) { if (r.body_sprite) s[r.body_sprite] = 1; });
-    (T.Items || []).forEach(function (r) { if (r.worn_sprite) s[r.worn_sprite] = 1; });
-    (T.Appearances || []).forEach(function (r) { layersOf(r).forEach(function (L) { (L.options || []).forEach(function (o) { if (o.sprite) s[o.sprite] = 1; }); }); });
+    (artManifest || []).forEach(function (p) { s[p] = 1; });
     return Object.keys(s).sort();
+  }
+  function pdBase() { return (pdManifest && pdManifest.length ? pdManifest : PD_FALLBACK); }
+  // Resolve a (possibly stale, pre-reorg flat) path to the real art file with the same filename, so an old
+  // reference like art/sprites/paperdoll/chest_leather_jacket.png maps onto .../chest/chest_leather_jacket.png.
+  function canonSprite(p) {
+    if (!p) return p;
+    var want = baseName(p);
+    var hit = pdBase().filter(function (q) { return baseName(q) === want; })[0];
+    return hit || p;
+  }
+  // The sprite options, de-duplicated by filename (the manifest/base path wins), so a moved-and-renamed
+  // file never appears twice — once broken (old path), once working (new path).
+  function paperdollSprites() {
+    var byName = {};
+    function add(p, preferred) { if (!p) return; var n = baseName(p); if (preferred || !byName[n]) byName[n] = p; }
+    pdBase().forEach(function (p) { add(p, true); });
+    (T.Classes || []).forEach(function (r) { if (r.body_sprite) add(canonSprite(r.body_sprite)); });
+    (T.Items || []).forEach(function (r) { if (r.worn_sprite) add(canonSprite(r.worn_sprite)); });
+    (T.Appearances || []).forEach(function (r) { layersOf(r).forEach(function (L) { (L.options || []).forEach(function (o) { if (o.sprite) add(canonSprite(o.sprite)); }); }); });
+    return Object.keys(byName).map(function (n) { return byName[n]; }).sort();
   }
 
   // --- layer types: filter the sprite list by what a layer is (body/hair/head/hand…). A sprite's type
   //     comes from the prefix before the first underscore in its filename (body_zombie -> body). ---
+  // Hand and off-hand hold the same things (a weapon can go in either), so they share one sprite set.
+  var HELD = ['sword', 'gun', 'axe', 'bat', 'knife', 'weapon', 'shield', 'offhand', 'torch'];
   var LAYER_TYPES = [
     { id: 'body',    label: 'Body',     match: ['body'] },
     { id: 'hair',    label: 'Hair',     match: ['hair'] },
     { id: 'head',    label: 'Head',     match: ['helm', 'hat', 'mask', 'hood'] },
     { id: 'chest',   label: 'Chest',    match: ['chest', 'shirt', 'jacket', 'vest', 'armor', 'coat'] },
     { id: 'legs',    label: 'Legs',     match: ['legs', 'pants', 'skirt'] },
-    { id: 'hand',    label: 'Hand',     match: ['sword', 'gun', 'axe', 'bat', 'knife', 'weapon'] },
-    { id: 'offhand', label: 'Off-hand', match: ['shield', 'offhand', 'torch'] },
+    { id: 'hand',    label: 'Hand',     match: HELD },
+    { id: 'offhand', label: 'Off-hand', match: HELD },
     { id: 'back',    label: 'Back',     match: ['back', 'cape', 'pack', 'bag'] },
     { id: 'any',     label: 'Any',      match: [] }
   ];
@@ -408,7 +498,33 @@ var CStudio = (function () {
 
   // --- visual dropdown: items show a sprite thumbnail or colour swatch + a name (not a raw path) ---
   function closePickers() { Array.prototype.forEach.call(document.querySelectorAll('.pickwrap.open'), function (w) { w.classList.remove('open'); }); }
-  function spriteThumb(p) { return h('img', { className: 'thumb', src: spritePath(p), alt: '', title: p, onerror: function () { this.style.visibility = 'hidden'; } }); }
+  // Hold a hover on any sprite thumbnail for ~1s to pop a big, crisp preview near the cursor.
+  var hv = { el: null, timer: 0, mx: 0, my: 0, bound: false };
+  function hvPlace() {
+    var el = hv.el; if (!el || el.style.display === 'none') return;
+    var w = el.offsetWidth || 170, ht = el.offsetHeight || 170, x = hv.mx + 18, y = hv.my + 18;
+    if (x + w > window.innerWidth - 8) x = Math.max(8, hv.mx - w - 18);
+    if (y + ht > window.innerHeight - 8) y = Math.max(8, window.innerHeight - ht - 8);
+    el.style.left = x + 'px'; el.style.top = y + 'px';
+  }
+  function hvInit() {
+    if (hv.bound) return; hv.bound = true;
+    hv.el = h('div', { className: 'sprhover' }); document.body.appendChild(hv.el);
+    document.addEventListener('mousemove', function (e) { hv.mx = e.clientX; hv.my = e.clientY; hvPlace(); });
+  }
+  function hoverZoom(img, src) {
+    if (!src) return img;
+    hvInit();
+    img.addEventListener('mouseenter', function () {
+      clearTimeout(hv.timer);
+      hv.timer = setTimeout(function () {
+        hv.el.innerHTML = ''; hv.el.appendChild(h('img', { src: src, alt: '' })); hv.el.style.display = 'block'; hvPlace();
+      }, 1000);
+    });
+    img.addEventListener('mouseleave', function () { clearTimeout(hv.timer); if (hv.el) hv.el.style.display = 'none'; });
+    return img;
+  }
+  function spriteThumb(p) { return hoverZoom(h('img', { className: 'thumb lit', src: spritePath(p), alt: '', title: p, onerror: function () { this.style.visibility = 'hidden'; } }), spritePath(p)); }
   function swatch(ramp) {
     var cs = (typeof Tint !== 'undefined' && Tint.TINTS[ramp]) || null;
     return cs ? h('span', { className: 'swatch', style: 'background:linear-gradient(90deg,' + cs.join(',') + ')' }) : h('span', { className: 'swatch none' });
@@ -430,7 +546,7 @@ var CStudio = (function () {
   function spritePicker(L, current, onPick) {
     var items = [{ value: '', label: '— none —', visual: function () { return h('span', { className: 'thumb ph' }); } }]
       .concat(spritesForType(layerType(L)).map(function (p) { return { value: p, label: fileName(p), visual: function () { return spriteThumb(p); } }; }));
-    return visualPicker(current, items, onPick, 'sprite…');
+    return visualPicker(canonSprite(current), items, onPick, 'sprite…');
   }
   function colourPicker(current, onPick) {
     var items = [{ value: '', label: 'no tint', visual: function () { return h('span', { className: 'swatch none' }); } }]
@@ -441,6 +557,76 @@ var CStudio = (function () {
   function pctInput(value, onInput) {
     return h('input', { type: 'number', min: 0, max: 100, step: 1, value: value == null ? 0 : value, className: 'pct',
       title: 'Weight 0–100% (relative to the other choices in this layer)', oninput: function (e) { onInput(Math.max(0, Math.min(100, Number(e.target.value) || 0))); } });
+  }
+
+  // --- image field: a /art file-browser (collapsible folder tree) + an inline preview of the pick ---
+  function baseName(p) { return String(p || '').split('/').pop(); }
+  function buildTree(paths) {                            // nested { dirs:{name:node}, files:[path] } from art/ paths
+    var root = { dirs: {}, files: [] };
+    paths.forEach(function (p) {
+      var parts = p.split('/'), node = root;            // parts[0] is 'art' (the root) — skip it
+      for (var i = 1; i < parts.length - 1; i++) { node.dirs[parts[i]] = node.dirs[parts[i]] || { dirs: {}, files: [] }; node = node.dirs[parts[i]]; }
+      node.files.push(p);
+    });
+    return root;
+  }
+  function artPicker(current, onPick) {
+    var tree = buildTree(artSprites()), expanded = {}, q = '';
+    if (current) { var pp = current.split('/'), acc = ''; for (var i = 1; i < pp.length - 1; i++) { acc = acc ? acc + '/' + pp[i] : pp[i]; expanded[acc] = true; } }
+
+    var btn = h('button', { type: 'button', className: 'picker' });
+    function renderBtn(v) {
+      btn.innerHTML = '';
+      btn.appendChild(v ? spriteThumb(v) : h('span', { className: 'thumb ph' }));
+      btn.appendChild(h('span', { className: 'picklabel', text: v ? baseName(v) : 'Browse /art…' }));
+      btn.appendChild(h('span', { className: 'caret', text: '▾' }));
+    }
+    renderBtn(current);
+
+    var tree_el = h('div', { className: 'picktree' });
+    var search = h('input', { className: 'picksearch', placeholder: 'Search /art…', oninput: function (e) { q = e.target.value.trim().toLowerCase(); draw(); } });
+    var pop = h('div', { className: 'pickpop art' }, search, tree_el);
+
+    function matches(p) { return !q || p.toLowerCase().indexOf(q) >= 0; }
+    function hasMatch(node) { return node.files.some(matches) || Object.keys(node.dirs).some(function (k) { return hasMatch(node.dirs[k]); }); }
+    function pick(v) { renderBtn(v); closePickers(); onPick(v); }
+    function fileRow(p, depth) {
+      return h('div', { className: 'pickitem' + (p === current ? ' on' : ''), title: p, style: 'padding-left:' + (depth * 14 + 8) + 'px',
+        onclick: function (e) { e.stopPropagation(); pick(p); } }, spriteThumb(p), h('span', { className: 'picklabel', text: baseName(p) }));
+    }
+    function renderNode(node, prefix, depth, frag) {
+      Object.keys(node.dirs).sort().forEach(function (name) {
+        var child = node.dirs[name], fp = prefix ? prefix + '/' + name : name;
+        if (q && !hasMatch(child)) return;
+        var open = q ? true : !!expanded[fp];
+        frag.appendChild(h('div', { className: 'pickfolder', style: 'padding-left:' + (depth * 14) + 'px',
+          onclick: function (e) { e.stopPropagation(); if (!q) { expanded[fp] = !expanded[fp]; draw(); } } },
+          h('span', { className: 'tw', text: open ? '▾' : '▸' }), h('span', { text: name })));
+        if (open) renderNode(child, fp, depth + 1, frag);
+      });
+      node.files.filter(matches).sort().forEach(function (p) { frag.appendChild(fileRow(p, depth)); });
+    }
+    function draw() {
+      tree_el.innerHTML = '';
+      tree_el.appendChild(h('div', { className: 'pickitem', onclick: function (e) { e.stopPropagation(); pick(''); } }, h('span', { className: 'thumb ph' }), h('span', { text: '— none —' })));
+      var frag = document.createDocumentFragment();
+      renderNode(tree, '', 0, frag);
+      tree_el.appendChild(frag);
+    }
+    var wrap = h('div', { className: 'pickwrap' }, btn, pop);
+    btn.onclick = function (e) { e.stopPropagation(); var open = wrap.classList.contains('open'); closePickers(); if (!open) { wrap.classList.add('open'); q = ''; search.value = ''; draw(); setTimeout(function () { search.focus(); }, 0); } };
+    wrap.setValue = renderBtn;
+    return wrap;
+  }
+  function imageControl(r, fl, val, change) {
+    var cur = val == null ? '' : String(val);
+    var prev = h('img', { className: 'imgprev', alt: '', onerror: function () { this.style.display = 'none'; } });
+    function showPrev(v) { if (v) { prev.src = spritePath(v); prev.style.display = ''; } else { prev.removeAttribute('src'); prev.style.display = 'none'; } }
+    var input = h('input', { type: 'text', value: cur, placeholder: 'art/… path or URL',
+      oninput: function (e) { cur = e.target.value; change(cur); showPrev(cur); picker.setValue(cur); } });
+    var picker = artPicker(cur, function (v) { cur = v; input.value = v; change(v); showPrev(v); });
+    showPrev(cur);
+    return h('div', { className: 'imagefield' }, h('div', { className: 'row' }, picker, input), prev);
   }
 
   function layerCard(r, layers, L, li) {

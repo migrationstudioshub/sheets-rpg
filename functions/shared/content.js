@@ -78,8 +78,9 @@ var Content = (function () {
 
     (tables.Terrain || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
-      c.terrain[id] = { id: id, name: str(r.name) || id, color: str(r.color) || '#000000',
-        sprite: str(r.sprite), autotile: str(r.autotile), frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200),
+      c.terrain[id] = { id: id, name: str(r.name) || id,
+        sprite: str(r.sprite), autotile: str(r.autotile), layer: str(r.layer) === 'overlay' ? 'overlay' : (str(r.layer) === 'base' ? 'base' : ''),
+        frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200),
         pass: { n: bool(r.pass_n), e: bool(r.pass_e), s: bool(r.pass_s), w: bool(r.pass_w) } };
     });
 
@@ -103,8 +104,13 @@ var Content = (function () {
     (tables.Maps || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
       var grid = decodeGrid(json(r.terrain, []));
+      // Optional second terrain grid drawn on top of the base (overlay autotiles, transparent outside their
+      // shape). Absent/empty on older maps, which then behave exactly as before (base layer only).
+      var overlay = decodeGrid(json(r.overlay, []));
+      // Frozen autotile shapes from shift-click mapping: sparse { "x,y": mask } per layer, render-only.
       c.maps[id] = { id: id, name: str(r.name) || id, width: num(r.width, grid[0] ? grid[0].length : 0),
-        height: num(r.height, grid.length), terrain: grid, entities: [] };
+        height: num(r.height, grid.length), terrain: grid, overlay: overlay,
+        shapes: json(r.shapes, {}), overlayShapes: json(r.overlayShapes, {}), entities: [] };
     });
 
     (tables.MapEntities || []).forEach(function (r) {

@@ -112,7 +112,7 @@
   },
   {
    "key": "start_hair",
-   "value": "art/sprites/paperdoll/hair_messy.png",
+   "value": "art/sprites/paperdoll/hair/hair_messy.png",
    "notes": "Paper-doll hair a new character starts with (a hair_*.png layer); blank = bald. Hidden when a helm is worn."
   },
   {
@@ -431,6 +431,7 @@
    "color": "#000000",
    "sprite": "",
    "autotile": "",
+   "layer": "base",
    "pass_n": 0,
    "pass_e": 0,
    "pass_s": 0,
@@ -445,6 +446,7 @@
    "color": "#878173",
    "sprite": "https://i.imgur.com/8EFJwKW.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -459,6 +461,7 @@
    "color": "#5d5548",
    "sprite": "https://i.imgur.com/XqsReYO.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 0,
    "pass_e": 0,
    "pass_s": 0,
@@ -473,6 +476,7 @@
    "color": "#6d9b1a",
    "sprite": "https://i.imgur.com/HECTlBE.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -487,6 +491,7 @@
    "color": "#5e3a08",
    "sprite": "https://i.imgur.com/IQmDvm8.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -501,6 +506,7 @@
    "color": "#492903",
    "sprite": "https://i.imgur.com/eXjCoQ9.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 0,
    "pass_e": 0,
    "pass_s": 0,
@@ -515,6 +521,7 @@
    "color": "#bda67e",
    "sprite": "https://i.imgur.com/8GJB4m8.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -529,6 +536,7 @@
    "color": "#784d1b",
    "sprite": "https://i.imgur.com/3gs7WSL.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 0,
    "pass_s": 1,
@@ -543,6 +551,7 @@
    "color": "#454545",
    "sprite": "https://i.imgur.com/G3aixIu.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 0,
    "pass_s": 1,
@@ -557,6 +566,7 @@
    "color": "#505050",
    "sprite": "https://i.imgur.com/d4JZy3y.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 0,
    "pass_s": 1,
@@ -571,6 +581,7 @@
    "color": "#84592a",
    "sprite": "https://i.imgur.com/zmadX46.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -585,6 +596,7 @@
    "color": "#61584f",
    "sprite": "https://i.imgur.com/dT0cGqM.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 0,
    "pass_e": 0,
    "pass_s": 0,
@@ -599,6 +611,7 @@
    "color": "#90cf2c",
    "sprite": "https://i.imgur.com/ayCqVYr.png",
    "autotile": "",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -613,6 +626,7 @@
    "color": "#c99660",
    "sprite": "",
    "autotile": "fields",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -627,6 +641,7 @@
    "color": "#26262b",
    "sprite": "",
    "autotile": "ts_asphalt",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -641,6 +656,7 @@
    "color": "#45474b",
    "sprite": "",
    "autotile": "ts_sidewalk",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -655,6 +671,7 @@
    "color": "#45392a",
    "sprite": "",
    "autotile": "ts_dirt",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -669,6 +686,7 @@
    "color": "#39402b",
    "sprite": "",
    "autotile": "ts_grass",
+   "layer": "overlay",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -683,6 +701,7 @@
    "color": "#3a2a1a",
    "sprite": "",
    "autotile": "ts_wood",
+   "layer": "base",
    "pass_n": 1,
    "pass_e": 1,
    "pass_s": 1,
@@ -697,6 +716,7 @@
    "color": "#2b2320",
    "sprite": "",
    "autotile": "ts_wbrick",
+   "layer": "base",
    "pass_n": 0,
    "pass_e": 0,
    "pass_s": 0,
@@ -711,6 +731,7 @@
    "color": "#2b2b2b",
    "sprite": "",
    "autotile": "ts_wconcrete",
+   "layer": "base",
    "pass_n": 0,
    "pass_e": 0,
    "pass_s": 0,
@@ -3802,7 +3823,7 @@
    "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/wooden_sword.png",
-   "worn_sprite": "art/sprites/paperdoll/sword_machete.png",
+   "worn_sprite": "art/sprites/paperdoll/hands/sword_machete.png",
    "default_tint": "",
    "notes": "",
    "range": "",
@@ -3836,7 +3857,7 @@
    "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/iron_sword.png",
-   "worn_sprite": "art/sprites/paperdoll/sword_machete.png",
+   "worn_sprite": "art/sprites/paperdoll/hands/sword_machete.png",
    "default_tint": "",
    "notes": "",
    "range": "",
@@ -3870,7 +3891,7 @@
    "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/leather_armor.png",
-   "worn_sprite": "art/sprites/paperdoll/chest_leather_jacket.png",
+   "worn_sprite": "art/sprites/paperdoll/chest/chest_leather_jacket.png",
    "default_tint": "brown",
    "notes": "",
    "range": "",
@@ -3904,7 +3925,7 @@
    "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/iron_armor.png",
-   "worn_sprite": "art/sprites/paperdoll/chest_riot_vest.png",
+   "worn_sprite": "art/sprites/paperdoll/chest/chest_riot_vest.png",
    "default_tint": "navy",
    "notes": "",
    "range": "",
@@ -3938,7 +3959,7 @@
    "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/army_helmet.png",
-   "worn_sprite": "art/sprites/paperdoll/helm_army.png",
+   "worn_sprite": "art/sprites/paperdoll/head/helm_army.png",
    "default_tint": "olive",
    "notes": "",
    "range": "",
@@ -4346,7 +4367,7 @@
    "equip_if": "",
    "on_use": "",
    "sprite": "art/sprites/pistol.png",
-   "worn_sprite": "art/sprites/paperdoll/gun_pistol.png",
+   "worn_sprite": "art/sprites/paperdoll/hands/gun_pistol.png",
    "default_tint": "",
    "notes": "",
    "range": 16,
@@ -4380,7 +4401,7 @@
    "equip_if": "level:3",
    "on_use": "",
    "sprite": "art/sprites/rifle.png",
-   "worn_sprite": "art/sprites/paperdoll/gun_pistol.png",
+   "worn_sprite": "art/sprites/paperdoll/hands/gun_pistol.png",
    "default_tint": "",
    "notes": "",
    "range": 30,
@@ -4801,7 +4822,7 @@
    "skills": "charge@1, cleave@1, second_wind@3",
    "notes": "Front line",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
   },
   {
    "id": "rogue",
@@ -4819,7 +4840,7 @@
    "skills": "throw_dagger@1, poison_strike@1, shadow_step@3",
    "notes": "Fast, ranged poke",
    "lockpicking": 0.3,
-   "body_sprite": "art/sprites/paperdoll/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
   },
   {
    "id": "mage",
@@ -4837,7 +4858,7 @@
    "skills": "fireball@1, frost_bolt@1, frost_nova@3",
    "notes": "Ranged magic, fragile",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
   },
   {
    "id": "paladin",
@@ -4855,7 +4876,7 @@
    "skills": "holy_strike@1, blessing@1, lay_on_hands@3",
    "notes": "Support: protects allies",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
   },
   {
    "id": "priest",
@@ -4873,7 +4894,7 @@
    "skills": "heal@1, smite@1, renew@3",
    "notes": "Healer",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
   },
   {
    "id": "barbarian",
@@ -4891,7 +4912,7 @@
    "skills": "whirlwind@1, rage@1, leap@3",
    "notes": "Brute force",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
   },
   {
    "id": "survivor",
@@ -4909,7 +4930,7 @@
    "skills": "second_wind@1, cleave@1",
    "notes": "Demo: left-click to aim+fire the pistol (R reloads from your pistol-ammo reserve); the rifle uses rifle ammo and needs level 3; 1-5 belt; Q/E abilities",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
   }
  ],
  "Statuses": [
@@ -5491,7 +5512,7 @@
   {
    "id": "zombie_plain",
    "name": "Plain zombie",
-   "layers": "[{\"name\":\"body\",\"empty\":0,\"options\":[{\"sprite\":\"art/sprites/paperdoll/body_zombie.png\",\"weight\":60},{\"sprite\":\"art/sprites/paperdoll/body_zombie_female.png\",\"weight\":40}],\"tints\":[]},{\"name\":\"hair\",\"empty\":15,\"options\":[{\"sprite\":\"art/sprites/paperdoll/hair_bob.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair_buzz.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair_long.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair_messy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair_pony.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair_shaggy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair_slick.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair_under.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair_metal_mohawk_v1.png\",\"weight\":3},{\"sprite\":\"art/sprites/paperdoll/hair_metal_mohawk_v2.png\",\"weight\":3}],\"tints\":[{\"tint\":\"hair_grey\",\"weight\":23},{\"tint\":\"hair_dark\",\"weight\":16},{\"tint\":\"hair_black\",\"weight\":16},{\"tint\":\"hair_brown\",\"weight\":16},{\"tint\":\"hair_white\",\"weight\":12},{\"tint\":\"hair_blonde\",\"weight\":8},{\"tint\":\"hair_auburn\",\"weight\":5},{\"tint\":\"hair_ginger\",\"weight\":5}]},{\"name\":\"clothes\",\"empty\":67,\"options\":[{\"sprite\":\"art/sprites/paperdoll/chest_leather_jacket.png\",\"weight\":33}],\"tints\":[{\"tint\":\"brown\",\"weight\":22},{\"tint\":\"olive\",\"weight\":22},{\"tint\":\"charcoal\",\"weight\":22},{\"tint\":\"maroon\",\"weight\":11},{\"tint\":\"navy\",\"weight\":11},{\"tint\":\"khaki\",\"weight\":11}]}]"
+   "layers": "[{\"name\":\"body\",\"empty\":0,\"options\":[{\"sprite\":\"art/sprites/paperdoll/base/body_zombie.png\",\"weight\":60},{\"sprite\":\"art/sprites/paperdoll/base/body_zombie_female.png\",\"weight\":40}],\"tints\":[]},{\"name\":\"hair\",\"empty\":15,\"options\":[{\"sprite\":\"art/sprites/paperdoll/hair/hair_bob.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_buzz.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_long.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_messy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_pony.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_shaggy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_slick.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_under.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v1.png\",\"weight\":3},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v2.png\",\"weight\":3}],\"tints\":[{\"tint\":\"hair_grey\",\"weight\":23},{\"tint\":\"hair_dark\",\"weight\":16},{\"tint\":\"hair_black\",\"weight\":16},{\"tint\":\"hair_brown\",\"weight\":16},{\"tint\":\"hair_white\",\"weight\":12},{\"tint\":\"hair_blonde\",\"weight\":8},{\"tint\":\"hair_auburn\",\"weight\":5},{\"tint\":\"hair_ginger\",\"weight\":5}]},{\"name\":\"clothes\",\"empty\":67,\"options\":[{\"sprite\":\"art/sprites/paperdoll/chest/chest_leather_jacket.png\",\"weight\":33}],\"tints\":[{\"tint\":\"brown\",\"weight\":22},{\"tint\":\"olive\",\"weight\":22},{\"tint\":\"charcoal\",\"weight\":22},{\"tint\":\"maroon\",\"weight\":11},{\"tint\":\"navy\",\"weight\":11},{\"tint\":\"khaki\",\"weight\":11}]}]"
   }
  ]
 }

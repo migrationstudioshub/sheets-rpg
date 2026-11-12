@@ -7,6 +7,7 @@ const path = require('path');
 const assert = require('assert');
 const Content = require('../shared/content.js');
 const Rules = require('../shared/rules.js');
+const Autotile = require('../shared/autotile.js');
 global.Rules = Rules;
 const World = require('../shared/world.js');
 
@@ -762,6 +763,51 @@ test('a walker bite can infect; infection worsens each tick until an antidote cu
   World.give(s.c, s.p, 'antidote', 1, []);
   assert.match(texts(act(s, { type: 'use', item: 'antidote' }, 7200)), /infection fades/);
   assert.ok(!s.p.statuses.some(st => st.id === 'infection'), 'cured');
+});
+
+test('an overlay terrain governs passability: a blocking overlay over walkable ground blocks', () => {
+  const c = Content.build({
+    Terrain: [
+      { id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 },
+      { id: 'water', name: 'Water', color: '#36c', pass_n: 0, pass_e: 0, pass_s: 0, pass_w: 0 }
+    ],
+    Maps: [{ id: 'm', name: 'M', width: 3, height: 1,
+      terrain: JSON.stringify([['grass', 'grass', 'grass']]),
+      overlay: JSON.stringify([['', 'water', '']]) }]
+  });
+  const map = c.maps.m;
+  assert.ok(Rules.standable(c, map, 0, 0), 'plain grass is standable');
+  assert.ok(!Rules.standable(c, map, 1, 0), 'a water overlay over grass is not standable');
+  assert.ok(!Rules.tryMove(c, map, 0, 0, 'E').ok, 'cannot step onto the water overlay');
+});
+
+test('a walkable overlay does not block, and a map with no overlay is unchanged', () => {
+  const c = Content.build({
+    Terrain: [
+      { id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 },
+      { id: 'flowers', name: 'Flowers', color: '#5c5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }
+    ],
+    Maps: [
+      { id: 'a', name: 'A', width: 2, height: 1, terrain: JSON.stringify([['grass', 'grass']]), overlay: JSON.stringify([['flowers', '']]) },
+      { id: 'b', name: 'B', width: 2, height: 1, terrain: JSON.stringify([['grass', 'grass']]) }   // no overlay field
+    ]
+  });
+  assert.ok(Rules.tryMove(c, c.maps.a, 1, 0, 'W').ok, 'a walkable overlay stays walkable');
+  assert.deepStrictEqual(c.maps.b.overlay, [], 'a map without an overlay decodes to an empty overlay');
+  assert.ok(Rules.tryMove(c, c.maps.b, 0, 0, 'E').ok, 'no-overlay maps behave exactly as before');
+});
+
+test('a frozen shape override (shift-click mapping) renders a fixed autotile tile regardless of neighbours', () => {
+  const c = Content.build({
+    Autotile: [{ layout: 'blob', mask: 0, tiles: '1' }, { layout: 'blob', mask: 255, tiles: '5' }],
+    Tilesets: [{ id: 'gts', image: 'x.png', columns: 8, layout: 'blob' }],
+    Terrain: [{ id: 'g', name: 'G', autotile: 'gts', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }]
+  });
+  const cells = [['g']];                               // one isolated cell; edgeSame=false → neighbour mask 0
+  assert.strictEqual(Autotile.effectiveMask(cells, 0, 0, false, null), 0, 'isolated cell computes mask 0');
+  assert.strictEqual(Autotile.effectiveMask(cells, 0, 0, false, { '0,0': 255 }), 255, 'an override wins over the neighbours');
+  assert.strictEqual(Autotile.gridFor(c, cells, false, null)[0][0].tile, 1, 'no override → mask 0 → tile 1');
+  assert.strictEqual(Autotile.gridFor(c, cells, false, { '0,0': 255 })[0][0].tile, 5, 'override 255 → the centre tile (5)');
 });
 
 console.log(`\n${passed} world tests passed`);

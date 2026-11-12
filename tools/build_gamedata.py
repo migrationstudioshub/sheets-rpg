@@ -19,6 +19,14 @@ from openpyxl.styles import Alignment, Font, PatternFill
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IMP = os.path.join(ROOT, 'data', 'import')
 
+# Paper-doll art lives in type subfolders (base/ hair/ head/ chest/ hands/); route a sprite by its prefix.
+PD_SUBDIR = {'body': 'base', 'hair': 'hair', 'helm': 'head', 'hat': 'head', 'hood': 'head',
+             'chest': 'chest', 'shirt': 'chest', 'jacket': 'chest', 'vest': 'chest', 'armor': 'chest', 'coat': 'chest',
+             'back': 'back', 'sword': 'hands', 'gun': 'hands', 'offhand': 'hands'}
+def pd_path(name):
+    f = PD_SUBDIR.get(name.split('_', 1)[0], '')
+    return 'art/sprites/paperdoll/' + (f + '/' if f else '') + name + '.png'
+
 BLOB47 = {
     0: [47], 1: [44], 2: [41], 3: [22], 4: [43], 5: [32, 40, 48], 6: [6], 7: [50],
     8: [42], 9: [24], 10: [30, 31, 39], 11: [52], 12: [8], 13: [49], 14: [51], 15: [15],
@@ -110,7 +118,7 @@ def build():
         {'key': 'ranged_status_ms', 'value': 3000, 'notes': "How long a ranged enemy's applied status lasts (e.g. poison spit)"},
         {'key': 'engage_range', 'value': 24, 'notes': 'How far a monster will chase a player who shot/hit it from beyond its aggro range before giving up'},
         # --- paper-doll character look ---
-        {'key': 'start_hair', 'value': 'art/sprites/paperdoll/hair_messy.png', 'notes': 'Paper-doll hair a new character starts with (a hair_*.png layer); blank = bald. Hidden when a helm is worn.'},
+        {'key': 'start_hair', 'value': pd_path('hair_messy'), 'notes': 'Paper-doll hair a new character starts with (a hair_*.png layer); blank = bald. Hidden when a helm is worn.'},
         {'key': 'start_hair_color', 'value': 'hair_brown', 'notes': 'Starting hair colour: a hair_* ramp from Tint.TINTS (hair_black/dark/brown/auburn/ginger/blonde/grey/white)'},
     ]
     t['Tilesets'] = [
@@ -351,7 +359,7 @@ def build():
             'leather_armor': 'chest_leather_jacket', 'iron_armor': 'chest_riot_vest',
             'army_helmet': 'helm_army', 'pistol': 'gun_pistol', 'rifle': 'gun_pistol'}
     TINT = {'leather_armor': 'brown', 'iron_armor': 'navy', 'army_helmet': 'olive'}
-    worn = lambda n: f'art/sprites/paperdoll/{WORN[n]}.png' if n in WORN else ''
+    worn = lambda n: pd_path(WORN[n]) if n in WORN else ''
     ITEM_COLS = ['id', 'name', 'type', 'slot', 'stack_max', 'value', 'atk', 'def', 'heal', 'mp', 'hunger', 'thirst', 'grants_skill', 'equip_if', 'on_use']
     t['Items'] = [dict(zip(ITEM_COLS, r), sprite=sp(r[0]), worn_sprite=worn(r[0]), default_tint=TINT.get(r[0], ''), notes='') for r in [
         # id, name, type, slot, stack, value, atk, def, heal, mp, hunger, thirst, grants_skill, equip_if, on_use
@@ -446,7 +454,7 @@ def build():
     # Every class shares the survivor base body for now; the package also ships body_survivor_female,
     # body_zombie and body_zombie_female to assign per class (or per character) later.
     for _cls in t['Classes']:
-        _cls['body_sprite'] = 'art/sprites/paperdoll/body_survivor.png'
+        _cls['body_sprite'] = pd_path('body_survivor')
     STATUS_COLS = ['id', 'name', 'kind', 'amount', 'tick_ms', 'atk', 'def', 'slow', 'color', 'notes']
     t['Statuses'] = [dict(zip(STATUS_COLS, r)) for r in [
         ('infection', 'Infected', 'infection', 2, 3000, 0, 0, 1, '#9acd32', 'From a zombie bite: worsens each tick and never fades on its own. Cure with an antidote (on_use: cure) or turn.'),

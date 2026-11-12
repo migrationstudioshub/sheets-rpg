@@ -22,26 +22,38 @@ var Autotile = (function () {
   }
 
   /**
-   * For a map, returns a grid of {tileset, tile} (tile = 1-based index in the
-   * tileset image) for autotiled cells, null elsewhere. Variants are chosen by
-   * position, so the same map always looks the same.
+   * For one terrain grid (base or overlay), returns a grid of {tileset, tile}
+   * (tile = 1-based index in the tileset image) for autotiled cells, null elsewhere.
+   * Empty cells ('' on the overlay) have no terrain def, so they are null and count
+   * as "different" for their neighbours' edge masks. Variants are chosen by position,
+   * so the same map always looks the same.
    */
-  function grid(content, map) {
-    var edgeSame = content.config.autotile_edge_same !== false;
-    return map.terrain.map(function (row, y) {
+  // The shape a cell draws: a frozen override (hand-placed via shift-click mapping) wins, else the mask
+  // computed from neighbours. `overrides` is a sparse { "x,y": mask } map (null/absent = autotile).
+  function effectiveMask(cells, x, y, edgeSame, overrides) {
+    if (overrides) { var o = overrides[x + ',' + y]; if (o != null) return o; }
+    return mask(cells, x, y, edgeSame);
+  }
+
+  function gridFor(content, cells, edgeSame, overrides) {
+    if (edgeSame === undefined) edgeSame = content.config.autotile_edge_same !== false;
+    return (cells || []).map(function (row, y) {
       return row.map(function (tid, x) {
         var t = content.terrain[tid];
         if (!t || !t.autotile) return null;
         var ts = content.tilesets[t.autotile];
         var table = ts && content.autotile[ts.layout];
         if (!table) return null;
-        var options = table[mask(map.terrain, x, y, edgeSame)];
+        var options = table[effectiveMask(cells, x, y, edgeSame, overrides)];
         if (!options || !options.length) return null;
         return { tileset: ts.id, tile: options[(y * 31 + x * 17) % options.length] };
       });
     });
   }
 
-  return { mask: mask, grid: grid };
+  /** Back-compat: autotile a map's base terrain grid. */
+  function grid(content, map) { return gridFor(content, map.terrain, content.config.autotile_edge_same !== false); }
+
+  return { mask: mask, effectiveMask: effectiveMask, grid: grid, gridFor: gridFor };
 })();
 if (typeof module !== 'undefined') module.exports = Autotile;

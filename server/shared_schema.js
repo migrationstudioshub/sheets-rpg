@@ -48,9 +48,10 @@ var Schema = (function () {
       f('tiles', 'text', '', 'Comma list of 1-based tile indices')
     ] },
     terrain: { collection: 'terrain', id: 'id', label: 'Terrain', authored: 'studio', fields: [
-      f('id', 'text', ''), f('name', 'text', ''), f('color', 'color', '#000000', 'Base colour drawn under the tile'),
+      f('id', 'text', ''), f('name', 'text', ''),
       f('sprite', 'image', '', 'Non-autotiled sprite (optional)'),
       f('autotile', 'ref', '', 'Autotiled: which tileset', { ref: 'tilesets' }),
+      f('layer', 'select', 'base', 'Layer this paints on by default: base (opaque ground) or overlay (transparent, sits on top of the ground)', { options: ['base', 'overlay'] }),
       f('frames', 'number', 1), f('frame_ms', 'number', 200),
       f('pass_n', 'bool', true, 'Can leave northward'), f('pass_e', 'bool', true),
       f('pass_s', 'bool', true), f('pass_w', 'bool', true), f('notes', 'text', '')

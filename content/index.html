@@ -28,6 +28,14 @@
   #list .rec small { color: var(--dim); }
   #list .rec .rbody { min-width: 0; overflow: hidden; }
   #list .rthumb { width: 28px; height: 28px; flex: none; object-fit: contain; image-rendering: pixelated; background: #14161b; border-radius: 4px; }
+  #list .rthumb.ph { border: 1px dashed var(--line); background: transparent; }   /* no art yet */
+  #list .listgroup { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin: 10px 2px 2px; }
+  #list .listgroup:first-of-type { margin-top: 2px; }
+  /* Base Tile / Autotile segmented toggle (terrain form) */
+  #form .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  #form .seg .segbtn { border: 0; border-radius: 0; background: #262a33; color: var(--text); padding: 5px 14px; cursor: pointer; }
+  #form .seg .segbtn + .segbtn { border-left: 1px solid var(--line); }
+  #form .seg .segbtn.on { background: #3d6fb6; color: #fff; }
   #form { overflow: auto; padding: 14px 16px; }
   #form .field { margin-bottom: 10px; max-width: 540px; }
   #form label { display: block; color: var(--dim); font-size: 12px; margin-bottom: 3px; }
@@ -62,6 +70,11 @@
   #form .picker .caret { color: var(--dim); }
   #form .thumb { width: 24px; height: 24px; flex: none; object-fit: contain; image-rendering: pixelated; background: #0e1014; border-radius: 3px; }
   #form .thumb.ph { border: 1px dashed var(--line); background: transparent; }
+  /* light checkerboard so line-art sprites (e.g. black hair) stay visible, not lost on dark */
+  #form .thumb.lit { background-color: #c8ccd2;
+    background-image: linear-gradient(45deg, #9aa0a8 25%, transparent 25%, transparent 75%, #9aa0a8 75%),
+                      linear-gradient(45deg, #9aa0a8 25%, transparent 25%, transparent 75%, #9aa0a8 75%);
+    background-size: 8px 8px; background-position: 0 0, 4px 4px; }
   #form .swatch { width: 24px; height: 16px; flex: none; border-radius: 3px; border: 1px solid rgba(255,255,255,.15); }
   #form .swatch.none { background: repeating-linear-gradient(45deg, #2a2a2a 0 4px, #1b1b1b 4px 8px); }
   #form .pickpop { display: none; position: absolute; z-index: 50; left: 0; top: 100%; margin-top: 2px; width: max(220px, 100%);
@@ -70,6 +83,26 @@
   #form .pickitem { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
   #form .pickitem:hover { background: #2f4f7a; }
   #form .pickitem.on { outline: 1px solid var(--accent); }
+  /* /art file browser (collapsible folder tree) + inline image preview */
+  #form .pickpop.art { width: max(340px, 100%); max-height: 340px; }
+  #form .picksearch { width: 100%; margin-bottom: 4px; }
+  #form .pickfolder { display: flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 6px; cursor: pointer; color: var(--dim); font-size: 12px; user-select: none; }
+  #form .pickfolder:hover { background: #2a2f3a; color: var(--text); }
+  #form .pickfolder .tw { width: 12px; flex: none; text-align: center; }
+  #form .imagefield { display: flex; flex-direction: column; gap: 6px; }
+  #form .imagefield .row { display: flex; gap: 6px; align-items: center; }
+  #form .imagefield .row > input { flex: 1; min-width: 0; }
+  #form .imgprev { width: 72px; height: 72px; object-fit: contain; image-rendering: pixelated; background: #0e1014; border: 1px solid var(--line); border-radius: 6px; }
+  /* whole-sheet preview for an autotile terrain (below its picker), like the Base Tile preview */
+  #form .autoprev { display: block; max-width: 100%; max-height: 240px; width: auto; height: auto; margin-top: 6px;
+    object-fit: contain; image-rendering: pixelated; background: #0e1014; border: 1px solid var(--line); border-radius: 6px; }
+  /* hover-to-zoom popup for small sprite thumbnails (held ~1s) */
+  .sprhover { position: fixed; z-index: 2000; display: none; pointer-events: none; padding: 4px; border: 1px solid var(--accent);
+    border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,.6); background-color: #c8ccd2;
+    background-image: linear-gradient(45deg, #9aa0a8 25%, transparent 25%, transparent 75%, #9aa0a8 75%),
+                      linear-gradient(45deg, #9aa0a8 25%, transparent 25%, transparent 75%, #9aa0a8 75%);
+    background-size: 14px 14px; background-position: 0 0, 7px 7px; }
+  .sprhover img { display: block; width: 160px; height: 160px; object-fit: contain; image-rendering: pixelated; }
   .note { color: var(--dim); font-size: 12px; }
   .status .dirty { color: var(--warn); } .status .clean { color: var(--good); } .status .bad { color: var(--bad); }
   .empty { color: var(--dim); padding: 24px; }

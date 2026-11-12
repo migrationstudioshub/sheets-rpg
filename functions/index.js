@@ -50,7 +50,8 @@ async function mergeMaps(content) {
   snap.forEach(doc => {
     const m = doc.data(); if (!m || !m.id) return;
     content.maps[m.id] = { id: m.id, name: m.name || m.id, width: m.width, height: m.height,
-      terrain: MapCode.decode(m.terrain), entities: m.entities || [] };
+      terrain: MapCode.decode(m.terrain), overlay: MapCode.decode(m.overlay || []),
+      shapes: m.shapes || {}, overlayShapes: m.overlayShapes || {}, entities: m.entities || [] };
   });
 }
 async function getContent() {
@@ -94,7 +95,9 @@ async function publishMap(map, key) {
   const doc = {
     id: String(map.id), name: String(map.name || map.id),
     width: Number(map.width) || 0, height: Number(map.height) || 0,
-    terrain: map.terrain, entities: Array.isArray(map.entities) ? map.entities : [],
+    terrain: map.terrain, overlay: map.overlay || null,
+    shapes: map.shapes || null, overlayShapes: map.overlayShapes || null,
+    entities: Array.isArray(map.entities) ? map.entities : [],
     updatedAt: Date.now()
   };
   await admin.firestore().doc('maps/' + doc.id).set(doc);
@@ -105,6 +108,16 @@ async function deleteMap(id, key) {
   requireEditor(key);
   if (!/^[a-z0-9_]+$/i.test(String(id || ''))) throw new Error('bad map id');
   await admin.firestore().doc('maps/' + id).delete();
+  // A map can also live in the published content blob (a seed/legacy map never individually saved).
+  // Strip it there too, or deleting it looks successful but the blob map reappears on the next load.
+  const pub = await getPublished();
+  if (pub && pub.tables && ((pub.tables.Maps || []).some(r => String(r.id) === String(id)) ||
+      (pub.tables.MapEntities || []).some(r => String(r.map) === String(id)))) {
+    const t = pub.tables;
+    t.Maps = (t.Maps || []).filter(r => String(r.id) !== String(id));
+    t.MapEntities = (t.MapEntities || []).filter(r => String(r.map) !== String(id));
+    await admin.firestore().doc('published/current').set({ tables: t, version: Date.now().toString(36), updatedAt: Date.now() });
+  }
   _content = null; _contentAt = 0;
   return { ok: true, id: id };
 }

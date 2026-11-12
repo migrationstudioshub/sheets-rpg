@@ -21,7 +21,7 @@ var Gear = (function () {
   ];
   var CLOTH_TINTS = ['black', 'charcoal', 'navy', 'olive', 'khaki', 'brown', 'maroon', 'bone', 'hazard'];
   var HAIR_TINTS = ['hair_black', 'hair_dark', 'hair_brown', 'hair_auburn', 'hair_ginger', 'hair_blonde', 'hair_grey', 'hair_white'];
-  var BODY_SRC = '../art/sprites/paperdoll/body_survivor.png';
+  var BODY_SRC = '../art/sprites/paperdoll/base/body_survivor.png';
 
   var root = null, fields = null, statusEl = null, outEl = null;
   var bodyImg = null, serverOk = false, hasKey = false;

@@ -179,10 +179,10 @@ var Panels = (function () {
         return h('button', { className: 'item' + (on ? ' on' : ''), title: d.name + ' (' + d.id + ')' + (d.kind ? ' · ' + d.kind : '') + '\nDouble-click to edit',
           onclick: function () {
             if (type === 'terrain') { E.brush.terrain = d.id; E.layer = 'terrain';
-              if (d.layer === 'overlay' || d.layer === 'base') {   // only jump when this terrain has a default set; else keep the current layer
-                E.terrainLayer = d.layer;
-                if (d.layer === 'base' && E.tool === 'erase') E.tool = 'brush';   // the ground can't be erased
-              }
+              // Jump to this terrain's paint layer: an explicit per-terrain default wins; otherwise autotiles
+              // default to the overlay and plain tiles to the base (flip the odd one, e.g. a wall, by hand).
+              E.terrainLayer = (d.layer === 'overlay' || d.layer === 'base') ? d.layer : (d.autotile ? 'overlay' : 'base');
+              if (E.terrainLayer === 'base' && E.tool === 'erase') E.tool = 'brush';   // the ground can't be erased
               if (E.clearStamp) E.clearStamp(); }
             else if (type === 'monster') { E.brush.monster = d.id; E.layer = 'objects'; }
             else { E.brush.object = d.id; E.layer = 'objects'; }

@@ -81,6 +81,16 @@ var Panels = (function () {
     bar.appendChild(view); bar.appendChild(save);
   }
   // Base = the opaque ground layer; Overlay = autotiles drawn on top (transparent outside their shape).
+  // Which layer a terrain paints on by default when selected. Walls (…_top_auto.png) are structural — their
+  // front faces are drawn only from the base grid — so they're always base, even if tagged otherwise. Then an
+  // explicit per-terrain default wins; otherwise plain tiles are base and other autotiles overlay.
+  function terrainDefaultLayer(d) {
+    var ts = d.autotile && E.content.tilesets[d.autotile];
+    var info = ts && typeof Scatter !== 'undefined' && Scatter.tileInfo ? Scatter.tileInfo(ts.image) : null;
+    if (info && info.isWall) return 'base';
+    if (d.layer === 'overlay' || d.layer === 'base') return d.layer;
+    return d.autotile ? 'overlay' : 'base';
+  }
   function subBtn(id, label) {
     return h('button', { className: 'tool' + (E.terrainLayer === id ? ' on' : ''),
       title: id === 'base' ? 'Paint the ground layer (opaque)' : 'Paint autotiles on top of the ground (transparent outside their shape); the eraser clears them',
@@ -179,9 +189,7 @@ var Panels = (function () {
         return h('button', { className: 'item' + (on ? ' on' : ''), title: d.name + ' (' + d.id + ')' + (d.kind ? ' · ' + d.kind : '') + '\nDouble-click to edit',
           onclick: function () {
             if (type === 'terrain') { E.brush.terrain = d.id; E.layer = 'terrain';
-              // Jump to this terrain's paint layer: an explicit per-terrain default wins; otherwise autotiles
-              // default to the overlay and plain tiles to the base (flip the odd one, e.g. a wall, by hand).
-              E.terrainLayer = (d.layer === 'overlay' || d.layer === 'base') ? d.layer : (d.autotile ? 'overlay' : 'base');
+              E.terrainLayer = terrainDefaultLayer(d);   // walls + plain tiles → base, other autotiles → overlay
               if (E.terrainLayer === 'base' && E.tool === 'erase') E.tool = 'brush';   // the ground can't be erased
               if (E.clearStamp) E.clearStamp(); }
             else if (type === 'monster') { E.brush.monster = d.id; E.layer = 'objects'; }

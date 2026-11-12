@@ -153,8 +153,8 @@
     // Load the game code without the browser cache, so players always get the latest
     // version right after an update (GitHub Pages otherwise lets browsers keep files for 10 minutes).
     (function () {
-      var files = ['../shared/content.js', '../shared/autotile.js', '../shared/rules.js', '../shared/world.js',
-                   'js/config.js', 'js/assets.js', 'js/scatter.js', 'js/tint.js', 'js/render.js', 'js/api.js', 'js/main.js'];
+      var files = ['../shared/mapcode.js', '../shared/content.js', '../shared/autotile.js', '../shared/rules.js', '../shared/world.js',
+                   'js/config.js', 'js/assets.js', 'js/scatter.js', 'js/tint.js', 'js/render.js', 'js/content_store.js', 'js/api.js', 'js/main.js'];
       var v = Date.now();
       (function next(i) {
         if (i >= files.length) return;

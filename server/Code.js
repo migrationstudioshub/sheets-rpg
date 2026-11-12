@@ -27,7 +27,7 @@
  */
 
 var CONTENT_TABS = ['Config', 'Tilesets', 'Autotile', 'Terrain', 'Kinds', 'Objects', 'Maps', 'MapEntities',
-  'Items', 'Monsters', 'LootTables', 'Classes', 'Levels', 'Skills', 'Statuses'];
+  'Items', 'Monsters', 'LootTables', 'Classes', 'Levels', 'Skills', 'Statuses', 'Appearances'];
 var PLAYER_COLS = ['id', 'token', 'name', 'class', 'map', 'x', 'y', 'facing', 'hp', 'mp', 'level', 'xp', 'gold',
   'inventory', 'equipment', 'abilities', 'belt', 'mags', 'cooldowns', 'statuses', 'flags', 'respawn', 'created', 'last_seen'];
 var CACHE_S = 21600; // 6 hours, the CacheService maximum

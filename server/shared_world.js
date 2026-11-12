@@ -222,6 +222,56 @@ var World = (function () {
     (c.loot[table] || []).forEach(function (r) { if (rng() < r.chance) out.push({ item: r.item, qty: rint(rng, r.min, r.max) }); });
     return out;
   }
+  // Weighted pick: returns the index of one item by its weight, or -1 when the weights sum to <= 0.
+  // `extra` is an optional extra weight for a "none" outcome that maps to index -1.
+  function pickWeighted(items, weightOf, rng, extra) {
+    var total = Math.max(0, Number(extra) || 0), i;
+    for (i = 0; i < items.length; i++) total += Math.max(0, Number(weightOf(items[i])) || 0);
+    if (total <= 0) return -1;
+    var pick = rng() * total;
+    pick -= Math.max(0, Number(extra) || 0);
+    if (pick < 0) return -1;                               // landed on the "none" outcome
+    for (i = 0; i < items.length; i++) { pick -= Math.max(0, Number(weightOf(items[i])) || 0); if (pick < 0) return i; }
+    return items.length - 1;
+  }
+  function wOf(x) { return x.weight; }
+  // A container may list several loot tables each with a weight; one is picked per open, then rolled.
+  // `loot` is [{table, weight}]; falls back to the legacy single `loot_table` when there's no list.
+  function pickLootTable(pr, rng) {
+    var list = pr.loot;
+    if (typeof list === 'string') { try { list = JSON.parse(list); } catch (e) { list = null; } }
+    if (!Array.isArray(list) || !list.length) return pr.loot_table;
+    var i = pickWeighted(list, wOf, rng);
+    if (i < 0) return list[0].table;                      // all zero/blank weights: just use the first
+    return list[i].table;
+  }
+  // Roll one Appearance set's layers into a look: for each layer, weighted-pick one option (or none,
+  // by the layer's `empty` weight), plus an independent colour. Returns [{path, tint}] in draw order.
+  function rollSetLayers(set, rng) {
+    if (!set || !set.layers || !set.layers.length) return null;
+    var look = [];
+    set.layers.forEach(function (L) {
+      var opts = L.options || [];
+      var i = pickWeighted(opts, wOf, rng, L.empty);
+      if (i < 0 || !opts[i].sprite) return;
+      var tint = opts[i].tint || '';
+      if (L.tints && L.tints.length) {                    // independent colour pick for the chosen sprite
+        var ti = pickWeighted(L.tints, function (t) { return t.weight; }, rng);
+        if (ti >= 0) tint = L.tints[ti].tint;
+      }
+      look.push({ path: opts[i].sprite, tint: tint });
+    });
+    return look.length ? look : null;
+  }
+  // A monster may list several Appearance sets (e.g. a male and a female variant), each with a weight;
+  // one is picked per spawn, then rolled. `def.appearance` is [{set, weight}] (content.js parses it).
+  function rollLook(c, def, rng) {
+    var list = def && def.appearance;
+    if (!Array.isArray(list) || !list.length || !c.appearances) return null;
+    var i = list.length === 1 ? 0 : pickWeighted(list, wOf, rng);
+    if (i < 0) i = 0;
+    return rollSetLayers(c.appearances[list[i].set], rng);
+  }
 
   // ------------------------------------------------------------ space
   function walkableEntity(c, ws, mapId, e) {
@@ -274,7 +324,7 @@ var World = (function () {
    * Makes the map's monsters match its spawn points. Runs whenever the spawn points change
    * (edited in the editor or in Game Data): unchanged monsters stay where they are.
    */
-  function ensureMonsters(c, ws, mapId, now) {
+  function ensureMonsters(c, ws, mapId, now, rng) {
     var ms = mapState(ws, mapId), map = c.maps[mapId];
     if (!map) { ms.monsters = ms.monsters || []; return ms; }
     var want = [];
@@ -291,6 +341,8 @@ var World = (function () {
       var m = old[w.id];
       if (m && m.ref === w.ref) return m;
       m = { id: w.id, ref: w.ref, spawn: w.e.key, x: w.e.x, y: w.e.y, hp: c.monsters[w.ref].hp, dead: false, last: now, respawnAt: 0, facing: 'S' };
+      var look = rollLook(c, c.monsters[w.ref], rng || Math.random);     // random paper-doll look, fixed for this instance
+      if (look) m.look = look;
       place(c, ws, mapId, m, w.e, w.radius, w.i);
       return m;
     });
@@ -302,7 +354,7 @@ var World = (function () {
   /** Moves the world on to `now`: timers, respawns, monsters wandering, chasing and attacking. */
   function advance(c, ws, mapId, players, now, rng, ev) {
     var map = c.maps[mapId]; if (!map) return;
-    var ms = ensureMonsters(c, ws, mapId, now);
+    var ms = ensureMonsters(c, ws, mapId, now, rng);
     Object.keys(ms.timers).forEach(function (k) {
       var t = ms.timers[k]; if (now >= t.at) { setState(ws, mapId, k, t.state); delete ms.timers[k]; }
     });
@@ -925,7 +977,7 @@ var World = (function () {
       setState(ws, p.map, e.key, 'empty');
       if (refill) mapState(ws, p.map).timers[e.key] = { at: now + refill * 1000, state: null };
     }
-    var got = pr.contents ? list(pr.contents) : roll(c, pr.loot_table, rng);
+    var got = pr.contents ? list(pr.contents) : roll(c, pickLootTable(pr, rng), rng);
     ev.push({ type: 'info', to: p.id, text: 'You open the ' + name + '.' + (got.length ? '' : ' Nothing inside.') });
     got.forEach(function (g) { give(c, p, g.item, g.qty, ev); });
   }
@@ -1162,7 +1214,8 @@ var World = (function () {
       monsters: (ms.monsters || []).filter(function (m) { return !m.dead; }).map(function (m) {
         var d = c.monsters[m.ref];
         return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing,
-          statuses: (m.statuses || []).map(function (st) { return st.id; }) };
+          statuses: (m.statuses || []).map(function (st) { return st.id; }),
+          look: m.look || undefined };     // random paper-doll layers [{path, tint}], when the monster has an Appearance set
       }),
       players: (players || []).filter(function (q) { return q.id !== p.id && q.map === mapId; }).map(function (q) {
         // class + equipment + hair let other clients draw this player's paper-doll (base body, hair, worn gear)
@@ -1220,6 +1273,6 @@ var World = (function () {
     stateOf: stateOf, mapState: mapState, check: check, run: run, give: give, count: count,
     liveState: liveState, trapPhase: trapPhase, knownSkills: knownSkills, checkTarget: checkTarget,
     viewLookup: viewLookup, canSee: canSee, snapTarget: snapTarget, actionsAt: actionsAt, lineCells: lineCells, applyStatus: applyStatus,
-    rangedWeapon: rangedWeapon, shotReach: shotReach };
+    rangedWeapon: rangedWeapon, shotReach: shotReach, pickLootTable: pickLootTable, rollLook: rollLook };
 })();
 if (typeof module !== 'undefined') module.exports = World;

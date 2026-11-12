@@ -18,7 +18,11 @@ var Rules = (function () {
     return map._at[x + ',' + y] || [];
   }
 
+  // The terrain that governs a cell: the overlay terrain if one sits here, else the base. So a walkable
+  // overlay (decorative grass) changes nothing, but a blocking overlay (water over ground) blocks.
   function terrainAt(content, map, x, y) {
+    var ov = map.overlay && map.overlay[y] && map.overlay[y][x];
+    if (ov && content.terrain[ov]) return content.terrain[ov];
     var row = map.terrain[y];
     return row ? content.terrain[row[x]] : undefined;
   }

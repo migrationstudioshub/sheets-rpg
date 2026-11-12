@@ -54,5 +54,19 @@
    5,
    0.05
   ]
+ },
+ "dry_grass": {
+  "details": [
+   "dry_grass_details.png",
+   24,
+   8,
+   0.4
+  ],
+  "decals": [
+   "dry_grass_decals.png",
+   6,
+   6,
+   0.06
+  ]
  }
 }

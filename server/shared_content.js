@@ -29,6 +29,21 @@ var Content = (function () {
     try { return JSON.parse(v); } catch (e) { return d; }
   }
   function str(v) { return v == null ? '' : String(v).trim(); }
+  // A monster's `appearance` lists one or more Appearance sets ("set" or "set:weight", comma-separated);
+  // one is picked per spawn. Accepts an already-parsed array too (drafts may store it structured).
+  function parseLooks(v) {
+    if (Array.isArray(v)) return v.map(function (e) { return { set: str(e.set || e), weight: num(e.weight, 1) }; }).filter(function (e) { return e.set; });
+    return str(v).split(',').map(function (x) {
+      var a = x.trim().split(':'), id = (a[0] || '').trim();
+      return id ? { set: id, weight: num(a[1], 1) } : null;
+    }).filter(Boolean);
+  }
+  // Terrain may be stored compact-encoded (palette + RLE); decode it to a plain grid. Look MapCode up
+  // lazily so content.js keeps no load-order dependency (global in the browser, require() in Node).
+  function decodeGrid(v) {
+    var MC = (typeof MapCode !== 'undefined') ? MapCode : (typeof require !== 'undefined' ? require('./mapcode.js') : null);
+    return MC ? MC.decode(v) : v;
+  }
   function byId(rows, key) {
     var out = {};
     (rows || []).forEach(function (r) { var k = str(r[key || 'id']); if (k) out[k] = r; });
@@ -63,8 +78,9 @@ var Content = (function () {
 
     (tables.Terrain || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
-      c.terrain[id] = { id: id, name: str(r.name) || id, color: str(r.color) || '#000000',
-        sprite: str(r.sprite), autotile: str(r.autotile), frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200),
+      c.terrain[id] = { id: id, name: str(r.name) || id,
+        sprite: str(r.sprite), autotile: str(r.autotile), layer: str(r.layer) === 'overlay' ? 'overlay' : (str(r.layer) === 'base' ? 'base' : ''),
+        frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200),
         pass: { n: bool(r.pass_n), e: bool(r.pass_e), s: bool(r.pass_s), w: bool(r.pass_w) } };
     });
 
@@ -87,9 +103,14 @@ var Content = (function () {
 
     (tables.Maps || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
-      var grid = json(r.terrain, []);
+      var grid = decodeGrid(json(r.terrain, []));
+      // Optional second terrain grid drawn on top of the base (overlay autotiles, transparent outside their
+      // shape). Absent/empty on older maps, which then behave exactly as before (base layer only).
+      var overlay = decodeGrid(json(r.overlay, []));
+      // Frozen autotile shapes from shift-click mapping: sparse { "x,y": mask } per layer, render-only.
       c.maps[id] = { id: id, name: str(r.name) || id, width: num(r.width, grid[0] ? grid[0].length : 0),
-        height: num(r.height, grid.length), terrain: grid, entities: [] };
+        height: num(r.height, grid.length), terrain: grid, overlay: overlay,
+        shapes: json(r.shapes, {}), overlayShapes: json(r.overlayShapes, {}), entities: [] };
     });
 
     (tables.MapEntities || []).forEach(function (r) {
@@ -97,7 +118,7 @@ var Content = (function () {
       m.entities.push({ key: str(r.key), x: num(r.x, 0), y: num(r.y, 0), ref: str(r.ref), data: json(r.data, {}) });
     });
 
-    c.items = {}; c.monsters = {}; c.loot = {}; c.classes = {}; c.levels = [];
+    c.items = {}; c.monsters = {}; c.loot = {}; c.classes = {}; c.levels = []; c.appearances = {};
     (tables.Items || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
       c.items[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), type: str(r.type) || 'material',
@@ -127,7 +148,28 @@ var Content = (function () {
         // 0 = melee only; >1 = can attack from that many tiles away (with line of sight)
         attackRange: num(r.attack_range, 0), rangedMs: Math.max(250, num(r.ranged_cooldown_ms, 1500)),
         rangedProjectile: bool(r.ranged_projectile), rangedStatus: str(r.ranged_status),
-        infectChance: num(r.infect_chance, 0) };
+        infectChance: num(r.infect_chance, 0),
+        // paper-doll monsters: one or more Appearance sets; the server picks one per spawn and rolls a look
+        appearance: parseLooks(r.appearance) };
+    });
+    // Appearance sets: an ordered list of layers (bottom->top = draw order); each layer weighted-picks
+    // one option per spawn (or none, by `empty` weight). An option is { sprite, tint, weight }; tint is a
+    // Tint ramp name (recolours the sprite's sibling .tint.png mask). Lets many monsters share a look pool.
+    (tables.Appearances || []).forEach(function (r) {
+      var id = str(r.id); if (!id) return;
+      var layers = json(r.layers, []).map(function (L) {
+        return { name: str(L.name), empty: num(L.empty, 0),
+          // sprite options for this layer (one is picked per spawn)
+          options: (L.options || []).map(function (o) {
+            return { sprite: str(o.sprite), tint: str(o.tint), weight: num(o.weight, 1) };
+          }),
+          // optional colour pool: when set, the chosen sprite is recoloured with one of these ramps
+          // (picked independently), so e.g. 9 hairstyles x 8 hair colours come from a short list
+          tints: (L.tints || []).map(function (t) {
+            return { tint: str(t.tint), weight: num(t.weight, 1) };
+          }) };
+      });
+      c.appearances[id] = { id: id, name: str(r.name) || id, layers: layers };
     });
     (tables.LootTables || []).forEach(function (r) {
       var t = str(r.table), it = str(r.item); if (!t || !it) return;

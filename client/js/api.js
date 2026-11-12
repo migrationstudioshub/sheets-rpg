@@ -17,7 +17,10 @@ var Api = (function () {
   // ---------- offline ----------
   function Offline() { this.mode = 'offline'; }
   Offline.prototype.loadContent = function () {
-    // A draft saved by the map editor in this browser wins over the repository data, so you can play-test edits.
+    // The Content Studio's draft wins over everything, so Play-test runs the real rules on your edits.
+    var cdraft = (typeof ContentStore !== 'undefined') ? ContentStore.getDraft() : null;
+    if (cdraft && Object.keys(cdraft).length) { this.usingDraft = true; return Promise.resolve(this.content = Content.build(cdraft)); }
+    // Otherwise a draft saved by the map editor in this browser wins over the repository data.
     // A draft made from older data (missing newer maps, monsters...) is ignored, and the game says so.
     var draft = store('sheetsrpg.editorDraft');
     return fetch(GAME_CONFIG.OFFLINE_TABLES, { cache: 'no-cache' }).then(function (r) { return r.json(); })
@@ -127,8 +130,8 @@ var Api = (function () {
       .then(function (r) { return r.json(); })
       .then(function (res) { if (res.error) throw new Error(res.error); return res; });
   };
-  Functions.prototype.loadContent = function () {        // content still lives in the Game Data sheet
-    return fetch(GAME_CONFIG.API_URL + '?action=content').then(function (r) { return r.json(); })
+  Functions.prototype.loadContent = function () {        // content now comes from the function (Firestore)
+    return fetch(this.url + '?action=content').then(function (r) { return r.json(); })
       .then(function (res) { if (res.error) throw new Error(res.error); return (this.content = res.content); }.bind(this));
   };
 
@@ -157,7 +160,7 @@ var Api = (function () {
     if (typeof location !== 'undefined' && /[?&]offline(\b|=)/.test(location.search)) return new Offline();
     if (typeof window !== 'undefined' && window.GAME_LAN) return new Lan();
     if (GAME_CONFIG.FUNCTIONS_URL) return new Functions(GAME_CONFIG.FUNCTIONS_URL);
-    return GAME_CONFIG.API_URL ? new Online(GAME_CONFIG.API_URL) : new Offline();
+    return new Offline();   // the referee is the Cloud Function; Apps Script is retired
   }
   return { create: create };
 })();

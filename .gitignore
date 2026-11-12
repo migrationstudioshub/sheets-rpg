@@ -18,7 +18,14 @@ tools/objpipe/raw/props/*
 tools/google_api_key.txt
 __pycache__/
 node_modules/
+# Electron desktop app: deps, the bundled frozen Python, and build output
+desktop/node_modules/
+desktop/python/
+desktop/dist/
+desktop/_python-embed.zip
 .clasprc.json
+# Firebase CLI debug log (local, written on deploy)
+firebase-debug.log
 .DS_Store
 ~$*.xlsx
 server/.clasp.json

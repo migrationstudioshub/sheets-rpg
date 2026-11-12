@@ -7,6 +7,7 @@ const path = require('path');
 const assert = require('assert');
 const Content = require('../shared/content.js');
 const Rules = require('../shared/rules.js');
+const Autotile = require('../shared/autotile.js');
 global.Rules = Rules;
 const World = require('../shared/world.js');
 
@@ -64,6 +65,62 @@ test('the hut chest gives its contents once per player, then is empty', () => {
   const q = World.newPlayer(s.c, 'p2', 'Other', 'rogue'); q.map = 'map_3'; q.x = 9; q.y = 7; q.facing = 'E';
   World.act(s.c, s.ws, q, { type: 'interact' }, 1000, mid, [q]);
   assert.strictEqual(World.count(q, 'wooden_sword'), 1);
+});
+
+test('a container with several weighted loot tables picks one per open, by weight', () => {
+  // zero-weight tables are never picked; a single positive weight is always picked
+  assert.strictEqual(World.pickLootTable({ loot: [{ table: 'a', weight: 0 }, { table: 'b', weight: 1 }] }, dice([0.5])), 'b');
+  assert.strictEqual(World.pickLootTable({ loot: [{ table: 'a', weight: 1 }, { table: 'b', weight: 0 }] }, dice([0.5])), 'a');
+  // weight splits the 0..1 roll: 1:3 → first table below 0.25, second above
+  const two = [{ table: 'a', weight: 1 }, { table: 'b', weight: 3 }];
+  assert.strictEqual(World.pickLootTable({ loot: two }, dice([0.1])), 'a');
+  assert.strictEqual(World.pickLootTable({ loot: two }, dice([0.9])), 'b');
+  // a JSON-string list (as stored in object properties) is parsed; all-zero weights fall back to the first
+  assert.strictEqual(World.pickLootTable({ loot: '[{"table":"x","weight":2}]' }, dice([0.5])), 'x');
+  assert.strictEqual(World.pickLootTable({ loot: [{ table: 'a', weight: 0 }, { table: 'b', weight: 0 }] }, dice([0.5])), 'a');
+  // no list: the legacy single loot_table still wins
+  assert.strictEqual(World.pickLootTable({ loot_table: 'legacy' }, dice([0.5])), 'legacy');
+  assert.strictEqual(World.pickLootTable({ loot: [], loot_table: 'legacy' }, dice([0.5])), 'legacy');
+});
+
+test('a paper-doll monster rolls a random layered look from its appearance set', () => {
+  const { c } = fresh();
+  // the walker references the seeded zombie_plain set (parsed into a weighted list of one)
+  assert.deepStrictEqual(c.monsters.walker.appearance, [{ set: 'zombie_plain', weight: 1 }]);
+  const set = c.appearances.zombie_plain;
+  assert.ok(set && set.layers.length >= 2, 'zombie_plain has layers');
+  // a roll yields layers in draw order, body first, with a path on each; tints map to Tint ramp names
+  const look = World.rollLook(c, c.monsters.walker, dice([0.5]));
+  assert.ok(Array.isArray(look) && look.length, 'rolled a look');
+  assert.match(look[0].path, /body_zombie/, 'body layer first');
+  look.forEach(l => assert.ok(l.path, 'every layer has a sprite path'));
+  // a monster with no appearance rolls nothing (keeps its flat sprite)
+  assert.strictEqual(World.rollLook(c, c.monsters.slime, dice([0.5])), null);
+  // an always-empty layer is skipped; a single-option layer is deterministic
+  const toy = { appearance: [{ set: 'toy', weight: 1 }] };
+  const c2 = { appearances: { toy: { layers: [
+    { name: 'body', empty: 0, options: [{ sprite: 'b.png', weight: 1 }], tints: [] },
+    { name: 'hat', empty: 1, options: [], tints: [] },                       // nothing to pick -> skipped
+    { name: 'coat', empty: 0, options: [{ sprite: 'c.png', weight: 1 }], tints: [{ tint: 'navy', weight: 1 }] }
+  ] } } };
+  assert.deepStrictEqual(World.rollLook(c2, toy, dice([0.5])),
+    [{ path: 'b.png', tint: '' }, { path: 'c.png', tint: 'navy' }]);
+});
+
+test('a monster can list several appearance sets; one is picked per spawn by weight', () => {
+  // the content layer: "male:1, female:3" parses into a weighted list
+  const c = Content.build({ Appearances: [
+    { id: 'male', name: 'M', layers: JSON.stringify([{ name: 'body', empty: 0, options: [{ sprite: 'bm.png', weight: 1 }], tints: [] }]) },
+    { id: 'female', name: 'F', layers: JSON.stringify([{ name: 'body', empty: 0, options: [{ sprite: 'bf.png', weight: 1 }], tints: [] }]) }
+  ], Monsters: [{ id: 'walker2', name: 'W', appearance: 'male:1, female:3' }] });
+  assert.deepStrictEqual(c.monsters.walker2.appearance, [{ set: 'male', weight: 1 }, { set: 'female', weight: 3 }]);
+  // the 1:3 split puts the male set below 0.25 of the roll, the female set above it
+  assert.strictEqual(World.rollLook(c, c.monsters.walker2, dice([0.1]))[0].path, 'bm.png');
+  assert.strictEqual(World.rollLook(c, c.monsters.walker2, dice([0.9]))[0].path, 'bf.png');
+  // a single set (the common case) is always used, whatever the roll
+  const one = Content.build({ Appearances: [{ id: 'z', name: 'z', layers: JSON.stringify([{ name: 'body', empty: 0, options: [{ sprite: 'bz.png', weight: 1 }], tints: [] }]) }],
+    Monsters: [{ id: 'm', name: 'M', appearance: 'z' }] });
+  assert.strictEqual(World.rollLook(one, one.monsters.m, dice([0.99]))[0].path, 'bz.png');
 });
 
 test('equipping a sword raises attack; using a potion heals and is consumed', () => {
@@ -706,6 +763,51 @@ test('a walker bite can infect; infection worsens each tick until an antidote cu
   World.give(s.c, s.p, 'antidote', 1, []);
   assert.match(texts(act(s, { type: 'use', item: 'antidote' }, 7200)), /infection fades/);
   assert.ok(!s.p.statuses.some(st => st.id === 'infection'), 'cured');
+});
+
+test('an overlay terrain governs passability: a blocking overlay over walkable ground blocks', () => {
+  const c = Content.build({
+    Terrain: [
+      { id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 },
+      { id: 'water', name: 'Water', color: '#36c', pass_n: 0, pass_e: 0, pass_s: 0, pass_w: 0 }
+    ],
+    Maps: [{ id: 'm', name: 'M', width: 3, height: 1,
+      terrain: JSON.stringify([['grass', 'grass', 'grass']]),
+      overlay: JSON.stringify([['', 'water', '']]) }]
+  });
+  const map = c.maps.m;
+  assert.ok(Rules.standable(c, map, 0, 0), 'plain grass is standable');
+  assert.ok(!Rules.standable(c, map, 1, 0), 'a water overlay over grass is not standable');
+  assert.ok(!Rules.tryMove(c, map, 0, 0, 'E').ok, 'cannot step onto the water overlay');
+});
+
+test('a walkable overlay does not block, and a map with no overlay is unchanged', () => {
+  const c = Content.build({
+    Terrain: [
+      { id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 },
+      { id: 'flowers', name: 'Flowers', color: '#5c5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }
+    ],
+    Maps: [
+      { id: 'a', name: 'A', width: 2, height: 1, terrain: JSON.stringify([['grass', 'grass']]), overlay: JSON.stringify([['flowers', '']]) },
+      { id: 'b', name: 'B', width: 2, height: 1, terrain: JSON.stringify([['grass', 'grass']]) }   // no overlay field
+    ]
+  });
+  assert.ok(Rules.tryMove(c, c.maps.a, 1, 0, 'W').ok, 'a walkable overlay stays walkable');
+  assert.deepStrictEqual(c.maps.b.overlay, [], 'a map without an overlay decodes to an empty overlay');
+  assert.ok(Rules.tryMove(c, c.maps.b, 0, 0, 'E').ok, 'no-overlay maps behave exactly as before');
+});
+
+test('a frozen shape override (shift-click mapping) renders a fixed autotile tile regardless of neighbours', () => {
+  const c = Content.build({
+    Autotile: [{ layout: 'blob', mask: 0, tiles: '1' }, { layout: 'blob', mask: 255, tiles: '5' }],
+    Tilesets: [{ id: 'gts', image: 'x.png', columns: 8, layout: 'blob' }],
+    Terrain: [{ id: 'g', name: 'G', autotile: 'gts', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }]
+  });
+  const cells = [['g']];                               // one isolated cell; edgeSame=false → neighbour mask 0
+  assert.strictEqual(Autotile.effectiveMask(cells, 0, 0, false, null), 0, 'isolated cell computes mask 0');
+  assert.strictEqual(Autotile.effectiveMask(cells, 0, 0, false, { '0,0': 255 }), 255, 'an override wins over the neighbours');
+  assert.strictEqual(Autotile.gridFor(c, cells, false, null)[0][0].tile, 1, 'no override → mask 0 → tile 1');
+  assert.strictEqual(Autotile.gridFor(c, cells, false, { '0,0': 255 })[0][0].tile, 5, 'override 255 → the centre tile (5)');
 });
 
 console.log(`\n${passed} world tests passed`);

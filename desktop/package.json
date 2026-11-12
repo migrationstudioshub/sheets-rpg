@@ -1,0 +1,45 @@
+{
+  "name": "sheets-rpg-studio",
+  "version": "0.1.0",
+  "description": "Desktop shell for the Sheets RPG authoring suite (Content Studio, Map Editor, Asset Studio, LAN host).",
+  "author": "Migration Studios",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "prepare-python": "node prepare_python.js",
+    "test": "node test_server.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.7.6",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.migrationstudios.sheetsrpgstudio",
+    "productName": "Sheets RPG Studio",
+    "directories": { "output": "dist" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "server.js",
+      "python.js",
+      "home.html",
+      "home.js",
+      "home.css",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "python", "to": "python" }
+    ],
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

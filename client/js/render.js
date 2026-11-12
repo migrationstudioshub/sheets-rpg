@@ -110,40 +110,48 @@ var Render = (function () {
     var g = c.getContext('2d');
     g.imageSmoothingEnabled = false;
     var edgeSame = content.config.autotile_edge_same !== false;
-    var auto = Autotile.grid(content, map);
+    var base = map.terrain, overlay = (map.overlay && map.overlay.length) ? map.overlay : null;
+    var auto = Autotile.gridFor(content, base, edgeSame, map.shapes);           // shapes = frozen overrides
+    var autoOv = overlay ? Autotile.gridFor(content, overlay, edgeSame, map.overlayShapes) : null;
     var Sc = typeof Scatter !== 'undefined' ? Scatter : null;
 
-    // layers 1-2 + variety: base colour, (base tile underlay +) autotile sheet, then scatter sprites.
+    // Draw one terrain layer at a cell. `underlay` = this is the opaque ground layer (draws the base-tile
+    // underlay so edges aren't holes, and a flat-colour fallback for artless terrain). The overlay layer
+    // passes underlay=false, so its autotile is transparent outside its shape and reveals the ground below.
+    function drawCell(cells, autoGrid, x, y, dx, dy, underlay, overrides) {
+      var tid = cells[y] && cells[y][x]; if (!tid) return;
+      var t = content.terrain[tid]; if (!t) return;
+      var a = autoGrid[y][x];
+      if (a) {
+        var ts = content.tilesets[a.tileset], img = Assets.get(ts.image);
+        var info = Sc && Sc.tileInfo(ts.image);
+        if (underlay && info && info.baseTile) {               // underlay: texture shows at ragged edges
+          var bimg = Assets.get(info.baseTile);
+          if (bimg) g.drawImage(bimg, 0, 0, bimg.width, bimg.height, dx, dy, T, T);
+        }
+        if (img) tileFromSheet(img, ts, a.tile, g, dx, dy, T);
+        if (info && info.scatterKey && Sc) {                   // variety layer (baked, so it's free per frame)
+          var interior = Autotile.effectiveMask(cells, x, y, edgeSame, overrides) === 255;
+          Sc.scatterFor(info.scatterKey, x, y, interior).forEach(function (s) {
+            var sh = Assets.get(Sc.sheetPath(info.dir, s.sheet)); if (!sh) return;
+            g.save();
+            if (s.flip) { g.translate(dx + T, dy); g.scale(-1, 1); g.drawImage(sh, s.sx, s.sy, NT, NT, 0, 0, T, T); }
+            else g.drawImage(sh, s.sx, s.sy, NT, NT, dx, dy, T, T);
+            g.restore();
+          });
+        }
+      } else if (t.sprite) {
+        var timg = Assets.get(t.sprite);
+        if (timg) { var f0 = frameOf(timg, t.frames, t.frameMs, 0); g.drawImage(timg, 0, 0, f0.sw, f0.fh, dx, dy, T, T); }
+      }
+      // no art → nothing drawn (an artless terrain shows empty, so missing art is obvious)
+    }
+
     for (var y = 0; y < map.height; y++) {
       for (var x = 0; x < map.width; x++) {
-        var t = content.terrain[map.terrain[y][x]];
         var dx = x * T, dy = y * T;
-        g.fillStyle = t ? t.color : '#ff00ff';                 // layer 1: base colour
-        g.fillRect(dx, dy, T, T);
-        if (!t) continue;
-        var a = auto[y][x];                                    // layer 2: terrain tile
-        if (a) {
-          var ts = content.tilesets[a.tileset], img = Assets.get(ts.image);
-          var info = Sc && Sc.tileInfo(ts.image);
-          if (info && info.baseTile) {                         // underlay: texture shows at ragged edges
-            var bimg = Assets.get(info.baseTile);
-            if (bimg) g.drawImage(bimg, 0, 0, bimg.width, bimg.height, dx, dy, T, T);
-          }
-          if (img) tileFromSheet(img, ts, a.tile, g, dx, dy, T);
-          if (info && info.scatterKey && Sc) {                 // variety layer (baked, so it's free per frame)
-            var interior = Autotile.mask(map.terrain, x, y, edgeSame) === 255;
-            Sc.scatterFor(info.scatterKey, x, y, interior).forEach(function (s) {
-              var sh = Assets.get(Sc.sheetPath(info.dir, s.sheet)); if (!sh) return;
-              g.save();
-              if (s.flip) { g.translate(dx + T, dy); g.scale(-1, 1); g.drawImage(sh, s.sx, s.sy, NT, NT, 0, 0, T, T); }
-              else g.drawImage(sh, s.sx, s.sy, NT, NT, dx, dy, T, T);
-              g.restore();
-            });
-          }
-        } else if (t.sprite) {
-          var timg = Assets.get(t.sprite);
-          if (timg) { var f0 = frameOf(timg, t.frames, t.frameMs, 0); g.drawImage(timg, 0, 0, f0.sw, f0.fh, dx, dy, T, T); }
-        }
+        drawCell(base, auto, x, y, dx, dy, true, map.shapes);            // ground layer (opaque)
+        if (autoOv) drawCell(overlay, autoOv, x, y, dx, dy, false, map.overlayShapes);   // overlay (transparent)
       }
     }
 

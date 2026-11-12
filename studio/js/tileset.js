@@ -42,7 +42,8 @@ var Tileset = (function () {
   function ensureDom() {
     if (root) return;
     var kind = h('select', { onchange: refreshConditional }, [
-      h('option', { value: 'ground', text: 'Ground terrain' }),
+      h('option', { value: 'ground', text: 'Ground terrain (autotile)' }),
+      h('option', { value: 'plain', text: 'Plain tile (no autotiling)' }),
       h('option', { value: 'wall', text: 'Wall (top + face)' })
     ]);
     var name = h('input', { placeholder: 'snake_case id, e.g. gravel or wall_concrete' });
@@ -79,12 +80,12 @@ var Tileset = (function () {
   }
 
   function refreshConditional() {
-    var ground = fields.kind.value === 'ground';
+    var kind = fields.kind.value, ground = kind === 'ground', plain = kind === 'plain';
     var f = root.querySelector('.gearform');
-    f._whatField.style.display = ground ? '' : 'none';
-    f._patternField.style.display = ground ? '' : 'none';
-    f._decalsField.style.display = ground ? '' : 'none';
-    f._matField.style.display = ground ? 'none' : '';
+    f._whatField.style.display = (ground || plain) ? '' : 'none';   // both need a surface texture
+    f._patternField.style.display = (ground || plain) ? '' : 'none';
+    f._decalsField.style.display = ground ? '' : 'none';            // plain tiles have no scatter layer
+    f._matField.style.display = kind === 'wall' ? '' : 'none';
   }
 
   // ---- shared key handling (same local server + localStorage key as the Gear view) ----
@@ -121,15 +122,15 @@ var Tileset = (function () {
   function showKeySetup() { setStatus(''); outEl.innerHTML = ''; outEl.appendChild(keyField()); }
 
   function generate() {
-    var kind = fields.kind.value;
-    var body = { kind: kind, name: fields.name.value.trim() };
-    if (kind === 'ground') { body.what = fields.what.value.trim(); body.decals = fields.decals.value.trim(); body.pattern = fields.pattern.checked; }
+    var sel = fields.kind.value, plain = sel === 'plain', kind = plain ? 'ground' : sel;
+    var body = { kind: kind, plain: plain, name: fields.name.value.trim() };
+    if (kind === 'ground') { body.what = fields.what.value.trim(); body.pattern = fields.pattern.checked; if (!plain) body.decals = fields.decals.value.trim(); }
     else { body.material = fields.material.value; }
     if (!/^[a-z0-9_]+$/.test(body.name)) { setStatus('Name must be snake_case (lowercase letters, numbers, underscores).', 'bad'); return; }
-    if (kind === 'ground' && !body.what) { setStatus('Describe the ground surface.', 'bad'); return; }
+    if (kind === 'ground' && !body.what) { setStatus('Describe the ' + (plain ? 'tile' : 'ground') + ' surface.', 'bad'); return; }
     var k = localStorage.getItem(KEY_LS); if (k) body.google_api = k;
 
-    setStatus('Generating ' + kind + '… (Nano Banana takes a few seconds)', 'dirty');
+    setStatus('Generating ' + sel + '… (Nano Banana takes a few seconds)', 'dirty');
     outEl.innerHTML = '';
     fetch('/tile/make', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function (r) { return r.json(); })
@@ -144,7 +145,7 @@ var Tileset = (function () {
 
   function card(res) {
     var im = res.images || {};
-    var head = h('div', { className: 'gearcard-head' }, h('strong', { text: res.name }), '  ·  ' + res.kind);
+    var head = h('div', { className: 'gearcard-head' }, h('strong', { text: res.name }), '  ·  ' + (res.plain ? 'plain tile' : res.kind));
     var prev = h('div', { className: 'gearprev' });
     if (im.review) prev.appendChild(h('img', { src: dataUrl(im.review.b64), className: 'gearreview', alt: 'review' }));
     var sheet = im.auto || im.top;
@@ -159,7 +160,7 @@ var Tileset = (function () {
       if (!/^[a-z0-9_]+$/.test(dest)) { saved.textContent = 'Name must be snake_case.'; saved.className = 'note bad'; return; }
       saveBtn.disabled = true; saved.textContent = 'Saving…'; saved.className = 'note';
       fetch('/tile/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: dest, kind: res.kind, confirm: !!confirm }) })
+        body: JSON.stringify({ name: dest, kind: res.kind, plain: !!res.plain, confirm: !!confirm }) })
         .then(function (r) { return r.json(); })
         .then(function (r2) {
           saveBtn.disabled = false;

@@ -4,11 +4,12 @@
  */
 var E = {
   tables: null, content: null, mapId: null,
-  layer: 'terrain', tool: 'brush', paletteTab: 'terrain',
+  layer: 'terrain', terrainLayer: 'base', tool: 'brush', paletteTab: 'terrain',
   brush: { terrain: 'til_3', object: null, monster: null },
   view: { zoom: 2, x: 40, y: 40 },
   show: { terrain: true, objects: true, grid: true },
   selected: null, hover: null, mode: null,
+  stamp: null,   // shift-click clipboard: { w, h, cells:[{base, overlay, baseMask, overlayMask}] }
   dirty: { maps: {}, tabs: {}, deleted: [] },
   undo: [], redo: [],
   ground: null, groundDirty: true, needsDraw: true,
@@ -19,9 +20,49 @@ var E = {
   var canvas = document.getElementById('canvas'), g = canvas.getContext('2d');
   var drag = null, spaceDown = false;
 
+  // Autosave unsaved edits locally (online mode) so leaving the editor — switching tools, closing the
+  // desktop app — doesn't lose them; restored on reopen (see the start block). Debounced so a burst of
+  // paints is one write. Offline mode already persists through its own draft, so skip it there.
+  var wipTimer = null;
+  function scheduleWip() {
+    if (wipTimer || !E.tables || !Store.online()) return;
+    wipTimer = setTimeout(function () {
+      wipTimer = null;
+      if (!E.isDirty()) { Store.clearWip(); return; }
+      E.syncAll();
+      Store.saveWip(E.tables, E.base, E.dirty);
+    }, 600);
+  }
+  E.scheduleWip = scheduleWip;   // panels.js calls this after edits that set dirty directly
+
   function T() { return E.content.config.tile_size || 32; }
   function cellSize() { return T() * E.view.zoom; }
   E.map = function () { return E.content.maps[E.mapId]; };
+
+  // The terrain grid currently being painted: the base ground, or the overlay (autotiles drawn on top).
+  E.cells = function (map) {
+    map = map || E.map();
+    return E.terrainLayer === 'overlay' ? E.ensureOverlay(map) : map.terrain;
+  };
+  // Overlay starts empty ([]) to keep maps small; build a full W×H grid of '' the first time it's painted.
+  E.ensureOverlay = function (map) {
+    var ov = map.overlay;
+    if (!ov || ov.length !== map.height || (ov[0] && ov[0].length !== map.width)) {
+      var g = [];
+      for (var y = 0; y < map.height; y++) {
+        var row = [];
+        for (var x = 0; x < map.width; x++) row.push((ov && ov[y] && ov[y][x]) || '');
+        g.push(row);
+      }
+      map.overlay = g;
+    }
+    return map.overlay;
+  };
+  // The frozen-shape override map ({ "x,y": mask }) for the layer currently being painted.
+  E.shapeMap = function (map) {
+    map = map || E.map();
+    return E.terrainLayer === 'overlay' ? (map.overlayShapes = map.overlayShapes || {}) : (map.shapes = map.shapes || {});
+  };
 
   // ------------------------------------------------------------ data helpers
   E.entityAt = function (x, y) {
@@ -43,6 +84,12 @@ var E = {
     var old = (E.tables.Maps || []).filter(function (r) { return String(r.id) === map.id; })[0] || {};
     var row = Object.assign({}, old, { id: map.id, name: map.name, width: map.width, height: map.height,
       terrain: JSON.stringify(map.terrain) });
+    var ov = map.overlay;
+    var hasOv = ov && ov.some(function (r) { return r && r.some(function (c) { return c; }); });
+    if (hasOv) row.overlay = JSON.stringify(ov); else delete row.overlay;   // keep overlay-free maps clean
+    ['shapes', 'overlayShapes'].forEach(function (k) {                       // frozen shift-click shapes
+      var o = map[k]; if (o && Object.keys(o).length) row[k] = JSON.stringify(o); else delete row[k];
+    });
     if (row.notes === undefined) row.notes = '';
     var ents = map.entities.map(function (e) {
       return { map: map.id, key: e.key, x: e.x, y: e.y, ref: e.ref,
@@ -63,6 +110,7 @@ var E = {
     E.content = Content.build(E.tables);
     E.loadArt().then(function () { E.groundDirty = true; E.redraw(); Panels.palette(); });
     E.groundDirty = true; E.redraw(); Panels.all();
+    scheduleWip();   // definition edits set dirty.tabs then rebuild
     return Promise.resolve();
   };
 
@@ -81,7 +129,7 @@ var E = {
   E.markDirty = function (what) {
     if (what === 'map') { E.dirty.maps[E.mapId] = true; E.groundDirty = true; }
     else E.dirty.tabs[what] = true;
-    E.redraw(); Panels.status();
+    E.redraw(); Panels.status(); scheduleWip();
   };
   E.isDirty = function () { return Object.keys(E.dirty.maps).length || Object.keys(E.dirty.tabs).length || E.dirty.deleted.length; };
 
@@ -89,12 +137,15 @@ var E = {
   function snapshot() {
     var m = E.map();
     return { mapId: m.id, width: m.width, height: m.height, name: m.name,
-      terrain: JSON.parse(JSON.stringify(m.terrain)), entities: JSON.parse(JSON.stringify(m.entities)) };
+      terrain: JSON.parse(JSON.stringify(m.terrain)), overlay: JSON.parse(JSON.stringify(m.overlay || [])),
+      shapes: JSON.parse(JSON.stringify(m.shapes || {})), overlayShapes: JSON.parse(JSON.stringify(m.overlayShapes || {})),
+      entities: JSON.parse(JSON.stringify(m.entities)) };
   }
   function restore(s) {
     var m = E.content.maps[s.mapId]; if (!m) return;
     if (E.mapId !== s.mapId) E.openMap(s.mapId);
-    m.width = s.width; m.height = s.height; m.name = s.name; m.terrain = s.terrain; m.entities = s.entities;
+    m.width = s.width; m.height = s.height; m.name = s.name; m.terrain = s.terrain; m.overlay = s.overlay || [];
+    m.shapes = s.shapes || {}; m.overlayShapes = s.overlayShapes || {}; m.entities = s.entities;
     if (E.selected && !E.entityByKey(E.selected)) E.selected = null;
     E.markDirty('map'); Panels.all();
   }
@@ -104,10 +155,73 @@ var E = {
 
   // ------------------------------------------------------------ edits
   function setTerrain(x, y, id) {
-    var m = E.map();
-    if (!E.inside(x, y) || m.terrain[y][x] === id) return false;
-    m.terrain[y][x] = id; return true;
+    if (!E.inside(x, y)) return false;
+    var cells = E.cells();                        // base or overlay, whichever layer is active
+    var had = E.shapeMap()[x + ',' + y] != null;
+    if (cells[y][x] === id && !had) return false;
+    cells[y][x] = id;
+    delete E.shapeMap()[x + ',' + y];             // normal painting re-autotiles the cell (unfreezes it)
+    return true;
   }
+  // The eraser: clears an overlay cell back to empty; on objects it removes the entity. The base ground
+  // can't be erased (every cell needs a terrain), so erase is only offered on the overlay or objects.
+  function eraseAt(x, y) {
+    if (E.layer === 'terrain') return E.terrainLayer === 'overlay' ? setTerrain(x, y, '') : false;
+    return removeObject(x, y);
+  }
+
+  // ---- shift-click mapping: frozen shapes + a two-layer stamp clipboard ----
+  function writeCell(cells, overrides, x, y, id, maskVal) {
+    if (id !== undefined && cells[y]) cells[y][x] = id;
+    var key = x + ',' + y;
+    if (maskVal == null) delete overrides[key]; else overrides[key] = maskVal;
+  }
+  function edgeSame() { return E.content.config.autotile_edge_same !== false; }
+  // The exact mask a cell currently draws (override if frozen, else computed) — null for non-autotiles.
+  function shapeOf(cells, overrides, x, y, id) {
+    var t = id && E.content.terrain[id];
+    return (t && t.autotile) ? Autotile.effectiveMask(cells, x, y, edgeSame(), overrides) : null;
+  }
+  // Place just the centre tile (mask 255, no edges) of the palette terrain on the active layer.
+  function stampCenter(x, y) {
+    if (!E.inside(x, y) || !E.brush.terrain) return false;
+    var cells = E.cells(), ov = E.shapeMap();
+    if (cells[y][x] === E.brush.terrain && ov[x + ',' + y] === 255) return false;
+    writeCell(cells, ov, x, y, E.brush.terrain, 255);
+    return true;
+  }
+  // Paste the clipboard (both layers + frozen shapes) anchored at (x, y).
+  function pasteStamp(x, y) {
+    if (!E.stamp) return false;
+    var m = E.map(); E.ensureOverlay(m);
+    var baseOv = (m.shapes = m.shapes || {}), ovOv = (m.overlayShapes = m.overlayShapes || {});
+    var s = E.stamp, changed = false;
+    for (var j = 0; j < s.h; j++) for (var i = 0; i < s.w; i++) {
+      var tx = x + i, ty = y + j; if (!E.inside(tx, ty)) continue;
+      var cell = s.cells[j * s.w + i];
+      writeCell(m.terrain, baseOv, tx, ty, cell.base, cell.baseMask);
+      writeCell(m.overlay, ovOv, tx, ty, cell.overlay, cell.overlayMask);
+      changed = true;
+    }
+    return changed;
+  }
+  // Copy a region (or one cell) into the clipboard. freeze = capture exact shapes (Shift+Right), else ids only.
+  function copyRegion(a, b, freeze) {
+    var m = E.map();
+    var x0 = Math.min(a.x, b.x), y0 = Math.min(a.y, b.y), x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y);
+    var w = x1 - x0 + 1, h = y1 - y0 + 1, cells = [];
+    for (var y = y0; y <= y1; y++) for (var x = x0; x <= x1; x++) {
+      var base = (m.terrain[y] && m.terrain[y][x]) || '';
+      var overlay = (m.overlay && m.overlay[y] && m.overlay[y][x]) || '';
+      cells.push({ base: base, overlay: overlay,
+        baseMask: freeze ? shapeOf(m.terrain, m.shapes, x, y, base) : null,
+        overlayMask: freeze ? shapeOf(m.overlay, m.overlayShapes, x, y, overlay) : null });
+    }
+    E.stamp = { w: w, h: h, cells: cells };
+    Panels.status((freeze ? 'Copied ' : 'Picked ') + w + '×' + h + ' — Shift+Left-click to stamp it');
+  }
+  function stampAt(x, y) { return E.stamp ? pasteStamp(x, y) : stampCenter(x, y); }
+  E.clearStamp = function () { E.stamp = null; };
   function placeObject(x, y, ref) {
     if (!E.inside(x, y) || !ref) return false;
     var m = E.map(), old = E.entityAt(x, y);
@@ -130,7 +244,8 @@ var E = {
   };
   function placeMonster(x, y, monster) {
     var spawn = E.spawnObject();
-    if (!E.inside(x, y) || !monster || !spawn) return false;
+    if (!spawn) { Panels.status('Can\'t place monsters: no spawn object exists. Add an Object of kind "spawn" in the Content Studio and publish.', true); return false; }
+    if (!E.inside(x, y) || !monster) return false;
     var old = E.entityAt(x, y);
     if (old && old.ref === spawn && old.data.monster === monster) return false;
     var e = placeObject(x, y, spawn);
@@ -141,7 +256,7 @@ var E = {
   E.setPaletteTab = function (t) {
     E.paletteTab = t;
     E.layer = t === 'terrain' ? 'terrain' : 'objects';
-    if (E.tool === 'erase' && t === 'terrain') E.tool = 'brush';
+    if (E.tool === 'erase' && t === 'terrain' && E.terrainLayer !== 'overlay') E.tool = 'brush';
   };
   function paint(x, y) {
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
@@ -167,15 +282,16 @@ var E = {
     return changed;
   }
   function flood(x, y) {
-    var m = E.map(); if (!E.inside(x, y)) return false;
+    if (!E.inside(x, y)) return false;
     if (E.layer === 'objects') return rect({ x: x, y: y }, { x: x, y: y }, paint);
-    var from = m.terrain[y][x], to = E.brush.terrain;
+    var cells = E.cells();
+    var from = cells[y][x], to = (E.tool === 'erase' && E.terrainLayer === 'overlay') ? '' : E.brush.terrain;
     if (from === to) return false;
     var stack = [[x, y]];
     while (stack.length) {
       var p = stack.pop(), px = p[0], py = p[1];
-      if (!E.inside(px, py) || m.terrain[py][px] !== from) continue;
-      m.terrain[py][px] = to;
+      if (!E.inside(px, py) || cells[py][px] !== from) continue;
+      cells[py][px] = to;
       stack.push([px + 1, py], [px - 1, py], [px, py + 1], [px, py - 1]);
     }
     return true;
@@ -186,7 +302,7 @@ var E = {
     var eo = e && E.content.objects[e.ref];
     if (E.layer === 'objects' && e && eo && eo.kind === 'spawn' && e.data.monster) { E.brush.monster = e.data.monster; E.setPaletteTab('monsters'); }
     else if (E.layer === 'objects' && e) { E.brush.object = e.ref; E.setPaletteTab('objects'); }
-    else { E.brush.terrain = E.map().terrain[y][x]; E.setPaletteTab('terrain'); }
+    else { var picked = E.cells()[y][x]; if (picked) E.brush.terrain = picked; E.setPaletteTab('terrain'); }
     E.setTool('brush'); Panels.palette();
   }
 
@@ -211,7 +327,7 @@ var E = {
     var id = 'map_' + n, fill = E.brush.terrain;
     var terrain = [];
     for (var y = 0; y < h; y++) { var row = []; for (var x = 0; x < w; x++) row.push(fill); terrain.push(row); }
-    E.content.maps[id] = { id: id, name: name || id, width: w, height: h, terrain: terrain, entities: [] };
+    E.content.maps[id] = { id: id, name: name || id, width: w, height: h, terrain: terrain, overlay: [], shapes: {}, overlayShapes: {}, entities: [] };
     E.dirty.maps[id] = true;
     E.openMap(id);
     return id;
@@ -219,6 +335,9 @@ var E = {
   E.duplicateMap = function () {
     var src = E.map(), id = E.newMap(src.name + ' copy', src.width, src.height), m = E.content.maps[id];
     m.terrain = JSON.parse(JSON.stringify(src.terrain));
+    m.overlay = JSON.parse(JSON.stringify(src.overlay || []));
+    m.shapes = JSON.parse(JSON.stringify(src.shapes || {}));
+    m.overlayShapes = JSON.parse(JSON.stringify(src.overlayShapes || {}));
     m.entities = src.entities.map(function (e, i) { return { key: id + '.e' + (i + 1), x: e.x, y: e.y, ref: e.ref, data: JSON.parse(JSON.stringify(e.data)) }; });
     E.markDirty('map'); Panels.all();
   };
@@ -230,8 +349,19 @@ var E = {
       for (var x = 0; x < w; x++) row.push(y < m.height && x < m.width ? m.terrain[y][x] : fill);
       terrain.push(row);
     }
-    m.terrain = terrain; m.width = w; m.height = h;
+    var overlay = (m.overlay && m.overlay.length) ? [] : null;   // resize the overlay the same way, '' for new cells
+    if (overlay) for (var oy = 0; oy < h; oy++) {
+      var orow = [];
+      for (var ox = 0; ox < w; ox++) orow.push(oy < m.height && ox < m.width && m.overlay[oy] ? (m.overlay[oy][ox] || '') : '');
+      overlay.push(orow);
+    }
+    m.terrain = terrain; if (overlay) m.overlay = overlay; m.width = w; m.height = h;
     m.entities = m.entities.filter(function (e) { return e.x < w && e.y < h; });
+    ['shapes', 'overlayShapes'].forEach(function (k) {         // drop frozen shapes outside the new bounds
+      var o = m[k]; if (!o) return; var keep = {};
+      Object.keys(o).forEach(function (key) { var p = key.split(','); if (+p[0] < w && +p[1] < h) keep[key] = o[key]; });
+      m[k] = keep;
+    });
     E.markDirty('map'); E.fitView(); Panels.all();
   };
   E.deleteMap = function () {
@@ -244,7 +374,7 @@ var E = {
     if (E.dirty.deleted.indexOf(id) < 0) E.dirty.deleted.push(id);
     E.undo = E.undo.filter(function (s) { return s.mapId !== id; }); E.redo = [];
     E.openMap(Object.keys(E.content.maps)[0]);
-    Panels.status();
+    Panels.status(); scheduleWip();
   };
 
   // ------------------------------------------------------------ saving
@@ -257,6 +387,7 @@ var E = {
     Panels.status('saving…');
     return Store.save(changes, E.tables, E.base).then(function (r) {
       E.dirty = { maps: {}, tabs: {}, deleted: [] };
+      if (r.where === 'server') { E.base = Store.baseOf(E.tables); Store.clearWip(); }  // published: tables are now the base
       Panels.status(r.where === 'server' ? 'saved to Game Data' : 'saved as a draft in this browser');
     }).catch(function (e) { Panels.status('save failed: ' + e.message, true); });
   };
@@ -325,12 +456,15 @@ var E = {
       });
     }
 
-    if (drag && drag.kind === 'rect') {
-      var a = drag.start, b = drag.end;
-      g.fillStyle = 'rgba(78,161,255,.25)'; g.strokeStyle = '#4ea1ff'; g.lineWidth = 1;
+    if (drag && (drag.kind === 'rect' || drag.kind === 'copy')) {
+      var a = drag.start, b = drag.end, copy = drag.kind === 'copy';   // amber = copy-to-stamp, blue = paint rect
+      g.fillStyle = copy ? 'rgba(242,193,78,.18)' : 'rgba(78,161,255,.25)'; g.strokeStyle = copy ? '#f2c14e' : '#4ea1ff'; g.lineWidth = 1;
       var rx = vx + Math.min(a.x, b.x) * s, ry = vy + Math.min(a.y, b.y) * s;
       var rw = (Math.abs(a.x - b.x) + 1) * s, rh = (Math.abs(a.y - b.y) + 1) * s;
       g.fillRect(rx, ry, rw, rh); g.strokeRect(rx + .5, ry + .5, rw - 1, rh - 1);
+    } else if (E.stamp && E.layer === 'terrain' && E.hover && E.inside(E.hover.x, E.hover.y)) {
+      g.strokeStyle = '#f2c14e'; g.lineWidth = 1;                       // paste footprint of the clipboard
+      g.strokeRect(vx + E.hover.x * s + .5, vy + E.hover.y * s + .5, E.stamp.w * s - 1, E.stamp.h * s - 1);
     } else if (E.hover && E.inside(E.hover.x, E.hover.y)) {
       g.strokeStyle = E.mode ? '#f2c14e' : 'rgba(255,255,255,.8)'; g.lineWidth = 1;
       g.strokeRect(vx + E.hover.x * s + .5, vy + E.hover.y * s + .5, s - 1, s - 1);
@@ -343,8 +477,12 @@ var E = {
           var bo = c.objects[E.brush.object], bi = bo && Assets.get(bo.sprite);
           if (bi) g.drawImage(bi, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
         } else if (E.layer === 'terrain') {
-          var tt = c.terrain[E.brush.terrain];
-          if (tt) { g.fillStyle = tt.color; g.fillRect(vx + E.hover.x * s, vy + E.hover.y * s, s, s); }
+          var tt = c.terrain[E.brush.terrain], gx = vx + E.hover.x * s, gy = vy + E.hover.y * s, gts, gimg;
+          if (tt && tt.autotile && (gts = c.tilesets[tt.autotile]) && (gimg = Assets.get(gts.image))) {
+            var full = (c.autotile[gts.layout] || {})[255], gn = (full ? full[0] : 1) - 1, gc = gts.columns || 8, gz = gts.tileSize || 32;
+            g.drawImage(gimg, (gn % gc) * gz, Math.floor(gn / gc) * gz, gz, gz, gx, gy, s, s);
+          } else if (tt && tt.sprite && (gimg = Assets.get(tt.sprite))) g.drawImage(gimg, gx, gy, s, s);
+          // no art → no ghost fill (the cell outline still shows where you'll paint)
         }
         g.globalAlpha = 1;
       }
@@ -384,12 +522,23 @@ var E = {
   canvas.addEventListener('pointerdown', function (ev) {
     canvas.setPointerCapture(ev.pointerId);
     var cell = cellAt(ev);
-    if (ev.button === 1 || ev.button === 2 || spaceDown) {
+    if (ev.button === 1 || spaceDown) {            // middle button / Space pans (right-click is free now)
       drag = { kind: 'pan', sx: ev.clientX, sy: ev.clientY, vx: E.view.x, vy: E.view.y }; canvas.style.cursor = 'grabbing'; return;
+    }
+    if (ev.button === 2) {                          // right button copies into the stamp (drag selects more)
+      drag = { kind: 'copy', start: cell, end: cell, freeze: ev.shiftKey }; E.redraw(); return;
     }
     if (ev.button !== 0) return;
 
     if (E.mode) { Panels.pickAt(cell); E.redraw(); return; }
+
+    if (ev.shiftKey && E.layer === 'terrain') {     // Shift+Left stamps: paste the clipboard, else the centre tile
+      E.checkpoint();
+      var sch = stampAt(cell.x, cell.y);
+      drag = { kind: 'stamp', last: cell, changed: sch };
+      if (sch) E.markDirty('map');
+      return;
+    }
 
     if (E.tool === 'select') {
       var e = E.inside(cell.x, cell.y) && E.entityAt(cell.x, cell.y);
@@ -406,7 +555,7 @@ var E = {
     E.checkpoint();
     var changed = false;
     if (E.tool === 'brush') { changed = paint(cell.x, cell.y); drag = { kind: 'paint', last: cell, changed: changed }; }
-    else if (E.tool === 'erase') { changed = removeObject(cell.x, cell.y); drag = { kind: 'erase', last: cell, changed: changed }; }
+    else if (E.tool === 'erase') { changed = eraseAt(cell.x, cell.y); drag = { kind: 'erase', last: cell, changed: changed }; }
     else if (E.tool === 'rect') { drag = { kind: 'rect', start: cell, end: cell }; }
     else if (E.tool === 'fill') { changed = flood(cell.x, cell.y); if (changed) E.markDirty('map'); else E.undo.pop(); }
     if (changed) E.markDirty('map');
@@ -417,12 +566,13 @@ var E = {
     if (!E.hover || E.hover.x !== cell.x || E.hover.y !== cell.y) { E.hover = cell; Panels.cellInfo(cell); E.redraw(); }
     if (!drag) return;
     if (drag.kind === 'pan') { E.view.x = drag.vx + ev.clientX - drag.sx; E.view.y = drag.vy + ev.clientY - drag.sy; E.redraw(); return; }
-    if (drag.kind === 'paint' || drag.kind === 'erase') {
+    if (drag.kind === 'paint' || drag.kind === 'erase' || drag.kind === 'stamp') {
       if (cell.x === drag.last.x && cell.y === drag.last.y) return;
-      var ch = line(drag.last, cell, drag.kind === 'paint' ? paint : removeObject);
+      var fn = drag.kind === 'paint' ? paint : drag.kind === 'stamp' ? stampAt : eraseAt;
+      var ch = line(drag.last, cell, fn);
       drag.last = cell;
       if (ch) { drag.changed = true; E.markDirty('map'); }
-    } else if (drag.kind === 'rect') { drag.end = cell; E.redraw(); }
+    } else if (drag.kind === 'rect' || drag.kind === 'copy') { drag.end = cell; E.redraw(); }
     else if (drag.kind === 'move') {
       var e = E.entityByKey(drag.key);
       if (e && E.inside(cell.x, cell.y) && !E.entityAt(cell.x, cell.y)) {
@@ -434,9 +584,10 @@ var E = {
 
   function endDrag() {
     if (!drag) return;
-    if (drag.kind === 'rect') {
+    if (drag.kind === 'copy') { copyRegion(drag.start, drag.end, drag.freeze); }   // captures into E.stamp; no map change
+    else if (drag.kind === 'rect') {
       if (rect(drag.start, drag.end, paint)) E.markDirty('map'); else E.undo.pop();
-    } else if ((drag.kind === 'paint' || drag.kind === 'erase') && !drag.changed) E.undo.pop();
+    } else if ((drag.kind === 'paint' || drag.kind === 'erase' || drag.kind === 'stamp') && !drag.changed) E.undo.pop();
     drag = null; canvas.style.cursor = ''; E.redraw();
   }
   canvas.addEventListener('pointerup', endDrag);
@@ -475,12 +626,29 @@ var E = {
   });
   addEventListener('keyup', function (ev) { if (ev.key === ' ') { spaceDown = false; canvas.style.cursor = ''; } });
   addEventListener('resize', E.redraw);
-  addEventListener('beforeunload', function (ev) { if (E.isDirty()) { ev.preventDefault(); ev.returnValue = ''; } });
+  // Warn before leaving with unsaved changes — but NOT inside the desktop app (window.desktop, set by
+  // Electron's preload): there, a beforeunload that cancels silently blocks closing the window and
+  // switching tools, which wedges the whole app. On the web this still guards against losing edits.
+  if (!window.desktop) {
+    addEventListener('beforeunload', function (ev) { if (E.isDirty()) { ev.preventDefault(); ev.returnValue = ''; } });
+  }
 
   // ------------------------------------------------------------ start
   Store.load().then(function (res) {
     E.tables = res.tables; E.source = res.source;
     E.base = res.source === 'server' ? Store.baseOf(res.tables) : null;   // what the sheet looked like when loaded
+    // Restore unsaved work-in-progress (autosaved locally in online mode) so switching tools or restarting
+    // the app doesn't lose edits. Only when loaded from the server — offline keeps its own draft.
+    if (res.source === 'server') {
+      var wip = Store.loadWip();
+      if (wip && wip.tables) {
+        var unchanged = JSON.stringify(wip.base) === JSON.stringify(E.base);   // server same as when editing began
+        var keep = unchanged || confirm('You have unsaved editor changes from before, but the published game data has changed since.\n\n' +
+          'OK: keep your unsaved changes (Save may then report a conflict to resolve).\nCancel: discard them and open the latest data.');
+        if (keep) { E.tables = wip.tables; E.base = wip.base || E.base; E.dirty = wip.dirty || { maps: {}, tabs: {}, deleted: [] }; E.source = 'wip'; }
+        else { Store.clearWip(); }
+      }
+    }
     E.content = Content.build(E.tables);
     var first = Object.keys(E.content.objects).filter(function (k) { return E.content.objects[k].kind !== 'spawn'; })[0];
     E.brush.object = first || null;
@@ -493,6 +661,7 @@ var E = {
     E.mapId = E.content.maps[want] ? want : Object.keys(E.content.maps)[0];
     Panels.all(); E.openMap(E.mapId);
     Panels.status(E.source === 'draft' ? 'opened your draft from this browser' :
+      E.source === 'wip' ? 'restored your unsaved changes (not yet published)' :
       E.source === 'server' ? 'opened Game Data from the server' : 'opened the repository data (offline)');
   }).catch(function (e) { Panels.status('could not load: ' + e.message, true); console.error(e); });
 })();

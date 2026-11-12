@@ -93,11 +93,10 @@ var Panels = (function () {
   }
   function subBtn(id, label) {
     return h('button', { className: 'tool' + (E.terrainLayer === id ? ' on' : ''),
-      title: id === 'base' ? 'Paint the ground layer (opaque)' : 'Paint autotiles on top of the ground (transparent outside their shape); the eraser clears them',
+      title: id === 'base' ? 'Paint the ground layer (opaque); the eraser clears a cell to empty void' : 'Paint autotiles on top of the ground (transparent outside their shape); the eraser clears them',
       text: label,
       onclick: function () {
         E.terrainLayer = id;
-        if (id === 'base' && E.tool === 'erase') E.tool = 'brush';   // the ground can't be erased
         toolbar(); E.redraw();
       } });
   }
@@ -190,7 +189,6 @@ var Panels = (function () {
           onclick: function () {
             if (type === 'terrain') { E.brush.terrain = d.id; E.layer = 'terrain';
               E.terrainLayer = terrainDefaultLayer(d);   // walls + plain tiles → base, other autotiles → overlay
-              if (E.terrainLayer === 'base' && E.tool === 'erase') E.tool = 'brush';   // the ground can't be erased
               if (E.clearStamp) E.clearStamp(); }
             else if (type === 'monster') { E.brush.monster = d.id; E.layer = 'objects'; }
             else { E.brush.object = d.id; E.layer = 'objects'; }

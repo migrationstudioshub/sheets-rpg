@@ -163,10 +163,11 @@ var E = {
     delete E.shapeMap()[x + ',' + y];             // normal painting re-autotiles the cell (unfreezes it)
     return true;
   }
-  // The eraser: clears an overlay cell back to empty; on objects it removes the entity. The base ground
-  // can't be erased (every cell needs a terrain), so erase is only offered on the overlay or objects.
+  // The eraser clears a terrain cell to empty (overlay cell, or a base cell to void) or, on the objects
+  // layer, removes the entity. An empty base cell is safe: Rules treats a cell with no terrain as
+  // unwalkable void (terrainAt → undefined, tryMove 'no terrain', standable false) and it draws nothing.
   function eraseAt(x, y) {
-    if (E.layer === 'terrain') return E.terrainLayer === 'overlay' ? setTerrain(x, y, '') : false;
+    if (E.layer === 'terrain') return setTerrain(x, y, '');
     return removeObject(x, y);
   }
 
@@ -256,7 +257,6 @@ var E = {
   E.setPaletteTab = function (t) {
     E.paletteTab = t;
     E.layer = t === 'terrain' ? 'terrain' : 'objects';
-    if (E.tool === 'erase' && t === 'terrain' && E.terrainLayer !== 'overlay') E.tool = 'brush';
   };
   function paint(x, y) {
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
@@ -514,10 +514,7 @@ var E = {
   }
 
   E.setTool = function (t) {
-    E.tool = t;
-    // Erase stays on the active layer. On terrain the base can't be erased (every cell needs a tile), so
-    // point it at the overlay; objects erase removes entities. (No more jumping to the Objects layer.)
-    if (t === 'erase' && E.layer === 'terrain' && E.terrainLayer !== 'overlay') E.terrainLayer = 'overlay';
+    E.tool = t;   // erase works on whatever layer is active: base or overlay terrain, or objects
     Panels.toolbar(); E.redraw();
   };
 

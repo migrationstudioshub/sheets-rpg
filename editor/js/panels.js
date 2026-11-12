@@ -50,7 +50,7 @@ var Panels = (function () {
 
   // ------------------------------------------------------------ toolbar
   var TOOLS = [['select', 'Select / move', 'V'], ['brush', 'Brush', 'B'], ['rect', 'Rectangle', 'R'],
-    ['fill', 'Fill', 'F'], ['pick', 'Eyedropper', 'I'], ['erase', 'Erase', 'E']];
+    ['fill', 'Fill', 'F'], ['erase', 'Erase', 'E']];   // eyedropper removed: right-click picks into the stamp
   var ICONS = { select: '⬚', brush: '✎', rect: '▭', fill: '▧', pick: '⊙', erase: '⌫' };
 
   function toolbar() {

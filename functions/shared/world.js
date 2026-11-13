@@ -601,7 +601,7 @@ var World = (function () {
   function blocksSight(c, map, x, y, stateFn) {
     var t = Rl().terrainAt(c, map, x, y);
     if (!t || !(t.pass.n || t.pass.e || t.pass.s || t.pass.w)) return true;
-    return Rl().entitiesAt(map, x, y).some(function (e) {
+    return Rl().blockersAt(c, map, x, y).some(function (e) {
       var o = objOf(c, e); if (!o) return false;
       if (o.kind === 'door') return stateFn(e) !== 'open';
       return o.blocksSight;

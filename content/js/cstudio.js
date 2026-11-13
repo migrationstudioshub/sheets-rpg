@@ -320,12 +320,24 @@ var CStudio = (function () {
       if (fl.key === 'kind') { var sel = el.querySelector('select'); if (sel) sel.addEventListener('change', function () { setTimeout(objForm, 0); }); }
       form.appendChild(el);
     });
-    // Footprint
-    form.appendChild(h('div', { className: 'sub', text: 'Footprint — tiles, from the sprite’s bottom-left' }));
+    // Footprint — the solid tiles this object blocks (bottom-left anchored). w×h, default 1×1.
+    // Non-walkable objects block their whole footprint, not just the anchor tile. Width auto-fills
+    // from the sprite so a wide object blocks its whole base without extra typing.
+    form.appendChild(h('div', { className: 'sub', text: 'Footprint — solid tiles this blocks (from the bottom-left)' }));
+    var fpW = h('input', { type: 'number', min: 1, value: p.width == null ? '' : p.width, style: 'width:70px', title: 'Width in tiles', oninput: function (e) { setProp(o, 'width', e.target.value === '' ? undefined : Number(e.target.value)); } });
     form.appendChild(h('div', { className: 'lootrow' },
-      h('span', { className: 'lootlbl', text: 'w' }), h('input', { type: 'number', min: 1, value: p.width == null ? '' : p.width, style: 'width:70px', title: 'Width in tiles', oninput: function (e) { setProp(o, 'width', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+      h('span', { className: 'lootlbl', text: 'w' }), fpW,
       h('span', { className: 'lootlbl', text: 'h' }), h('input', { type: 'number', min: 1, value: p.height == null ? '' : p.height, style: 'width:70px', title: 'Height in tiles', oninput: function (e) { setProp(o, 'height', e.target.value === '' ? undefined : Number(e.target.value)); } }),
-      h('span', { className: 'note', text: '(blank = the sprite’s own size)' })));
+      h('span', { className: 'note', text: '(blank = 1 tile; width auto-fills from the sprite)' })));
+    if (p.width == null && o.sprite) {                       // detect the sprite’s tile-width and prefill it
+      var im = new Image();
+      im.onload = function () {
+        if (propsObj(o).width != null) return;               // the user typed one meanwhile
+        var tiles = Math.max(1, Math.round((im.naturalWidth / (Number(o.frames) || 1)) / 32));
+        if (tiles > 1) { setProp(o, 'width', tiles); fpW.value = tiles; }
+      };
+      im.src = spritePath(o.sprite);
+    }
     // Container loot
     if (o.kind === 'container') form.appendChild(containerLoot(o));
     // All kind properties, collapsible

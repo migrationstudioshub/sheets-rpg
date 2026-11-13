@@ -304,7 +304,7 @@ var World = (function () {
     if (!map || x < 0 || y < 0 || x >= map.width || y >= map.height) return false;
     var t = Rl().terrainAt(c, map, x, y);
     if (!t || !(t.pass.n || t.pass.e || t.pass.s || t.pass.w)) return false;
-    if (Rl().entitiesAt(map, x, y).some(function (e) { return !walkableEntity(c, ws, mapId, e); })) return false;
+    if (Rl().blockersAt(c, map, x, y).some(function (e) { return !walkableEntity(c, ws, mapId, e); })) return false;
     return !monsterAt(mapState(ws, mapId), x, y, self);
   }
   function facingCell(p) { var d = Rl().DIRS[p.facing] || Rl().DIRS.S; return { x: p.x + d.dx, y: p.y + d.dy }; }
@@ -637,7 +637,7 @@ var World = (function () {
       free: function (x, y) {
         if (!Rl().standable(c, map, x, y) && !Rl().entitiesAt(map, x, y).length) return false;
         var t = Rl().terrainAt(c, map, x, y); if (!t || !(t.pass.n || t.pass.e || t.pass.s || t.pass.w)) return false;
-        if (Rl().entitiesAt(map, x, y).some(function (e) {
+        if (Rl().blockersAt(c, map, x, y).some(function (e) {
           var o = objOf(c, e); if (!o || o.kind === 'spawn' || o.kind === 'trigger') return false;
           return o.kind === 'door' ? st(e) !== 'open' : !o.walkable;
         })) return false;

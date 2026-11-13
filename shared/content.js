@@ -93,11 +93,15 @@ var Content = (function () {
 
     (tables.Objects || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
+      var pr = json(r.properties, {});
       c.objects[id] = { id: id, name: str(r.name) || id, kind: str(r.kind) || 'deco',
         sprite: str(r.sprite), spriteTop: str(r.sprite_top), spriteStates: pairs(r.sprite_states), walkable: bool(r.walkable),
         blocksSight: bool(r.blocks_sight),
+        // Collision footprint in tiles (w×h, bottom-left anchored); authored in the Content Studio as
+        // properties.width / properties.height, default 1. Rules.blockersAt blocks the whole footprint.
+        footprintW: Math.max(1, num(pr.width, 1)), footprintH: Math.max(1, num(pr.height, 1)),
         frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200),
-        properties: json(r.properties, {}), onInteract: str(r.on_interact) };
+        properties: pr, onInteract: str(r.on_interact) };
     });
 
     (tables.Maps || []).forEach(function (r) {

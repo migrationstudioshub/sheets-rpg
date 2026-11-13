@@ -10,6 +10,7 @@ var Content = (function () {
     var s = String(v == null ? '' : v).trim().toLowerCase();
     return s === 'true' || s === '1' || s === 'yes';
   }
+  function boolDef(v, d) { return v == null || v === '' ? d : bool(v); }   // like bool, but blank keeps the default
   function num(v, d) {
     if (v === '' || v == null) return d;
     var n = Number(v);
@@ -100,6 +101,12 @@ var Content = (function () {
         // Collision footprint in tiles (w×h, bottom-left anchored); authored in the Content Studio as
         // properties.width / properties.height, default 1. Rules.blockersAt blocks the whole footprint.
         footprintW: Math.max(1, num(pr.width, 1)), footprintH: Math.max(1, num(pr.height, 1)),
+        // Directional passability for a walkable object (like terrain): can you leave/enter its cell
+        // that way? Default open, so an ordinary walkable object restricts nothing.
+        pass: { n: boolDef(pr.pass_n, true), e: boolDef(pr.pass_e, true), s: boolDef(pr.pass_s, true), w: boolDef(pr.pass_w, true) },
+        // Draw order relative to the player: 'auto' (base behind, tall overflow in front — the default),
+        // 'over' (whole object in front of characters) or 'under' (whole object behind them).
+        draw: pr.draw === 'over' || pr.draw === 'under' ? pr.draw : 'auto',
         frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200),
         properties: pr, onInteract: str(r.on_interact) };
     });

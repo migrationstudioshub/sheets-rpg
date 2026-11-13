@@ -60,11 +60,20 @@ var Rules = (function () {
     if (!to) return { ok: false, x: x, y: y, reason: 'no terrain' };
     if (from && !from.pass[d.out]) return { ok: false, x: x, y: y, reason: 'blocked side' };
     if (!to.pass[d.into]) return { ok: false, x: x, y: y, reason: 'blocked' };
+    // Leaving the current cell: a walkable object here can block one of its edges (one-way).
+    var hereObjs = blockersAt(content, map, x, y);
+    for (var h = 0; h < hereObjs.length; h++) {
+      var ho = content.objects[hereObjs[h].ref];
+      var hwalk = opts && opts.walkable ? opts.walkable(hereObjs[h]) : !(ho && !ho.walkable);
+      if (hwalk && ho && ho.pass && !ho.pass[d.out]) return { ok: false, x: x, y: y, reason: 'object side', entity: hereObjs[h].key };
+    }
     var ents = blockersAt(content, map, nx, ny);
     for (var i = 0; i < ents.length; i++) {
       var o = content.objects[ents[i].ref];
       var walk = opts && opts.walkable ? opts.walkable(ents[i]) : !(o && !o.walkable);
       if (!walk) return { ok: false, x: x, y: y, reason: 'object', entity: ents[i].key, tx: nx, ty: ny };
+      // Entering the target cell: a walkable object there can block the edge you'd come in through.
+      if (o && o.pass && !o.pass[d.into]) return { ok: false, x: x, y: y, reason: 'object side', entity: ents[i].key, tx: nx, ty: ny };
     }
     if (opts && opts.occupied) {
       var who = opts.occupied(nx, ny);

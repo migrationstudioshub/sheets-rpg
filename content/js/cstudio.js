@@ -338,6 +338,26 @@ var CStudio = (function () {
       };
       im.src = spritePath(o.sprite);
     }
+    // Draw order relative to the player, and one-way passability for walkable objects.
+    form.appendChild(h('div', { className: 'sub', text: 'Drawing & one-way movement' }));
+    var drawMode = p.draw === 'over' || p.draw === 'under' ? p.draw : 'auto';
+    form.appendChild(h('div', { className: 'field', title: 'Where the object is painted relative to characters' },
+      h('label', { text: 'Draw order' }),
+      h('div', { className: 'seg' }, ['auto', 'over', 'under'].map(function (m) {
+        return h('button', { type: 'button', className: 'segbtn' + (drawMode === m ? ' on' : ''),
+          text: m === 'auto' ? 'Auto' : m === 'over' ? 'Over player' : 'Under player',
+          onclick: function () { setProp(o, 'draw', m === 'auto' ? undefined : m); objForm(); } });
+      })),
+      h('div', { className: 'help', text: 'Auto: base behind the player, tall tops in front. Over: always in front (foreground). Under: always behind.' })));
+    form.appendChild(h('div', { className: 'field', title: 'Block leaving/entering this walkable object in a direction (one-way)' },
+      h('label', { text: 'Can pass (walkable objects only)' }),
+      h('div', { className: 'lootrow' }, [['n', 'N'], ['e', 'E'], ['s', 'S'], ['w', 'W']].map(function (d) {
+        var open = propsObj(o)['pass_' + d[0]] !== false;
+        return h('label', { className: 'row', style: 'margin-right:8px' },
+          h('input', { type: 'checkbox', checked: open, title: d[1], onchange: function (e) { setProp(o, 'pass_' + d[0], e.target.checked ? undefined : false); } }),
+          h('span', { text: ' ' + d[1] }));
+      })),
+      h('div', { className: 'help', text: 'Unticked = you cannot move that way across the object (e.g. a ledge you drop off but can’t climb). Ignored if the object isn’t walkable.' })));
     // Container loot
     if (o.kind === 'container') form.appendChild(containerLoot(o));
     // All kind properties, collapsible

@@ -15,6 +15,7 @@ var CStudio = (function () {
   var curIndex = -1;     // index into T[tab] of the record being edited
   var curLoot = null;    // selected loot-table name (loot is edited grouped by table)
   var filter = '';
+  var hasAssetServer = false;   // the local Asset Studio server (asset_server.py) is reachable → offer "Rescan art"
 
   function h(tag, props) {
     var el = document.createElement(tag);
@@ -59,6 +60,7 @@ var CStudio = (function () {
       Schema.list().forEach(function (t) { if (!Array.isArray(T[tab(t)])) T[tab(t)] = []; });
       type = Schema.authored('studio')[0];
       renderAll();
+      probeAssetServer();                                       // reveal "Rescan art" if the local art server is up
       setStatus(draft ? 'Editing your local draft.' : 'Loaded live content.', draft ? 'dirty' : 'clean');
     }).catch(function (e) { renderTop('Load failed'); setStatus('Could not load content: ' + e.message, 'bad'); });
   }
@@ -71,6 +73,7 @@ var CStudio = (function () {
     top.appendChild(h('span', { className: 'title', text: 'Content Studio' }));
     top.appendChild(h('span', { id: 'status', className: 'status note', text: msg || '' }));
     top.appendChild(h('span', { className: 'sp' }));
+    if (hasAssetServer) top.appendChild(h('button', { className: 'ghost', title: 'Rescan the art/ folder and rebuild the picker list (local app only)', text: '↻ Rescan art', onclick: rescanArt }));
     top.appendChild(h('button', { className: 'ghost', title: 'Play-test offline against this draft', text: '▶ Play-test', onclick: playtest }));
     top.appendChild(h('button', { className: 'ghost', title: 'Download the draft as JSON (for a repo snapshot)', text: 'Export', onclick: function () { ContentStore.exportFile(T, 'content.json'); } }));
     top.appendChild(h('button', { title: 'Reload live content, discarding the local draft', text: 'Discard draft', onclick: discard }));
@@ -81,6 +84,22 @@ var CStudio = (function () {
   function playtest() {
     ContentStore.setDraft(T);                                   // make sure the latest edits are in the draft
     window.open('../client/?offline', '_blank');
+  }
+  // The Asset Studio server (asset_server.py, behind the desktop app) can rescan art/ and rebuild the
+  // manifest. GitHub Pages has no such server, so only show the button when it answers.
+  function probeAssetServer() {
+    fetch('/gear/ping', { cache: 'no-cache' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { if (j && j.ok) { hasAssetServer = true; renderTop(); } })
+      .catch(function () { /* no local server (e.g. on Pages): leave the button hidden */ });
+  }
+  function rescanArt() {
+    setStatus('Rescanning art…', 'dirty');
+    fetch('/art/rebuild-manifest', { method: 'POST' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('the art server returned ' + r.status)); })
+      .then(function (res) { return loadManifest().then(function () { return res; }); })
+      .then(function (res) { renderList(); renderForm(); setStatus('Art list rebuilt ✓ (' + (res.count != null ? res.count : '?') + ' images).', 'clean'); })
+      .catch(function (e) { setStatus('Rescan failed: ' + e.message, 'bad'); });
   }
   function discard() {
     if (!confirm('Discard your local draft and reload the live content?')) return;

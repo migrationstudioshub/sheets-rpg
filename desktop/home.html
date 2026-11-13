@@ -7,52 +7,43 @@
 <link rel="stylesheet" href="home.css">
 </head>
 <body>
-  <header>
-    <h1>Sheets RPG Studio</h1>
-    <div class="sub">Author content, maps and art — then commit &amp; deploy as usual. No terminal needed.</div>
-  </header>
+  <!-- The top chrome stays visible at all times; each tool loads in a view below it. -->
+  <div id="chrome">
+    <header id="homebtn" title="Home — LAN host &amp; status">
+      <h1>Sheets RPG Studio</h1>
+    </header>
 
-  <div class="status" id="status">
-    <span><span class="dot" id="artdot"></span><span id="artlabel">Checking…</span></span>
-    <span>Project: <span class="path" id="projpath" title="Open the project folder">—</span></span>
-    <span>Port: <b id="port">—</b></span>
+    <nav class="tabs" id="tabs">
+      <button class="tab" data-tool="content">Content Studio</button>
+      <button class="tab" data-tool="editor">Map Editor</button>
+      <button class="tab" data-tool="studio" id="studiotab">Asset Studio<span class="tag" id="studiotag" style="display:none">art offline</span></button>
+      <button class="tab" data-tool="play">Play (offline)</button>
+    </nav>
+
+    <div class="status" id="status">
+      <span><span class="dot" id="artdot"></span><span id="artlabel">Checking…</span></span>
+      <span>Project: <span class="path" id="projpath" title="Open the project folder">—</span></span>
+      <span>Port: <b id="port">—</b></span>
+    </div>
   </div>
 
-  <main>
-    <div class="tiles">
-      <a class="tile" href="/content/">
-        <div class="t">Content Studio</div>
-        <div class="d">Items, classes, skills, monsters, statuses, loot, appearances. Edit a draft, play-test, publish.</div>
-      </a>
-      <a class="tile" href="/editor/">
-        <div class="t">Map Editor</div>
-        <div class="d">Draw maps, place objects and entities, set facings, play-test, publish maps.</div>
-      </a>
-      <a class="tile" id="studiotile" href="/studio/">
-        <div class="t">Asset Studio</div>
-        <div class="d">Generate gear, tilesets and map objects. Approved art is saved into the project's art folder.</div>
-        <span class="tag" id="studiotag" style="display:none">art engine offline</span>
-      </a>
-      <a class="tile" href="/client/?offline">
-        <div class="t">Play (offline)</div>
-        <div class="d">Run the game in-browser against your draft/data — single-player, no server, no cost.</div>
-      </a>
-    </div>
-
-    <div class="lan">
-      <h2>LAN host — same-WiFi multiplayer</h2>
-      <div class="d">Runs the real referee on this computer so people in the same room can join from a browser. Nothing touches the live cloud game.</div>
-      <div class="row">
-        <button class="primary" id="lanstart">Start LAN host</button>
-        <button id="lanstop" disabled>Stop</button>
-        <span class="hint" id="lanstatus" style="color:var(--dim);font-size:12px"></span>
+  <!-- Home panel: shown when no tool is active (the tool view is detached). -->
+  <div id="homebody">
+    <main>
+      <div class="lan">
+        <h2>LAN host — same-WiFi multiplayer</h2>
+        <div class="d">Runs the real referee on this computer so people in the same room can join from a browser. Nothing touches the live cloud game.</div>
+        <div class="row">
+          <button class="primary" id="lanstart">Start LAN host</button>
+          <button id="lanstop" disabled>Stop</button>
+          <span class="hint" id="lanstatus" style="color:var(--dim);font-size:12px"></span>
+        </div>
+        <div class="addrs" id="addrs"></div>
+        <div class="log" id="lanlog"></div>
       </div>
-      <div class="addrs" id="addrs"></div>
-      <div class="log" id="lanlog"></div>
-    </div>
-  </main>
-
-  <footer id="foot">Generated art and content are written into your project folder — commit and push them to deploy to the live site.</footer>
+    </main>
+    <footer id="foot">Pick a tool above. Generated art and content are written into your project folder — commit and push them to deploy to the live site.</footer>
+  </div>
 
   <script src="home.js"></script>
 </body>

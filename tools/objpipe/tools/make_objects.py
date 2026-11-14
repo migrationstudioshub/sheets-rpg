@@ -1,12 +1,12 @@
 """Make ONE map object (furniture, prop, vehicle, tree...) end to end, the way the pilot objects were made.
 
-  python3 make_objects.py --name bookshelf --size 1.0,1.9,0.4 --what "a tall wooden bookshelf with a few dusty books"
-  python3 make_objects.py --name chair --size 0.45,0.9,0.45 --box 26x40 --views down,up,side --what "a simple wooden kitchen chair"
-  python3 make_objects.py --name car_sedan --size 4.5,1.4,1.8 --free-top --what "a burned-out sedan, long side facing the viewer"
-  python3 make_objects.py --name sofa --size 2.0,0.9,0.9 --what "a torn fabric sofa" --variants 3
+  python3 make_objects.py --name bookshelf --size 1,1.6,0.4 --what "a tall wooden bookshelf with a few dusty books"
+  python3 make_objects.py --name chair --size 0.8,1,0.8 --box 26x40 --views down,up,side --what "a simple wooden kitchen chair"
+  python3 make_objects.py --name car_sedan --size 4,1.2,1.5 --free-top --what "a burned-out sedan, long side facing the viewer"
+  python3 make_objects.py --name sofa --size 2,0.9,0.9 --what "a torn fabric sofa" --variants 3
 
-  --size W,H,D   real size in metres; the size rule (STYLE_GUIDE.md) turns it into the canvas
-                 (whole tiles wide, height to the nearest 16px) - the 32x48 human is 1.8 m.
+  --size W,H,D   size in units (1 unit = 32px = one tile); the size rule (STYLE_GUIDE.md) turns it into
+                 the canvas (whole tiles wide, height to the nearest 16px) - the 32x48 human is 1.5 units tall.
   --box WxH      optional override of the object's box inside the canvas (e.g. chairs read better bigger).
   --views        down (faces the viewer, default), up (seen from behind), side (faces right; the engine
                  flips it for left). Extra views are generated from the 'down' result so they match.
@@ -114,7 +114,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", required=True, help="snake_case id, e.g. bookshelf")
     ap.add_argument("--what", required=True, help="what the object looks like (no clutter on top)")
-    ap.add_argument("--size", required=True, help="real size in metres: width,height,depth")
+    ap.add_argument("--size", required=True, help="size in units (1 = 32px): width,height,depth")
     ap.add_argument("--box", help="override the object box inside the canvas, e.g. 26x40")
     ap.add_argument("--h", type=float, help="override canvas height in tiles (e.g. 1.5)")
     ap.add_argument("--views", default="down", help="comma list of down,up,side")

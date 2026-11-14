@@ -40,7 +40,7 @@ var MapObjects = (function () {
     if (root) return;
     var name = h('input', { placeholder: 'snake_case id, e.g. bookshelf' });
     var what = h('textarea', { rows: 2, placeholder: 'what it looks like, e.g. "a tall wooden bookshelf with a few dusty books"' });
-    var size = h('input', { placeholder: 'W,H,D in metres, e.g. 1.0,1.9,0.4', value: '1.0,1.0,0.6' });
+    var size = h('input', { placeholder: 'W,H,D in units (1 = 32px), e.g. 1,1.6,0.4', value: '1,1,0.6' });
     var box = h('input', { placeholder: 'optional WxH px override, e.g. 26x40' });
     var down = h('input', { type: 'checkbox', checked: true });
     var up = h('input', { type: 'checkbox' });
@@ -59,7 +59,7 @@ var MapObjects = (function () {
       h('div', { className: 'form' },
         field('Name', name, 'Lowercase, numbers, underscores. Becomes the file name.'),
         field('Description', what),
-        field('Size (m)', size, 'Real width,height,depth. The 32×48 human is 1.8 m; sets the canvas by the size rule.'),
+        field('Size (units)', size, 'Width,height,depth — 1 unit = 32px = one tile (floats OK). Height is the front face; depth is how much of the top you see, capped at 1 tile. The 32×48 human is 1.5 units tall.'),
         field('Box override (optional)', box, 'Force the object box inside the canvas (chairs read better a bit bigger).'),
         field('Views', views, 'down faces the viewer; up = from behind; side faces right (mirror for left).'),
         h('div', { className: 'field check' }, freeTop, h('label', { text: 'Free top (cars, trees, round tops — don’t square the top)' })),
@@ -123,7 +123,7 @@ var MapObjects = (function () {
     };
     if (!/^[a-z0-9_]+$/.test(body.name)) { setStatus('Name must be snake_case (lowercase letters, numbers, underscores).', 'bad'); return; }
     if (!body.what) { setStatus('Describe the object.', 'bad'); return; }
-    if (!/^\s*[0-9.]+\s*,\s*[0-9.]+\s*,\s*[0-9.]+\s*$/.test(body.size)) { setStatus('Size must be W,H,D in metres, e.g. 1.0,1.9,0.4', 'bad'); return; }
+    if (!/^\s*[0-9.]+\s*,\s*[0-9.]+\s*,\s*[0-9.]+\s*$/.test(body.size)) { setStatus('Size must be W,H,D in units (1 = 32px), e.g. 1,1.6,0.4', 'bad'); return; }
     var k = localStorage.getItem(KEY_LS); if (k) body.google_api = k;
 
     setStatus('Generating ' + (body.variants > 1 ? body.variants + ' candidates' : '') + ' × ' + views.length + ' view(s)… (a few seconds each)', 'dirty');

@@ -135,16 +135,16 @@ def split_decals(rgb, fig, n, cell=8, gap=1):
     return out
 
 
-PX_PER_M = 27          # 48px human = 1.8 m
+PX_PER_UNIT = 32       # 1 unit = one 32px tile (so the 48px human is 1.5 units tall)
 
 
-def size_rule(width_m, height_m, depth_m):
-    """Santi's size rule: canvas and object box from real-world size, measured against the 32x48 human.
+def size_rule(width_u, height_u, depth_u):
+    """Santi's size rule: canvas and object box from size in units (1 unit = 32px = one tile).
     width -> whole tiles; height = front height + top depth (full scale, top capped at 1 tile);
     canvas height = nearest multiple of 16 (ties round down), at least 32."""
     import math
-    tiles = max(1, math.ceil(width_m * PX_PER_M / 32 - 0.05))
-    h = height_m * PX_PER_M + min(depth_m * PX_PER_M, 32)
+    tiles = max(1, math.ceil(width_u * PX_PER_UNIT / 32 - 0.05))
+    h = height_u * PX_PER_UNIT + min(depth_u * PX_PER_UNIT, 32)
     canvas_h = max(32, math.ceil(h / 16 - 0.5) * 16)          # nearest 16, ties down
     return tiles, canvas_h / 32, (tiles * 32 - 2, min(int(round(h)), canvas_h - 1))
 
@@ -251,7 +251,7 @@ if __name__ == "__main__":
     ap.add_argument("--decal", action="store_true")
     ap.add_argument("--variants", type=int, default=1)
     ap.add_argument("--box", help="fit the object inside WxH px of the canvas (true scale), e.g. 26x28")
-    ap.add_argument("--size", help="real size in metres W,H,D (e.g. 1.6,0.75,0.9); sets --w/--h/--box by the size rule")
+    ap.add_argument("--size", help="size in units W,H,D (1 unit = 32px; e.g. 2,1,1); sets --w/--h/--box by the size rule")
     ap.add_argument("--ref", help="raw image of the same object to match (e.g. other facings)")
     ap.add_argument("--free-top", action="store_true", help="don't square the top (cars, trees, round things whose top is legitimately narrower)")
     ap.add_argument("--repixel", help="skip generation; re-pixelize this raw image")

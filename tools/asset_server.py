@@ -422,7 +422,7 @@ def object_make(req):
     if not what:
         return {"error": "Describe the object."}
     if not re.match(r"^\s*[0-9.]+\s*,\s*[0-9.]+\s*,\s*[0-9.]+\s*$", size):
-        return {"error": "Size must be W,H,D in metres, e.g. 1.0,1.9,0.4"}
+        return {"error": "Size must be W,H,D in units (1 = 32px), e.g. 1,1.6,0.4"}
     key = read_key() or (req.get("google_api") or "").strip()
     if not key:
         return {"error": "no_key"}

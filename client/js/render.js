@@ -92,19 +92,38 @@ var Render = (function () {
   // A layer is { path, mask?, ramp? }: the base sprite, plus an optional tint mask + colour
   // ramp for recolourable cloth/hair. Every layer shares the 32x48 skeleton, so each is drawn
   // bottom-anchored at the tile's foot and scaled to the tile width; the whole stack flips as one.
-  function drawLayers(g, layers, ax, ay, T, flip) {
+  // `aim` (radians, world space) rotates the weapon layer so the gun points at the crosshair; null = no aim.
+  // The pivot is a rough shoulder/hand point — a per-gun "forward" setup is a future tool.
+  function drawLayers(g, layers, ax, ay, T, flip, aim) {
     var topY = ay;
-    g.save();
-    if (flip) { g.translate(ax + T, 0); g.scale(-1, 1); }
-    var x0 = flip ? 0 : ax;                                 // after the flip, x grows the other way from ax+T
     layers.forEach(function (l) {
       var base = Assets.get(l.path); if (!base) return;
       var img = (l.mask && l.ramp) ? Tint.getTintedLayer(base, Assets.get(l.mask), l.ramp) : base;
       var h = Math.round(T * base.height / base.width), dy = ay + T - h;
       if (dy < topY) topY = dy;
-      g.drawImage(img, x0, dy, T, h);
+      if (aim != null && l.slot === 'weapon') {            // the equipped weapon swings to track the crosshair
+        // Pivot + barrel tip are normalised to the sprite box (set in the Content Studio); default to a
+        // centre pivot firing right when unset. The sprite is rotated so pivot→tip points along `aim`.
+        var ap = l.aimPoints || null;
+        var px = ap && ap.px != null ? ap.px : 0.5, py = ap && ap.py != null ? ap.py : 0.52;
+        var mx = ap && ap.mx != null ? ap.mx : 0.95, my = ap && ap.my != null ? ap.my : 0.52;
+        var pivotX = ax + px * T, pivotY = dy + py * h;               // dy = ay + T - h is the sprite box top
+        var intrinsic = Math.atan2((my - py) * h, (mx - px) * T);     // the barrel's angle in the unrotated sprite
+        g.save();
+        g.translate(pivotX, pivotY);
+        // Pointing left would draw the gun upside-down; mirror it across the aim axis (not the sprite's own
+        // axis) so it turns upright while the barrel keeps pointing exactly at the cursor.
+        if (Math.cos(aim) < 0) { g.rotate(aim); g.scale(1, -1); g.rotate(-aim); }
+        g.rotate(aim - intrinsic);
+        g.drawImage(img, -px * T, -py * h, T, h);
+        g.restore();
+      } else {
+        g.save();
+        if (flip) { g.translate(ax + T, 0); g.scale(-1, 1); g.drawImage(img, 0, dy, T, h); }
+        else g.drawImage(img, ax, dy, T, h);
+        g.restore();
+      }
     });
-    g.restore();
     return topY;
   }
 
@@ -271,7 +290,7 @@ var Render = (function () {
       var ax = Math.round(ox + a.x * T), ay = Math.round(oy + a.y * T);
       var top = ay;                                                  // top of the drawn figure (busts rise above the tile)
       if (a.layers && a.layers.length) {
-        top = drawLayers(g, a.layers, ax, ay, T, a.facing === 'W');
+        top = drawLayers(g, a.layers, ax, ay, T, a.facing === 'W', a.aim);
       } else if (a.sprite !== undefined) {
         var img = a.sprite && Assets.get(a.sprite);
         if (img) {

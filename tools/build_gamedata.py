@@ -392,11 +392,12 @@ def build():
         ('molotov', 'Molotov', 'throwable', '', 10, 16, 0, 0, 0, 0, 0, 0, '', '', ''),
     ]]
     # --- combat rework: ranged weapon + ammo + throwable columns (kept off the tuple list to stay readable) ---
-    NEW_ITEM_FIELDS = ['range', 'ammo', 'ammo_cost', 'fire_ms', 'clip', 'penetration', 'falloff', 'tint',
+    NEW_ITEM_FIELDS = ['range', 'ammo', 'ammo_cost', 'fire_ms', 'clip', 'fire_mode', 'penetration', 'falloff', 'tint',
                        'throw_range', 'throw_area', 'throw_power', 'throw_status', 'throw_status_ms']
+    # fire_mode: '' / 'single' = one shot per click; 'semi' / 'auto' = hold the fire button to keep firing
     GUNS = {  # range (tiles); each gun takes its own ammo calibre; cost, fire cooldown ms, clip (magazine), tracer tint
-        'pistol': dict(range=16, ammo='ammo_pistol', ammo_cost=1, fire_ms=350, clip=12, tint='#ffd36b'),
-        'rifle':  dict(range=30, ammo='ammo_rifle', ammo_cost=1, fire_ms=700, clip=8, tint='#c9b27a'),
+        'pistol': dict(range=16, ammo='ammo_pistol', ammo_cost=1, fire_ms=350, clip=12, fire_mode='semi', tint='#ffd36b'),
+        'rifle':  dict(range=30, ammo='ammo_rifle', ammo_cost=1, fire_ms=140, clip=8, fire_mode='auto', tint='#c9b27a'),
     }
     # pistol rounds pierce 2 with falloff; rifle rounds are stronger — pierce 3, less falloff
     AMMO = {'ammo_pistol': dict(penetration=2, falloff=0.3), 'ammo_rifle': dict(penetration=3, falloff=0.2)}

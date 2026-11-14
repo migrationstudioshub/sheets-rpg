@@ -143,6 +143,11 @@ var Content = (function () {
         // a ranged weapon: range > 0, spends `ammo` per shot, fires no faster than fire_ms;
         // clip = magazine size (fire from the loaded mag; press R to refill it from the ammo stack)
         range: num(r.range, 0), ammo: str(r.ammo), ammoCost: Math.max(1, num(r.ammo_cost, 1)), fireMs: num(r.fire_ms, 0), clip: num(r.clip, 0),
+        // fire_mode: '' / single = one shot per click; semi / auto = hold the fire button to keep firing
+        fireMode: str(r.fire_mode),
+        // aim: {px,py,mx,my} normalised to the worn sprite — pivot (rotation axis) and barrel tip, set in the
+        // Content Studio. The renderer rotates the gun about the pivot so pivot→tip points at the cursor.
+        aim: json(r.aim, null),
         tint: str(r.tint),
         // ammo: how many enemies one shot pierces, losing `falloff` of its damage per extra hit (0..1)
         penetration: Math.max(1, num(r.penetration, 1)), falloff: Math.max(0, Math.min(1, num(r.falloff, 0))),

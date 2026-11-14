@@ -16,6 +16,9 @@
   var fx = [], bagOpen = false;
   var armed = null;                      // {slot, id, skill} while an ability (Q/E) waits for a target
   var throwing = null;                   // belt item id armed for a throw (click to throw, Esc to cancel)
+  // mouse: right-button held = aiming; left = interact (tap) / action list (hold) / fire (while aiming)
+  var aiming = false, leftHeld = false, holdFired = false, pendingCell = null, holdMenuEvt = null, holdTimer = 0;
+  var lastHoldShot = 0, aimAngle = 0, HOLD_CLICK_MS = 250;   // left-press longer than this opens the action list
   var hover = null, lastCam = { x: 0, y: 0 };
   var clockOffset = 0;                   // server clock minus ours, for timed traps
   var timed = [];                        // timed traps on this map, drawn from the clock
@@ -43,8 +46,8 @@
       var it = content.items[eq[slot]];
       if (!it || !it.wornSprite) return;
       var ramp = it.defaultTint ? Tint.TINTS[it.defaultTint] : null;     // item is tintable iff it names a default tint
-      out.push({ z: SLOT_Z[slot] != null ? SLOT_Z[slot] : 9, path: it.wornSprite,
-        mask: ramp ? maskOf(it.wornSprite) : '', ramp: ramp });
+      out.push({ z: SLOT_Z[slot] != null ? SLOT_Z[slot] : 9, path: it.wornSprite, slot: slot,
+        mask: ramp ? maskOf(it.wornSprite) : '', ramp: ramp, aimPoints: it.aim || null });
     });
     out.sort(function (a, b) { return a.z - b.z; });
     out.forEach(function (l) {                                           // make sure late-arriving layers load
@@ -209,33 +212,43 @@
   addEventListener('keyup', function (e) {
     var d = KEYS[e.code]; if (d) held = held.filter(function (h) { return h !== d; });
   });
-  addEventListener('blur', function () { held = []; });
+  addEventListener('blur', function () { held = []; aiming = false; leftHeld = false; clearTimeout(holdTimer); updateCursor(); });
   function cellAt(e) {
     var r = canvas.getBoundingClientRect(), T = content.config.tile_size || 32;
     var px = (e.clientX - r.left) * canvas.width / r.width + lastCam.x, py = (e.clientY - r.top) * canvas.height / r.height + lastCam.y;
     return { x: Math.floor(px / T), y: Math.floor(py / T) };
   }
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-  canvas.addEventListener('pointermove', function (e) { if (content) { hover = cellAt(e); hoverLabel(e); } });
+  canvas.addEventListener('pointermove', function (e) {
+    if (!content) return;
+    hover = cellAt(e); hoverLabel(e);
+    if (aiming && me) aimAt(e);                           // keep facing + gun angle tracking the cursor
+  });
   canvas.addEventListener('pointerleave', function () { hover = null; $('tip').hidden = true; });
-  canvas.addEventListener('pointerdown', function (e) {
+  // mousedown/up (not pointerdown) so a left-click still fires while the right button is held to aim —
+  // a pointer only fires one 'down' per gesture, reporting extra buttons as moves, which swallowed the shot.
+  canvas.addEventListener('mousedown', function (e) {
     if (!me) return;
     var cell = cellAt(e);
-    if (e.button === 2) {                                 // right-click: cancel aiming, or open the action menu
-      if (armed) { disarm(); return; }
-      if (throwing) { cancelThrow(); return; }
-      closeMenu();
-      var acts = World.actionsAt(content, mapOf(), lookup(), me, cell.x, cell.y);
-      if (acts.length) openMenu(e, cell, acts);
+    if (e.button === 2) {                                 // right-button (held): aim — fire/attack toward the cursor
+      e.preventDefault(); closeMenu();
+      aiming = true; aimAt(e); updateCursor();
       return;
     }
     if (e.button !== 0) return;
     closeMenu();
     hover = cell;
-    if (armed) { castAt(cell); return; }                  // left-click: aim + fire/throw/cast only — never walk or act
+    if (armed) { castAt(cell); return; }                  // an armed ability still aims + casts on left-click
     if (throwing) { throwAt(cell); return; }
-    if (World.rangedWeapon(content, me)) { shootAt(cell); return; }
-    log('No ranged weapon equipped — press F to use or attack what you face (right-click for options).', 'info');
+    if (aiming) { leftHeld = true; fireToward(cell); return; }   // fire/attack while aiming
+    // not aiming: left-click interacts. A quick tap does the default action; holding opens the action list.
+    leftHeld = true; holdFired = false; pendingCell = cell; holdMenuEvt = e;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(function () {
+      if (!leftHeld || aiming) return;
+      var acts = World.actionsAt(content, mapOf(), lookup(), me, cell.x, cell.y);
+      if (acts.length) { holdFired = true; openMenu(holdMenuEvt, cell, acts); }
+    }, HOLD_CLICK_MS);
   });
 
   // ---------------------------------------------------------------- mouse: a click acts; it never walks you there
@@ -271,10 +284,28 @@
     if (Number(w.clip) > 0) {                                   // fire from the loaded magazine, not the reserve
       if (((me.mags && me.mags[w.id]) || 0) < cost) { log(count(w.ammo) >= cost ? 'Out of ammo — press R to reload.' : 'Out of ' + ammoName + '.', 'info'); return; }
     } else if (w.ammo && count(w.ammo) < cost) { log('Out of ' + ammoName + '.', 'info'); return; }
-    me.facing = facingToward(cell.x, cell.y);
+    if (!aiming) me.facing = facingToward(cell.x, cell.y);   // while aiming, facing already follows the cursor (W/E)
+    lastHoldShot = performance.now();
     send({ type: 'shoot', x: cell.x, y: cell.y });
     var end = reach.cells[reach.cells.length - 1] || me;
     fx.push({ kind: 'tracer', from: { x: me.x, y: me.y }, to: { x: end.x, y: end.y }, color: w.tint || '#ffd36b', t0: performance.now(), life: 160 });
+  }
+  /** While aiming (right-button held): fire the gun, or swing melee at the tile toward the cursor. */
+  function fireToward(cell) {
+    if (World.rangedWeapon(content, me)) { shootAt(cell); return; }
+    var dir = facingToward(cell.x, cell.y), d = Rules.DIRS[dir] || { dx: 0, dy: 0 };
+    var tx = me.x + d.dx, ty = me.y + d.dy;
+    send({ type: 'attack', x: tx, y: ty }); attackFx(tx, ty);
+    lastHoldShot = performance.now();
+  }
+  /** Point the aim at the cursor: the sprite looks to the cursor's side (W/E), the gun angle tracks it. */
+  function aimAt(e) {
+    var r = canvas.getBoundingClientRect(), T = content.config.tile_size || 32;
+    var cx = (e.clientX - r.left) * canvas.width / r.width;
+    var cy = (e.clientY - r.top) * canvas.height / r.height;
+    var dx = cx - ((shown.x + 0.5) * T - lastCam.x), dy = cy - ((shown.y + 0.5) * T - lastCam.y);
+    aimAngle = Math.atan2(dy, dx);
+    if (dx || dy) me.facing = dx < 0 ? 'W' : 'E';
   }
   /** Throw the armed belt item (grenade/molotov) at a cell within its range. */
   function throwAt(cell) {
@@ -290,7 +321,7 @@
   }
   function cancelThrow() { if (throwing) { throwing = null; updateCursor(); hotbar(); } }
   function updateCursor() {
-    canvas.style.cursor = (armed || throwing || (me && World.rangedWeapon(content, me))) ? 'crosshair' : '';
+    canvas.style.cursor = (aiming || armed || throwing) ? 'crosshair' : '';
   }
 
   function openMenu(e, cell, acts) {
@@ -309,20 +340,14 @@
     menu.style.left = x + 'px'; menu.style.top = y + 'px';
   }
   function closeMenu() { $('menu').hidden = true; }
-  addEventListener('pointerdown', function (e) { if (!$('menu').contains(e.target) && e.target !== canvas) closeMenu(); });
+  addEventListener('mousedown', function (e) { if (!$('menu').contains(e.target) && e.target !== canvas) closeMenu(); });
 
-  /** Aiming a weapon → crosshair, no tip. Otherwise show what right-click (or F) would do here. */
-  function hoverLabel(e) {
-    var tip = $('tip');
-    if (!me || armed || throwing || World.rangedWeapon(content, me)) { tip.hidden = true; updateCursor(); return; }
-    if (!hover) { tip.hidden = true; canvas.style.cursor = ''; return; }
-    var acts = World.actionsAt(content, mapOf(), lookup(), me, hover.x, hover.y), a = acts[0];
-    canvas.style.cursor = a ? 'pointer' : 'default';
-    if (!a) { tip.hidden = true; return; }
-    var r = $('frame').getBoundingClientRect();
-    tip.textContent = a.label + ' — right-click, or F if you face it';
-    tip.style.left = (e.clientX - r.left + 14) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px';
-    tip.hidden = false;
+  /** Just the cursor hint: a pointer over something you can act on, a crosshair while aiming, else default. */
+  function hoverLabel() {
+    $('tip').hidden = true;                                 // no hover tooltip
+    if (!me || aiming || armed || throwing) { updateCursor(); return; }
+    if (!hover) { canvas.style.cursor = ''; return; }
+    canvas.style.cursor = World.actionsAt(content, mapOf(), lookup(), me, hover.x, hover.y)[0] ? 'pointer' : 'default';
   }
 
   // ---------------------------------------------------------------- abilities (Q/E) and the belt (1-5)
@@ -482,7 +507,19 @@
     return sk.name + ': ' + sk.description + '\n' + sk.mp + ' MP · ' + (sk.cooldownMs / 1000) + ' s cooldown · targets ' + t +
       (sk.range ? ' · range ' + sk.range : '') + (sk.area ? ' · area ' + sk.area : '') + (sk.los ? ' · needs a clear line' : '');
   }
-  addEventListener('pointerup', function () { held = []; });
+  addEventListener('mouseup', function (e) {
+    // note: don't touch `held` here — those are the keyboard movement keys; a mouse release must not stop walking
+    if (!me || !content) return;
+    if (e.button === 2) { if (aiming) { me.facing = Math.cos(aimAngle) < 0 ? 'W' : 'E'; aiming = false; leftHeld = false; updateCursor(); } return; }
+    if (e.button !== 0) return;
+    var was = leftHeld; leftHeld = false; clearTimeout(holdTimer);
+    if (!was || aiming) return;                            // was firing while aiming, or not our press
+    if (holdFired) { holdFired = false; return; }          // the hold already opened the action list
+    if (pendingCell) {                                     // quick tap → the default interaction
+      var acts = World.actionsAt(content, mapOf(), lookup(), me, pendingCell.x, pendingCell.y);
+      if (acts.length) doAction(acts[0], pendingCell);
+    }
+  });
   $('btn-use').onclick = interact;
   $('btn-bag').onclick = toggleBag;
 
@@ -643,8 +680,21 @@
     if (now - lastReply > pollMs) poll();
 
     ease(shown, me, dt / moveMs);
+    // hold-to-fire: while aiming with the left button down, a semi/auto weapon keeps firing on its cadence
+    if (aiming && leftHeld && hover) {
+      var hw = World.rangedWeapon(content, me);
+      if (hw && (hw.fireMode === 'semi' || hw.fireMode === 'auto')) {
+        var cost = hw.ammoCost || 1, clip = Number(hw.clip) || 0, mag = (me.mags && me.mags[hw.id]) || 0;
+        var canFire = clip > 0 ? mag >= cost : (hw.ammo ? count(hw.ammo) >= cost : true);
+        var cd = Math.max(120, Number(hw.fireMs) || 300);
+        if (canFire && now - lastHoldShot >= cd) shootAt(hover);   // shootAt sets lastHoldShot + facing
+      }
+    }
     var myst = me.statuses && me.statuses.length && content.statuses[me.statuses[0].id];
-    var actors = [{ x: shown.x, y: shown.y, facing: me.facing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, statusColor: myst ? myst.color : '' }];
+    // while aiming, the body faces the cursor's side derived from the aim angle — not me.facing, which a
+    // poll can briefly reset to the server's value (it never hears the aim), which would flicker the flip.
+    var myFacing = aiming ? (Math.cos(aimAngle) < 0 ? 'W' : 'E') : me.facing;
+    var actors = [{ x: shown.x, y: shown.y, facing: myFacing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, aim: aiming ? aimAngle : null, statusColor: myst ? myst.color : '' }];
     var seen = {};
     view.monsters.forEach(function (m) {
       var d = content.monsters[m.ref] || { name: m.ref, sprite: '' }, s = shownOthers[m.id] || (shownOthers[m.id] = { x: m.x, y: m.y });
@@ -753,7 +803,7 @@
     return res;
   }).then(apply).then(function () {
     setupDebug();
-    log('WASD / arrows move · left-click aims + fires your gun (R to reload) · right-click for actions · F/Space to use or attack what you face · Q/E abilities · 1-5 belt · I bag.', 'info');
+    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use or attack what you face · Q/E abilities · 1-5 belt · I bag.', 'info');
     if (api.staleDraft) log('Your map editor draft was made from older game data, so the game is using the latest data instead. Open the editor to update or discard the draft.', 'death');
     requestAnimationFrame(frame);
   }).catch(function (e) {
@@ -767,5 +817,5 @@
     plan: function () { return null; },    // kept for back-compat: there is no click-to-walk plan any more
     layers: function () { return me ? playerLayers(me) : null; },
     camera: function () { return lastCam; },
-    aim: function () { return { armed: armed, throwing: throwing, hover: hover, check: armed && hover ? aimCheck(hover) : null }; } };
+    aim: function () { return { aiming: aiming, aimAngle: aimAngle, facing: me && me.facing, armed: armed, throwing: throwing, hover: hover, check: armed && hover ? aimCheck(hover) : null }; } };
 })();

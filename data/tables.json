@@ -3736,7 +3736,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "mana_potion",
@@ -3770,7 +3772,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "big_potion",
@@ -3804,7 +3808,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "wooden_sword",
@@ -3838,7 +3844,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "iron_sword",
@@ -3872,7 +3880,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "leather_armor",
@@ -3906,7 +3916,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "iron_armor",
@@ -3940,7 +3952,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "army_helmet",
@@ -3974,7 +3988,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "iron_key",
@@ -4008,7 +4024,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "lockpick",
@@ -4042,7 +4060,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "bone",
@@ -4076,7 +4096,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "slime_gel",
@@ -4110,7 +4132,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "ration",
@@ -4144,7 +4168,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "water",
@@ -4178,7 +4204,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "antidote",
@@ -4212,7 +4240,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "bandage",
@@ -4246,7 +4276,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "medkit",
@@ -4280,7 +4312,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "ammo_pistol",
@@ -4314,7 +4348,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "ammo_rifle",
@@ -4348,7 +4384,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "pistol",
@@ -4382,7 +4420,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "semi",
+   "aim": "{\"px\": 0.5, \"py\": 0.58, \"mx\": 0.92, \"my\": 0.5}"
   },
   {
    "id": "rifle",
@@ -4407,7 +4447,7 @@
    "range": 30,
    "ammo": "ammo_rifle",
    "ammo_cost": 1,
-   "fire_ms": 700,
+   "fire_ms": 140,
    "clip": 8,
    "penetration": "",
    "falloff": "",
@@ -4416,7 +4456,9 @@
    "throw_area": "",
    "throw_power": "",
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "auto",
+   "aim": "{\"px\": 0.46, \"py\": 0.56, \"mx\": 0.98, \"my\": 0.5}"
   },
   {
    "id": "grenade",
@@ -4450,7 +4492,9 @@
    "throw_area": 1,
    "throw_power": 18,
    "throw_status": "",
-   "throw_status_ms": ""
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": ""
   },
   {
    "id": "molotov",
@@ -4484,7 +4528,9 @@
    "throw_area": 1,
    "throw_power": 6,
    "throw_status": "burn",
-   "throw_status_ms": 4000
+   "throw_status_ms": 4000,
+   "fire_mode": "",
+   "aim": ""
   }
  ],
  "Monsters": [
@@ -5507,12 +5553,12 @@
    "xp_needed": 950
   }
  ],
- "_version": "4899d096caa6",
  "Appearances": [
   {
    "id": "zombie_plain",
    "name": "Plain zombie",
    "layers": "[{\"name\":\"body\",\"empty\":0,\"options\":[{\"sprite\":\"art/sprites/paperdoll/base/body_zombie.png\",\"weight\":60},{\"sprite\":\"art/sprites/paperdoll/base/body_zombie_female.png\",\"weight\":40}],\"tints\":[]},{\"name\":\"hair\",\"empty\":15,\"options\":[{\"sprite\":\"art/sprites/paperdoll/hair/hair_bob.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_buzz.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_long.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_messy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_pony.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_shaggy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_slick.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_under.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v1.png\",\"weight\":3},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v2.png\",\"weight\":3}],\"tints\":[{\"tint\":\"hair_grey\",\"weight\":23},{\"tint\":\"hair_dark\",\"weight\":16},{\"tint\":\"hair_black\",\"weight\":16},{\"tint\":\"hair_brown\",\"weight\":16},{\"tint\":\"hair_white\",\"weight\":12},{\"tint\":\"hair_blonde\",\"weight\":8},{\"tint\":\"hair_auburn\",\"weight\":5},{\"tint\":\"hair_ginger\",\"weight\":5}]},{\"name\":\"clothes\",\"empty\":67,\"options\":[{\"sprite\":\"art/sprites/paperdoll/chest/chest_leather_jacket.png\",\"weight\":33}],\"tints\":[{\"tint\":\"brown\",\"weight\":22},{\"tint\":\"olive\",\"weight\":22},{\"tint\":\"charcoal\",\"weight\":22},{\"tint\":\"maroon\",\"weight\":11},{\"tint\":\"navy\",\"weight\":11},{\"tint\":\"khaki\",\"weight\":11}]}]"
   }
- ]
+ ],
+ "_version": "1705dcc5b9e5"
 }

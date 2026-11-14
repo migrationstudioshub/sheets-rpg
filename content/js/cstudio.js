@@ -224,6 +224,7 @@ var CStudio = (function () {
   function fieldEl(r, fl) {
     var control, val = r[fl.key];
     if (fl.type === 'looks') return looksField(r, fl);
+    if (fl.type === 'aim') return aimField(r, fl);
     function change(v) { r[fl.key] = v; persist(); if (fl.key === idField(type) || fl.key === 'name') { renderNav(); renderList(); } }
     if (fl.type === 'bool') {
       control = h('input', { type: 'checkbox', checked: !!val, onchange: function (e) { change(e.target.checked); } });
@@ -461,6 +462,69 @@ var CStudio = (function () {
     });
     box.appendChild(h('button', { className: 'primary', style: 'margin:2px 0', text: list.length ? '+ add another set (one is picked per spawn)' : '+ add appearance set', onclick: function () { list.push({ set: sets[0] || '', weight: 1 }); save(); renderForm(); } }));
     box.appendChild(h('div', { className: 'help', text: fl.help }));
+    return box;
+  }
+  // Weapon aim setup: a little sprite viewer with two draggable dots — the rotation pivot (orange) and the
+  // barrel tip (blue). Stored normalised (0–1 of the worn sprite) as {px,py,mx,my}; the game rotates the gun
+  // about the pivot so pivot→tip points at the cursor. See drawLayers() in client/js/render.js.
+  function aimField(r, fl) {
+    var box = h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key + ' — aim setup' }));
+    if (r.type !== 'weapon') { box.appendChild(h('div', { className: 'help', text: 'Aim points apply to weapons. Set type = weapon first.' })); return box; }
+    var spr = r.worn_sprite || r.sprite;
+    if (!spr) { box.appendChild(h('div', { className: 'help', text: 'Give this weapon a worn sprite, then place its aim points here.' })); return box; }
+    function read() { var v = r[fl.key]; if (!v) return null; if (typeof v === 'object') return v; try { return JSON.parse(v); } catch (e) { return null; } }
+    var pts = read() || { px: 0.5, py: 0.55, mx: 0.95, my: 0.5 };
+    var round = function (n) { return Math.round(Math.max(0, Math.min(1, n)) * 1000) / 1000; };
+    var W = 200, cv = h('canvas', { width: W, height: Math.round(W * 1.5),
+      style: 'display:block;background:#20242e;border:1px solid var(--line);image-rendering:pixelated;cursor:crosshair;touch-action:none;max-width:100%' });
+    var img = new Image(), drag = null;
+    function layout() {
+      var ar = (img.naturalWidth && img.naturalHeight) ? img.naturalHeight / img.naturalWidth : 1.5;
+      cv.width = W; cv.height = Math.round(W * ar);
+    }
+    function P() { return { x: pts.px * cv.width, y: pts.py * cv.height }; }
+    function M() { return { x: pts.mx * cv.width, y: pts.my * cv.height }; }
+    function dot(g, p, color) {
+      g.beginPath(); g.arc(p.x, p.y, 6, 0, 7); g.fillStyle = color; g.fill();
+      g.lineWidth = 1.5; g.strokeStyle = '#000'; g.stroke();
+    }
+    function draw() {
+      var g = cv.getContext('2d'); g.clearRect(0, 0, cv.width, cv.height);
+      if (img.complete && img.naturalWidth) g.drawImage(img, 0, 0, cv.width, cv.height);
+      var p = P(), m = M();
+      g.strokeStyle = '#ffd36b'; g.lineWidth = 2; g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(m.x, m.y); g.stroke();
+      var a = Math.atan2(m.y - p.y, m.x - p.x);             // little arrowhead at the barrel tip
+      g.beginPath(); g.moveTo(m.x, m.y);
+      g.lineTo(m.x - 9 * Math.cos(a - 0.4), m.y - 9 * Math.sin(a - 0.4));
+      g.lineTo(m.x - 9 * Math.cos(a + 0.4), m.y - 9 * Math.sin(a + 0.4));
+      g.closePath(); g.fillStyle = '#ffd36b'; g.fill();
+      dot(g, p, '#ff7a2a'); dot(g, m, '#39c0ff');
+    }
+    function at(e) { var b = cv.getBoundingClientRect(); return { x: (e.clientX - b.left) / b.width, y: (e.clientY - b.top) / b.height }; }
+    function move(e) {
+      var n = at(e), x = round(n.x), y = round(n.y);
+      if (drag === 'm') { pts.mx = x; pts.my = y; } else { pts.px = x; pts.py = y; }
+      draw();
+    }
+    function save() { r[fl.key] = JSON.stringify({ px: round(pts.px), py: round(pts.py), mx: round(pts.mx), my: round(pts.my) }); persist(); }
+    cv.addEventListener('pointerdown', function (e) {           // pick the nearer dot, then drag it (pointer capture, so no window leaks)
+      e.preventDefault(); cv.setPointerCapture(e.pointerId);
+      var n = at(e), p = P(), m = M(), cw = cv.width, ch = cv.height;
+      var dp = Math.hypot(n.x * cw - p.x, n.y * ch - p.y), dm = Math.hypot(n.x * cw - m.x, n.y * ch - m.y);
+      drag = dp <= dm ? 'p' : 'm'; move(e);
+    });
+    cv.addEventListener('pointermove', function (e) { if (drag) move(e); });
+    cv.addEventListener('pointerup', function () { if (drag) { drag = null; save(); } });
+    img.onload = function () { layout(); draw(); };
+    img.onerror = function () { draw(); };
+    img.src = spritePath(canonSprite(spr));
+    layout(); draw();
+    box.appendChild(cv);
+    box.appendChild(h('div', { className: 'help', style: 'margin-top:4px' },
+      h('span', { style: 'color:#ff7a2a;font-weight:600' }, 'Orange'), ' = rotation pivot · ',
+      h('span', { style: 'color:#39c0ff;font-weight:600' }, 'Blue'), ' = barrel tip (points at the cursor). Drag either dot.'));
+    box.appendChild(h('button', { className: 'ghost', style: 'margin-top:4px', text: 'Reset to default',
+      onclick: function () { r[fl.key] = ''; persist(); renderForm(); } }));
     return box;
   }
   function layersOf(r) {

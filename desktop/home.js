@@ -1,7 +1,7 @@
 /**
- * Shell behaviour. The top nav (4 big tabs) stays visible; clicking a tab asks the Electron main
- * process to load that tool in a view below the nav (window.desktop.navigate). The title acts as a
- * Home button, which detaches the tool view and reveals the LAN host + status panel underneath.
+ * Shell behaviour. The slim top nav stays visible; clicking a tab asks the Electron main process to
+ * load that tool in a view below the nav (window.desktop.navigate). A "Home" tab detaches the tool
+ * view and reveals the LAN host + status panel underneath.
  * Talks to main via window.desktop (see preload.js). Degrades gracefully in a plain browser.
  */
 'use strict';
@@ -56,11 +56,11 @@
     document.querySelectorAll('.tab').forEach(function (b) {
       b.onclick = function () {
         var tool = b.dataset.tool;
-        if (D) D.navigate(tool);
-        else window.location.href = tool === 'play' ? '/client/?offline' : '/' + tool + '/';
+        if (D) { D.navigate(tool); return; }
+        if (tool === 'home') return;                        // no tool view in a plain browser — the strip stays put
+        window.location.href = tool === 'play' ? '/client/?offline' : '/' + tool + '/';
       };
     });
-    $('homebtn').onclick = function () { if (D) D.navigate('home'); };
   }
 
   function refresh() {

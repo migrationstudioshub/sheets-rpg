@@ -160,8 +160,12 @@ function ensureToolView() {
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
   toolView.setBackgroundColor('#14161b');
-  // Keep window.open (e.g. Content Studio's Play-test) opening in the default browser-like window.
   toolView.webContents.setWindowOpenHandler(({ url }) => {
+    // A Play-test (map editor / Content Studio) opens the offline game with window.open. It has already
+    // written the offline draft first, so instead of spawning a separate window, load it straight into
+    // the Play tab in this same window (carrying any ?map=...), and don't pop a new window.
+    if (url.indexOf(base() + '/client/') === 0) { showTool('play', url); return { action: 'deny' }; }
+    // Anything else (external links) opens in the default browser-like window.
     if (win && !win.isDestroyed()) win.webContents.send('nav:active', activeTool);
     return { action: 'allow' };
   });
@@ -173,11 +177,13 @@ function layoutToolView() {
   const y = Math.min(navHeight, b.height);
   toolView.setBounds({ x: 0, y: y, width: b.width, height: Math.max(0, b.height - y) });
 }
-function showTool(tool) {
+function showTool(tool, overrideUrl) {
   if (!win || win.isDestroyed()) return;
   ensureToolView();
-  const url = urlFor(tool);
-  if (toolView.webContents.getURL() !== url) toolView.webContents.loadURL(url);
+  const url = overrideUrl || urlFor(tool);
+  // Reload when the tool changes, or always when given an explicit URL (a Play-test carries fresh content
+  // and a specific map, so re-load even if the Play tab already shows the game).
+  if (overrideUrl || toolView.webContents.getURL() !== url) toolView.webContents.loadURL(url);
   if (activeTool === 'home') win.contentView.addChildView(toolView);   // attach only when leaving Home
   activeTool = tool;
   layoutToolView();

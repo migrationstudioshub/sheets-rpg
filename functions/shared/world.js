@@ -320,6 +320,15 @@ var World = (function () {
     cells.sort(function (a, b) { return a.d - b.d || a.y - b.y || a.x - b.x; });
     var pick = cells[(pickIndex * 7) % cells.length]; m.x = pick.x; m.y = pick.y;
   }
+  // Give a monster a rolled paper-doll look if its def has an Appearance set but it carries none yet —
+  // e.g. it was spawned before the look feature existed, or before its appearance was authored, and is
+  // being reused from saved world state. Returns true if it changed (so the caller can mark the world dirty).
+  function ensureLook(c, m, rng) {
+    if (!m || m.look) return false;
+    var look = rollLook(c, c.monsters[m.ref], rng || Math.random);
+    if (!look) return false;
+    m.look = look; return true;
+  }
   /**
    * Makes the map's monsters match its spawn points. Runs whenever the spawn points change
    * (edited in the editor or in Game Data): unchanged monsters stay where they are.
@@ -334,12 +343,17 @@ var World = (function () {
       for (var i = 0; i < (Number(pr.count) || 1); i++) want.push({ id: e.key + '#' + i, ref: def.id, e: e, radius: Number(pr.radius) || 0, i: i });
     });
     var sig = want.map(function (w) { return w.id + '=' + w.ref + '@' + w.e.x + ',' + w.e.y; }).join(';');
-    if (ms.monsters && ms.spawnSig === sig) return ms;
+    if (ms.monsters && ms.spawnSig === sig) {                 // spawns unchanged: still heal any look-less monsters
+      var healed = false;
+      ms.monsters.forEach(function (m) { if (ensureLook(c, m, rng)) healed = true; });
+      if (healed) ws.dirty = true;
+      return ms;
+    }
     var old = {};
     (ms.monsters || []).forEach(function (m) { old[m.id] = m; });
     ms.monsters = want.map(function (w) {
       var m = old[w.id];
-      if (m && m.ref === w.ref) return m;
+      if (m && m.ref === w.ref) { ensureLook(c, m, rng); return m; }    // reused: keep it, but give it a look if it lacks one
       m = { id: w.id, ref: w.ref, spawn: w.e.key, x: w.e.x, y: w.e.y, hp: c.monsters[w.ref].hp, dead: false, last: now, respawnAt: 0, facing: 'S' };
       var look = rollLook(c, c.monsters[w.ref], rng || Math.random);     // random paper-doll look, fixed for this instance
       if (look) m.look = look;
@@ -383,7 +397,9 @@ var World = (function () {
         if (now >= m.respawnAt) {
           var se = entity(c, mapId, m.spawn);
           if (se) place(c, ws, mapId, m, se, Number(props(c, se).radius) || 0, rint(rng, 0, 50));
-          m.dead = false; m.hp = def.hp; m.last = now; ws.dirty = true;
+          m.dead = false; m.hp = def.hp; m.last = now;
+          m.look = rollLook(c, def, rng || Math.random) || undefined;   // fresh paper-doll look each respawn
+          ws.dirty = true;
         }
         return;
       }
@@ -518,7 +534,12 @@ var World = (function () {
     if (p && m.hp > 0) m.engaged = p.id;                        // being hit (even from range) makes it come after you
     ev.push({ type: 'hit', map: mapId, x: m.x, y: m.y, amount: dmg, to: p ? p.id : undefined, text: p ? text : '' });
     if (m.hp > 0) return;
-    m.dead = true; m.statuses = []; m.respawnAt = now + def.respawnS * 1000;
+    m.dead = true; m.statuses = [];
+    // Respawn delay: the spawn point's own respawn_after_s wins (set per spawner); 0/blank falls back
+    // to the monster's respawn_s. The monster reappears that many seconds after it's killed.
+    var se = m.spawn && entity(c, mapId, m.spawn);
+    var rs = se ? (Number(props(c, se).respawn_after_s) || 0) : 0;
+    m.respawnAt = now + (rs > 0 ? rs : def.respawnS) * 1000;
     if (!p) return;
     ev.push({ type: 'kill', map: mapId, x: m.x, y: m.y, to: p.id, text: 'The ' + lower(def.name) + ' is defeated. +' + def.xp + ' XP' });
     var gold = rint(rng, def.goldMin, def.goldMax);

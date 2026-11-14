@@ -41,7 +41,8 @@ var Render = (function () {
 
   /**
    * Draws one object whose footprint is cell (dx, dy). An object is `w` tiles wide (from its image
-   * width) and bottom-anchored on the footprint row; everything above that row overflows upward.
+   * width), centred over its footprint width and bottom-anchored on the footprint row; everything
+   * above that row overflows upward. A per-object offset_y nudges it vertically.
    * part 'base' = the footprint row (the part that can block); part 'top' = the overflow above it,
    * drawn after characters so they can walk behind it. `flip` mirrors the whole object (side→left).
    */
@@ -50,7 +51,12 @@ var Render = (function () {
     if (!img) { if (part === 'base' && path) g.drawImage(Assets.placeholder(o.name, '#7a5a3a', size), dx, dy, size, size); return; }
     var f = frameOf(img, o.frames, o.frameMs, now), fw = f.sw, ih = img.height;
     var sc = size / NT, w = Math.max(1, Math.round(fw / NT)), destW = w * size;
-    var baseSrcH = Math.min(NT, ih), baseDstH = baseSrcH * sc, baseDstY = dy + size - baseDstH;
+    // Centre the sprite over its footprint width, so a sprite wider (or narrower) than its footprint
+    // straddles the footprint tiles instead of growing rightward from the anchor.
+    dx += (Math.max(1, o.footprintW || 1) - w) * size / 2;
+    // Per-object vertical nudge (offset_y, authored in 32px pixels; negative = up, positive = down).
+    var offY = (o.offsetY || 0) * sc;
+    var baseSrcH = Math.min(NT, ih), baseDstH = baseSrcH * sc, baseDstY = dy + size - baseDstH + offY;
     var topSrcH = ih - baseSrcH;
     function blit(srcY, srcH, dstY, dstH) {
       if (srcH <= 0) return;

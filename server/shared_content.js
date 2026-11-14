@@ -108,6 +108,8 @@ var Content = (function () {
         // Draw order relative to the player: 'auto' (base behind, tall overflow in front — the default),
         // 'over' (whole object in front of characters) or 'under' (whole object behind them).
         draw: pr.draw === 'over' || pr.draw === 'under' ? pr.draw : 'auto',
+        // Vertical draw nudge in authoring pixels (negative = up, positive = down); the renderer scales it.
+        offsetY: num(pr.offset_y, 0),
         frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200),
         properties: pr, onInteract: str(r.on_interact) };
     });

@@ -348,6 +348,7 @@ var CStudio = (function () {
       h('span', { className: 'lootlbl', text: 'w' }), fpW,
       h('span', { className: 'lootlbl', text: 'h' }), h('input', { type: 'number', min: 1, value: p.height == null ? '' : p.height, style: 'width:70px', title: 'Height in tiles', oninput: function (e) { setProp(o, 'height', e.target.value === '' ? undefined : Number(e.target.value)); } }),
       h('span', { className: 'note', text: '(blank = 1 tile; width auto-fills from the sprite)' })));
+    form.appendChild(h('div', { className: 'help', text: 'The sprite is centred over this width, so a sprite wider than its footprint straddles the tiles — e.g. a 2-tile (64px) sprite with width 1 sits centred on a single tile.' }));
     if (p.width == null && o.sprite) {                       // detect the sprite’s tile-width and prefill it
       var im = new Image();
       im.onload = function () {
@@ -368,6 +369,10 @@ var CStudio = (function () {
           onclick: function () { setProp(o, 'draw', m === 'auto' ? undefined : m); objForm(); } });
       })),
       h('div', { className: 'help', text: 'Auto: base behind the player, tall tops in front. Over: always in front (foreground). Under: always behind.' })));
+    form.appendChild(h('div', { className: 'field', title: 'Nudge the sprite up or down without moving its tile' },
+      h('label', { text: 'Vertical nudge (px)' }),
+      h('input', { type: 'number', value: p.offset_y == null ? '' : p.offset_y, style: 'width:70px', title: 'Pixels: negative = up, positive = down', oninput: function (e) { setProp(o, 'offset_y', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+      h('div', { className: 'help', text: 'Shifts the sprite vertically in pixels (negative = up, positive = down) — e.g. -6 to sit a centred object slightly higher on its tile.' })));
     form.appendChild(h('div', { className: 'field', title: 'Block leaving/entering this walkable object in a direction (one-way)' },
       h('label', { text: 'Can pass (walkable objects only)' }),
       h('div', { className: 'lootrow' }, [['n', 'N'], ['e', 'E'], ['s', 'S'], ['w', 'W']].map(function (d) {

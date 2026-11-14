@@ -15,6 +15,7 @@ var CStudio = (function () {
   var curIndex = -1;     // index into T[tab] of the record being edited
   var curLoot = null;    // selected loot-table name (loot is edited grouped by table)
   var filter = '';
+  var hasAssetServer = false;   // the local Asset Studio server (asset_server.py) is reachable → offer "Rescan art"
 
   function h(tag, props) {
     var el = document.createElement(tag);
@@ -59,6 +60,7 @@ var CStudio = (function () {
       Schema.list().forEach(function (t) { if (!Array.isArray(T[tab(t)])) T[tab(t)] = []; });
       type = Schema.authored('studio')[0];
       renderAll();
+      probeAssetServer();                                       // reveal "Rescan art" if the local art server is up
       setStatus(draft ? 'Editing your local draft.' : 'Loaded live content.', draft ? 'dirty' : 'clean');
     }).catch(function (e) { renderTop('Load failed'); setStatus('Could not load content: ' + e.message, 'bad'); });
   }
@@ -71,6 +73,7 @@ var CStudio = (function () {
     top.appendChild(h('span', { className: 'title', text: 'Content Studio' }));
     top.appendChild(h('span', { id: 'status', className: 'status note', text: msg || '' }));
     top.appendChild(h('span', { className: 'sp' }));
+    if (hasAssetServer) top.appendChild(h('button', { className: 'ghost', title: 'Rescan the art/ folder and rebuild the picker list (local app only)', text: '↻ Rescan art', onclick: rescanArt }));
     top.appendChild(h('button', { className: 'ghost', title: 'Play-test offline against this draft', text: '▶ Play-test', onclick: playtest }));
     top.appendChild(h('button', { className: 'ghost', title: 'Download the draft as JSON (for a repo snapshot)', text: 'Export', onclick: function () { ContentStore.exportFile(T, 'content.json'); } }));
     top.appendChild(h('button', { title: 'Reload live content, discarding the local draft', text: 'Discard draft', onclick: discard }));
@@ -81,6 +84,22 @@ var CStudio = (function () {
   function playtest() {
     ContentStore.setDraft(T);                                   // make sure the latest edits are in the draft
     window.open('../client/?offline', '_blank');
+  }
+  // The Asset Studio server (asset_server.py, behind the desktop app) can rescan art/ and rebuild the
+  // manifest. GitHub Pages has no such server, so only show the button when it answers.
+  function probeAssetServer() {
+    fetch('/gear/ping', { cache: 'no-cache' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { if (j && j.ok) { hasAssetServer = true; renderTop(); } })
+      .catch(function () { /* no local server (e.g. on Pages): leave the button hidden */ });
+  }
+  function rescanArt() {
+    setStatus('Rescanning art…', 'dirty');
+    fetch('/art/rebuild-manifest', { method: 'POST' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('the art server returned ' + r.status)); })
+      .then(function (res) { return loadManifest().then(function () { return res; }); })
+      .then(function (res) { renderList(); renderForm(); setStatus('Art list rebuilt ✓ (' + (res.count != null ? res.count : '?') + ' images).', 'clean'); })
+      .catch(function (e) { setStatus('Rescan failed: ' + e.message, 'bad'); });
   }
   function discard() {
     if (!confirm('Discard your local draft and reload the live content?')) return;
@@ -320,12 +339,49 @@ var CStudio = (function () {
       if (fl.key === 'kind') { var sel = el.querySelector('select'); if (sel) sel.addEventListener('change', function () { setTimeout(objForm, 0); }); }
       form.appendChild(el);
     });
-    // Footprint
-    form.appendChild(h('div', { className: 'sub', text: 'Footprint — tiles, from the sprite’s bottom-left' }));
+    // Footprint — the solid tiles this object blocks (bottom-left anchored). w×h, default 1×1.
+    // Non-walkable objects block their whole footprint, not just the anchor tile. Width auto-fills
+    // from the sprite so a wide object blocks its whole base without extra typing.
+    form.appendChild(h('div', { className: 'sub', text: 'Footprint — solid tiles this blocks (from the bottom-left)' }));
+    var fpW = h('input', { type: 'number', min: 1, value: p.width == null ? '' : p.width, style: 'width:70px', title: 'Width in tiles', oninput: function (e) { setProp(o, 'width', e.target.value === '' ? undefined : Number(e.target.value)); } });
     form.appendChild(h('div', { className: 'lootrow' },
-      h('span', { className: 'lootlbl', text: 'w' }), h('input', { type: 'number', min: 1, value: p.width == null ? '' : p.width, style: 'width:70px', title: 'Width in tiles', oninput: function (e) { setProp(o, 'width', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+      h('span', { className: 'lootlbl', text: 'w' }), fpW,
       h('span', { className: 'lootlbl', text: 'h' }), h('input', { type: 'number', min: 1, value: p.height == null ? '' : p.height, style: 'width:70px', title: 'Height in tiles', oninput: function (e) { setProp(o, 'height', e.target.value === '' ? undefined : Number(e.target.value)); } }),
-      h('span', { className: 'note', text: '(blank = the sprite’s own size)' })));
+      h('span', { className: 'note', text: '(blank = 1 tile; width auto-fills from the sprite)' })));
+    form.appendChild(h('div', { className: 'help', text: 'The sprite is centred over this width, so a sprite wider than its footprint straddles the tiles — e.g. a 2-tile (64px) sprite with width 1 sits centred on a single tile.' }));
+    if (p.width == null && o.sprite) {                       // detect the sprite’s tile-width and prefill it
+      var im = new Image();
+      im.onload = function () {
+        if (propsObj(o).width != null) return;               // the user typed one meanwhile
+        var tiles = Math.max(1, Math.round((im.naturalWidth / (Number(o.frames) || 1)) / 32));
+        if (tiles > 1) { setProp(o, 'width', tiles); fpW.value = tiles; }
+      };
+      im.src = spritePath(o.sprite);
+    }
+    // Draw order relative to the player, and one-way passability for walkable objects.
+    form.appendChild(h('div', { className: 'sub', text: 'Drawing & one-way movement' }));
+    var drawMode = p.draw === 'over' || p.draw === 'under' ? p.draw : 'auto';
+    form.appendChild(h('div', { className: 'field', title: 'Where the object is painted relative to characters' },
+      h('label', { text: 'Draw order' }),
+      h('div', { className: 'seg' }, ['auto', 'over', 'under'].map(function (m) {
+        return h('button', { type: 'button', className: 'segbtn' + (drawMode === m ? ' on' : ''),
+          text: m === 'auto' ? 'Auto' : m === 'over' ? 'Over player' : 'Under player',
+          onclick: function () { setProp(o, 'draw', m === 'auto' ? undefined : m); objForm(); } });
+      })),
+      h('div', { className: 'help', text: 'Auto: base behind the player, tall tops in front. Over: always in front (foreground). Under: always behind.' })));
+    form.appendChild(h('div', { className: 'field', title: 'Nudge the sprite up or down without moving its tile' },
+      h('label', { text: 'Vertical nudge (px)' }),
+      h('input', { type: 'number', value: p.offset_y == null ? '' : p.offset_y, style: 'width:70px', title: 'Pixels: negative = up, positive = down', oninput: function (e) { setProp(o, 'offset_y', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+      h('div', { className: 'help', text: 'Shifts the sprite vertically in pixels (negative = up, positive = down) — e.g. -6 to sit a centred object slightly higher on its tile.' })));
+    form.appendChild(h('div', { className: 'field', title: 'Block leaving/entering this walkable object in a direction (one-way)' },
+      h('label', { text: 'Can pass (walkable objects only)' }),
+      h('div', { className: 'lootrow' }, [['n', 'N'], ['e', 'E'], ['s', 'S'], ['w', 'W']].map(function (d) {
+        var open = propsObj(o)['pass_' + d[0]] !== false;
+        return h('label', { className: 'row', style: 'margin-right:8px' },
+          h('input', { type: 'checkbox', checked: open, title: d[1], onchange: function (e) { setProp(o, 'pass_' + d[0], e.target.checked ? undefined : false); } }),
+          h('span', { text: ' ' + d[1] }));
+      })),
+      h('div', { className: 'help', text: 'Unticked = you cannot move that way across the object (e.g. a ledge you drop off but can’t climb). Ignored if the object isn’t walkable.' })));
     // Container loot
     if (o.kind === 'container') form.appendChild(containerLoot(o));
     // All kind properties, collapsible

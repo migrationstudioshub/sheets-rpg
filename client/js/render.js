@@ -41,7 +41,8 @@ var Render = (function () {
 
   /**
    * Draws one object whose footprint is cell (dx, dy). An object is `w` tiles wide (from its image
-   * width) and bottom-anchored on the footprint row; everything above that row overflows upward.
+   * width), centred over its footprint width and bottom-anchored on the footprint row; everything
+   * above that row overflows upward. A per-object offset_y nudges it vertically.
    * part 'base' = the footprint row (the part that can block); part 'top' = the overflow above it,
    * drawn after characters so they can walk behind it. `flip` mirrors the whole object (side→left).
    */
@@ -50,7 +51,12 @@ var Render = (function () {
     if (!img) { if (part === 'base' && path) g.drawImage(Assets.placeholder(o.name, '#7a5a3a', size), dx, dy, size, size); return; }
     var f = frameOf(img, o.frames, o.frameMs, now), fw = f.sw, ih = img.height;
     var sc = size / NT, w = Math.max(1, Math.round(fw / NT)), destW = w * size;
-    var baseSrcH = Math.min(NT, ih), baseDstH = baseSrcH * sc, baseDstY = dy + size - baseDstH;
+    // Centre the sprite over its footprint width, so a sprite wider (or narrower) than its footprint
+    // straddles the footprint tiles instead of growing rightward from the anchor.
+    dx += (Math.max(1, o.footprintW || 1) - w) * size / 2;
+    // Per-object vertical nudge (offset_y, authored in 32px pixels; negative = up, positive = down).
+    var offY = (o.offsetY || 0) * sc;
+    var baseSrcH = Math.min(NT, ih), baseDstH = baseSrcH * sc, baseDstY = dy + size - baseDstH + offY;
     var topSrcH = ih - baseSrcH;
     function blit(srcY, srcH, dstY, dstH) {
       if (srcH <= 0) return;
@@ -233,17 +239,26 @@ var Render = (function () {
     });
 
     // layer 3: objects (sprite follows the entity's state, then its facing; ground decals are baked)
-    var tops = [];
+    // draw order per object: 'auto' = base here (behind characters), tall overflow saved for after them;
+    // 'under' = whole object here (always behind characters); 'over' = whole object saved for after them.
+    var tops = [], overs = [];
     map.entities.forEach(function (e) {
       if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
       var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
       var path = objPath(o, st, facing), flip = facing === 'left' || facing === 'W';
-      var dx = ox + e.x * T, dy = oy + e.y * T;
-      drawObject(g, o, path, dx, dy, T, 'base', now, flip);
-      if (hasTop(o, path)) tops.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
+      var dx = ox + e.x * T, dy = oy + e.y * T, dz = o.draw || 'auto';
+      if (dz === 'over') {
+        overs.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
+      } else {
+        drawObject(g, o, path, dx, dy, T, 'base', now, flip);
+        if (hasTop(o, path)) {
+          if (dz === 'under') drawObject(g, o, path, dx, dy, T, 'top', now, flip);   // keep the overflow behind characters too
+          else tops.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
+        }
+      }
       // no art for this state yet: show it with a simple mark
-      if (st && !o.spriteStates[st]) {
+      if (dz !== 'over' && st && !o.spriteStates[st]) {
         if (st === 'open' && o.kind === 'door') { g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(dx + 4, dy + 2, T - 8, T - 4); }
         else if (st === 'empty' || st === 'open') { g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(dx, dy, T, T); }
         else if (st === 'down' && o.kind === 'trap') { g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(dx, dy, T, T); }
@@ -284,6 +299,11 @@ var Render = (function () {
     // layer 5b: tops of tall objects (tree crowns, roofs) cover characters behind them;
     // lower objects are drawn last, so a tree in front overlaps the one behind it
     tops.sort(function (a, b) { return a.y - b.y; }).forEach(function (t) { drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now, t.flip); });
+    // layer 5c: 'over' objects — the whole sprite sits in front of characters (foreground foliage, railings)
+    overs.sort(function (a, b) { return a.y - b.y; }).forEach(function (t) {
+      drawObject(g, t.o, t.path, t.dx, t.dy, T, 'base', now, t.flip);
+      if (hasTop(t.o, t.path)) drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now, t.flip);
+    });
   };
 
   /** Aiming: cells in range, the line to the cursor, the cell under it (green = can cast) and the area it would hit. */

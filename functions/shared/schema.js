@@ -68,7 +68,8 @@ var Schema = (function () {
       f('sprite', 'image', ''), f('sprite_top', 'image', '', 'Upper tile for tall objects'),
       f('sprite_states', 'text', '', 'state=sprite pairs, e.g. open=url; empty=url'),
       f('frames', 'number', 1), f('frame_ms', 'number', 200),
-      f('walkable', 'bool', false), f('blocks_sight', 'bool', false),
+      f('walkable', 'bool', false, 'Can you walk onto it? Off = solid (a wall, a table). Independent of sight.'),
+      f('blocks_sight', 'bool', false, 'Does it block line of sight and shots? Off = you can see and shoot across it (e.g. a table you can fire over but not walk through).'),
       f('properties', 'json', '', 'JSON of kind-specific settings'),
       f('on_interact', 'text', '', 'Data-driven action list'), f('notes', 'text', '')
     ] },

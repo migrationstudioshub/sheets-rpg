@@ -163,10 +163,11 @@ var E = {
     delete E.shapeMap()[x + ',' + y];             // normal painting re-autotiles the cell (unfreezes it)
     return true;
   }
-  // The eraser: clears an overlay cell back to empty; on objects it removes the entity. The base ground
-  // can't be erased (every cell needs a terrain), so erase is only offered on the overlay or objects.
+  // The eraser clears a terrain cell to empty (overlay cell, or a base cell to void) or, on the objects
+  // layer, removes the entity. An empty base cell is safe: Rules treats a cell with no terrain as
+  // unwalkable void (terrainAt → undefined, tryMove 'no terrain', standable false) and it draws nothing.
   function eraseAt(x, y) {
-    if (E.layer === 'terrain') return E.terrainLayer === 'overlay' ? setTerrain(x, y, '') : false;
+    if (E.layer === 'terrain') return setTerrain(x, y, '');
     return removeObject(x, y);
   }
 
@@ -256,7 +257,6 @@ var E = {
   E.setPaletteTab = function (t) {
     E.paletteTab = t;
     E.layer = t === 'terrain' ? 'terrain' : 'objects';
-    if (E.tool === 'erase' && t === 'terrain' && E.terrainLayer !== 'overlay') E.tool = 'brush';
   };
   function paint(x, y) {
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
@@ -457,8 +457,9 @@ var E = {
     }
 
     if (drag && (drag.kind === 'rect' || drag.kind === 'copy')) {
-      var a = drag.start, b = drag.end, copy = drag.kind === 'copy';   // amber = copy-to-stamp, blue = paint rect
-      g.fillStyle = copy ? 'rgba(242,193,78,.18)' : 'rgba(78,161,255,.25)'; g.strokeStyle = copy ? '#f2c14e' : '#4ea1ff'; g.lineWidth = 1;
+      var a = drag.start, b = drag.end, copy = drag.kind === 'copy', erasing = drag.erase;   // red = erase, amber = copy-to-stamp, blue = paint rect
+      g.fillStyle = erasing ? 'rgba(255,122,106,.22)' : copy ? 'rgba(242,193,78,.18)' : 'rgba(78,161,255,.25)';
+      g.strokeStyle = erasing ? '#ff7a6a' : copy ? '#f2c14e' : '#4ea1ff'; g.lineWidth = 1;
       var rx = vx + Math.min(a.x, b.x) * s, ry = vy + Math.min(a.y, b.y) * s;
       var rw = (Math.abs(a.x - b.x) + 1) * s, rh = (Math.abs(a.y - b.y) + 1) * s;
       g.fillRect(rx, ry, rw, rh); g.strokeRect(rx + .5, ry + .5, rw - 1, rh - 1);
@@ -513,8 +514,7 @@ var E = {
   }
 
   E.setTool = function (t) {
-    E.tool = t;
-    if (t === 'erase') E.layer = 'objects';
+    E.tool = t;   // erase works on whatever layer is active: base or overlay terrain, or objects
     Panels.toolbar(); E.redraw();
   };
 
@@ -555,7 +555,7 @@ var E = {
     E.checkpoint();
     var changed = false;
     if (E.tool === 'brush') { changed = paint(cell.x, cell.y); drag = { kind: 'paint', last: cell, changed: changed }; }
-    else if (E.tool === 'erase') { changed = eraseAt(cell.x, cell.y); drag = { kind: 'erase', last: cell, changed: changed }; }
+    else if (E.tool === 'erase') { drag = { kind: 'rect', start: cell, end: cell, erase: true }; }   // drag a box to erase; click = one tile
     else if (E.tool === 'rect') { drag = { kind: 'rect', start: cell, end: cell }; }
     else if (E.tool === 'fill') { changed = flood(cell.x, cell.y); if (changed) E.markDirty('map'); else E.undo.pop(); }
     if (changed) E.markDirty('map');
@@ -566,9 +566,9 @@ var E = {
     if (!E.hover || E.hover.x !== cell.x || E.hover.y !== cell.y) { E.hover = cell; Panels.cellInfo(cell); E.redraw(); }
     if (!drag) return;
     if (drag.kind === 'pan') { E.view.x = drag.vx + ev.clientX - drag.sx; E.view.y = drag.vy + ev.clientY - drag.sy; E.redraw(); return; }
-    if (drag.kind === 'paint' || drag.kind === 'erase' || drag.kind === 'stamp') {
+    if (drag.kind === 'paint' || drag.kind === 'stamp') {
       if (cell.x === drag.last.x && cell.y === drag.last.y) return;
-      var fn = drag.kind === 'paint' ? paint : drag.kind === 'stamp' ? stampAt : eraseAt;
+      var fn = drag.kind === 'paint' ? paint : stampAt;
       var ch = line(drag.last, cell, fn);
       drag.last = cell;
       if (ch) { drag.changed = true; E.markDirty('map'); }
@@ -586,8 +586,8 @@ var E = {
     if (!drag) return;
     if (drag.kind === 'copy') { copyRegion(drag.start, drag.end, drag.freeze); }   // captures into E.stamp; no map change
     else if (drag.kind === 'rect') {
-      if (rect(drag.start, drag.end, paint)) E.markDirty('map'); else E.undo.pop();
-    } else if ((drag.kind === 'paint' || drag.kind === 'erase' || drag.kind === 'stamp') && !drag.changed) E.undo.pop();
+      if (rect(drag.start, drag.end, drag.erase ? eraseAt : paint)) E.markDirty('map'); else E.undo.pop();
+    } else if ((drag.kind === 'paint' || drag.kind === 'stamp') && !drag.changed) E.undo.pop();
     drag = null; canvas.style.cursor = ''; E.redraw();
   }
   canvas.addEventListener('pointerup', endDrag);
@@ -602,7 +602,7 @@ var E = {
     Panels.status(); E.redraw();
   }, { passive: false });
 
-  var KEYS = { b: 'brush', r: 'rect', f: 'fill', i: 'pick', e: 'erase', v: 'select' };
+  var KEYS = { b: 'brush', r: 'rect', f: 'fill', e: 'erase', v: 'select' };
   addEventListener('keydown', function (ev) {
     var tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;

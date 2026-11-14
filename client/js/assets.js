@@ -32,18 +32,22 @@ var Assets = (function () {
   function loadForMap(content, map) {
     var paths = {};
     var tiles = [];                                   // convention tilesets on this map (for scatter sheets)
-    map.terrain.forEach(function (row) {
-      row.forEach(function (tid) {
-        var t = content.terrain[tid]; if (!t) return;
-        if (t.sprite) paths[t.sprite] = 1;
-        if (t.autotile && content.tilesets[t.autotile]) {
-          var img = content.tilesets[t.autotile].image;
-          paths[img] = 1;
-          var info = (typeof Scatter !== 'undefined') && Scatter.tileInfo(img);  // base tile / wall face / scatter
-          if (info) { tiles.push(info); if (info.baseTile) paths[info.baseTile] = 1; if (info.face) paths[info.face] = 1; }
-        }
+    function scanTerrain(grid) {                       // the art a terrain grid needs (sprite or autotile tileset)
+      (grid || []).forEach(function (row) {
+        row.forEach(function (tid) {
+          var t = content.terrain[tid]; if (!t) return;
+          if (t.sprite) paths[t.sprite] = 1;
+          if (t.autotile && content.tilesets[t.autotile]) {
+            var img = content.tilesets[t.autotile].image;
+            paths[img] = 1;
+            var info = (typeof Scatter !== 'undefined') && Scatter.tileInfo(img);  // base tile / wall face / scatter
+            if (info) { tiles.push(info); if (info.baseTile) paths[info.baseTile] = 1; if (info.face) paths[info.face] = 1; }
+          }
+        });
       });
-    });
+    }
+    scanTerrain(map.terrain);
+    scanTerrain(map.overlay);   // overlay layer too — a terrain painted only on the overlay (e.g. grass) is otherwise never preloaded
     map.entities.forEach(function (e) {
       var o = content.objects[e.ref]; if (!o) return;
       if (o.sprite) paths[o.sprite] = 1;

@@ -10,7 +10,12 @@ editor over the internet, unchanged.
 
 ## How it works
 
-- On launch it serves your project folder on a fixed local port and opens a launcher window.
+- On launch it serves your project folder on a fixed local port and opens a window with a persistent,
+  slim top nav — a **Home** tab plus four tool tabs (**Content Studio**, **Map Editor**, **Asset
+  Studio**, **Play offline**) that load the matching tool below the nav and stay highlighted while
+  active. **Home** detaches the tool view and reveals the LAN host + status panel. A **Play-test** from
+  the Map Editor or Content Studio writes the offline draft and opens the game **in the Play tab** (not a
+  separate window).
   - **Primary server:** the repo's own `tools/asset_server.py`, run by a bundled Python — this gives
     the art generators (Gear / Tileset / Objects). The art logic is still the repo's scripts; only the
     Python interpreter + Pillow/numpy are frozen into the app, so art behaves the same on any machine.
@@ -64,6 +69,6 @@ npm test        # node test_server.js — exercises the fallback static server
 | `preload.js` | Safe `window.desktop` bridge for the launcher page |
 | `server.js` | Fallback Node static server (+ port helpers); also runnable standalone for testing |
 | `python.js` | Finds a usable Python and launches `tools/asset_server.py` |
-| `home.html` / `home.js` / `home.css` | The launcher window |
+| `home.html` / `home.js` / `home.css` | The shell window: the top nav tabs + the Home (LAN/status) panel |
 | `prepare_python.js` | Build step: fetch + freeze the bundled Python |
 | `test_server.js` | Tests for `server.js` |

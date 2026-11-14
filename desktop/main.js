@@ -12,7 +12,7 @@
  * git commit -> GitHub Pages deploy loop is unchanged. Firestore publish still goes over the internet.
  */
 'use strict';
-const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, WebContentsView, Menu, dialog, shell, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -28,6 +28,13 @@ let win = null;
 let httpServer = null;                  // fallback Node server (only in fallback mode)
 let assetChild = null;                  // Python asset_server.py (only in python mode)
 let lanChild = null;                    // host/server.js
+
+// The window itself shows the shell (home.html): the top nav + the Home panel (LAN, status). Each tool
+// loads into this WebContentsView, laid out BELOW the nav, so the shared web pages stay untouched and the
+// live site is unaffected. 'home' means the view is detached, revealing the shell's Home panel underneath.
+let toolView = null;
+let activeTool = 'home';
+let navHeight = 150;                    // px reserved for the shell's top nav; the shell reports the real value
 
 const state = {
   projectRoot: null,
@@ -146,6 +153,50 @@ function urlFor(tool) {
   }
 }
 
+// ---------------------------------------------------------------- tool view (below the nav)
+function ensureToolView() {
+  if (toolView) return toolView;
+  toolView = new WebContentsView({
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  toolView.setBackgroundColor('#14161b');
+  toolView.webContents.setWindowOpenHandler(({ url }) => {
+    // A Play-test (map editor / Content Studio) opens the offline game with window.open. It has already
+    // written the offline draft first, so instead of spawning a separate window, load it straight into
+    // the Play tab in this same window (carrying any ?map=...), and don't pop a new window.
+    if (url.indexOf(base() + '/client/') === 0) { showTool('play', url); return { action: 'deny' }; }
+    // Anything else (external links) opens in the default browser-like window.
+    if (win && !win.isDestroyed()) win.webContents.send('nav:active', activeTool);
+    return { action: 'allow' };
+  });
+  return toolView;
+}
+function layoutToolView() {
+  if (!win || win.isDestroyed() || !toolView || activeTool === 'home') return;
+  const b = win.getContentBounds();
+  const y = Math.min(navHeight, b.height);
+  toolView.setBounds({ x: 0, y: y, width: b.width, height: Math.max(0, b.height - y) });
+}
+function showTool(tool, overrideUrl) {
+  if (!win || win.isDestroyed()) return;
+  ensureToolView();
+  const url = overrideUrl || urlFor(tool);
+  // Reload when the tool changes, or always when given an explicit URL (a Play-test carries fresh content
+  // and a specific map, so re-load even if the Play tab already shows the game).
+  if (overrideUrl || toolView.webContents.getURL() !== url) toolView.webContents.loadURL(url);
+  if (activeTool === 'home') win.contentView.addChildView(toolView);   // attach only when leaving Home
+  activeTool = tool;
+  layoutToolView();
+  win.webContents.send('nav:active', activeTool);
+}
+function showHome() {
+  if (!win || win.isDestroyed()) return;
+  if (toolView && activeTool !== 'home') win.contentView.removeChildView(toolView);  // reveal the shell's Home panel
+  activeTool = 'home';
+  win.webContents.send('nav:active', activeTool);
+}
+function navTo(tool) { if (!tool || tool === 'home') showHome(); else showTool(tool); }
+
 // ---------------------------------------------------------------- LAN host
 function lanState() { return Object.assign({}, state.lan); }
 function pushLanState() { if (win && !win.isDestroyed()) win.webContents.send('lan:state', lanState()); }
@@ -184,7 +235,7 @@ function stopLan() {
 
 // ---------------------------------------------------------------- window + menu
 function buildMenu() {
-  const nav = (tool) => () => { if (win) win.loadURL(urlFor(tool)); };
+  const nav = (tool) => () => navTo(tool);
   const template = [
     {
       label: 'Studio',
@@ -240,7 +291,14 @@ function createWindow() {
     },
   });
   win.loadURL(urlFor('home'));
-  win.on('closed', () => { win = null; });
+  // Re-tell the shell which tab is active whenever it (re)loads, so a manual Reload keeps the highlight right.
+  win.webContents.on('did-finish-load', () => { if (win && !win.isDestroyed()) win.webContents.send('nav:active', activeTool); });
+  win.on('closed', () => { win = null; toolView = null; activeTool = 'home'; });
+  win.on('resize', layoutToolView);
+  win.on('maximize', layoutToolView);
+  win.on('unmaximize', layoutToolView);
+  win.on('enter-full-screen', layoutToolView);
+  win.on('leave-full-screen', layoutToolView);
 }
 
 // ---------------------------------------------------------------- IPC
@@ -250,7 +308,9 @@ ipcMain.handle('status', () => ({
 }));
 ipcMain.handle('lan:start', () => startLan());
 ipcMain.handle('lan:stop', () => stopLan());
-ipcMain.handle('navigate', (_e, tool) => { if (win) win.loadURL(urlFor(tool)); return true; });
+ipcMain.handle('navigate', (_e, tool) => { navTo(tool); return true; });
+// The shell reports how tall its top nav is, so the tool view sits exactly beneath it.
+ipcMain.on('nav:height', (_e, px) => { navHeight = Math.max(0, Math.round(Number(px) || 0)) || navHeight; layoutToolView(); });
 ipcMain.handle('project:choose', () => changeProject());
 ipcMain.handle('project:reveal', () => shell.openPath(state.projectRoot));
 ipcMain.handle('open-external', (_e, url) => shell.openExternal(url));

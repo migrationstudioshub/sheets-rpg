@@ -182,8 +182,10 @@ def rebuild_art_manifest():
         with open(os.path.join(art, "manifest.json"), "w", encoding="utf-8") as fh:
             json.dump({"images": images}, fh, indent=2)
             fh.write("\n")
+        return len(images)
     except Exception:
         traceback.print_exc()   # a manifest hiccup must never fail the save itself
+        return 0
 
 
 # Route saved paper-doll art into type subfolders by filename prefix (matches the paperdoll/ layout:
@@ -420,7 +422,7 @@ def object_make(req):
     if not what:
         return {"error": "Describe the object."}
     if not re.match(r"^\s*[0-9.]+\s*,\s*[0-9.]+\s*,\s*[0-9.]+\s*$", size):
-        return {"error": "Size must be W,H,D in metres, e.g. 1.0,1.9,0.4"}
+        return {"error": "Size must be W,H,D in units (1 = 32px), e.g. 1,1.6,0.4"}
     key = read_key() or (req.get("google_api") or "").strip()
     if not key:
         return {"error": "no_key"}
@@ -546,6 +548,8 @@ class Handler(BaseHTTPRequestHandler):
                 res = object_make(req)
             elif path == "/object/save":
                 res = object_save(req)
+            elif path == "/art/rebuild-manifest":       # rescan art/ on demand (the Content Studio button)
+                res = {"ok": True, "count": rebuild_art_manifest()}
             else:
                 return self.send_error(404, "not found")
         except Exception as e:                  # noqa: BLE001 -- report any pipeline failure to the view

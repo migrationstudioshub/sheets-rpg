@@ -18,6 +18,25 @@ var Rules = (function () {
     return map._at[x + ',' + y] || [];
   }
 
+  // Objects can be bigger than one tile. A placed object's footprint is w×h tiles (from its object's
+  // footprintW/footprintH, default 1), anchored at the entity cell as the bottom-left corner and
+  // reaching right and upward. blockersAt lists every entity whose footprint covers (x, y) — used for
+  // collision, so a wide/tall object blocks its whole footprint, not just the one anchor tile. (entitiesAt
+  // keeps anchor-only semantics, which is what interaction and targeting want.)
+  function blockersAt(content, map, x, y) {
+    if (!map._block) {
+      map._block = {};
+      map.entities.forEach(function (e) {
+        var o = content.objects[e.ref];
+        var w = Math.max(1, (o && o.footprintW) || 1), h = Math.max(1, (o && o.footprintH) || 1);
+        for (var ax = e.x; ax < e.x + w; ax++)
+          for (var ay = e.y; ay > e.y - h; ay--)
+            (map._block[ax + ',' + ay] = map._block[ax + ',' + ay] || []).push(e);
+      });
+    }
+    return map._block[x + ',' + y] || [];
+  }
+
   // The terrain that governs a cell: the overlay terrain if one sits here, else the base. So a walkable
   // overlay (decorative grass) changes nothing, but a blocking overlay (water over ground) blocks.
   function terrainAt(content, map, x, y) {
@@ -41,11 +60,20 @@ var Rules = (function () {
     if (!to) return { ok: false, x: x, y: y, reason: 'no terrain' };
     if (from && !from.pass[d.out]) return { ok: false, x: x, y: y, reason: 'blocked side' };
     if (!to.pass[d.into]) return { ok: false, x: x, y: y, reason: 'blocked' };
-    var ents = entitiesAt(map, nx, ny);
+    // Leaving the current cell: a walkable object here can block one of its edges (one-way).
+    var hereObjs = blockersAt(content, map, x, y);
+    for (var h = 0; h < hereObjs.length; h++) {
+      var ho = content.objects[hereObjs[h].ref];
+      var hwalk = opts && opts.walkable ? opts.walkable(hereObjs[h]) : !(ho && !ho.walkable);
+      if (hwalk && ho && ho.pass && !ho.pass[d.out]) return { ok: false, x: x, y: y, reason: 'object side', entity: hereObjs[h].key };
+    }
+    var ents = blockersAt(content, map, nx, ny);
     for (var i = 0; i < ents.length; i++) {
       var o = content.objects[ents[i].ref];
       var walk = opts && opts.walkable ? opts.walkable(ents[i]) : !(o && !o.walkable);
       if (!walk) return { ok: false, x: x, y: y, reason: 'object', entity: ents[i].key, tx: nx, ty: ny };
+      // Entering the target cell: a walkable object there can block the edge you'd come in through.
+      if (o && o.pass && !o.pass[d.into]) return { ok: false, x: x, y: y, reason: 'object side', entity: ents[i].key, tx: nx, ty: ny };
     }
     if (opts && opts.occupied) {
       var who = opts.occupied(nx, ny);
@@ -72,7 +100,7 @@ var Rules = (function () {
   function standable(content, map, x, y) {
     var t = terrainAt(content, map, x, y);
     if (!t || !(t.pass.n || t.pass.e || t.pass.s || t.pass.w)) return false;
-    return !entitiesAt(map, x, y).some(function (e) {
+    return !blockersAt(content, map, x, y).some(function (e) {
       var o = content.objects[e.ref]; return o && !o.walkable;
     });
   }
@@ -88,7 +116,7 @@ var Rules = (function () {
     return { x: x, y: y };
   }
 
-  return { DIRS: DIRS, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt,
+  return { DIRS: DIRS, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt, blockersAt: blockersAt,
     terrainAt: terrainAt, standable: standable, nearestStandable: nearestStandable };
 })();
 if (typeof module !== 'undefined') module.exports = Rules;

@@ -274,10 +274,41 @@ var World = (function () {
   }
 
   // ------------------------------------------------------------ space
+  // ---- edge doors ----
+  // A door placed on a wall (kind 'door', layer 'wall') gates the wall EDGES it spans rather than blocking a
+  // tile: its cell (x,y) covers footprintW cells east, i.e. hWalls[y][x .. x+w-1]. We fold its open/closed
+  // state onto those edges in a transient overlay (map._doorEdges, keyed 'h'+x+','+y), rebuilt before each
+  // action/tick; the movement and sight edge checks consult it, so an OPEN door opens its edge even through a
+  // wall, and a CLOSED/locked door seals it. Such a door does NOT block its own tile (it sits on the wall line).
+  function isEdgeDoor(o) { return !!(o && o.kind === 'door' && o.properties && o.properties.layer === 'wall'); }
+  function buildDoorEdges(c, ws, mapId) {
+    var map = c.maps[mapId], out = {};
+    if (map) (map.entities || []).forEach(function (e) {
+      var o = objOf(c, e); if (!isEdgeDoor(o)) return;
+      var open = stateOf(c, ws, mapId, e) === 'open', w = Math.max(1, o.footprintW || 1);
+      for (var k = 0; k < w; k++) out['h' + (e.x + k) + ',' + e.y] = open ? 'open' : 'closed';
+    });
+    return out;
+  }
+  function syncDoorEdges(c, ws, mapId) { var m = c.maps[mapId]; if (m) m._doorEdges = buildDoorEdges(c, ws, mapId); }
+  // The edge between two orthogonally-adjacent cells, as {orient, x, y} into the wall grids (null if not adjacent).
+  function sharedEdge(ax, ay, bx, by) {
+    if (ax === bx && Math.abs(ay - by) === 1) return { orient: 'h', x: ax, y: Math.max(ay, by) };
+    if (ay === by && Math.abs(ax - bx) === 1) return { orient: 'v', x: Math.max(ax, bx), y: ay };
+    return null;
+  }
+  function doorOnEdge(map, orient, x, y) { return (map && map._doorEdges && map._doorEdges[orient + x + ',' + y]) || null; }
+  // Does moving across the edge between two adjacent cells blocked? A door on that edge overrides the wall.
+  function moveBlockedEdge(c, map, ax, ay, bx, by) {
+    var e = sharedEdge(ax, ay, bx, by), d = e && doorOnEdge(map, e.orient, e.x, e.y);
+    if (d) return d === 'closed';
+    return Rl().wallBlocksMove(c, Rl().wallBetweenCells(map, ax, ay, bx, by));
+  }
+
   function walkableEntity(c, ws, mapId, e) {
     var o = objOf(c, e); if (!o) return true;
     if (o.kind === 'spawn' || o.kind === 'trigger') return true;        // invisible markers
-    if (o.kind === 'door') return stateOf(c, ws, mapId, e) === 'open';
+    if (o.kind === 'door') return isEdgeDoor(o) ? true : stateOf(c, ws, mapId, e) === 'open';   // edge door sits on the wall, tile stays walkable
     return o.walkable;
   }
   function monsterAt(ms, x, y, except) {
@@ -368,6 +399,7 @@ var World = (function () {
   /** Moves the world on to `now`: timers, respawns, monsters wandering, chasing and attacking. */
   function advance(c, ws, mapId, players, now, rng, ev) {
     var map = c.maps[mapId]; if (!map) return;
+    syncDoorEdges(c, ws, mapId);                          // refresh the door-edge overlay monster AI reads
     var ms = ensureMonsters(c, ws, mapId, now, rng);
     Object.keys(ms.timers).forEach(function (k) {
       var t = ms.timers[k]; if (now >= t.at) { setState(ws, mapId, k, t.state); delete ms.timers[k]; }
@@ -437,7 +469,7 @@ var World = (function () {
             }
             break;
           }
-          if (best === 1 && !Rl().wallBlocksMove(c, Rl().wallBetweenCells(map, m.x, m.y, target.x, target.y))) {
+          if (best === 1 && !moveBlockedEdge(c, map, m.x, m.y, target.x, target.y)) {
             // adjacent with no wall between: swing. (A wall on the edge makes it try to move around instead.)
             var dmg = damage(ms2.atk, stats(c, target).def, rng);
             target.hp -= dmg;
@@ -625,7 +657,7 @@ var World = (function () {
     if (!t || !(t.pass.n || t.pass.e || t.pass.s || t.pass.w)) return true;
     return Rl().blockersAt(c, map, x, y).some(function (e) {
       var o = objOf(c, e); if (!o) return false;
-      if (o.kind === 'door') return stateFn(e) !== 'open';
+      if (o.kind === 'door') return isEdgeDoor(o) ? false : stateFn(e) !== 'open';   // edge door blocks sight on its EDGE, not its cell
       return o.blocksSight;
     });
   }
@@ -636,7 +668,11 @@ var World = (function () {
   // chooses which walls count: sight for shots and sight-skills, movement for melee/physical reach.
   function edgeBlocks(c, map, a, b, blk) {
     var R = Rl();
-    function w(ax, ay, bx, by) { return blk(c, R.wallBetweenCells(map, ax, ay, bx, by)); }
+    function w(ax, ay, bx, by) {
+      var e = sharedEdge(ax, ay, bx, by), d = e && doorOnEdge(map, e.orient, e.x, e.y);
+      if (d) return d === 'closed';                                     // a door overrides the wall on its edge
+      return blk(c, R.wallBetweenCells(map, ax, ay, bx, by));
+    }
     if (a.x === b.x || a.y === b.y) return w(a.x, a.y, b.x, b.y);
     return (w(a.x, a.y, b.x, a.y) || w(b.x, a.y, b.x, b.y)) &&
            (w(a.x, a.y, a.x, b.y) || w(a.x, b.y, b.x, b.y));
@@ -700,7 +736,7 @@ var World = (function () {
         var t = Rl().terrainAt(c, map, x, y); if (!t || !(t.pass.n || t.pass.e || t.pass.s || t.pass.w)) return false;
         if (Rl().blockersAt(c, map, x, y).some(function (e) {
           var o = objOf(c, e); if (!o || o.kind === 'spawn' || o.kind === 'trigger') return false;
-          return o.kind === 'door' ? st(e) !== 'open' : !o.walkable;
+          return o.kind === 'door' ? (isEdgeDoor(o) ? false : st(e) !== 'open') : !o.walkable;
         })) return false;
         return !mon(x, y) && !ply(x, y);
       }
@@ -1065,8 +1101,10 @@ var World = (function () {
     }
     if (pr.target) { teleport(c, p, pr.target, ev); return; }
     if (st === 'open') {
-      var opts = moveOpts(c, ws, p.map, players, null);
-      if (opts.occupied(e.x, e.y)) { ev.push({ type: 'info', to: p.id, text: 'Something is in the way.' }); return; }
+      if (!isEdgeDoor(o)) {                               // a tile door can't close on someone standing on it; an edge door sits on the wall line
+        var opts = moveOpts(c, ws, p.map, players, null);
+        if (opts.occupied(e.x, e.y)) { ev.push({ type: 'info', to: p.id, text: 'Something is in the way.' }); return; }
+      }
       setState(ws, p.map, e.key, 'closed');
     } else setState(ws, p.map, e.key, 'open');
   }
@@ -1210,6 +1248,7 @@ var World = (function () {
     var ev = [];
     if (!action || !c.maps[p.map]) return ev;
     players = players || [p];
+    syncDoorEdges(c, ws, p.map);                          // refresh the door-edge overlay this action reads
     if (action.type === 'move') {
       var dirs = (action.dirs || []).slice(0, 20);
       for (var i = 0; i < dirs.length; i++) {
@@ -1227,7 +1266,7 @@ var World = (function () {
       if (!am) ev.push({ type: 'info', to: p.id, text: 'Nothing to attack there.' });
       else if (!near(p, ax, ay)) ev.push({ type: 'info', to: p.id, text: 'Too far away.' });
       // A wall on the shared edge stops a melee swing, just as it stops a step (near() is orthogonal only).
-      else if (Rl().wallBlocksMove(c, Rl().wallBetweenCells(c.maps[p.map], p.x, p.y, ax, ay))) ev.push({ type: 'info', to: p.id, text: 'A wall is in the way.' });
+      else if (moveBlockedEdge(c, c.maps[p.map], p.x, p.y, ax, ay)) ev.push({ type: 'info', to: p.id, text: 'A wall is in the way.' });
       else { faceTo(p, ax, ay); attack(c, ws, p.map, p, am, now, rng, ev); }
     }
     else if (action.type === 'use') useItem(c, ws, p, action.item, now, ev);
@@ -1307,7 +1346,7 @@ var World = (function () {
       walkable: function (e) {
         var o = c.objects[e.ref]; if (!o) return true;
         if (o.kind === 'spawn' || o.kind === 'trigger') return true;
-        if (o.kind === 'door') return v.states[e.key] === 'open';
+        if (o.kind === 'door') return isEdgeDoor(o) ? true : v.states[e.key] === 'open';
         return o.walkable;
       },
       occupied: function (x, y) {
@@ -1349,6 +1388,7 @@ var World = (function () {
     stateOf: stateOf, mapState: mapState, check: check, run: run, give: give, count: count,
     liveState: liveState, trapPhase: trapPhase, knownSkills: knownSkills, checkTarget: checkTarget,
     viewLookup: viewLookup, canSee: canSee, snapTarget: snapTarget, actionsAt: actionsAt, lineCells: lineCells, applyStatus: applyStatus,
-    rangedWeapon: rangedWeapon, shotReach: shotReach, throwLanding: throwLanding, blastCells: blastCells, pickLootTable: pickLootTable, rollLook: rollLook };
+    rangedWeapon: rangedWeapon, shotReach: shotReach, throwLanding: throwLanding, blastCells: blastCells, pickLootTable: pickLootTable, rollLook: rollLook,
+    syncDoorEdges: syncDoorEdges, isEdgeDoor: isEdgeDoor };
 })();
 if (typeof module !== 'undefined') module.exports = World;

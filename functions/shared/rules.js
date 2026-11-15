@@ -109,8 +109,11 @@ var Rules = (function () {
     if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) return { ok: false, x: x, y: y, reason: 'edge' };
     var from = terrainAt(content, map, x, y), to = terrainAt(content, map, nx, ny);
     if (!to) return { ok: false, x: x, y: y, reason: 'no terrain' };
-    // Edge wall on the boundary between the two cells blocks the step (independent of terrain/objects).
-    if (wallBlocksMove(content, wallBetween(map, x, y, dir))) return { ok: false, x: x, y: y, reason: 'wall' };
+    // Edge wall on the boundary blocks the step; a door on that edge overrides it (open = pass, closed = block).
+    // map._doorEdges is a transient overlay the world sets each action/tick (keyed 'h'/'v' + x + ',' + y).
+    var dEdge = wallEdge(x, y, dir), de = map._doorEdges;
+    var door = dEdge && de ? de[dEdge.orient + dEdge.x + ',' + dEdge.y] : null;
+    if (door ? door === 'closed' : wallBlocksMove(content, wallBetween(map, x, y, dir))) return { ok: false, x: x, y: y, reason: door ? 'door' : 'wall' };
     if (from && !from.pass[d.out]) return { ok: false, x: x, y: y, reason: 'blocked side' };
     if (!to.pass[d.into]) return { ok: false, x: x, y: y, reason: 'blocked' };
     // Leaving the current cell: a walkable object here can block one of its edges (one-way).

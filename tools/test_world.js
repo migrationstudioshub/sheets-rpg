@@ -882,6 +882,29 @@ test('a straight wall blocks a diagonal line across it; a wall end can still be 
   assert.ok(World.canSee(b.c, b.map, 0, 1, 1, 0, st), 'you can still see diagonally past a wall end');
 });
 
+test('an edge door gates its wall: closed blocks move + sight, open lets both through (even over a wall)', () => {
+  const c = Content.build({
+    Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+    WallStyles: [{ id: 'brick', name: 'Brick', blocks_move: true, blocks_sight: true }],
+    Kinds: [{ kind: 'door', property: 'states', default: 'closed|open' }],
+    Objects: [{ id: 'door1', name: 'Door', kind: 'door', walkable: true, properties: '{"layer":"wall"}' }],
+    Maps: [{ id: 'm', name: 'M', width: 3, height: 3,
+      terrain: JSON.stringify([['grass', 'grass', 'grass'], ['grass', 'grass', 'grass'], ['grass', 'grass', 'grass']]),
+      hWalls: JSON.stringify([[], [], ['', 'brick:2', ''], []]) }]
+  });
+  const map = c.maps.m;
+  map.entities = [{ key: 'm.e1', x: 1, y: 2, ref: 'door1', data: { side: 'N' } }];   // on edge hWalls[2][1]
+  const ws = { maps: {} };
+  const st = (e) => World.stateOf(c, ws, 'm', e);
+  World.syncDoorEdges(c, ws, 'm');                                   // default state = 'closed'
+  assert.strictEqual(Rules.tryMove(c, map, 1, 2, 'N', {}).ok, false, 'closed door blocks the step north');
+  assert.ok(!World.canSee(c, map, 1, 2, 1, 1, st), 'closed door blocks sight across its edge');
+  World.mapState(ws, 'm').states['m.e1'] = 'open';
+  World.syncDoorEdges(c, ws, 'm');
+  assert.strictEqual(Rules.tryMove(c, map, 1, 2, 'N', {}).ok, true, 'open door lets you walk through the wall');
+  assert.ok(World.canSee(c, map, 1, 2, 1, 1, st), 'open door lets you see through');
+});
+
 test('a wall stops a melee swing; attacking from the open side still connects', () => {
   const { s, slime } = wallArena();
   put(s, 'arena', 0, 0);

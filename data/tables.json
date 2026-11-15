@@ -1862,6 +1862,36 @@
    "notes": "Wall-mounted, interactable: stand in the cell it hangs in and use it. Link it to doors/levers like any switch."
   },
   {
+   "id": "obj_edge_door",
+   "name": "Door",
+   "kind": "door",
+   "sprite": "https://i.imgur.com/cUnIspj.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "{\"layer\": \"wall\"}",
+   "on_interact": "",
+   "notes": "Edge door: paint it onto a horizontal wall in the Objects layer. Closed = opaque + blocks the edge; open = a see-through, walk-through hole the shape of the sprite. Interact to toggle. Walkable (it sits on the wall line, not the tile)."
+  },
+  {
+   "id": "obj_garage_door",
+   "name": "Garage Door",
+   "kind": "door",
+   "sprite": "https://i.imgur.com/cUnIspj.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "{\"layer\": \"wall\", \"width\": 2}",
+   "on_interact": "",
+   "notes": "A 2-tile-wide edge door (width = 2). Spans and gates two wall edges; opens as one wide hole."
+  },
+  {
    "id": "chair",
    "name": "Chair",
    "kind": "deco",

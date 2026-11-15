@@ -201,6 +201,39 @@ var Render = (function () {
     return set;
   }
 
+  // ---- edge doors ----
+  // A door (kind 'door', layer 'wall') renders as the wall-face segment it covers (footprintW tiles wide),
+  // with the door asset composited in: drawn over the face when CLOSED, and punched OUT of the face (exact
+  // sprite shape, via destination-out) when OPEN — so an open door is a real see-through, walk-through hole
+  // the size and shape of the door, with the surrounding wall still solid. Works for multi-tile doors.
+  var _doorCv = null;
+  function doorCanvas(w, h) {
+    if (!_doorCv && typeof document !== 'undefined') _doorCv = document.createElement('canvas');
+    if (!_doorCv) return null;
+    _doorCv.width = Math.max(1, w); _doorCv.height = Math.max(1, h);     // setting size also clears it
+    return _doorCv;
+  }
+  function drawDoor(g, content, map, job, ox, oy, S) {
+    var o = job.o, e = job.e, W = job.W, open = job.open;
+    var tokStr = (map.hWalls[e.y] && map.hWalls[e.y][e.x]) || '', tok = parseWallTok(tokStr);
+    var H = (tok && tok.height) || 2, st = (tok && content.wallStyles && content.wallStyles[tok.style]) || {};
+    var faceImg = st.face && Assets.get(st.face), col = st.color || '#8a8f98';
+    var line = oy + e.y * S, fx = ox + e.x * S, fw = W * S, fh = H * S, faceTop = line - fh;
+    var off = doorCanvas(fw, fh); if (!off) return;
+    var og = off.getContext('2d'); og.imageSmoothingEnabled = false;
+    if (faceImg) { for (var yy = 0; yy < fh; yy += S) { var hh = Math.min(S, fh - yy); for (var xx = 0; xx < fw; xx += S) og.drawImage(faceImg, 0, 0, faceImg.width, Math.max(1, Math.round(faceImg.height * hh / S)), xx, yy, S, hh); } }
+    else { og.fillStyle = shade(col, -0.06); og.fillRect(0, 0, fw, fh); }
+    var dImg = o.sprite && Assets.get(o.sprite);
+    var doorH = dImg ? Math.min(fh, Math.round(dImg.height / dImg.width * fw)) : Math.min(fh, 2 * S), doorY = fh - doorH;
+    if (dImg) {
+      og.globalCompositeOperation = open ? 'destination-out' : 'source-over';       // open punches the exact door shape out of the face
+      og.drawImage(dImg, 0, 0, dImg.width, dImg.height, 0, doorY, fw, doorH);
+      og.globalCompositeOperation = 'source-over';
+    } else if (open) og.clearRect(0, doorY, fw, doorH);                              // no art: a plain rectangular hole / panel
+    else { og.fillStyle = shade(col, -0.32); og.fillRect(0, doorY, fw, doorH); og.strokeStyle = shade(col, -0.5); og.strokeRect(0.5, doorY + 0.5, fw - 1, doorH - 1); }
+    g.drawImage(off, fx, faceTop);
+  }
+
   // ---- wall-mounted objects (layer:'wall') ----
   // A wall object hangs on ONE edge of its cell: side N/S = the horizontal wall on the cell's north/south
   // grid line, W/E = the vertical wall on its west/east line. It renders centred on that wall's visible face,
@@ -479,11 +512,17 @@ var Render = (function () {
     // tall overflow) y-sorts by its south edge with walls and characters, so a thing north of a wall is drawn
     // entirely behind it (cap included) and a thing south of it entirely in front. 'under' = whole object
     // drawn now (always behind everyone); 'over' = saved for the foreground. Ground decals are baked in.
-    var overs = [], renderables = [];
+    var overs = [], renderables = [], doorFaces = {};
     map.entities.forEach(function (e) {
       if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
       var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
       if (layerOf(o) === 'wall') {                                                      // hung on an edge face
+        if (o.kind === 'door') {                                                        // edge door: renders the wall face with a cutout
+          var dW = Math.max(1, o.footprintW || 1), dOpen = states[e.key] === 'open';
+          for (var dk = 0; dk < dW; dk++) doorFaces[(e.x + dk) + ',' + e.y] = 1;        // the door draws these faces (suppress the plain ones)
+          renderables.push({ sortY: oy + e.y * T + 0.25, door: { o: o, e: e, W: dW, open: dOpen } });
+          return;
+        }
         var wst = states[e.key], wp = objPath(o, wst, null), mp = wallMountPlace(map, o, e, ox, oy, T);
         renderables.push({ sortY: mp.sortY, obj: { o: o, path: wp, dx: mp.dx, dy: mp.dy, flip: mp.flip, st: wst, tall: hasTop(o, wp) } });
         return;
@@ -516,6 +555,7 @@ var Render = (function () {
     var prims = this.wall25 || [];
     prims.forEach(function (p) {
       if (p.x < x0 - 1 || p.x > x1 + 1 || p.y < y0 - 2 || p.y > y1 + 4) return;
+      if (p.kind === 'hface' && doorFaces[p.x + ',' + p.y]) return;             // a door draws this face region itself
       var isCap = p.kind === 'hcap' || p.kind === 'vcap';
       renderables.push({ sortY: prim25SortY(p, oy, T) + (isCap ? 0.5 : 0.25), prim: p });
     });
@@ -531,6 +571,7 @@ var Render = (function () {
       fadeCells = wallFadeCells(map, meA, fadeMode, fr);
     }
     renderables.forEach(function (r) {
+      if (r.door) { drawDoor(g, c, map, r.door, ox, oy, T); return; }
       if (r.prim) {
         var fk = fadeCells && fadeCells[(r.prim.kind.charAt(0) === 'h' ? 'h:' : 'v:') + r.prim.x + ':' + r.prim.y];
         if (fk) g.globalAlpha = fadeAlpha;

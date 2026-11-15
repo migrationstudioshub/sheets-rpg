@@ -1817,6 +1817,36 @@
    "notes": "from the objects maker"
   },
   {
+   "id": "obj_wall_torch",
+   "name": "Wall Torch",
+   "kind": "deco",
+   "sprite": "https://i.imgur.com/JL6vT4Z.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "{\"layer\": \"wall\"}",
+   "on_interact": "",
+   "notes": "Wall-mounted: paint it in the Objects layer and it snaps to the nearest wall edge; set the side/height in the inspector. Walkable so it doesn't block the floor."
+  },
+  {
+   "id": "obj_wall_switch",
+   "name": "Wall Switch",
+   "kind": "switch",
+   "sprite": "https://i.imgur.com/U6OpVaE.png",
+   "sprite_top": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "{\"layer\": \"wall\"}",
+   "on_interact": "message:The lever clunks into place.",
+   "notes": "Wall-mounted, interactable: stand in the cell it hangs in and use it. Link it to doors/levers like any switch."
+  },
+  {
    "id": "chair",
    "name": "Chair",
    "kind": "deco",

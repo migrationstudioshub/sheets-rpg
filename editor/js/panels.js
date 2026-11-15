@@ -427,6 +427,13 @@ var Panels = (function () {
         return h('option', { value: id, text: d.name + ' (' + d.kind + ')', selected: id === e.ref }); }));
     wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'object' }), objSel));
 
+    if (o && o.properties && o.properties.layer === 'wall') {   // wall-mounted object: height up the visible (south-facing) wall face
+      wrap.appendChild(h('div', { className: 'sub', text: 'Wall mount' }));
+      wrap.appendChild(field('mount', { type: 'number', 'default': 0,
+        notes: 'Height up the wall face, in tiles (0 = centred, negative = lower).' },
+        e.data.mount, function (v) { setProp(e.key, E.mapId, 'mount', v); inspector(); E.redraw(); }, { entity: e }));
+    }
+
     if (kind.states.length) {
       var st = h('select', { onchange: function () { setProp(e.key, E.mapId, 'state', st.value === kind.states[0] ? undefined : st.value); E.redraw(); } },
         kind.states.map(function (s, i) { return h('option', { value: s, text: s + (i === 0 ? ' (default)' : ''), selected: (e.data.state || kind.states[0]) === s }); }));

@@ -174,10 +174,11 @@ var Render = (function () {
   }
 
   // Walls that currently hide the player, to draw see-through. Only E-W (horizontal) walls ever fade — the
-  // thin N-S walls don't occlude. Mode: 'tiles' (just the cells over the player), 'run' (the whole contiguous
-  // E-W run the player is behind), 'radius' (E-W walls within `radius` tiles, but only to the SOUTH of the
-  // player — a wall north of the player never hides it). A face at line y, column x, height ht covers the
-  // player when me.x === x and me.y is in [y-ht, y-1]. Returns a set keyed 'h:x:y' matching a prim's x,y.
+  // thin N-S walls don't occlude. Mode: 'tiles' (just the column over the player), 'run' (the contiguous E-W
+  // wall the player is behind, up to ±radius cells each side; a gap stops it, so it never reaches a separate
+  // building's wall), 'radius' (E-W walls within `radius` tiles, south of the player only — note this bubble
+  // can fade walls of a structure you're outside of). A face at line y, column x, height ht covers the player
+  // when me.x === x and me.y is in [y-ht, y-1]. Returns a set keyed 'h:x:y' matching a prim's x,y.
   function wallFadeCells(map, me, mode, radius) {
     var set = {};
     if (!me || mode === 'off') return set;
@@ -186,14 +187,16 @@ var Render = (function () {
       for (y = my + 1; y <= my + radius && y < h.length; y++) { row = h[y] || []; for (x = mx - radius; x <= mx + radius; x++) if (row[x]) set['h:' + x + ':' + y] = 1; }
       return set;
     }
+    // 'run' fades along the CONTIGUOUS wall the player is behind, up to ±radius cells each side (radius 0/blank
+    // = the whole run). A gap stops the grow, so the fade never jumps to a separate wall — which keeps it off
+    // the walls of a building you're outside of. 'tiles' = just the covering column (span 0).
+    var span = mode === 'run' ? (radius > 0 ? radius : 1e9) : 0;
     for (y = my + 1; y < h.length && y <= my + 12; y++) {                 // E-W walls south of the player
       var tok = (h[y] && h[y][mx]) ? parseWallTok(h[y][mx]) : null;
       if (!tok || my < y - tok.height) continue;                          // its face doesn't rise over the player's cell
-      if (mode === 'run') {                                               // fade the whole contiguous run at this line
-        var x0 = mx; while (x0 - 1 >= 0 && h[y] && h[y][x0 - 1]) x0--;
-        var x1 = mx; while (h[y] && h[y][x1 + 1]) x1++;
-        for (x = x0; x <= x1; x++) set['h:' + x + ':' + y] = 1;
-      } else set['h:' + mx + ':' + y] = 1;                                // 'tiles': just the covering cell
+      var x0 = mx; while (x0 - 1 >= mx - span && h[y] && h[y][x0 - 1]) x0--;
+      var x1 = mx; while (x1 + 1 <= mx + span && h[y] && h[y][x1 + 1]) x1++;
+      for (x = x0; x <= x1; x++) set['h:' + x + ':' + y] = 1;
     }
     return set;
   }

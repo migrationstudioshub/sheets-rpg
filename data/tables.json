@@ -8,12 +8,12 @@
   {
    "key": "wall_fade",
    "value": "run",
-   "notes": "See through walls that hide you: off | tiles (just the covering cells) | run (the whole wall section) | radius (any wall near you)"
+   "notes": "See through walls that hide you: off | tiles (just your column) | run (the wall you're behind, up to wall_fade_radius tiles each side) | radius (any wall near you, south-facing)"
   },
   {
    "key": "wall_fade_radius",
    "value": 3,
-   "notes": "Tiles around the player faded when wall_fade = radius"
+   "notes": "Tiles each side of the player that fade: the window half-width for run, the bubble size for radius"
   },
   {
    "key": "wall_fade_alpha",

@@ -8,6 +8,7 @@ Ground (Nano Banana texture -> plain base + variety layer -> 8x8 autotile sheet)
   options: --pattern  (built surfaces: keeps seams/welds/joints; without it the base is flattened to 2 colours)
            --joints N  (slab/tile lines every N px)  --contrast 2.5  --shift -0.2 (darker)
            --details-chance 0.4 --decals-chance 0.06  --under <terrain> (what the review sits on)
+           --colours "cool dark steel greys, patches of rust"  (say the material's colours)
            --raw <png>  reuse an existing texture image instead of generating one (no credits)
 
 Wall (procedural bricks, no credits):
@@ -86,7 +87,7 @@ def plain_review(name, out):
 
 
 def ground(a):
-    raw = a.raw or make_tile.gen(a.name, a.what, a.pattern)
+    raw = a.raw or make_tile.gen(a.name, a.what, a.pattern, a.colours)
     contrast = a.contrast if a.contrast is not None else (1.3 if a.pattern else 2.5)
     details.run(raw, f"{TILES}/{a.name}", contrast, a.shift, a.joints, pattern=a.pattern)
     if a.plain:                                       # a plain, non-autotiled ground tile (a sprite terrain)
@@ -160,6 +161,7 @@ if __name__ == "__main__":
     ap.add_argument("--pattern", action="store_true",
                     help="built surfaces (metal plates, planks, tiles, pavers): keep seams/joints in the base tile and ask for small units")
     ap.add_argument("--shift", type=float, default=0.0)
+    ap.add_argument("--colours", help="ground: main colours, e.g. 'cool dark steel greys, patches of rust'")
     ap.add_argument("--details-chance", type=float, default=0.4)
     ap.add_argument("--decals-chance", type=float, default=0.06)
     ap.add_argument("--under", default="asphalt", help="terrain the review patch sits on")

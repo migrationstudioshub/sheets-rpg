@@ -160,16 +160,24 @@ PATTERN_TAIL = ("Even, dim, desaturated colours. The surface's STRUCTURE is what
                 "6 to 8 units across the whole image, so several fit in one game tile.")
 
 
-def gen(name, what, pattern=False):
+def gen(name, what, pattern=False, colours=None):
     from nano import generate
     here = os.path.dirname(__file__)
     root = os.path.join(here, "..")
-    refs = [Image.open(os.path.join(root, "samples/palette.png")).convert("RGBA"),
-            Image.open(os.path.join(root, "samples/tiles/tile_floor.png")).convert("RGBA").resize((256, 256), Image.NEAREST)]
+    refs = [Image.open(os.path.join(root, "samples/palette.png")).convert("RGBA")]
+    if not pattern:
+        # natural ground only: the wood floor sets the dark mood. For built surfaces it drags every
+        # material toward brown planks (steel came out as tan stone), so pattern mode sends the palette alone.
+        refs.append(Image.open(os.path.join(root, "samples/tiles/tile_floor.png")).convert("RGBA").resize((256, 256), Image.NEAREST))
     prompt = STYLE.format(what=what)
     if pattern:   # built surfaces: the default "one colour, sparse detail" wording erases their structure
         prompt = prompt.replace("Even, dim, desaturated colours; one dominant colour with "
                                 "sparse small details so it does not look busy.", PATTERN_TAIL)
+        prompt = prompt.replace("Match the colour mood of the reference images.",
+                                "Use the material's REAL colours (steel and concrete are grey, not brown), dark and "
+                                "desaturated, picked from the palette reference.")
+    if colours:
+        prompt += f" Colours: {colours}."
     img = generate(prompt, refs, aspect="1:1", model=os.environ.get("NANO_MODEL", "gemini-3.1-flash-image"))
     out = os.path.join(root, "raw/tiles2", name + ".png")
     os.makedirs(os.path.dirname(out), exist_ok=True)

@@ -173,7 +173,39 @@ var Render = (function () {
     else if (p.kind === 'vcap') { var vt = oy + (p.y + 1) * S - p.h * S; cap(vx - hd + voff, vt - S, vx + hd + voff, vt); } // 1-tile cap on top of the face
   }
 
-  /** The object layer: 'object' (y-sorted, default), 'wall' (over a wall face) or 'ground_decal' (flat). */
+  // ---- wall-mounted objects (layer:'wall') ----
+  // A wall object hangs on ONE edge of its cell: side N/S = the horizontal wall on the cell's north/south
+  // grid line, W/E = the vertical wall on its west/east line. It renders centred on that wall's visible face,
+  // raised toward the middle of the wall's height (data.mount nudges it up in tiles; negative lowers it), and
+  // sorts just after the face so it sits ON the wall. Collision is unchanged — the wall edge already blocks and
+  // the object's own tile stays walkable (author wall objects walkable). Interaction uses the object's cell.
+  function mountSide(e) { return String((e.data && (e.data.side || e.data.facing)) || 'N').toUpperCase().charAt(0); }
+  function mountEdge(x, y, side) {
+    if (side === 'S') return { orient: 'h', ex: x, ey: y + 1 };
+    if (side === 'W') return { orient: 'v', ex: x, ey: y };
+    if (side === 'E') return { orient: 'v', ex: x + 1, ey: y };
+    return { orient: 'h', ex: x, ey: y };                        // 'N' (default)
+  }
+  function wallHeightAt(map, ed) {
+    var grid = ed.orient === 'h' ? map.hWalls : map.vWalls, row = grid && grid[ed.ey];
+    var p = row ? parseWallTok(row[ed.ex]) : null;
+    return p ? p.height : 0;                                     // 0 = no wall there (mount one tile high)
+  }
+  /** Screen placement {dx, dy, sortY, flip} for a wall-mounted object entity. (ox,oy)=map origin, S=cell px. */
+  function wallMountPlace(map, o, e, ox, oy, S) {
+    var side = mountSide(e), ed = mountEdge(e.x, e.y, side), H = wallHeightAt(map, ed) || 1;
+    var mount = Number((e.data && e.data.mount != null) ? e.data.mount : (o.properties && o.properties.mount)) || 0;
+    if (ed.orient === 'h') {
+      var line = oy + ed.ey * S;                                 // the wall's grid line (face rises north of it)
+      var bottom = line - H * S / 2 + S / 2 - mount * S;         // centre a 1-tile sprite on the face
+      return { dx: ox + ed.ex * S, dy: bottom - S, sortY: line + 0.26, flip: false };
+    }
+    var vline = ox + ed.ex * S, vbase = oy + (ed.ey + 1) * S;    // vertical wall rises from the cell's south edge
+    var vb = vbase - H * S / 2 + S / 2 - mount * S;
+    return { dx: vline - S / 2, dy: vb - S, sortY: vbase + 0.26, flip: side === 'E' };
+  }
+
+  /** The object layer: 'object' (y-sorted, default), 'wall' (hung on an edge face) or 'ground_decal' (flat). */
   function layerOf(o) { return (o.properties && o.properties.layer) || 'object'; }
 
   /** Which sprite to show: an active state (open/empty…) wins, else the facing view, else the base sprite. */
@@ -423,6 +455,11 @@ var Render = (function () {
     map.entities.forEach(function (e) {
       if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
       var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
+      if (layerOf(o) === 'wall') {                                                      // hung on an edge face
+        var wst = states[e.key], wp = objPath(o, wst, null), mp = wallMountPlace(map, o, e, ox, oy, T);
+        renderables.push({ sortY: mp.sortY, obj: { o: o, path: wp, dx: mp.dx, dy: mp.dy, flip: mp.flip, st: wst, tall: hasTop(o, wp) } });
+        return;
+      }
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
       var path = objPath(o, st, facing), flip = facing === 'left' || facing === 'W';
       var dx = ox + e.x * T, dy = oy + e.y * T, dz = o.draw || 'auto';
@@ -559,5 +596,6 @@ var Render = (function () {
   return { Renderer: Renderer, bakeGround: bakeGround, drawObject: drawObject, frameOf: frameOf,
     drawWall: drawWall, wallSegments: wallSegments, wallBaseY: wallBaseY, parseWallTok: parseWallTok,
     connectorNodes: connectorNodes, drawWallNodes: drawWallNodes, styleHasTiles: styleHasTiles,
-    wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25 };
+    wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25,
+    layerOf: layerOf, wallMountPlace: wallMountPlace };
 })();

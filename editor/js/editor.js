@@ -280,6 +280,46 @@ var E = {
     if (E.selected === e.key) E.selected = null;
     return true;
   }
+  // ---- wall-mounted objects (object defs with properties.layer === 'wall') ----
+  // The current object brush, if it is a wall-mount object; else null.
+  E.wallMountBrush = function () {
+    if (E.layer !== 'objects' || E.paletteTab === 'monsters' || !E.brush.object) return null;
+    var o = E.content.objects[E.brush.object];
+    return o && o.properties && o.properties.layer === 'wall' ? o : null;
+  };
+  // Map a hovered edge {orient,x,y,side} to the cell + side letter the wall object mounts on.
+  function edgeToMount(edge) {
+    if (!edge) return null;
+    if (edge.orient === 'h') return edge.side === 's' ? { x: edge.x, y: edge.y, side: 'N' }        // top edge → north wall
+                                                      : { x: edge.x, y: edge.y - 1, side: 'S' };   // bottom edge → south wall
+    return edge.side === 'r' ? { x: edge.x, y: edge.y, side: 'W' }                                 // left edge → west wall
+                             : { x: edge.x - 1, y: edge.y, side: 'E' };                            // right edge → east wall
+  }
+  // The wall-mount entity already on this cell+side, so a side can be repainted without disturbing
+  // another wall object or a floor object sharing the cell.
+  function wallEntAt(x, y, side) {
+    var m = E.map();
+    for (var i = m.entities.length - 1; i >= 0; i--) {
+      var e = m.entities[i], o = e.ref && E.content.objects[e.ref];
+      if (e.x === x && e.y === y && o && o.properties && o.properties.layer === 'wall'
+          && ((e.data && e.data.side) || 'N') === side) return e;
+    }
+    return null;
+  }
+  function placeWallObject(edge, ref) {
+    var mnt = edgeToMount(edge); if (!mnt || !E.inside(mnt.x, mnt.y) || !ref) return false;
+    var ex = wallEntAt(mnt.x, mnt.y, mnt.side);
+    if (ex) { if (ex.ref === ref) return false; ex.ref = ref; return true; }
+    var m = E.map();
+    m.entities.push({ key: E.newKey(m), x: mnt.x, y: mnt.y, ref: ref, data: { side: mnt.side } });
+    return true;
+  }
+  function eraseWallObject(edge) {
+    var mnt = edgeToMount(edge); if (!mnt) return false;
+    var ex = wallEntAt(mnt.x, mnt.y, mnt.side); if (!ex) return false;
+    var m = E.map(); m.entities.splice(m.entities.indexOf(ex), 1);
+    if (E.selected === ex.key) E.selected = null; return true;
+  }
   /** The object used to place monsters: the first object of kind "spawn". */
   E.spawnObject = function () {
     return Object.keys(E.content.objects).filter(function (k) { return E.content.objects[k].kind === 'spawn'; })[0] || null;
@@ -490,7 +530,12 @@ var E = {
     }
     var items = [];
     if (E.show.objects) m.entities.forEach(function (e) {
-      items.push({ sortY: Math.round(e.y * s) + s, ent: e, o: c.objects[e.ref], dx: vx + e.x * s, dy: vy + e.y * s });
+      var eo = c.objects[e.ref];
+      if (eo && Render.wallMountPlace && Render.layerOf(eo) === 'wall') {              // hung on a wall edge
+        var mp = Render.wallMountPlace(m, eo, e, vx, vy, s);                           // screen position (with view offset)
+        var ms = Render.wallMountPlace(m, eo, e, 0, 0, s);                             // sort key in the no-offset space the other items use
+        items.push({ sortY: ms.sortY, ent: e, o: eo, dx: mp.dx, dy: mp.dy, flip: mp.flip });
+      } else items.push({ sortY: Math.round(e.y * s) + s, ent: e, o: eo, dx: vx + e.x * s, dy: vy + e.y * s });
     });
     if (Render.wall25) Render.wall25(c, m).forEach(function (p) {
       var isCap = p.kind === 'hcap' || p.kind === 'vcap';
@@ -505,8 +550,8 @@ var E = {
       else if (o.kind === 'spawn') drawSpawn(e, o, it.dx, it.dy, s);
       else {
         var path = (e.data && e.data.state && o.spriteStates[e.data.state]) || o.sprite;
-        Render.drawObject(g, o, path, it.dx, it.dy, s, 'base', 0);
-        Render.drawObject(g, o, path, it.dx, it.dy, s, 'top', 0);   // overflow (no-op when the sprite is one tile)
+        Render.drawObject(g, o, path, it.dx, it.dy, s, 'base', 0, it.flip);
+        Render.drawObject(g, o, path, it.dx, it.dy, s, 'top', 0, it.flip);   // overflow (no-op when the sprite is one tile)
       }
       g.globalAlpha = 1;
     });
@@ -530,6 +575,24 @@ var E = {
         var off = E.wallSide === 'cursor' && he.side === 'r' ? hd : E.wallSide === 'cursor' && he.side === 'l' ? -hd : 0;
         g.moveTo(vx + he.x * s + off, vy + he.y * s); g.lineTo(vx + he.x * s + off, vy + (he.y + 1) * s);
       }
+      g.stroke(); g.lineWidth = 1; g.lineCap = 'butt';
+    }
+
+    // objects layer, wall-mount brush: ghost the object on the snapped face + highlight the edge it hangs on
+    var wmb = E.wallMountBrush();
+    if (wmb && E.hoverEdge && !E.mode && (E.tool === 'brush' || E.tool === 'erase')) {
+      var we = E.hoverEdge, mnt = edgeToMount(we);
+      if (mnt && E.tool !== 'erase') {
+        var gp = Render.wallMountPlace(m, wmb, { x: mnt.x, y: mnt.y, data: { side: mnt.side } }, vx, vy, s);
+        g.globalAlpha = 0.5;
+        Render.drawObject(g, wmb, wmb.sprite, gp.dx, gp.dy, s, 'base', 0, gp.flip);
+        Render.drawObject(g, wmb, wmb.sprite, gp.dx, gp.dy, s, 'top', 0, gp.flip);
+        g.globalAlpha = 1;
+      }
+      g.strokeStyle = E.tool === 'erase' ? '#ff7a6a' : '#ffd27a';
+      g.lineWidth = Math.max(3, Math.round(s * 0.18)); g.lineCap = 'round'; g.beginPath();
+      if (we.orient === 'h') { g.moveTo(vx + we.x * s, vy + we.y * s); g.lineTo(vx + (we.x + 1) * s, vy + we.y * s); }
+      else { g.moveTo(vx + we.x * s, vy + we.y * s); g.lineTo(vx + we.x * s, vy + (we.y + 1) * s); }
       g.stroke(); g.lineWidth = 1; g.lineCap = 'butt';
     }
 
@@ -662,6 +725,13 @@ var E = {
       E.redraw(); return;
     }
     if (E.tool === 'pick') { eyedrop(cell.x, cell.y); return; }
+    if (E.wallMountBrush() && (E.tool === 'brush' || E.tool === 'erase')) {   // snap wall-mount objects to an edge
+      E.checkpoint();
+      var wedge = E.edgeAt(ev), wok = E.tool === 'erase' ? eraseWallObject(wedge) : placeWallObject(wedge, E.brush.object);
+      drag = { kind: 'wallobj', erase: E.tool === 'erase', changed: wok };
+      if (wok) E.markDirty('map'); else E.undo.pop();
+      return;
+    }
     if (E.layer === 'objects' && E.tool !== 'erase' && !(E.paletteTab === 'monsters' ? E.brush.monster : E.brush.object)) {
       Panels.status('pick ' + (E.paletteTab === 'monsters' ? 'a monster' : 'an object') + ' in the palette first', true); return;
     }
@@ -678,13 +748,18 @@ var E = {
   canvas.addEventListener('pointermove', function (ev) {
     var cell = cellAt(ev);
     if (!E.hover || E.hover.x !== cell.x || E.hover.y !== cell.y) { E.hover = cell; Panels.cellInfo(cell); E.redraw(); }
-    if (E.layer === 'walls') {   // track the nearest edge for the highlight (and to paint while dragging)
+    if (E.layer === 'walls' || E.wallMountBrush()) {   // track the nearest edge for the highlight (and to paint while dragging)
       var ed = E.edgeAt(ev), he = E.hoverEdge;
-      if (!he || !ed || he.orient !== ed.orient || he.x !== ed.x || he.y !== ed.y) { E.hoverEdge = ed; E.redraw(); }
+      if (!he || !ed || he.orient !== ed.orient || he.x !== ed.x || he.y !== ed.y || he.side !== ed.side) { E.hoverEdge = ed; E.redraw(); }
     }
     if (!drag) return;
     if (drag.kind === 'wall') {
       if (paintWall(E.edgeAt(ev))) { drag.changed = true; E.markDirty('map'); }
+      return;
+    }
+    if (drag.kind === 'wallobj') {
+      var we = E.edgeAt(ev);
+      if (drag.erase ? eraseWallObject(we) : placeWallObject(we, E.brush.object)) { drag.changed = true; E.markDirty('map'); }
       return;
     }
     if (drag.kind === 'pan') { E.view.x = drag.vx + ev.clientX - drag.sx; E.view.y = drag.vy + ev.clientY - drag.sy; E.redraw(); return; }
@@ -709,7 +784,7 @@ var E = {
     if (drag.kind === 'copy') { copyRegion(drag.start, drag.end, drag.freeze); }   // captures into E.stamp; no map change
     else if (drag.kind === 'rect') {
       if (rect(drag.start, drag.end, drag.erase ? eraseAt : paint)) E.markDirty('map'); else E.undo.pop();
-    } else if ((drag.kind === 'paint' || drag.kind === 'stamp' || drag.kind === 'wall') && !drag.changed) E.undo.pop();
+    } else if ((drag.kind === 'paint' || drag.kind === 'stamp' || drag.kind === 'wall' || drag.kind === 'wallobj') && !drag.changed) E.undo.pop();
     drag = null; canvas.style.cursor = ''; E.redraw();
   }
   canvas.addEventListener('pointerup', endDrag);

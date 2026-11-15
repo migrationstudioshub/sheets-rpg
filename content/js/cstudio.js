@@ -394,9 +394,14 @@ var CStudio = (function () {
       h('label', { text: 'Layer' }),
       h('div', { className: 'seg' }, [['object', 'Object'], ['wall', 'Wall-mounted'], ['ground_decal', 'Ground decal']].map(function (m) {
         return h('button', { type: 'button', className: 'segbtn' + (layer === m[0] ? ' on' : ''), text: m[1],
-          onclick: function () { setProp(o, 'layer', m[0] === 'object' ? undefined : m[0]); objForm(); } });
+          onclick: function () {
+            // A wall object sits on the wall, not the floor, so default it to walkable + see-through so it
+            // doesn't block or wall off the tile in front. You can still toggle those back above.
+            if (m[0] === 'wall') { o.walkable = true; o.blocks_sight = false; }
+            setProp(o, 'layer', m[0] === 'object' ? undefined : m[0]); objForm();
+          } });
       })),
-      h('div', { className: 'help', text: 'Object: normal, y-sorted on the ground. Wall-mounted: hangs on a wall’s visible (south-facing) face — in the map editor, paint it on the Objects layer and it snaps to the nearest wall (make it walkable so it doesn’t block the floor). Ground decal: a flat mark baked into the ground.' })));
+      h('div', { className: 'help', text: 'Object: normal, y-sorted on the ground. Wall-mounted: hangs on a wall’s visible (south-facing) face — in the map editor, paint it on the Objects layer and it snaps to the nearest wall. Choosing this sets the object walkable and see-through, so it doesn’t block the floor tile in front (the wall itself still stops you); tick those back on above if you want a solid, view-blocking panel. Ground decal: a flat mark baked into the ground.' })));
     if (layer === 'wall') {
       form.appendChild(h('div', { className: 'field', title: 'Default height up the wall face' },
         h('label', { text: 'Mount height (tiles)' }),

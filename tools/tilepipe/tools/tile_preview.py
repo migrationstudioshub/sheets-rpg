@@ -120,7 +120,7 @@ def scatter(canvas, grid, key, terrain, tiles_dir):
                 continue
             interior = not any(cell_sig(m, y, x))
             for kind, salt in (("details", 1), ("decals", 2)):
-                if kind == "decals" and not interior:
+                if (kind == "decals" and not interior) or kind not in t:
                     continue
                 sheet, count, cols, chance = t[kind]
                 h = hash32(x, y, salt)

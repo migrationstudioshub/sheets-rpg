@@ -548,11 +548,12 @@ var E = {
       g.globalAlpha = objDim;
       var e = it.ent, o = it.o;
       if (!o) g.drawImage(Assets.placeholder('?', '#a33', t), it.dx, it.dy, s, s);
-      else if (o.kind === 'spawn') drawSpawn(e, o, it.dx, it.dy, s);
+      else if (o.kind === 'spawn' && !o.sprite) drawSpawn(e, o, it.dx, it.dy, s);   // spriteless: editor-only marker
       else {
         var path = (e.data && e.data.state && o.spriteStates[e.data.state]) || o.sprite;
         Render.drawObject(g, o, path, it.dx, it.dy, s, 'base', 0, it.flip);
         Render.drawObject(g, o, path, it.dx, it.dy, s, 'top', 0, it.flip);   // overflow (no-op when the sprite is one tile)
+        if (o.kind === 'spawn') drawSpawnBadge(e, o, vx + e.x * s, vy + e.y * s, s);   // a sprited spawner (nest…): show what it spawns
       }
       g.globalAlpha = 1;
     });
@@ -666,6 +667,22 @@ var E = {
       var r = Number(pr.radius) || 0;
       g.strokeStyle = '#ff7a6a'; g.setLineDash([4, 3]); g.lineWidth = 1.5;
       g.strokeRect(dx - r * s + .5, dy - r * s + .5, (2 * r + 1) * s - 1, (2 * r + 1) * s - 1); g.setLineDash([]);
+    }
+  }
+  // A sprited spawner (a nest, a portal…) draws its own art; this adds the editor-only spawn info over its
+  // cell — a small monster badge, the ×count, and the spawn radius when selected. None of it shows in-game.
+  function drawSpawnBadge(e, o, cx, cy, s) {
+    var pr = World.props(E.content, e), mon = E.content.monsters[pr.monster], img = mon && mon.sprite && Assets.get(mon.sprite);
+    var n = Number(pr.count) || 1, bs = Math.max(8, Math.round(s * 0.4));
+    g.fillStyle = 'rgba(200,60,60,.6)'; g.fillRect(cx, cy, bs, bs);
+    if (img) g.drawImage(img, cx, cy, bs, bs);
+    g.font = 'bold ' + Math.max(9, Math.round(s * 0.3)) + 'px sans-serif'; g.textAlign = 'right';
+    g.fillStyle = 'rgba(0,0,0,.7)'; g.fillText('×' + n, cx + s - 1, cy + s - 1);
+    g.fillStyle = '#fff'; g.fillText('×' + n, cx + s - 2, cy + s - 2);
+    if (E.selected === e.key) {
+      var r = Number(pr.radius) || 0;
+      g.strokeStyle = '#ff7a6a'; g.setLineDash([4, 3]); g.lineWidth = 1.5;
+      g.strokeRect(cx - r * s + .5, cy - r * s + .5, (2 * r + 1) * s - 1, (2 * r + 1) * s - 1); g.setLineDash([]);
     }
   }
 

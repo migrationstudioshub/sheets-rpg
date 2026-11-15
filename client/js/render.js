@@ -173,18 +173,17 @@ var Render = (function () {
     else if (p.kind === 'vcap') { var vt = oy + (p.y + 1) * S - p.h * S; cap(vx - hd + voff, vt - S, vx + hd + voff, vt); } // 1-tile cap on top of the face
   }
 
-  // Walls that currently hide the player, to draw see-through. Mode: 'tiles' (just the cells over the player),
-  // 'run' (the whole contiguous E-W wall run the player is behind), 'radius' (any wall within `radius` tiles).
-  // E-W (horizontal) walls are the real occluders; N-S walls only join in 'radius' mode. A face at line y,
-  // column x, height ht covers the player when me.x === x and me.y is in [y-ht, y-1]. Returns a set keyed
-  // 'h:x:y' / 'v:x:y' matching a prim's kind (hface/hcap/vface/vcap → 'h'/'v' + its x,y).
+  // Walls that currently hide the player, to draw see-through. Only E-W (horizontal) walls ever fade — the
+  // thin N-S walls don't occlude. Mode: 'tiles' (just the cells over the player), 'run' (the whole contiguous
+  // E-W run the player is behind), 'radius' (E-W walls within `radius` tiles, but only to the SOUTH of the
+  // player — a wall north of the player never hides it). A face at line y, column x, height ht covers the
+  // player when me.x === x and me.y is in [y-ht, y-1]. Returns a set keyed 'h:x:y' matching a prim's x,y.
   function wallFadeCells(map, me, mode, radius) {
     var set = {};
     if (!me || mode === 'off') return set;
-    var mx = Math.round(me.x), my = Math.round(me.y), h = map.hWalls || [], v = map.vWalls || [], x, y, row;
-    if (mode === 'radius') {
-      for (y = 0; y < h.length; y++) { row = h[y] || []; for (x = 0; x < row.length; x++) if (row[x] && Math.abs(x - mx) <= radius && Math.abs(y - my) <= radius) set['h:' + x + ':' + y] = 1; }
-      for (y = 0; y < v.length; y++) { row = v[y] || []; for (x = 0; x < row.length; x++) if (row[x] && Math.abs(x - mx) <= radius && Math.abs(y - my) <= radius) set['v:' + x + ':' + y] = 1; }
+    var mx = Math.round(me.x), my = Math.round(me.y), h = map.hWalls || [], x, y, row;
+    if (mode === 'radius') {                                             // E-W walls south of the player, within the box
+      for (y = my + 1; y <= my + radius && y < h.length; y++) { row = h[y] || []; for (x = mx - radius; x <= mx + radius; x++) if (row[x]) set['h:' + x + ':' + y] = 1; }
       return set;
     }
     for (y = my + 1; y < h.length && y <= my + 12; y++) {                 // E-W walls south of the player

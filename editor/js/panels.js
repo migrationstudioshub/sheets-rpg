@@ -427,11 +427,8 @@ var Panels = (function () {
         return h('option', { value: id, text: d.name + ' (' + d.kind + ')', selected: id === e.ref }); }));
     wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'object' }), objSel));
 
-    if (o && o.properties && o.properties.layer === 'wall') {   // wall-mounted object: which edge + height on the face
+    if (o && o.properties && o.properties.layer === 'wall') {   // wall-mounted object: height up the visible (south-facing) wall face
       wrap.appendChild(h('div', { className: 'sub', text: 'Wall mount' }));
-      wrap.appendChild(field('side', { type: 'select:N|S|E|W', 'default': 'N',
-        notes: 'Which wall of this cell it hangs on: N/S = horizontal wall, W/E = vertical.' },
-        e.data.side, function (v) { setProp(e.key, E.mapId, 'side', v); inspector(); E.redraw(); }, { entity: e }));
       wrap.appendChild(field('mount', { type: 'number', 'default': 0,
         notes: 'Height up the wall face, in tiles (0 = centred, negative = lower).' },
         e.data.mount, function (v) { setProp(e.key, E.mapId, 'mount', v); inspector(); E.redraw(); }, { entity: e }));

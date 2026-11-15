@@ -6,7 +6,7 @@ var E = {
   tables: null, content: null, mapId: null,
   layer: 'terrain', terrainLayer: 'base', tool: 'brush', paletteTab: 'terrain',
   brush: { terrain: 'til_3', object: null, monster: null, wall: null },
-  wallHeight: 2, hoverEdge: null,   // edge walls: current brush height (tiles) + the edge under the cursor
+  wallHeight: 2, hoverEdge: null, mountHover: null,   // edge walls: brush height + hovered edge; mountHover = wall-mount target cell
   wallSide: 'center',   // N-S walls: 'center' straddles the line; 'cursor' snaps the wall onto whichever tile the cursor is nearer
   view: { zoom: 2, x: 40, y: 40 },
   show: { terrain: true, objects: true, grid: true },
@@ -287,36 +287,37 @@ var E = {
     var o = E.content.objects[E.brush.object];
     return o && o.properties && o.properties.layer === 'wall' ? o : null;
   };
-  // Map a hovered edge {orient,x,y,side} to the cell + side letter the wall object mounts on.
-  function edgeToMount(edge) {
-    if (!edge) return null;
-    if (edge.orient === 'h') return edge.side === 's' ? { x: edge.x, y: edge.y, side: 'N' }        // top edge → north wall
-                                                      : { x: edge.x, y: edge.y - 1, side: 'S' };   // bottom edge → south wall
-    return edge.side === 'r' ? { x: edge.x, y: edge.y, side: 'W' }                                 // left edge → west wall
-                             : { x: edge.x - 1, y: edge.y, side: 'E' };                            // right edge → east wall
-  }
-  // The wall-mount entity already on this cell+side, so a side can be repainted without disturbing
-  // another wall object or a floor object sharing the cell.
-  function wallEntAt(x, y, side) {
+  // Wall-mount objects only hang on walls whose face is visible: the SOUTH-facing side of a horizontal
+  // wall. The mount cell is the cell south of the grid line nearest the cursor; the object sits on that
+  // cell's north wall (always side 'N'). Returns {x, y} or null (outside the map). ev = pointer event.
+  E.mountCellAt = function (ev) {
+    var r = canvas.getBoundingClientRect(), s = cellSize(), m = E.map();
+    var fx = (ev.clientX - r.left - E.view.x) / s, fy = (ev.clientY - r.top - E.view.y) / s;
+    var x = Math.floor(fx), y = Math.round(fy);              // nearest horizontal grid line; the cell south of it is row y
+    if (x < 0 || x >= m.width || y < 0 || y >= m.height) return null;
+    return { x: x, y: y };
+  };
+  // The wall-mount entity already on this cell (its south-facing wall), so it can be repainted without
+  // disturbing a floor object sharing the cell. One wall object per cell.
+  function wallEntAt(x, y) {
     var m = E.map();
     for (var i = m.entities.length - 1; i >= 0; i--) {
       var e = m.entities[i], o = e.ref && E.content.objects[e.ref];
-      if (e.x === x && e.y === y && o && o.properties && o.properties.layer === 'wall'
-          && ((e.data && e.data.side) || 'N') === side) return e;
+      if (e.x === x && e.y === y && o && o.properties && o.properties.layer === 'wall') return e;
     }
     return null;
   }
-  function placeWallObject(edge, ref) {
-    var mnt = edgeToMount(edge); if (!mnt || !E.inside(mnt.x, mnt.y) || !ref) return false;
-    var ex = wallEntAt(mnt.x, mnt.y, mnt.side);
+  function placeWallObject(cell, ref) {
+    if (!cell || !E.inside(cell.x, cell.y) || !ref) return false;
+    var ex = wallEntAt(cell.x, cell.y);
     if (ex) { if (ex.ref === ref) return false; ex.ref = ref; return true; }
     var m = E.map();
-    m.entities.push({ key: E.newKey(m), x: mnt.x, y: mnt.y, ref: ref, data: { side: mnt.side } });
+    m.entities.push({ key: E.newKey(m), x: cell.x, y: cell.y, ref: ref, data: { side: 'N' } });
     return true;
   }
-  function eraseWallObject(edge) {
-    var mnt = edgeToMount(edge); if (!mnt) return false;
-    var ex = wallEntAt(mnt.x, mnt.y, mnt.side); if (!ex) return false;
+  function eraseWallObject(cell) {
+    if (!cell) return false;
+    var ex = wallEntAt(cell.x, cell.y); if (!ex) return false;
     var m = E.map(); m.entities.splice(m.entities.indexOf(ex), 1);
     if (E.selected === ex.key) E.selected = null; return true;
   }
@@ -578,12 +579,12 @@ var E = {
       g.stroke(); g.lineWidth = 1; g.lineCap = 'butt';
     }
 
-    // objects layer, wall-mount brush: ghost the object on the snapped face + highlight the edge it hangs on
+    // objects layer, wall-mount brush: ghost the object on the south-facing wall + highlight that wall line
     var wmb = E.wallMountBrush();
-    if (wmb && E.hoverEdge && !E.mode && (E.tool === 'brush' || E.tool === 'erase')) {
-      var we = E.hoverEdge, mnt = edgeToMount(we);
-      if (mnt && E.tool !== 'erase') {
-        var gp = Render.wallMountPlace(m, wmb, { x: mnt.x, y: mnt.y, data: { side: mnt.side } }, vx, vy, s);
+    if (wmb && E.mountHover && !E.mode && (E.tool === 'brush' || E.tool === 'erase')) {
+      var mc = E.mountHover;
+      if (E.tool !== 'erase') {
+        var gp = Render.wallMountPlace(m, wmb, { x: mc.x, y: mc.y, data: { side: 'N' } }, vx, vy, s);
         g.globalAlpha = 0.5;
         Render.drawObject(g, wmb, wmb.sprite, gp.dx, gp.dy, s, 'base', 0, gp.flip);
         Render.drawObject(g, wmb, wmb.sprite, gp.dx, gp.dy, s, 'top', 0, gp.flip);
@@ -591,8 +592,7 @@ var E = {
       }
       g.strokeStyle = E.tool === 'erase' ? '#ff7a6a' : '#ffd27a';
       g.lineWidth = Math.max(3, Math.round(s * 0.18)); g.lineCap = 'round'; g.beginPath();
-      if (we.orient === 'h') { g.moveTo(vx + we.x * s, vy + we.y * s); g.lineTo(vx + (we.x + 1) * s, vy + we.y * s); }
-      else { g.moveTo(vx + we.x * s, vy + we.y * s); g.lineTo(vx + we.x * s, vy + (we.y + 1) * s); }
+      g.moveTo(vx + mc.x * s, vy + mc.y * s); g.lineTo(vx + (mc.x + 1) * s, vy + mc.y * s);   // the cell's north wall line (south face)
       g.stroke(); g.lineWidth = 1; g.lineCap = 'butt';
     }
 
@@ -725,9 +725,9 @@ var E = {
       E.redraw(); return;
     }
     if (E.tool === 'pick') { eyedrop(cell.x, cell.y); return; }
-    if (E.wallMountBrush() && (E.tool === 'brush' || E.tool === 'erase')) {   // snap wall-mount objects to an edge
+    if (E.wallMountBrush() && (E.tool === 'brush' || E.tool === 'erase')) {   // snap wall-mount objects to the south-facing wall
       E.checkpoint();
-      var wedge = E.edgeAt(ev), wok = E.tool === 'erase' ? eraseWallObject(wedge) : placeWallObject(wedge, E.brush.object);
+      var wcell = E.mountCellAt(ev), wok = E.tool === 'erase' ? eraseWallObject(wcell) : placeWallObject(wcell, E.brush.object);
       drag = { kind: 'wallobj', erase: E.tool === 'erase', changed: wok };
       if (wok) E.markDirty('map'); else E.undo.pop();
       return;
@@ -748,9 +748,12 @@ var E = {
   canvas.addEventListener('pointermove', function (ev) {
     var cell = cellAt(ev);
     if (!E.hover || E.hover.x !== cell.x || E.hover.y !== cell.y) { E.hover = cell; Panels.cellInfo(cell); E.redraw(); }
-    if (E.layer === 'walls' || E.wallMountBrush()) {   // track the nearest edge for the highlight (and to paint while dragging)
+    if (E.layer === 'walls') {   // track the nearest edge for the walls-layer highlight (and to paint while dragging)
       var ed = E.edgeAt(ev), he = E.hoverEdge;
       if (!he || !ed || he.orient !== ed.orient || he.x !== ed.x || he.y !== ed.y || he.side !== ed.side) { E.hoverEdge = ed; E.redraw(); }
+    } else if (E.wallMountBrush()) {   // track the mount cell (south-facing wall) for the wall-mount ghost
+      var mc = E.mountCellAt(ev), mh = E.mountHover;
+      if (!mh || !mc || mh.x !== mc.x || mh.y !== mc.y) { E.mountHover = mc; E.redraw(); }
     }
     if (!drag) return;
     if (drag.kind === 'wall') {
@@ -758,8 +761,8 @@ var E = {
       return;
     }
     if (drag.kind === 'wallobj') {
-      var we = E.edgeAt(ev);
-      if (drag.erase ? eraseWallObject(we) : placeWallObject(we, E.brush.object)) { drag.changed = true; E.markDirty('map'); }
+      var wc = E.mountCellAt(ev);
+      if (drag.erase ? eraseWallObject(wc) : placeWallObject(wc, E.brush.object)) { drag.changed = true; E.markDirty('map'); }
       return;
     }
     if (drag.kind === 'pan') { E.view.x = drag.vx + ev.clientX - drag.sx; E.view.y = drag.vy + ev.clientY - drag.sy; E.redraw(); return; }
@@ -789,7 +792,7 @@ var E = {
   }
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
-  canvas.addEventListener('pointerleave', function () { E.hover = null; E.hoverEdge = null; E.redraw(); });
+  canvas.addEventListener('pointerleave', function () { E.hover = null; E.hoverEdge = null; E.mountHover = null; E.redraw(); });
 
   canvas.addEventListener('wheel', function (ev) {
     ev.preventDefault();

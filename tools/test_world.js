@@ -365,6 +365,22 @@ function monster(s, ref, x, y) {
   return m;
 }
 function cast(s, skill, x, y, now) { return World.act(s.c, s.ws, s.p, { type: 'cast', skill, x, y }, now || 1000, mid, [s.p]); }
+// A 4x1 floor with a solid vertical wall between cell 0 and cell 1, plus a slime standing at (1,0).
+// Used to check that walls stop melee and thrown attacks (collision already stops movement).
+function wallArena() {
+  const s = hero('warrior'), c = s.c;
+  const floor = Object.keys(c.terrain).find(id => { const t = c.terrain[id]; return t.pass.n && t.pass.e && t.pass.s && t.pass.w; });
+  const wallId = Object.keys(c.wallStyles).find(id => c.wallStyles[id].blocksMove !== false && c.wallStyles[id].blocksSight !== false);
+  assert.ok(floor && wallId, 'need a passable terrain and a solid wall style in the data');
+  c.maps.arena = { id: 'arena', name: 'Arena', width: 4, height: 1,
+    terrain: [[floor, floor, floor, floor]], overlay: [],
+    vWalls: [['', wallId + ':2', '', '', '']], hWalls: [], shapes: {}, overlayShapes: {}, entities: [] };
+  const slime = { ref: 'slime', id: 'slime#0', x: 1, y: 0, dead: false, hp: c.monsters.slime.hp, statuses: [], last: 0 };
+  const ms = World.mapState(s.ws, 'arena');
+  ms.monsters = [slime];
+  ms.spawnSig = '';                 // the arena has no spawners; match the empty signature so advance() keeps our slime
+  return { s, slime };
+}
 
 test('each class starts with its abilities on Q/E, a potion on the belt, and full mana', () => {
   const c = Content.build(tables);
@@ -797,6 +813,40 @@ test('a walkable overlay does not block, and a map with no overlay is unchanged'
   assert.ok(Rules.tryMove(c, c.maps.b, 0, 0, 'E').ok, 'no-overlay maps behave exactly as before');
 });
 
+test('an edge wall blocks movement across the cell boundary it sits on, both ways', () => {
+  const c = Content.build({
+    Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+    WallStyles: [{ id: 'brick', name: 'Brick', blocks_move: true, blocks_sight: true }],
+    Maps: [{ id: 'm', name: 'M', width: 3, height: 1,
+      terrain: JSON.stringify([['grass', 'grass', 'grass']]),
+      // vWalls has width+1 cols; a wall on the vertical line between cell 0 and cell 1 (col index 1)
+      vWalls: JSON.stringify([['', 'brick:3', '', '']]) }]
+  });
+  const map = c.maps.m;
+  assert.ok(!Rules.tryMove(c, map, 0, 0, 'E').ok, 'cannot cross the wall eastward');
+  assert.strictEqual(Rules.tryMove(c, map, 0, 0, 'E').reason, 'wall');
+  assert.ok(!Rules.tryMove(c, map, 1, 0, 'W').ok, 'cannot cross the wall westward');
+  assert.ok(Rules.tryMove(c, map, 1, 0, 'E').ok, 'the next boundary (no wall) is open');
+  assert.ok(Rules.standable(c, map, 0, 0) && Rules.standable(c, map, 1, 0), 'both cells stay standable floor');
+});
+
+test('a see-through wall (blocks_move, not sight) stops walking but not line of sight; height does not affect either', () => {
+  const c = Content.build({
+    Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+    WallStyles: [
+      { id: 'brick', name: 'Brick', blocks_move: true, blocks_sight: true },
+      { id: 'fence', name: 'Fence', blocks_move: true, blocks_sight: false }
+    ],
+    Maps: [{ id: 'm', name: 'M', width: 3, height: 1,
+      terrain: JSON.stringify([['grass', 'grass', 'grass']]),
+      vWalls: JSON.stringify([['', 'fence:1', 'brick:2', '']]) }]
+  });
+  const map = c.maps.m, st = () => '';
+  assert.ok(!Rules.tryMove(c, map, 0, 0, 'E').ok, 'the fence blocks walking');
+  assert.ok(World.canSee(c, map, 0, 0, 1, 0, st), 'but you can see across the fence');
+  assert.ok(!World.canSee(c, map, 1, 0, 2, 0, st), 'the brick wall blocks sight');
+});
+
 test('a frozen shape override (shift-click mapping) renders a fixed autotile tile regardless of neighbours', () => {
   const c = Content.build({
     Autotile: [{ layout: 'blob', mask: 0, tiles: '1' }, { layout: 'blob', mask: 255, tiles: '5' }],
@@ -808,6 +858,68 @@ test('a frozen shape override (shift-click mapping) renders a fixed autotile til
   assert.strictEqual(Autotile.effectiveMask(cells, 0, 0, false, { '0,0': 255 }), 255, 'an override wins over the neighbours');
   assert.strictEqual(Autotile.gridFor(c, cells, false, null)[0][0].tile, 1, 'no override → mask 0 → tile 1');
   assert.strictEqual(Autotile.gridFor(c, cells, false, { '0,0': 255 })[0][0].tile, 5, 'override 255 → the centre tile (5)');
+});
+
+test('a straight wall blocks a diagonal line across it; a wall end can still be seen past', () => {
+  function arena(rows) {
+    const c = Content.build({
+      Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+      WallStyles: [{ id: 'brick', name: 'Brick', blocks_move: true, blocks_sight: true }],
+      Maps: [{ id: 'm', name: 'M', width: 2, height: 2,
+        terrain: JSON.stringify([['grass', 'grass'], ['grass', 'grass']]),
+        vWalls: JSON.stringify(rows) }]
+    });
+    return { c, map: c.maps.m };
+  }
+  const st = () => '';
+  // a vertical wall between columns 0 and 1 on BOTH rows: a straight N-S barrier
+  const a = arena([['', 'brick:2', ''], ['', 'brick:2', '']]);
+  assert.ok(!World.canSee(a.c, a.map, 0, 0, 1, 0, st), 'orthogonal across the wall is blocked');
+  assert.ok(!World.canSee(a.c, a.map, 0, 0, 1, 1, st), 'a diagonal crossing the straight wall is blocked too');
+  assert.ok(!World.canSee(a.c, a.map, 0, 1, 1, 0, st), 'the other diagonal across it is blocked');
+  // only the row-0 segment present: the diagonal past its south end stays open (you can see around a wall's end)
+  const b = arena([['', 'brick:2', ''], ['', '', '']]);
+  assert.ok(World.canSee(b.c, b.map, 0, 1, 1, 0, st), 'you can still see diagonally past a wall end');
+});
+
+test('a wall stops a melee swing; attacking from the open side still connects', () => {
+  const { s, slime } = wallArena();
+  put(s, 'arena', 0, 0);
+  const hp0 = slime.hp;
+  assert.match(texts(act(s, { type: 'attack', x: 1, y: 0 }, 1000)), /in the way/i);
+  assert.strictEqual(slime.hp, hp0, 'the wall saved the slime');
+  put(s, 'arena', 2, 0);                                  // east of the wall: no wall between (2,0) and (1,0)
+  act(s, { type: 'attack', x: 1, y: 0 }, 2000);
+  assert.ok(slime.hp < hp0, 'attacking from the open side hits');
+});
+
+test('a thrown grenade is not refused by a wall: it detonates against it and the splash is blocked', () => {
+  const { s, slime } = wallArena();
+  put(s, 'arena', 0, 0);
+  s.p.inventory = [{ item: 'grenade', qty: 2 }];
+  const hp0 = slime.hp;
+  const ev = act(s, { type: 'throw', item: 'grenade', x: 1, y: 0 }, 1000);        // aimed across the wall
+  const te = ev.find(e => e.type === 'throw');
+  assert.deepStrictEqual([te.to.x, te.to.y], [0, 0], 'the grenade lands against the wall, not past it');
+  assert.strictEqual(slime.hp, hp0, 'the wall shields the slime from the blast');
+  assert.strictEqual(s.p.inventory[0].qty, 1, 'the grenade is still thrown and consumed');
+  put(s, 'arena', 2, 0);                                                          // open side: no wall between
+  act(s, { type: 'throw', item: 'grenade', x: 1, y: 0 }, 20000);                  // well past the throw cooldown
+  assert.ok(slime.hp < hp0, 'thrown from the open side it hits');
+});
+
+test('a monster cannot melee you through a wall, but can when adjacent in the open', () => {
+  const { s, slime } = wallArena();
+  const p = s.p;
+  put(s, 'arena', 0, 0); p.hp = 100;
+  const step = (s.c.monsters.slime.moveMs || 400) + 1;            // one monster step, small enough to avoid starve ticks
+  slime.x = 1; slime.y = 0; slime.last = 0;                        // one tile east, wall between
+  World.advance(s.c, s.ws, 'arena', [p], step, mid, []);
+  assert.strictEqual(p.hp, 100, 'the wall blocks the monster\'s swing');
+  s.c.maps.arena.vWalls = [['', '', '', '', '']];                  // tear the wall down
+  slime.last = step;
+  World.advance(s.c, s.ws, 'arena', [p], step * 2, mid, []);
+  assert.ok(p.hp < 100, 'with no wall between, the adjacent monster hits');
 });
 
 console.log(`\n${passed} world tests passed`);

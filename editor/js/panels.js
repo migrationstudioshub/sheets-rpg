@@ -39,6 +39,16 @@ var Panels = (function () {
       var mo = E.content.monsters[id], mi = mo && mo.sprite && Assets.get(mo.sprite);
       g.fillStyle = '#3a2a2a'; g.fillRect(0, 0, T(), T());
       if (mi) g.drawImage(mi, 0, 0, T(), T()); else g.drawImage(Assets.placeholder(mo ? mo.name : '?', '#8a2f2f', T()), 0, 0);
+    } else if (type === 'wallStyle') {
+      var ws = E.content.wallStyles && E.content.wallStyles[id];
+      g.fillStyle = '#20242c'; g.fillRect(0, 0, T(), T());
+      if (ws && ws.tiles && Render.drawWallNodes) {   // connector style: show the horizontal-straight tile
+        Render.drawWallNodes(g, E.content, [{ nx: 0.5, ny: 0.5, mask: 10, style: id }], 0, 0, T());
+      } else if (Render.drawPrim25) {                 // 2.5D style: a cap over a face, rising from the base
+        var s = Math.round(T() * 0.58), ox = Math.round((T() - s) / 2), base = Math.round(T() * 0.92);
+        Render.drawPrim25(g, E.content, { kind: 'hface', x: 0, y: base / s, h: 1, style: id }, ox, 0, s);
+        Render.drawPrim25(g, E.content, { kind: 'hcap', x: 0, y: base / s, h: 1, style: id }, ox, 0, s);
+      }
     } else {
       var o = E.content.objects[id], oi = o && o.sprite && Assets.get(o.sprite);
       g.fillStyle = '#2a2f3a'; g.fillRect(0, 0, T(), T());
@@ -160,25 +170,51 @@ var Panels = (function () {
 
   // ------------------------------------------------------------ palette
   var filter = '';
-  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters' };
+  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', walls: 'Walls' };
+  // Current brush height for edge walls: set here, painted into every new segment (per-segment, so you can
+  // change it and paint a taller/shorter run next). Keyboard [ and ] step it too.
+  function wallHeightRow() {
+    function step(d) { E.wallHeight = Math.max(1, Math.min(12, (E.wallHeight || 1) + d)); palette(); E.redraw(); }
+    var val = h('input', { type: 'number', min: 1, max: 12, value: E.wallHeight || 1, style: 'width:3em',
+      onchange: function () { E.wallHeight = Math.max(1, Math.min(12, Math.round(Number(val.value) || 1))); E.redraw(); } });
+    return h('div', { className: 'row', style: 'align-items:center;gap:6px' },
+      h('label', { text: 'Height', title: 'How many tiles tall new wall segments are (visual only)' }),
+      h('button', { text: '−', title: 'Shorter ([)', onclick: function () { step(-1); } }), val,
+      h('button', { text: '+', title: 'Taller (])', onclick: function () { step(1); } }),
+      h('span', { className: 'small', text: 'tiles' }));
+  }
+  // N-S walls: 'center' straddles the grid line; 'cursor' snaps the wall fully onto whichever tile the cursor is
+  // nearer, so you can keep objects in the other tile clear of the wall art. Visual only; collision stays on the line.
+  function wallSideRow() {
+    function set(v) { E.wallSide = v; palette(); E.redraw(); }
+    function opt(v, label, title) { return h('button', { className: E.wallSide === v ? 'on' : '', text: label, title: title, onclick: function () { set(v); } }); }
+    return h('div', { className: 'row', style: 'align-items:center;gap:6px' },
+      h('label', { text: 'Side', title: 'Where a N-S wall sits relative to its grid line (o to toggle)' }),
+      opt('center', 'Center', 'Straddle the grid line (default)'),
+      opt('cursor', 'Cursor side', 'Snap the wall onto the tile the cursor is nearer, touching the line'));
+  }
   function palette() {
     var box = $('palette'); box.innerHTML = '';
     var paletteTab = E.paletteTab;
     var tabs = h('div', { className: 'tabs' },
-      ['terrain', 'objects', 'monsters'].map(function (t) {
+      ['terrain', 'objects', 'monsters', 'walls'].map(function (t) {
         return h('button', { className: paletteTab === t ? 'on' : '', text: TAB_NAMES[t],
           onclick: function () { E.setPaletteTab(t); all(); E.redraw(); } });
       }));
-    var defType = paletteTab === 'terrain' ? 'terrain' : paletteTab === 'monsters' ? 'monster' : 'object';
-    var current = paletteTab === 'terrain' ? E.brush.terrain : paletteTab === 'monsters' ? E.brush.monster : E.brush.object;
+    var defType = paletteTab === 'terrain' ? 'terrain' : paletteTab === 'monsters' ? 'monster' : paletteTab === 'walls' ? 'wallStyle' : 'object';
+    var current = paletteTab === 'terrain' ? E.brush.terrain : paletteTab === 'monsters' ? E.brush.monster : paletteTab === 'walls' ? E.brush.wall : E.brush.object;
     var search = h('input', { placeholder: 'Search…', value: filter, oninput: function () { filter = search.value; list(); } });
     var listBox = h('div', { className: 'items' });
-    box.appendChild(tabs); box.appendChild(search); box.appendChild(listBox);
+    box.appendChild(tabs); box.appendChild(search);
+    if (paletteTab === 'walls') { box.appendChild(wallHeightRow()); box.appendChild(wallSideRow()); }
+    box.appendChild(listBox);
     box.appendChild(h('div', { className: 'row buttons' },
       h('button', { text: '✎ Edit selected', onclick: function () { editDef(defType, current); } }),
       h('button', { text: '+ New ' + defType, onclick: function () { newDef(defType); } })));
     if (paletteTab === 'monsters') box.appendChild(h('p', { className: 'note',
       text: 'Paint a monster to place a spawn point. Select it (V) to set how many appear and how far they roam.' }));
+    if (paletteTab === 'walls') box.appendChild(h('p', { className: 'note',
+      text: 'Paint on grid lines, not tiles: drag along cell edges. Each segment uses the height above ([ and ] adjust it). Erase (E) removes segments.' }));
 
     function list() {
       listBox.innerHTML = '';
@@ -191,6 +227,7 @@ var Panels = (function () {
               E.terrainLayer = terrainDefaultLayer(d);   // walls + plain tiles → base, other autotiles → overlay
               if (E.clearStamp) E.clearStamp(); }
             else if (type === 'monster') { E.brush.monster = d.id; E.layer = 'objects'; }
+            else if (type === 'wallStyle') { E.brush.wall = d.id; E.layer = 'walls'; }
             else { E.brush.object = d.id; E.layer = 'objects'; }
             if (E.tool === 'select' || E.tool === 'pick' || E.tool === 'erase') E.tool = 'brush';
             toolbar(); list(); E.redraw();
@@ -209,6 +246,10 @@ var Panels = (function () {
         Object.keys(E.content.monsters).map(function (k) { return E.content.monsters[k]; }).filter(match)
           .forEach(function (m) { listBox.appendChild(item('monster', m, E.brush.monster === m.id)); });
         if (!Object.keys(E.content.monsters).length) listBox.appendChild(h('div', { className: 'kind', text: 'No monsters yet: add one with + New monster' }));
+      } else if (paletteTab === 'walls') {
+        var styles = Object.keys(E.content.wallStyles || {}).map(function (k) { return E.content.wallStyles[k]; }).filter(match);
+        styles.forEach(function (w) { listBox.appendChild(item('wallStyle', w, E.brush.wall === w.id)); });
+        if (!styles.length) listBox.appendChild(h('div', { className: 'kind', text: 'No wall styles yet: add one with + New wallStyle' }));
       } else {
         var byKind = {};
         Object.keys(E.content.objects).map(function (k) { return E.content.objects[k]; })
@@ -422,12 +463,13 @@ var Panels = (function () {
   // ------------------------------------------------------------ definition forms (Objects / Terrain rows)
   function editDef(type, id) { if (!id) return; E.selected = null; E.mode = null; defEdit = { type: type, id: id }; inspector(); }
 
-  var DEF_TAB = { terrain: 'Terrain', object: 'Objects', monster: 'Monsters' };
+  var DEF_TAB = { terrain: 'Terrain', object: 'Objects', monster: 'Monsters', wallStyle: 'WallStyles' };
   function newDef(type) {
     Dialogs.prompt('Name of the new ' + type + ':').then(function (name) {
     if (!name) return;
     var slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'new';
-    var tab = DEF_TAB[type], pre = type === 'terrain' ? 'ter_' : type === 'monster' ? '' : 'obj_', id = pre + slug, n = 2;
+    var pre = type === 'terrain' ? 'ter_' : type === 'monster' ? '' : type === 'wallStyle' ? 'wall_' : 'obj_';
+    var tab = DEF_TAB[type], id = pre + slug, n = 2;
     E.tables[tab] = E.tables[tab] || [];
     var exists = function (x) { return (E.tables[tab] || []).some(function (r) { return String(r.id) === x; }); };
     while (exists(id)) id = pre + slug + '_' + n++;
@@ -435,10 +477,13 @@ var Panels = (function () {
       ? { id: id, name: name, color: '#808080', sprite: '', autotile: '', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1, frames: '', frame_ms: '', notes: '' }
       : type === 'monster'
       ? { id: id, name: name, sprite: '', hp: 10, atk: 3, def: 0, xp: 3, gold_min: 0, gold_max: 2, loot_table: '', aggro_range: 4, move_ms: 800, respawn_s: 60, notes: '' }
+      : type === 'wallStyle'
+      ? { id: id, name: name, tiles: '', cap: '', face: '', color: '#8a8f98', blocks_move: true, blocks_sight: true, notes: '' }
       : { id: id, name: name, kind: 'deco', sprite: '', sprite_top: '', sprite_states: '', frames: '', frame_ms: '', walkable: false, properties: '', on_interact: '', notes: '' };
     E.tables[tab].push(row);
     E.dirty.tabs[tab] = true;
-    if (type === 'terrain') E.brush.terrain = id; else if (type === 'monster') E.brush.monster = id; else E.brush.object = id;
+    if (type === 'terrain') E.brush.terrain = id; else if (type === 'monster') E.brush.monster = id;
+    else if (type === 'wallStyle') E.brush.wall = id; else E.brush.object = id;
     E.rebuild().then(function () { editDef(type, id); });
     });
   }
@@ -450,7 +495,7 @@ var Panels = (function () {
     var draft = JSON.parse(JSON.stringify(rec));
     var wrap = h('div', { className: 'form' });
     wrap.appendChild(h('div', { className: 'head' }, thumb(type, id, 40),
-      h('div', {}, h('h3', { text: { terrain: 'Terrain: ', object: 'Object: ', monster: 'Monster: ' }[type] + (rec.name || id) }),
+      h('div', {}, h('h3', { text: { terrain: 'Terrain: ', object: 'Object: ', monster: 'Monster: ', wallStyle: 'Wall style: ' }[type] + (rec.name || id) }),
         h('div', { className: 'note', text: id + ' · changes apply everywhere it is used' }))));
     function text(k, label, hint) {
       var i = h('input', { value: draft[k] == null ? '' : draft[k], placeholder: hint || '', oninput: function () { draft[k] = i.value; } });
@@ -487,6 +532,18 @@ var Panels = (function () {
       wrap.appendChild(h('div', { className: 'inline' }, text('frames', 'animation frames', '1'), text('frame_ms', 'ms per frame', '200')));
       wrap.appendChild(h('div', { className: 'sub', text: 'Can be crossed from' }));
       wrap.appendChild(h('div', { className: 'inline' }, check('pass_n', 'north'), check('pass_e', 'east'), check('pass_s', 'south'), check('pass_w', 'west')));
+    } else if (type === 'wallStyle') {
+      wrap.appendChild(text('name', 'name'));
+      var tif = text('tiles', 'connection tilesheet (4×4)', 'autotiles corners/joins, drawn top-down'); tif.appendChild(preview('tiles')); wrap.appendChild(tif);
+      var cin = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(draft.color || '') ? draft.color : '#8a8f98',
+        oninput: function () { draft.color = cin.value; } });
+      wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'colour (fallback when art is missing)' }), cin));
+      wrap.appendChild(h('div', { className: 'sub', text: 'Extruded look (used only when there is no connection tilesheet)' }));
+      var capf = text('cap', 'cap (top strip)', 'image URL or art/… path'); capf.appendChild(preview('cap')); wrap.appendChild(capf);
+      var facef = text('face', 'face (front, tiles vertically)', 'image URL or art/… path'); facef.appendChild(preview('face')); wrap.appendChild(facef);
+      wrap.appendChild(check('blocks_move', 'blocks walking across'));
+      wrap.appendChild(check('blocks_sight', 'blocks sight and shots across'));
+      wrap.appendChild(h('p', { className: 'note', text: 'Height is set per painted segment in the Walls palette, not here.' }));
     } else {
       wrap.appendChild(text('name', 'name'));
       var ks = h('select', { onchange: function () { draft.kind = ks.value; } },

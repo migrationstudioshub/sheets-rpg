@@ -436,7 +436,8 @@ var World = (function () {
             }
             break;
           }
-          if (best === 1) {
+          if (best === 1 && !Rl().wallBlocksMove(c, Rl().wallBetweenCells(map, m.x, m.y, target.x, target.y))) {
+            // adjacent with no wall between: swing. (A wall on the edge makes it try to move around instead.)
             var dmg = damage(ms2.atk, stats(c, target).def, rng);
             target.hp -= dmg;
             m.facing = target.x > m.x ? 'E' : target.x < m.x ? 'W' : target.y > m.y ? 'S' : 'N';
@@ -627,10 +628,49 @@ var World = (function () {
       return o.blocksSight;
     });
   }
-  function canSee(c, map, x0, y0, x1, y1, stateFn) {
+  // A wall between two line cells blocks passage. Orthogonal step: the one shared edge. Diagonal step:
+  // blocked when BOTH ways around the shared corner are obstructed — each L-detour has a wall on at least
+  // one of its two edges. A lone wall (or a wall's end) still lets a diagonal slip past, but two collinear
+  // segments forming a straight barrier correctly seal the diagonal that crosses them. `blk(c, token)`
+  // chooses which walls count: sight for shots and sight-skills, movement for melee/physical reach.
+  function edgeBlocks(c, map, a, b, blk) {
+    var R = Rl();
+    function w(ax, ay, bx, by) { return blk(c, R.wallBetweenCells(map, ax, ay, bx, by)); }
+    if (a.x === b.x || a.y === b.y) return w(a.x, a.y, b.x, b.y);
+    return (w(a.x, a.y, b.x, a.y) || w(b.x, a.y, b.x, b.y)) &&
+           (w(a.x, a.y, a.x, b.y) || w(a.x, b.y, b.x, b.y));
+  }
+  function edgeBlocksSight(c, map, a, b) { return edgeBlocks(c, map, a, b, Rl().wallBlocksSight); }
+  function edgeBlocksMove(c, map, a, b) { return edgeBlocks(c, map, a, b, Rl().wallBlocksMove); }
+  // Is the straight line between two cells clear? `edgeFn` picks the wall rule: sight for seeing/shooting,
+  // movement for a thrown item's flight and a blast's reach (an explosion is stopped by any solid wall).
+  function clearLine(c, map, x0, y0, x1, y1, stateFn, edgeFn) {
     var cells = lineCells(x0, y0, x1, y1);
     for (var i = 1; i < cells.length - 1; i++) if (blocksSight(c, map, cells[i].x, cells[i].y, stateFn)) return false;
+    for (var j = 0; j < cells.length - 1; j++) if (edgeFn(c, map, cells[j], cells[j + 1])) return false;
     return true;
+  }
+  function canSee(c, map, x0, y0, x1, y1, stateFn) { return clearLine(c, map, x0, y0, x1, y1, stateFn, edgeBlocksSight); }
+  // Where a thrown item ends up when aimed at (tx,ty): it travels along the line and stops at the first
+  // solid wall or blocker it cannot pass, detonating against it rather than the throw being refused.
+  function throwLanding(c, map, px, py, tx, ty, stateFn) {
+    var line = lineCells(px, py, tx, ty), land = { x: px, y: py };
+    for (var i = 1; i < line.length; i++) {
+      if (edgeBlocksMove(c, map, line[i - 1], line[i])) break;            // a wall stops it at the previous cell
+      if (blocksSight(c, map, line[i].x, line[i].y, stateFn)) break;      // can't land inside a solid cell
+      land = line[i];
+    }
+    return land;
+  }
+  // The cells a blast of radius `area` centred on (cx,cy) actually touches — those its force can reach
+  // without crossing a wall. Used for damage splash and to draw the explosion so it stops at walls.
+  function blastCells(c, map, cx, cy, area, stateFn) {
+    var out = [];
+    for (var y = cy - area; y <= cy + area; y++)
+      for (var x = cx - area; x <= cx + area; x++)
+        if (x >= 0 && y >= 0 && x < map.width && y < map.height && clearLine(c, map, cx, cy, x, y, stateFn, edgeBlocksMove))
+          out.push({ x: x, y: y });
+    return out;
   }
   /** What the world looks like for targeting: the server builds it from world state, the client from its view. */
   function serverLookup(c, ws, mapId, players) {
@@ -713,12 +753,14 @@ var World = (function () {
     if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return { ok: false, reason: 'Out of the map.' };
     if (tx === p.x && ty === p.y) return { ok: false, reason: 'Pick a target.' };
     if (cheb(p.x, p.y, tx, ty) > w.range) return { ok: false, reason: 'Too far away. Move closer with the movement keys.' };
-    var line = lineCells(p.x, p.y, tx, ty).slice(1), cells = [];
+    var line = lineCells(p.x, p.y, tx, ty).slice(1), cells = [], prev = { x: p.x, y: p.y };
     for (var i = 0; i < line.length; i++) {
       var cx = line[i].x, cy = line[i].y;
       if (cheb(p.x, p.y, cx, cy) > w.range) break;
+      if (edgeBlocksSight(c, map, prev, line[i])) break;          // an edge wall stops the shot before this cell
       cells.push(line[i]);
       if (blocksSight(c, map, cx, cy, lk.stateOf) && !(cx === tx && cy === ty)) break;   // a wall stops the shot here
+      prev = line[i];
     }
     var last = cells[cells.length - 1];
     if (lk.monsterAt(tx, ty) && !(last && last.x === tx && last.y === ty)) return { ok: false, reason: 'Something is in the way.' };
@@ -753,7 +795,12 @@ var World = (function () {
     }
 
     var targets = [], mons = mapState(ws, mapId).monsters || [];
-    function monstersNear(x, y, r) { return mons.filter(function (m) { return !m.dead && cheb(m.x, m.y, x, y) <= r; }); }
+    // Area hits reach only monsters the blast centre can actually reach — a wall between shields them.
+    function monstersNear(x, y, r) {
+      return mons.filter(function (m) {
+        return !m.dead && cheb(m.x, m.y, x, y) <= r && clearLine(c, map, x, y, m.x, m.y, lk.stateOf, edgeBlocksMove);
+      });
+    }
     if (sk.target === 'enemy') targets = sk.area > 0 ? monstersNear(tx, ty, sk.area) : [lk.monsterAt(tx, ty)];
     else if (sk.target === 'around') targets = monstersNear(p.x, p.y, Math.max(1, sk.area));
     else if (sk.target === 'tile') targets = sk.area > 0 ? monstersNear(tx, ty, sk.area) : [];
@@ -861,12 +908,18 @@ var World = (function () {
     if (isNaN(tx) || isNaN(ty)) return say('Pick a spot.');
     if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return say('Out of the map.');
     if (cheb(p.x, p.y, tx, ty) > (it.throwRange || 4)) return say('Too far away. Move closer with the movement keys.');
+    var stateFn = function (e) { return stateOf(c, ws, p.map, e); };
+    // The throw always happens; if a wall is in the way the grenade stops and goes off against it.
+    var land = throwLanding(c, map, p.x, p.y, tx, ty, stateFn);
     take(p, id, 1);
     p.cooldowns = p.cooldowns || {}; p.cooldowns._throw = now + (Number(it.fireMs) || 0);
     faceTo(p, tx, ty);
     var ms = mapState(ws, p.map), area = Number(it.throwArea) || 0;
-    var mons = (ms.monsters || []).filter(function (m) { return !m.dead && cheb(m.x, m.y, tx, ty) <= area; });
-    ev.push({ type: 'throw', map: p.map, by: p.id, item: id, from: { x: p.x, y: p.y }, to: { x: tx, y: ty },
+    // Splash from where it detonates, onto only the monsters the blast can actually reach (not through walls).
+    var mons = (ms.monsters || []).filter(function (m) {
+      return !m.dead && cheb(m.x, m.y, land.x, land.y) <= area && clearLine(c, map, land.x, land.y, m.x, m.y, stateFn, edgeBlocksMove);
+    });
+    ev.push({ type: 'throw', map: p.map, by: p.id, item: id, from: { x: p.x, y: p.y }, to: { x: land.x, y: land.y },
       area: area, color: it.tint || '#ff8c3b' });
     mons.forEach(function (m) {
       if (Number(it.throwPower) > 0) {
@@ -1172,6 +1225,8 @@ var World = (function () {
       var ax = Math.round(Number(action.x)), ay = Math.round(Number(action.y)), am = monsterAt(mapState(ws, p.map), ax, ay);
       if (!am) ev.push({ type: 'info', to: p.id, text: 'Nothing to attack there.' });
       else if (!near(p, ax, ay)) ev.push({ type: 'info', to: p.id, text: 'Too far away.' });
+      // A wall on the shared edge stops a melee swing, just as it stops a step (near() is orthogonal only).
+      else if (Rl().wallBlocksMove(c, Rl().wallBetweenCells(c.maps[p.map], p.x, p.y, ax, ay))) ev.push({ type: 'info', to: p.id, text: 'A wall is in the way.' });
       else { faceTo(p, ax, ay); attack(c, ws, p.map, p, am, now, rng, ev); }
     }
     else if (action.type === 'use') useItem(c, ws, p, action.item, now, ev);
@@ -1293,6 +1348,6 @@ var World = (function () {
     stateOf: stateOf, mapState: mapState, check: check, run: run, give: give, count: count,
     liveState: liveState, trapPhase: trapPhase, knownSkills: knownSkills, checkTarget: checkTarget,
     viewLookup: viewLookup, canSee: canSee, snapTarget: snapTarget, actionsAt: actionsAt, lineCells: lineCells, applyStatus: applyStatus,
-    rangedWeapon: rangedWeapon, shotReach: shotReach, pickLootTable: pickLootTable, rollLook: rollLook };
+    rangedWeapon: rangedWeapon, shotReach: shotReach, throwLanding: throwLanding, blastCells: blastCells, pickLootTable: pickLootTable, rollLook: rollLook };
 })();
 if (typeof module !== 'undefined') module.exports = World;

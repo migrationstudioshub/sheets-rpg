@@ -84,6 +84,20 @@ var Content = (function () {
         pass: { n: bool(r.pass_n), e: bool(r.pass_e), s: bool(r.pass_s), w: bool(r.pass_w) } };
     });
 
+    // Wall styles: materials for edge walls (walls painted on cell boundaries, not tiles). A style is art +
+    // behaviour only — NO height; height is set per painted segment. `face` is a vertically-tileable front
+    // strip, `cap` the top; `color` is the artless fallback so a style works before its art exists.
+    c.wallStyles = {};
+    (tables.WallStyles || []).forEach(function (r) {
+      var id = str(r.id); if (!id) return;
+      c.wallStyles[id] = { id: id, name: str(r.name) || id,
+        cap: str(r.cap), face: str(r.face), color: str(r.color) || '#8a8f98',
+        // tiles: a 16-tile connection sheet (4x4; tile index = N1·E2·S4·W8 mask). When set, the wall is drawn
+        // top-down and autotiled so corners/T/cross/caps join; when absent it falls back to the extruded slab.
+        tiles: str(r.tiles),
+        blocksMove: boolDef(r.blocks_move, true), blocksSight: boolDef(r.blocks_sight, true) };
+    });
+
     (tables.Kinds || []).forEach(function (r) {
       var k = str(r.kind); if (!k) return;
       var kind = c.kinds[k] = c.kinds[k] || { kind: k, states: [], props: {} };
@@ -119,9 +133,15 @@ var Content = (function () {
       // Optional second terrain grid drawn on top of the base (overlay autotiles, transparent outside their
       // shape). Absent/empty on older maps, which then behave exactly as before (base layer only).
       var overlay = decodeGrid(json(r.overlay, []));
+      // Edge walls: walls that live on cell boundaries, not tiles. Two grids of "styleId:height" tokens
+      // ('' = no wall). hWalls = horizontal lines (hWalls[y][x] is the north edge of cell x,y); it has
+      // height+1 rows × width cols. vWalls = vertical lines (vWalls[y][x] is the west edge of cell x,y);
+      // it has height rows × width+1 cols. Absent/empty on maps without walls. See Rules wall helpers.
+      var vWalls = decodeGrid(json(r.vWalls, []));
+      var hWalls = decodeGrid(json(r.hWalls, []));
       // Frozen autotile shapes from shift-click mapping: sparse { "x,y": mask } per layer, render-only.
       c.maps[id] = { id: id, name: str(r.name) || id, width: num(r.width, grid[0] ? grid[0].length : 0),
-        height: num(r.height, grid.length), terrain: grid, overlay: overlay,
+        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls,
         shapes: json(r.shapes, {}), overlayShapes: json(r.overlayShapes, {}), entities: [] };
     });
 

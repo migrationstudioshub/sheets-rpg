@@ -145,8 +145,10 @@ var Store = (function () {
         tables.MapEntities = (tables.MapEntities || []).filter(function (r) { return !ids[r.map]; });
         docs.forEach(function (m) {
           tables.Maps.push({ id: m.id, name: m.name, width: m.width, height: m.height, terrain: JSON.stringify(m.terrain),
-            // carry the overlay layer + frozen shapes back, or the whole overlay is lost on reload
+            // carry the overlay layer + edge walls + frozen shapes back, or they are lost on reload
             overlay: m.overlay == null ? '' : JSON.stringify(m.overlay),
+            vWalls: m.vWalls == null ? '' : JSON.stringify(m.vWalls),
+            hWalls: m.hWalls == null ? '' : JSON.stringify(m.hWalls),
             shapes: m.shapes == null ? '' : JSON.stringify(m.shapes),
             overlayShapes: m.overlayShapes == null ? '' : JSON.stringify(m.overlayShapes), notes: '' });
           (m.entities || []).forEach(function (e) {
@@ -182,6 +184,7 @@ var Store = (function () {
         jobs.push({ action: 'publishMap', key: k, map: {
           id: mc.row.id, name: mc.row.name, width: mc.row.width, height: mc.row.height,
           terrain: encodeGrid(mc.row.terrain), overlay: encodeGrid(mc.row.overlay),
+          vWalls: encodeGrid(mc.row.vWalls), hWalls: encodeGrid(mc.row.hWalls),
           shapes: parseObj(mc.row.shapes), overlayShapes: parseObj(mc.row.overlayShapes),
           entities: (mc.entities || []).map(function (e) { return { key: e.key, x: e.x, y: e.y, ref: e.ref, data: e.data }; }) } });
       });

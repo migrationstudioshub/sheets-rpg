@@ -51,6 +51,7 @@ async function mergeMaps(content) {
     const m = doc.data(); if (!m || !m.id) return;
     content.maps[m.id] = { id: m.id, name: m.name || m.id, width: m.width, height: m.height,
       terrain: MapCode.decode(m.terrain), overlay: MapCode.decode(m.overlay || []),
+      vWalls: MapCode.decode(m.vWalls || []), hWalls: MapCode.decode(m.hWalls || []),
       shapes: m.shapes || {}, overlayShapes: m.overlayShapes || {}, entities: m.entities || [] };
   });
 }
@@ -96,6 +97,7 @@ async function publishMap(map, key) {
     id: String(map.id), name: String(map.name || map.id),
     width: Number(map.width) || 0, height: Number(map.height) || 0,
     terrain: map.terrain, overlay: map.overlay || null,
+    vWalls: map.vWalls || null, hWalls: map.hWalls || null,
     shapes: map.shapes || null, overlayShapes: map.overlayShapes || null,
     entities: Array.isArray(map.entities) ? map.entities : [],
     updatedAt: Date.now()

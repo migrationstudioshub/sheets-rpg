@@ -46,6 +46,56 @@ var Rules = (function () {
     return row ? content.terrain[row[x]] : undefined;
   }
 
+  // ------------------------------------------------------------ edge walls
+  // Walls live on cell boundaries (grid lines), not tiles. A map carries two grids of "styleId:height"
+  // tokens ('' = no wall): hWalls (horizontal lines, hWalls[y][x] = north edge of cell x,y; height+1 rows)
+  // and vWalls (vertical lines, vWalls[y][x] = west edge of cell x,y; width+1 cols). Collision and sight
+  // consult these so client prediction and the server agree. Height is purely visual (see render.js).
+  function parseWall(tok) {
+    if (!tok) return null;
+    var s = String(tok), i = s.indexOf(':');
+    if (i < 0) return { style: s, height: 1 };
+    return { style: s.slice(0, i), height: Math.max(1, parseInt(s.slice(i + 1), 10) || 1) };
+  }
+  function wallAt(map, orient, x, y) {
+    var grid = orient === 'h' ? map.hWalls : map.vWalls;
+    var row = grid && grid[y];
+    return (row && row[x]) || '';
+  }
+  // The edge crossed when leaving (x, y) in direction dir: {orient, x, y} into the matching wall grid.
+  function wallEdge(x, y, dir) {
+    if (dir === 'N') return { orient: 'h', x: x, y: y };
+    if (dir === 'S') return { orient: 'h', x: x, y: y + 1 };
+    if (dir === 'W') return { orient: 'v', x: x, y: y };
+    if (dir === 'E') return { orient: 'v', x: x + 1, y: y };
+    return null;
+  }
+  function wallBetween(map, x, y, dir) {
+    var e = wallEdge(x, y, dir);
+    return e ? wallAt(map, e.orient, e.x, e.y) : '';
+  }
+  // The wall token on the shared edge of two orthogonally-adjacent cells ('' if none / not adjacent).
+  function wallBetweenCells(map, ax, ay, bx, by) {
+    if (ax === bx && Math.abs(ay - by) === 1) return wallAt(map, 'h', ax, Math.max(ay, by));
+    if (ay === by && Math.abs(ax - bx) === 1) return wallAt(map, 'v', Math.max(ax, bx), ay);
+    return '';
+  }
+  function wallStyleOf(content, tok) {
+    var p = parseWall(tok);
+    return p && content.wallStyles ? content.wallStyles[p.style] : null;
+  }
+  // An unknown style still blocks (safer); a known style blocks unless its flag is explicitly off.
+  function wallBlocksMove(content, tok) {
+    if (!tok) return false;
+    var s = wallStyleOf(content, tok);
+    return s ? s.blocksMove !== false : true;
+  }
+  function wallBlocksSight(content, tok) {
+    if (!tok) return false;
+    var s = wallStyleOf(content, tok);
+    return s ? s.blocksSight !== false : true;
+  }
+
   /**
    * Can something at (x, y) on map step in direction dir? Returns {ok, x, y, reason}.
    * opts (optional): walkable(entity) overrides object walkability (e.g. an open door);
@@ -58,6 +108,8 @@ var Rules = (function () {
     if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) return { ok: false, x: x, y: y, reason: 'edge' };
     var from = terrainAt(content, map, x, y), to = terrainAt(content, map, nx, ny);
     if (!to) return { ok: false, x: x, y: y, reason: 'no terrain' };
+    // Edge wall on the boundary between the two cells blocks the step (independent of terrain/objects).
+    if (wallBlocksMove(content, wallBetween(map, x, y, dir))) return { ok: false, x: x, y: y, reason: 'wall' };
     if (from && !from.pass[d.out]) return { ok: false, x: x, y: y, reason: 'blocked side' };
     if (!to.pass[d.into]) return { ok: false, x: x, y: y, reason: 'blocked' };
     // Leaving the current cell: a walkable object here can block one of its edges (one-way).
@@ -117,6 +169,8 @@ var Rules = (function () {
   }
 
   return { DIRS: DIRS, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt, blockersAt: blockersAt,
-    terrainAt: terrainAt, standable: standable, nearestStandable: nearestStandable };
+    terrainAt: terrainAt, standable: standable, nearestStandable: nearestStandable,
+    parseWall: parseWall, wallAt: wallAt, wallEdge: wallEdge, wallBetween: wallBetween, wallBetweenCells: wallBetweenCells,
+    wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight };
 })();
 if (typeof module !== 'undefined') module.exports = Rules;

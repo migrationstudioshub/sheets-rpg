@@ -26,7 +26,7 @@
  * (tools/sync_server.sh); edit the originals, not the copies.
  */
 
-var CONTENT_TABS = ['Config', 'Tilesets', 'Autotile', 'Terrain', 'Kinds', 'Objects', 'Maps', 'MapEntities',
+var CONTENT_TABS = ['Config', 'Tilesets', 'Autotile', 'Terrain', 'WallStyles', 'Kinds', 'Objects', 'Maps', 'MapEntities',
   'Items', 'Monsters', 'LootTables', 'Classes', 'Levels', 'Skills', 'Statuses', 'Appearances'];
 var PLAYER_COLS = ['id', 'token', 'name', 'class', 'map', 'x', 'y', 'facing', 'hp', 'mp', 'level', 'xp', 'gold',
   'inventory', 'equipment', 'abilities', 'belt', 'mags', 'cooldowns', 'statuses', 'flags', 'respawn', 'created', 'last_seen'];
@@ -371,7 +371,7 @@ function checkSetup() {
 
 // ---------------------------------------------------------------- editor
 
-var EDITABLE_TABS = ['Config', 'Tilesets', 'Autotile', 'Terrain', 'Kinds', 'Objects', 'Items', 'Monsters',
+var EDITABLE_TABS = ['Config', 'Tilesets', 'Autotile', 'Terrain', 'WallStyles', 'Kinds', 'Objects', 'Items', 'Monsters',
   'LootTables', 'Classes', 'Levels', 'Skills', 'Statuses'];
 
 function requireEditor(key) {

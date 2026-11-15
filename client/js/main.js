@@ -125,7 +125,8 @@
         var area = sk.target === 'around' ? Math.max(1, sk.area) : sk.area;
         var at = sk.target === 'around' || sk.target === 'self' ? e.from : e.to;
         if (sk.projectile) fx.push({ kind: 'proj', from: e.from, to: e.to, color: sk.color, t0: t0, life: 260 });
-        fx.push({ kind: 'flash', x: at.x, y: at.y, r: area, color: sk.color, t0: t0 + (sk.projectile ? 240 : 0), life: 450 });
+        var acells = area > 0 ? World.blastCells(content, mapOf(), at.x, at.y, area, lookup().stateOf) : null;
+        fx.push({ kind: 'flash', x: at.x, y: at.y, r: area, cells: acells, color: sk.color, t0: t0 + (sk.projectile ? 240 : 0), life: 450 });
         return;
       }
       if (e.type === 'shoot') {                                  // a bullet tracer (ours was drawn on click)
@@ -135,7 +136,7 @@
       if (e.type === 'throw') {                                  // a thrown grenade/molotov arc + blast
         if (e.by !== me.id) {
           fx.push({ kind: 'proj', from: e.from, to: e.to, color: e.color || '#ff8c3b', t0: t0, life: 300 });
-          fx.push({ kind: 'flash', x: e.to.x, y: e.to.y, r: e.area || 0, color: e.color || '#ff8c3b', t0: t0 + 280, life: 450 });
+          fx.push({ kind: 'flash', x: e.to.x, y: e.to.y, r: e.area || 0, cells: World.blastCells(content, mapOf(), e.to.x, e.to.y, e.area || 0, lookup().stateOf), color: e.color || '#ff8c3b', t0: t0 + 280, life: 450 });
         }
         return;
       }
@@ -314,9 +315,13 @@
     if (cheb(me.x, me.y, cell.x, cell.y) > (it.throwRange || 4)) { log(TOO_FAR, 'info'); return; }
     me.facing = facingToward(cell.x, cell.y);
     send({ type: 'throw', item: throwing, x: cell.x, y: cell.y });
+    // Predict where it actually lands (stops at a wall) and which cells the blast reaches, so the
+    // animation matches the server instead of sailing through walls.
+    var map = mapOf(), sf = lookup().stateOf;
+    var land = World.throwLanding(content, map, me.x, me.y, cell.x, cell.y, sf);
     var t0 = performance.now();
-    fx.push({ kind: 'proj', from: { x: me.x, y: me.y }, to: { x: cell.x, y: cell.y }, color: it.tint || '#ff8c3b', t0: t0, life: 300 });
-    fx.push({ kind: 'flash', x: cell.x, y: cell.y, r: it.throwArea || 0, color: it.tint || '#ff8c3b', t0: t0 + 280, life: 450 });
+    fx.push({ kind: 'proj', from: { x: me.x, y: me.y }, to: { x: land.x, y: land.y }, color: it.tint || '#ff8c3b', t0: t0, life: 300 });
+    fx.push({ kind: 'flash', x: land.x, y: land.y, r: it.throwArea || 0, cells: World.blastCells(content, map, land.x, land.y, it.throwArea || 0, sf), color: it.tint || '#ff8c3b', t0: t0 + 280, life: 450 });
     cancelThrow();
   }
   function cancelThrow() { if (throwing) { throwing = null; updateCursor(); hotbar(); } }
@@ -413,7 +418,8 @@
     var at = sk.target === 'around' || sk.target === 'self' ? from : to;
     lastOwnCast = t0;
     if (sk.projectile) fx.push({ kind: 'proj', from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y }, color: sk.color, t0: t0, life: 260 });
-    fx.push({ kind: 'flash', x: at.x, y: at.y, r: area, color: sk.color, t0: t0 + (sk.projectile ? 240 : 0), life: 450 });
+    var cells = area > 0 ? World.blastCells(content, mapOf(), at.x, at.y, area, lookup().stateOf) : null;
+    fx.push({ kind: 'flash', x: at.x, y: at.y, r: area, cells: cells, color: sk.color, t0: t0 + (sk.projectile ? 240 : 0), life: 450 });
   }
 
   /** Cells to light up while aiming an ability: in range and in sight. */
@@ -424,7 +430,9 @@
       if (World.checkTarget(content, map, me, reach, x, y, lk).ok) cells.push({ x: x, y: y });
     }
     var hc = hover && aimCheck(hover), h = hc && { x: hc.x, y: hc.y, ok: hc.ok };
-    return { cells: cells, hover: h, area: sk.area, from: me, color: sk.color };
+    var blast = (h && h.ok && sk.area > 0 && sk.target !== 'around' && sk.target !== 'self')
+      ? World.blastCells(content, map, h.x, h.y, sk.area, lk.stateOf) : null;
+    return { cells: cells, hover: h, area: sk.area, blast: blast, from: me, color: sk.color };
   }
   /** Cells within a square range of the player (the throw/shoot reach ring). */
   function ringCells(range) {
@@ -435,11 +443,19 @@
     }
     return cells;
   }
-  /** Throw-aim overlay: reach ring + the blast area under the cursor. */
+  /** Throw-aim overlay: the cells you can actually reach, plus the blast the grenade would make. */
   function throwOverlay() {
-    var it = content.items[throwing], rng = it.throwRange || 4;
-    var h = hover ? { x: hover.x, y: hover.y, ok: cheb(me.x, me.y, hover.x, hover.y) <= rng } : null;
-    return { cells: ringCells(rng), hover: h, area: it.throwArea || 0, from: me, color: it.tint || '#ff8c3b' };
+    var it = content.items[throwing], rng = it.throwRange || 4, map = mapOf(), sf = lookup().stateOf;
+    // only cells a clear throw can land on — a wall stops the grenade, so tiles behind it aren't shown
+    var cells = ringCells(rng).filter(function (c) {
+      var l = World.throwLanding(content, map, me.x, me.y, c.x, c.y, sf);
+      return l.x === c.x && l.y === c.y;
+    });
+    if (!hover) return { cells: cells, hover: null, from: me, color: it.tint || '#ff8c3b' };
+    var land = World.throwLanding(content, map, me.x, me.y, hover.x, hover.y, sf);
+    var inRange = cheb(me.x, me.y, hover.x, hover.y) <= rng;
+    var blast = inRange ? World.blastCells(content, map, land.x, land.y, it.throwArea || 0, sf) : null;
+    return { cells: cells, hover: { x: land.x, y: land.y, ok: inRange }, blast: blast, from: me, color: it.tint || '#ff8c3b' };
   }
   function icon(entry) {
     var el = document.createElement('div'); el.className = 'ico';

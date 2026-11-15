@@ -61,6 +61,9 @@ var Assets = (function () {
         if (it.defaultTint) paths[it.wornSprite.replace(/\.png$/i, '.tint.png')] = 1; }           // + its grey tint mask
     });
     Object.keys(content.classes || {}).forEach(function (k) { if (content.classes[k].bodySprite) paths[content.classes[k].bodySprite] = 1; });   // player base bodies
+    Object.keys(content.wallStyles || {}).forEach(function (k) {                                     // edge-wall art: connector sheet, cap, face
+      var w = content.wallStyles[k]; if (w.tiles) paths[w.tiles] = 1; if (w.cap) paths[w.cap] = 1; if (w.face) paths[w.face] = 1;
+    });
 
     // Variety layer: load scatter.json once, then the detail/decal sheets each ground terrain needs.
     var ready = (typeof Scatter !== 'undefined') ? Scatter.load(resolve('art/tilesets/scatter.json')) : Promise.resolve({});

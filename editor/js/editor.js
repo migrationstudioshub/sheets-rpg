@@ -5,7 +5,9 @@
 var E = {
   tables: null, content: null, mapId: null,
   layer: 'terrain', terrainLayer: 'base', tool: 'brush', paletteTab: 'terrain',
-  brush: { terrain: 'til_3', object: null, monster: null },
+  brush: { terrain: 'til_3', object: null, monster: null, wall: null },
+  wallHeight: 2, hoverEdge: null,   // edge walls: current brush height (tiles) + the edge under the cursor
+  wallSide: 'center',   // N-S walls: 'center' straddles the line; 'cursor' snaps the wall onto whichever tile the cursor is nearer
   view: { zoom: 2, x: 40, y: 40 },
   show: { terrain: true, objects: true, grid: true },
   selected: null, hover: null, mode: null,
@@ -58,6 +60,36 @@ var E = {
     }
     return map.overlay;
   };
+  // Edge walls live on cell boundaries. Two full grids of "styleId:height" tokens ('' = no wall), built
+  // lazily the first time walls are painted: hWalls = horizontal lines ((H+1) rows × W cols), vWalls =
+  // vertical lines (H rows × (W+1) cols). Kept full while editing; mapRows drops them when all-empty.
+  E.ensureWalls = function (map) {
+    map = map || E.map();
+    var w = map.width, h = map.height;
+    function build(src, rows, cols) {
+      var g = [];
+      for (var y = 0; y < rows; y++) { var r = []; for (var x = 0; x < cols; x++) r.push((src && src[y] && src[y][x]) || ''); g.push(r); }
+      return g;
+    }
+    if (!map.hWalls || map.hWalls.length !== h + 1 || (map.hWalls[0] && map.hWalls[0].length !== w)) map.hWalls = build(map.hWalls, h + 1, w);
+    if (!map.vWalls || map.vWalls.length !== h || (map.vWalls[0] && map.vWalls[0].length !== w + 1)) map.vWalls = build(map.vWalls, h, w + 1);
+    return map;
+  };
+  // The grid cell (edge) nearest the mouse: whichever of the hovered tile's four sides the cursor is closest
+  // to. Returns {orient:'h'|'v', x, y} indexing the matching wall grid, or null when outside the map.
+  E.edgeAt = function (ev) {
+    var r = canvas.getBoundingClientRect(), s = cellSize(), m = E.map();
+    var fx = (ev.clientX - r.left - E.view.x) / s, fy = (ev.clientY - r.top - E.view.y) / s;
+    var cx = Math.floor(fx), cy = Math.floor(fy), rx = fx - cx, ry = fy - cy;
+    // Each candidate edge also carries `side`: the tile the cursor is on, used to offset N-S walls.
+    // left edge of the hovered cell → cursor is to its right ('r'); right edge → cursor to its left ('l').
+    var d = [['v', cx, cy, rx, 'r'], ['v', cx + 1, cy, 1 - rx, 'l'], ['h', cx, cy, ry, 's'], ['h', cx, cy + 1, 1 - ry, 'n']];
+    d.sort(function (a, b) { return a[3] - b[3]; });
+    var e = { orient: d[0][0], x: d[0][1], y: d[0][2], side: d[0][4] };
+    if (e.orient === 'h') { if (e.x < 0 || e.x >= m.width || e.y < 0 || e.y > m.height) return null; }
+    else { if (e.x < 0 || e.x > m.width || e.y < 0 || e.y >= m.height) return null; }
+    return e;
+  };
   // The frozen-shape override map ({ "x,y": mask }) for the layer currently being painted.
   E.shapeMap = function (map) {
     map = map || E.map();
@@ -87,6 +119,10 @@ var E = {
     var ov = map.overlay;
     var hasOv = ov && ov.some(function (r) { return r && r.some(function (c) { return c; }); });
     if (hasOv) row.overlay = JSON.stringify(ov); else delete row.overlay;   // keep overlay-free maps clean
+    ['vWalls', 'hWalls'].forEach(function (k) {                              // edge walls, dropped when all-empty
+      var grid = map[k], has = grid && grid.some(function (r) { return r && r.some(function (c) { return c; }); });
+      if (has) row[k] = JSON.stringify(grid); else delete row[k];
+    });
     ['shapes', 'overlayShapes'].forEach(function (k) {                       // frozen shift-click shapes
       var o = map[k]; if (o && Object.keys(o).length) row[k] = JSON.stringify(o); else delete row[k];
     });
@@ -123,6 +159,9 @@ var E = {
       var o = c.objects[k]; if (o.sprite) paths.push(o.sprite); if (o.spriteTop) paths.push(o.spriteTop);
       Object.keys(o.spriteStates).forEach(function (s) { paths.push(o.spriteStates[s]); });
     });
+    Object.keys(c.wallStyles || {}).forEach(function (k) {
+      var w = c.wallStyles[k]; [w.tiles, w.cap, w.face].forEach(function (p) { if (p) paths.push(p); });
+    });
     return Promise.all(paths.map(Assets.load));
   };
 
@@ -138,6 +177,7 @@ var E = {
     var m = E.map();
     return { mapId: m.id, width: m.width, height: m.height, name: m.name,
       terrain: JSON.parse(JSON.stringify(m.terrain)), overlay: JSON.parse(JSON.stringify(m.overlay || [])),
+      vWalls: JSON.parse(JSON.stringify(m.vWalls || [])), hWalls: JSON.parse(JSON.stringify(m.hWalls || [])),
       shapes: JSON.parse(JSON.stringify(m.shapes || {})), overlayShapes: JSON.parse(JSON.stringify(m.overlayShapes || {})),
       entities: JSON.parse(JSON.stringify(m.entities)) };
   }
@@ -145,6 +185,7 @@ var E = {
     var m = E.content.maps[s.mapId]; if (!m) return;
     if (E.mapId !== s.mapId) E.openMap(s.mapId);
     m.width = s.width; m.height = s.height; m.name = s.name; m.terrain = s.terrain; m.overlay = s.overlay || [];
+    m.vWalls = s.vWalls || []; m.hWalls = s.hWalls || [];
     m.shapes = s.shapes || {}; m.overlayShapes = s.overlayShapes || {}; m.entities = s.entities;
     if (E.selected && !E.entityByKey(E.selected)) E.selected = null;
     E.markDirty('map'); Panels.all();
@@ -256,8 +297,25 @@ var E = {
   }
   E.setPaletteTab = function (t) {
     E.paletteTab = t;
-    E.layer = t === 'terrain' ? 'terrain' : 'objects';
+    E.layer = t === 'terrain' ? 'terrain' : t === 'walls' ? 'walls' : 'objects';
   };
+  // ---- edge walls ----
+  function wallToken(edge) {
+    if (!E.brush.wall) return '';
+    var t = E.brush.wall + ':' + Math.max(1, E.wallHeight || 1);
+    // Offset onto one tile only for N-S walls, and only in 'cursor' mode (keeps existing maps centred).
+    if (E.wallSide === 'cursor' && edge && edge.orient === 'v' && (edge.side === 'l' || edge.side === 'r')) t += ':' + edge.side;
+    return t;
+  }
+  function setWall(edge, val) {
+    if (!edge) return false;
+    E.ensureWalls();
+    var m = E.map(), grid = edge.orient === 'h' ? m.hWalls : m.vWalls, row = grid[edge.y];
+    if (!row || row[edge.x] === undefined) return false;
+    if (row[edge.x] === val) return false;
+    row[edge.x] = val; return true;
+  }
+  function paintWall(edge) { return setWall(edge, E.tool === 'erase' ? '' : wallToken(edge)); }
   function paint(x, y) {
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
     if (E.paletteTab === 'monsters') return placeMonster(x, y, E.brush.monster);
@@ -327,7 +385,7 @@ var E = {
     var id = 'map_' + n, fill = E.brush.terrain;
     var terrain = [];
     for (var y = 0; y < h; y++) { var row = []; for (var x = 0; x < w; x++) row.push(fill); terrain.push(row); }
-    E.content.maps[id] = { id: id, name: name || id, width: w, height: h, terrain: terrain, overlay: [], shapes: {}, overlayShapes: {}, entities: [] };
+    E.content.maps[id] = { id: id, name: name || id, width: w, height: h, terrain: terrain, overlay: [], vWalls: [], hWalls: [], shapes: {}, overlayShapes: {}, entities: [] };
     E.dirty.maps[id] = true;
     E.openMap(id);
     return id;
@@ -336,6 +394,8 @@ var E = {
     var src = E.map(), id = E.newMap(src.name + ' copy', src.width, src.height), m = E.content.maps[id];
     m.terrain = JSON.parse(JSON.stringify(src.terrain));
     m.overlay = JSON.parse(JSON.stringify(src.overlay || []));
+    m.vWalls = JSON.parse(JSON.stringify(src.vWalls || []));
+    m.hWalls = JSON.parse(JSON.stringify(src.hWalls || []));
     m.shapes = JSON.parse(JSON.stringify(src.shapes || {}));
     m.overlayShapes = JSON.parse(JSON.stringify(src.overlayShapes || {}));
     m.entities = src.entities.map(function (e, i) { return { key: id + '.e' + (i + 1), x: e.x, y: e.y, ref: e.ref, data: JSON.parse(JSON.stringify(e.data)) }; });
@@ -355,7 +415,17 @@ var E = {
       for (var ox = 0; ox < w; ox++) orow.push(oy < m.height && ox < m.width && m.overlay[oy] ? (m.overlay[oy][ox] || '') : '');
       overlay.push(orow);
     }
-    m.terrain = terrain; if (overlay) m.overlay = overlay; m.width = w; m.height = h;
+    m.terrain = terrain; if (overlay) m.overlay = overlay;
+    // edge walls: rebuild to the new bounds, keeping segments still in range
+    function resizeWalls(src, rows, cols) {
+      if (!src || !src.length) return src;
+      var g = [];
+      for (var y = 0; y < rows; y++) { var r = []; for (var x = 0; x < cols; x++) r.push((src[y] && src[y][x]) || ''); g.push(r); }
+      return g;
+    }
+    if (m.hWalls && m.hWalls.length) m.hWalls = resizeWalls(m.hWalls, h + 1, w);
+    if (m.vWalls && m.vWalls.length) m.vWalls = resizeWalls(m.vWalls, h, w + 1);
+    m.width = w; m.height = h;
     m.entities = m.entities.filter(function (e) { return e.x < w && e.y < h; });
     ['shapes', 'overlayShapes'].forEach(function (k) {         // drop frozen shapes outside the new bounds
       var o = m[k]; if (!o) return; var keep = {};
@@ -410,28 +480,57 @@ var E = {
     g.fillStyle = '#1b1e25'; g.fillRect(vx - 1, vy - 1, m.width * s + 2, m.height * s + 2);
     if (E.show.terrain) g.drawImage(E.ground, vx, vy, m.width * s, m.height * s);
 
-    var dim = E.layer === 'terrain' && E.tool !== 'select' ? 0.55 : 1;
-    if (E.show.objects) {
-      g.globalAlpha = dim;
-      var tops = [];
-      m.entities.forEach(function (e) {
-        var o = c.objects[e.ref], dx = vx + e.x * s, dy = vy + e.y * s;
-        if (!o) { g.drawImage(Assets.placeholder('?', '#a33', t), dx, dy, s, s); return; }
-        if (o.kind === 'spawn') { drawSpawn(e, o, dx, dy, s); return; }
-        var path = (e.data && e.data.state && o.spriteStates[e.data.state]) || o.sprite;
-        Render.drawObject(g, o, path, dx, dy, s, 'base', 0);
-        tops.push({ o: o, path: path, y: e.y, dx: dx, dy: dy });
-      });
-      // tall objects' upper parts, lower rows last so they overlap correctly (as in the game)
-      tops.sort(function (a, b) { return a.y - b.y; }).forEach(function (q) { Render.drawObject(g, q.o, q.path, q.dx, q.dy, s, 'top', 0); });
-      g.globalAlpha = 1;
+    // Objects and 2.5D edge walls share ONE back-to-front pass (by south edge), exactly as the game draws
+    // them, so a thing north of a wall is hidden behind it and one south of it sits in front — live, as you
+    // paint. (Flat 'tiles'-style walls stay a top-down underlay; the face+cap walls are what interleave.)
+    var objDim = E.layer === 'terrain' && E.tool !== 'select' ? 0.55 : 1;
+    var wallAlpha = E.layer === 'walls' ? 1 : 0.85;   // walls dimmed a touch unless their layer is active
+    if (Render.connectorNodes) {
+      g.globalAlpha = wallAlpha; Render.drawWallNodes(g, c, Render.connectorNodes(c, m), vx, vy, s); g.globalAlpha = 1;
     }
+    var items = [];
+    if (E.show.objects) m.entities.forEach(function (e) {
+      items.push({ sortY: Math.round(e.y * s) + s, ent: e, o: c.objects[e.ref], dx: vx + e.x * s, dy: vy + e.y * s });
+    });
+    if (Render.wall25) Render.wall25(c, m).forEach(function (p) {
+      var isCap = p.kind === 'hcap' || p.kind === 'vcap';
+      items.push({ sortY: Render.prim25SortY(p, 0, s) + (isCap ? 0.5 : 0.25), prim: p });
+    });
+    items.sort(function (a, b) { return a.sortY - b.sortY; });
+    items.forEach(function (it) {
+      if (it.prim) { g.globalAlpha = wallAlpha; Render.drawPrim25(g, c, it.prim, vx, vy, s); g.globalAlpha = 1; return; }
+      g.globalAlpha = objDim;
+      var e = it.ent, o = it.o;
+      if (!o) g.drawImage(Assets.placeholder('?', '#a33', t), it.dx, it.dy, s, s);
+      else if (o.kind === 'spawn') drawSpawn(e, o, it.dx, it.dy, s);
+      else {
+        var path = (e.data && e.data.state && o.spriteStates[e.data.state]) || o.sprite;
+        Render.drawObject(g, o, path, it.dx, it.dy, s, 'base', 0);
+        Render.drawObject(g, o, path, it.dx, it.dy, s, 'top', 0);   // overflow (no-op when the sprite is one tile)
+      }
+      g.globalAlpha = 1;
+    });
 
     if (E.show.grid && s >= 8) {
       g.strokeStyle = 'rgba(255,255,255,.12)'; g.lineWidth = 1; g.beginPath();
       for (var x = 0; x <= m.width; x++) { g.moveTo(vx + x * s + .5, vy); g.lineTo(vx + x * s + .5, vy + m.height * s); }
       for (var y = 0; y <= m.height; y++) { g.moveTo(vx, vy + y * s + .5); g.lineTo(vx + m.width * s, vy + y * s + .5); }
       g.stroke();
+    }
+
+    // walls layer: highlight the edge under the cursor (red when erasing, else the brush colour)
+    if (E.layer === 'walls' && E.hoverEdge && !E.mode) {
+      var he = E.hoverEdge, ws = c.wallStyles && c.wallStyles[E.brush.wall];
+      g.strokeStyle = E.tool === 'erase' ? '#ff7a6a' : (ws && ws.color) || '#6fe08a';
+      g.lineWidth = Math.max(3, Math.round(s * 0.18)); g.lineCap = 'round'; g.beginPath();
+      if (he.orient === 'h') { g.moveTo(vx + he.x * s, vy + he.y * s); g.lineTo(vx + (he.x + 1) * s, vy + he.y * s); }
+      else {
+        // In 'cursor' mode nudge the preview onto the tile the wall will occupy, matching the render offset.
+        var hd = Math.round(Math.max(4, Math.round(s * 0.32)) / 2);
+        var off = E.wallSide === 'cursor' && he.side === 'r' ? hd : E.wallSide === 'cursor' && he.side === 'l' ? -hd : 0;
+        g.moveTo(vx + he.x * s + off, vy + he.y * s); g.lineTo(vx + he.x * s + off, vy + (he.y + 1) * s);
+      }
+      g.stroke(); g.lineWidth = 1; g.lineCap = 'butt';
     }
 
     // links from the selected entity (switch targets, door/teleport destinations on this map)
@@ -540,6 +639,21 @@ var E = {
       return;
     }
 
+    if (E.layer === 'walls') {
+      var edge = E.edgeAt(ev);
+      if (E.tool === 'pick') {   // eyedrop a wall: adopt its style + height as the brush
+        var tok = edge && Rules.wallAt(E.map(), edge.orient, edge.x, edge.y), pw = tok && Rules.parseWall(tok);
+        if (pw) { E.brush.wall = pw.style; E.wallHeight = pw.height; E.setPaletteTab('walls'); E.setTool('brush'); Panels.palette(); }
+        return;
+      }
+      if (E.tool !== 'erase' && !E.brush.wall) { Panels.status('pick a wall style in the palette first', true); return; }
+      E.checkpoint();
+      var wch = paintWall(edge);
+      drag = { kind: 'wall', changed: wch };
+      if (wch) E.markDirty('map'); else E.undo.pop();
+      return;
+    }
+
     if (E.tool === 'select') {
       var e = E.inside(cell.x, cell.y) && E.entityAt(cell.x, cell.y);
       E.selected = e ? e.key : null;
@@ -564,7 +678,15 @@ var E = {
   canvas.addEventListener('pointermove', function (ev) {
     var cell = cellAt(ev);
     if (!E.hover || E.hover.x !== cell.x || E.hover.y !== cell.y) { E.hover = cell; Panels.cellInfo(cell); E.redraw(); }
+    if (E.layer === 'walls') {   // track the nearest edge for the highlight (and to paint while dragging)
+      var ed = E.edgeAt(ev), he = E.hoverEdge;
+      if (!he || !ed || he.orient !== ed.orient || he.x !== ed.x || he.y !== ed.y) { E.hoverEdge = ed; E.redraw(); }
+    }
     if (!drag) return;
+    if (drag.kind === 'wall') {
+      if (paintWall(E.edgeAt(ev))) { drag.changed = true; E.markDirty('map'); }
+      return;
+    }
     if (drag.kind === 'pan') { E.view.x = drag.vx + ev.clientX - drag.sx; E.view.y = drag.vy + ev.clientY - drag.sy; E.redraw(); return; }
     if (drag.kind === 'paint' || drag.kind === 'stamp') {
       if (cell.x === drag.last.x && cell.y === drag.last.y) return;
@@ -587,12 +709,12 @@ var E = {
     if (drag.kind === 'copy') { copyRegion(drag.start, drag.end, drag.freeze); }   // captures into E.stamp; no map change
     else if (drag.kind === 'rect') {
       if (rect(drag.start, drag.end, drag.erase ? eraseAt : paint)) E.markDirty('map'); else E.undo.pop();
-    } else if ((drag.kind === 'paint' || drag.kind === 'stamp') && !drag.changed) E.undo.pop();
+    } else if ((drag.kind === 'paint' || drag.kind === 'stamp' || drag.kind === 'wall') && !drag.changed) E.undo.pop();
     drag = null; canvas.style.cursor = ''; E.redraw();
   }
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
-  canvas.addEventListener('pointerleave', function () { E.hover = null; E.redraw(); });
+  canvas.addEventListener('pointerleave', function () { E.hover = null; E.hoverEdge = null; E.redraw(); });
 
   canvas.addEventListener('wheel', function (ev) {
     ev.preventDefault();
@@ -617,6 +739,9 @@ var E = {
     if (k === '1') { E.setPaletteTab('terrain'); Panels.all(); E.redraw(); return; }
     if (k === '2') { E.setPaletteTab(E.paletteTab === 'monsters' ? 'monsters' : 'objects'); Panels.all(); E.redraw(); return; }
     if (k === '3') { E.setPaletteTab('monsters'); Panels.all(); E.redraw(); return; }
+    if (k === '4') { E.setPaletteTab('walls'); Panels.all(); E.redraw(); return; }
+    if ((k === '[' || k === ']') && E.layer === 'walls') { E.wallHeight = Math.max(1, Math.min(12, (E.wallHeight || 1) + (k === ']' ? 1 : -1))); Panels.palette(); E.redraw(); return; }
+    if (k === 'o' && E.layer === 'walls') { E.wallSide = E.wallSide === 'cursor' ? 'center' : 'cursor'; Panels.palette(); E.redraw(); return; }
     if (k === '0') { E.fitView(); return; }
     if (k === 'escape') { if (E.mode) Panels.endPick(); else { E.selected = null; Panels.inspector(); E.redraw(); } return; }
     if ((k === 'delete' || k === 'backspace') && E.selected) {
@@ -653,6 +778,7 @@ var E = {
     var first = Object.keys(E.content.objects).filter(function (k) { return E.content.objects[k].kind !== 'spawn'; })[0];
     E.brush.object = first || null;
     E.brush.monster = Object.keys(E.content.monsters)[0] || null;
+    E.brush.wall = Object.keys(E.content.wallStyles || {})[0] || null;
     if (!E.content.terrain[E.brush.terrain]) E.brush.terrain = Object.keys(E.content.terrain)[0];
     // open right away; repaint as images arrive instead of waiting for slow image hosts
     E.loadArt().then(function () { E.groundDirty = true; E.redraw(); Panels.palette(); Panels.inspector(); });

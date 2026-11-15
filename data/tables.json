@@ -741,6 +741,30 @@
    "notes": "from the tileset maker"
   }
  ],
+ "WallStyles": [
+  {
+   "id": "wall_brick",
+   "name": "Brick wall",
+   "tiles": "",
+   "cap": "art/tilesets/wall_demo_cap.png",
+   "face": "art/tilesets/wall_demo_face.png",
+   "color": "#9a7b5a",
+   "blocks_move": true,
+   "blocks_sight": true,
+   "notes": ""
+  },
+  {
+   "id": "wall_fence",
+   "name": "Wire fence",
+   "tiles": "",
+   "cap": "",
+   "face": "",
+   "color": "#b9c0c8",
+   "blocks_move": true,
+   "blocks_sight": false,
+   "notes": "See-through: blocks movement but not sight or shots"
+  }
+ ],
  "Kinds": [
   {
    "kind": "deco",
@@ -5560,5 +5584,5 @@
    "layers": "[{\"name\":\"body\",\"empty\":0,\"options\":[{\"sprite\":\"art/sprites/paperdoll/base/body_zombie.png\",\"weight\":60},{\"sprite\":\"art/sprites/paperdoll/base/body_zombie_female.png\",\"weight\":40}],\"tints\":[]},{\"name\":\"hair\",\"empty\":15,\"options\":[{\"sprite\":\"art/sprites/paperdoll/hair/hair_bob.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_buzz.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_long.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_messy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_pony.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_shaggy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_slick.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_under.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v1.png\",\"weight\":3},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v2.png\",\"weight\":3}],\"tints\":[{\"tint\":\"hair_grey\",\"weight\":23},{\"tint\":\"hair_dark\",\"weight\":16},{\"tint\":\"hair_black\",\"weight\":16},{\"tint\":\"hair_brown\",\"weight\":16},{\"tint\":\"hair_white\",\"weight\":12},{\"tint\":\"hair_blonde\",\"weight\":8},{\"tint\":\"hair_auburn\",\"weight\":5},{\"tint\":\"hair_ginger\",\"weight\":5}]},{\"name\":\"clothes\",\"empty\":67,\"options\":[{\"sprite\":\"art/sprites/paperdoll/chest/chest_leather_jacket.png\",\"weight\":33}],\"tints\":[{\"tint\":\"brown\",\"weight\":22},{\"tint\":\"olive\",\"weight\":22},{\"tint\":\"charcoal\",\"weight\":22},{\"tint\":\"maroon\",\"weight\":11},{\"tint\":\"navy\",\"weight\":11},{\"tint\":\"khaki\",\"weight\":11}]}]"
   }
  ],
- "_version": "1705dcc5b9e5"
+ "_version": "2737c778e9f2"
 }

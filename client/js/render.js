@@ -26,6 +26,153 @@ var Render = (function () {
 
   var NT = 32;   // sprites are authored at 32 px per tile; the footprint is the bottom 32 px
 
+  // ---- edge walls: walls painted on cell boundaries, extruded upward by a per-segment height ----
+  // Token: "style:height[:side]". side ('l'|'r', N-S walls only) shifts a vertical wall fully onto the
+  // left/right tile instead of straddling its grid line; absent/anything else = centred ('c').
+  function parseWallTok(tok) {
+    if (!tok) return null;
+    var p = String(tok).split(':');
+    return { style: p[0], height: Math.max(1, parseInt(p[1], 10) || 1), side: p[2] || 'c' };
+  }
+  /** Every wall segment on a map as {orient:'h'|'v', x, y, style, height}. */
+  function wallSegments(map) {
+    var out = [], h = map.hWalls || [], v = map.vWalls || [], y, x, row, p;
+    for (y = 0; y < h.length; y++) { row = h[y] || []; for (x = 0; x < row.length; x++) { p = parseWallTok(row[x]); if (p) out.push({ orient: 'h', x: x, y: y, style: p.style, height: p.height }); } }
+    for (y = 0; y < v.length; y++) { row = v[y] || []; for (x = 0; x < row.length; x++) { p = parseWallTok(row[x]); if (p) out.push({ orient: 'v', x: x, y: y, style: p.style, height: p.height }); } }
+    return out;
+  }
+  // Nudge a #rrggbb colour lighter (f>0) or darker (f<0), for cap vs face contrast.
+  function shade(hex, f) {
+    var m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return hex || '#8a8f98';
+    var n = parseInt(m[1], 16), r = (n >> 16) & 255, gg = (n >> 8) & 255, b = n & 255;
+    function a(v) { return Math.max(0, Math.min(255, Math.round(v + 255 * f))); }
+    return 'rgb(' + a(r) + ',' + a(gg) + ',' + a(b) + ')';
+  }
+  // The screen y a segment sorts by (its southernmost / nearest-camera point), for occlusion ordering.
+  function wallBaseY(seg, oy, S) { return oy + (seg.orient === 'h' ? seg.y : seg.y + 1) * S; }
+  /**
+   * Draw one wall segment. Horizontal (E-W) segments show a front face rising `height` tiles above the
+   * grid line plus a cap; vertical (N-S) segments show a thin raised slab seen edge-on. Art (face strip +
+   * cap) is used when loaded, else the style colour. S = cell size in px; (ox,oy) = map origin on screen.
+   */
+  function drawWall(g, content, seg, ox, oy, S) {
+    var st = content.wallStyles && content.wallStyles[seg.style];
+    var col = (st && st.color) || '#8a8f98', H = seg.height * S, capH = Math.max(2, Math.round(S * 0.16));
+    var faceImg = st && st.face && Assets.get(st.face), capImg = st && st.cap && Assets.get(st.cap);
+    if (seg.orient === 'h') {
+      var x = ox + seg.x * S, yl = oy + seg.y * S, top = yl - H;
+      if (faceImg) { for (var yy = top; yy < yl; yy += S) { var hh = Math.min(S, yl - yy); g.drawImage(faceImg, 0, 0, faceImg.width, Math.max(1, Math.round(faceImg.height * hh / S)), x, yy, S, hh); } }
+      else { g.fillStyle = shade(col, -0.08); g.fillRect(x, top, S, H); g.strokeStyle = shade(col, -0.25); g.lineWidth = 1; g.strokeRect(x + 0.5, top + 0.5, S - 1, H - 1); }
+      if (capImg) g.drawImage(capImg, x, top - capH, S, capH * 2);
+      else { g.fillStyle = shade(col, 0.22); g.fillRect(x, top - capH, S, capH); }
+    } else {
+      var b = Math.max(2, Math.round(S * 0.14)), vx = ox + seg.x * S, yt = oy + seg.y * S, vtop = yt - H;
+      g.fillStyle = shade(col, -0.08); g.fillRect(vx - b, vtop, 2 * b, S + H);
+      g.strokeStyle = shade(col, -0.25); g.lineWidth = 1; g.strokeRect(vx - b + 0.5, vtop + 0.5, 2 * b - 1, S + H - 1);
+      if (capImg) g.drawImage(capImg, vx - b, vtop - capH, 2 * b, capH * 2);
+      else { g.fillStyle = shade(col, 0.22); g.fillRect(vx - b, vtop - capH, 2 * b, capH); }
+    }
+  }
+
+  // ---- connection autotiling for edge walls ----
+  // A wall style with a `tiles` sheet is drawn top-down and autotiled at grid NODES: one tile per node
+  // where walls meet, chosen by which of the node's four directions carry a wall (N=1,E=2,S=4,W=8). The
+  // sheet is 4x4 (16 tiles; tile index = the mask). This joins straights, corners, T-junctions, crosses
+  // and end-caps without any neighbour-blob cell logic.
+  function styleHasTiles(content, style) {
+    var s = content.wallStyles && content.wallStyles[style];
+    return s && s.tiles ? s : null;
+  }
+  // The four edges incident on node (nx,ny): N = vWall above, S = vWall below, E = hWall right, W = hWall
+  // left. filter(token) keeps only edges that count (e.g. only connector-style walls).
+  function nodeAt(map, nx, ny, filter) {
+    function tok(orient, x, y) {
+      var grid = orient === 'h' ? map.hWalls : map.vWalls, row = grid && grid[y], t = (row && row[x]) || '';
+      return t && (!filter || filter(t)) ? t : '';
+    }
+    var N = tok('v', nx, ny - 1), E = tok('h', nx, ny), S = tok('v', nx, ny), W = tok('h', nx - 1, ny);
+    return { mask: (N ? 1 : 0) | (E ? 2 : 0) | (S ? 4 : 0) | (W ? 8 : 0), token: N || E || S || W };
+  }
+  /** Every grid node that a connector-style wall touches, as {nx, ny, mask, style}. */
+  function connectorNodes(content, map) {
+    var out = [];
+    function keep(t) { return !!styleHasTiles(content, parseWallTok(t).style); }
+    for (var ny = 0; ny <= map.height; ny++) for (var nx = 0; nx <= map.width; nx++) {
+      var n = nodeAt(map, nx, ny, keep);
+      if (n.mask) out.push({ nx: nx, ny: ny, mask: n.mask, style: parseWallTok(n.token).style });
+    }
+    return out;
+  }
+  /** Draw the autotiled top-down connector tiles (one per node), centred on grid intersections. */
+  function drawWallNodes(g, content, nodes, ox, oy, S) {
+    nodes.forEach(function (n) {
+      var st = content.wallStyles && content.wallStyles[n.style]; if (!st) return;
+      var img = st.tiles && Assets.get(st.tiles);
+      var dx = ox + (n.nx - 0.5) * S, dy = oy + (n.ny - 0.5) * S;
+      if (img) {
+        var ts = img.width / 4, col = n.mask % 4, row = Math.floor(n.mask / 4);
+        g.drawImage(img, col * ts, row * ts, ts, ts, dx, dy, S, S);
+      } else {   // sheet not loaded yet: a colour band in the connected directions keeps the shape visible
+        var hw = Math.max(2, Math.round(S * 0.18)), cx = dx + S / 2, cy = dy + S / 2;
+        g.fillStyle = st.color || '#8a8f98';
+        if (n.mask & 1) g.fillRect(cx - hw, dy, 2 * hw, S / 2 + hw);
+        if (n.mask & 4) g.fillRect(cx - hw, cy - hw, 2 * hw, S / 2 + hw);
+        if (n.mask & 2) g.fillRect(cx - hw, cy - hw, S / 2 + hw, 2 * hw);
+        if (n.mask & 8) g.fillRect(dx, cy - hw, S / 2 + hw, 2 * hw);
+        if (!n.mask) g.fillRect(cx - hw, cy - hw, 2 * hw, 2 * hw);
+      }
+    });
+  }
+
+  // ---- 2.5D cap + face walls (the height-field look) ----
+  // A wall style WITHOUT a connector `tiles` sheet is drawn in 2.5D: each segment is a FACE (its height in
+  // tiles, hanging south toward the camera) plus a 1-tile CAP on top. E-W segments are full cell width; N-S
+  // segments are thin. Contiguous N-S segments overlap, each offset one tile south, the southern drawn on
+  // top — so their caps stack upward and only the southernmost face stays fully visible (the receding look).
+  /** 2.5D draw primitives (cap/face pieces) for every wall whose style has no connector sheet. */
+  function wall25(content, map) {
+    function flat(s) { var st = content.wallStyles && content.wallStyles[s]; return st && st.tiles; }
+    var out = [], h = map.hWalls || [], v = map.vWalls || [], y, x, row, p;
+    for (y = 0; y < h.length; y++) { row = h[y] || []; for (x = 0; x < row.length; x++) { p = parseWallTok(row[x]); if (!p || flat(p.style)) continue;
+      out.push({ kind: 'hcap', x: x, y: y, h: p.height, style: p.style });
+      out.push({ kind: 'hface', x: x, y: y, h: p.height, style: p.style });
+    } }
+    for (y = 0; y < v.length; y++) { row = v[y] || []; for (x = 0; x < row.length; x++) { p = parseWallTok(row[x]); if (!p || flat(p.style)) continue;
+      // Every N-S segment is a full face + 1-tile cap; contiguous ones overlap and the southern draws on top.
+      out.push({ kind: 'vface', x: x, y: y, h: p.height, style: p.style, side: p.side });
+      out.push({ kind: 'vcap', x: x, y: y, h: p.height, style: p.style, side: p.side });
+    } }
+    return out;
+  }
+  // The base (south-most, nearest-camera) screen y of a primitive — the drawn edge — for painter sorting.
+  function prim25SortY(p, oy, S) {
+    if (p.kind === 'hcap' || p.kind === 'hface') return oy + p.y * S;      // E-W: the drawn line
+    return oy + (p.y + 1) * S;                                             // N-S: south edge of the drawn cell
+  }
+  function drawPrim25(g, content, p, ox, oy, S) {
+    var st = (content.wallStyles && content.wallStyles[p.style]) || {}, col = st.color || '#8a8f98';
+    var capImg = st.cap && Assets.get(st.cap), faceImg = st.face && Assets.get(st.face);
+    // d = the cap's thickness AND the N-S wall's width (uniform): E-W cap lip is d tall, N-S wall/cap is d wide.
+    var d = Math.max(4, Math.round(S * 0.32)), hd = Math.round(d / 2);
+    function face(x0, y0, x1, y1) {
+      if (faceImg) { for (var yy = y0; yy < y1; yy += S) { var hh = Math.min(S, y1 - yy); g.drawImage(faceImg, 0, 0, faceImg.width, Math.max(1, Math.round(faceImg.height * hh / S)), x0, yy, x1 - x0, hh); } }
+      else { g.fillStyle = shade(col, -0.06); g.fillRect(x0, y0, x1 - x0, y1 - y0); g.strokeStyle = shade(col, -0.24); g.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1); }
+    }
+    function cap(x0, y0, x1, y1) {
+      if (capImg) g.drawImage(capImg, x0, y0, x1 - x0, y1 - y0);
+      else { g.fillStyle = shade(col, 0.24); g.fillRect(x0, y0, x1 - x0, y1 - y0); g.strokeStyle = shade(col, 0.42); g.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1); }
+    }
+    // The drawn edge is the BASE; the face rises UP (north) by height; the cap is a thin lip of thickness d.
+    // N-S walls can be shifted fully onto the left/right tile: side 'r' → body in the right tile (near edge on
+    // the line), 'l' → left tile, else straddles the line centred. Offset is purely visual (collision stays on the line).
+    var bx = ox + p.x * S, vx = ox + p.x * S;
+    var voff = p.side === 'r' ? hd : p.side === 'l' ? -hd : 0;
+    if (p.kind === 'hface') { var hb = oy + p.y * S; face(bx, hb - p.h * S, bx + S, hb); }
+    else if (p.kind === 'hcap') { var ht = oy + p.y * S - p.h * S; cap(bx, ht - d, bx + S, ht); }
+    else if (p.kind === 'vface') { var vb = oy + (p.y + 1) * S; face(vx - hd + voff, vb - p.h * S, vx + hd + voff, vb); }   // thin face, rising h tiles north
+    else if (p.kind === 'vcap') { var vt = oy + (p.y + 1) * S - p.h * S; cap(vx - hd + voff, vt - S, vx + hd + voff, vt); } // 1-tile cap on top of the face
+  }
+
   /** The object layer: 'object' (y-sorted, default), 'wall' (over a wall face) or 'ground_decal' (flat). */
   function layerOf(o) { return (o.properties && o.properties.layer) || 'object'; }
 
@@ -80,6 +227,14 @@ var Render = (function () {
     if (o.spriteTop) return true;
     var img = path && Assets.get(path); if (!img) return false;
     return img.height > NT + 1;                             // taller than one footprint tile = overflow above
+  }
+  /** A state with no art yet (open door, emptied chest, sprung trap, lit switch) shown as a simple mark. */
+  function drawStateMark(g, o, st, dx, dy, S) {
+    if (!st || o.spriteStates[st]) return;
+    if (st === 'open' && o.kind === 'door') { g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(dx + 4, dy + 2, S - 8, S - 4); }
+    else if (st === 'empty' || st === 'open') { g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(dx, dy, S, S); }
+    else if (st === 'down' && o.kind === 'trap') { g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(dx, dy, S, S); }
+    else if (st === 'on') { g.fillStyle = 'rgba(255,210,80,.35)'; g.fillRect(dx, dy, S, S); }
   }
 
   /**
@@ -225,6 +380,9 @@ var Render = (function () {
     this.map = map;
     this.mapId = map.id;
     this.ground = bakeGround(this.content, map);
+    var content = this.content;
+    this.wallNodes = connectorNodes(content, map);                                   // connector-style walls (flat top-down autotiled)
+    this.wall25 = wall25(content, map);                                              // the rest: 2.5D cap + face pieces
     var c = this.content, animated = [];
     map.terrain.forEach(function (row, y) { row.forEach(function (tid, x) {
       var t = c.terrain[tid]; if (t && t.frames > 1 && t.sprite && !t.autotile) animated.push({ x: x, y: y, t: t });
@@ -257,10 +415,11 @@ var Render = (function () {
       g.drawImage(img, f.sx, 0, f.sw, f.fh, ox + a.x * T, oy + a.y * T, T, T);
     });
 
-    // layer 3: objects (sprite follows the entity's state, then its facing; ground decals are baked)
-    // draw order per object: 'auto' = base here (behind characters), tall overflow saved for after them;
-    // 'under' = whole object here (always behind characters); 'over' = whole object saved for after them.
-    var tops = [], overs = [];
+    // layer 3: collect objects for the merged back-to-front pass (layer 5). 'auto' = the WHOLE object (base +
+    // tall overflow) y-sorts by its south edge with walls and characters, so a thing north of a wall is drawn
+    // entirely behind it (cap included) and a thing south of it entirely in front. 'under' = whole object
+    // drawn now (always behind everyone); 'over' = saved for the foreground. Ground decals are baked in.
+    var overs = [], renderables = [];
     map.entities.forEach(function (e) {
       if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
       var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
@@ -269,24 +428,43 @@ var Render = (function () {
       var dx = ox + e.x * T, dy = oy + e.y * T, dz = o.draw || 'auto';
       if (dz === 'over') {
         overs.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
+      } else if (dz === 'under') {
+        drawObject(g, o, path, dx, dy, T, 'base', now, flip);                        // always behind everyone
+        if (hasTop(o, path)) drawObject(g, o, path, dx, dy, T, 'top', now, flip);
+        drawStateMark(g, o, st, dx, dy, T);
       } else {
-        drawObject(g, o, path, dx, dy, T, 'base', now, flip);
-        if (hasTop(o, path)) {
-          if (dz === 'under') drawObject(g, o, path, dx, dy, T, 'top', now, flip);   // keep the overflow behind characters too
-          else tops.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
-        }
-      }
-      // no art for this state yet: show it with a simple mark
-      if (dz !== 'over' && st && !o.spriteStates[st]) {
-        if (st === 'open' && o.kind === 'door') { g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(dx + 4, dy + 2, T - 8, T - 4); }
-        else if (st === 'empty' || st === 'open') { g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(dx, dy, T, T); }
-        else if (st === 'down' && o.kind === 'trap') { g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(dx, dy, T, T); }
-        else if (st === 'on') { g.fillStyle = 'rgba(255,210,80,.35)'; g.fillRect(dx, dy, T, T); }
+        renderables.push({ sortY: Math.round(oy + e.y * T) + T, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
       }
     });
 
-    // layer 5: characters, back to front so lower ones overlap upper ones
-    actors.slice().sort(function (a, b) { return a.y - b.y; }).forEach(function (a) {
+    // layer 4b: connector-style walls, drawn top-down (autotiled) over the ground, under characters
+    if (this.wallNodes && this.wallNodes.length) {
+      var vis = this.wallNodes.filter(function (n) { return n.nx >= x0 - 1 && n.nx <= x1 + 1 && n.ny >= y0 - 1 && n.ny <= y1 + 2; });
+      drawWallNodes(g, c, vis, ox, oy, T);
+    }
+
+    // layer 5: whole objects, 2.5D wall segments (face + cap), and characters, merged and drawn back-to-front
+    // by their nearest-camera (south) edge. A wall gets a sub-pixel bias (face +0.25, cap +0.5) so that, at the
+    // SAME base line, it draws after — and therefore over — an object or character sharing that line: anyone
+    // standing right against a wall is one row north of it, i.e. behind it, so the wall must win that tie.
+    // (Anything genuinely in front of the wall is a full tile further south, so the bias never flips it.)
+    var prims = this.wall25 || [];
+    prims.forEach(function (p) {
+      if (p.x < x0 - 1 || p.x > x1 + 1 || p.y < y0 - 2 || p.y > y1 + 4) return;
+      var isCap = p.kind === 'hcap' || p.kind === 'vcap';
+      renderables.push({ sortY: prim25SortY(p, oy, T) + (isCap ? 0.5 : 0.25), prim: p });
+    });
+    actors.forEach(function (a) { renderables.push({ sortY: Math.round(oy + a.y * T) + T, actor: a }); });
+    renderables.sort(function (p, q) { return p.sortY - q.sortY; });
+    renderables.forEach(function (r) {
+      if (r.prim) { drawPrim25(g, c, r.prim, ox, oy, T); return; }
+      if (r.obj) {
+        drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'base', now, r.obj.flip);
+        if (r.obj.tall) drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'top', now, r.obj.flip);
+        drawStateMark(g, r.obj.o, r.obj.st, r.obj.dx, r.obj.dy, T);
+        return;
+      }
+      var a = r.actor;
       var ax = Math.round(ox + a.x * T), ay = Math.round(oy + a.y * T);
       var top = ay;                                                  // top of the drawn figure (busts rise above the tile)
       if (a.layers && a.layers.length) {
@@ -315,10 +493,7 @@ var Render = (function () {
       }
     });
 
-    // layer 5b: tops of tall objects (tree crowns, roofs) cover characters behind them;
-    // lower objects are drawn last, so a tree in front overlaps the one behind it
-    tops.sort(function (a, b) { return a.y - b.y; }).forEach(function (t) { drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now, t.flip); });
-    // layer 5c: 'over' objects — the whole sprite sits in front of characters (foreground foliage, railings)
+    // layer 5c: 'over' objects — the whole sprite sits in front of everything (foreground foliage, railings)
     overs.sort(function (a, b) { return a.y - b.y; }).forEach(function (t) {
       drawObject(g, t.o, t.path, t.dx, t.dy, T, 'base', now, t.flip);
       if (hasTop(t.o, t.path)) drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now, t.flip);
@@ -335,7 +510,10 @@ var Render = (function () {
     g.strokeStyle = col; g.lineWidth = 1; g.setLineDash([3, 3]);
     g.beginPath(); g.moveTo(aim.from.x * T + T / 2 - cam.x, aim.from.y * T + T / 2 - cam.y); g.lineTo(h.x * T + T / 2 - cam.x, h.y * T + T / 2 - cam.y); g.stroke();
     g.setLineDash([]);
-    if (h.ok && aim.area) {
+    if (h.ok && aim.blast) {                                  // explicit cells (a blast that stops at walls)
+      g.fillStyle = 'rgba(255,170,80,.18)';
+      aim.blast.forEach(function (c) { g.fillRect(Math.round(c.x * T - cam.x) + 1, Math.round(c.y * T - cam.y) + 1, T - 2, T - 2); });
+    } else if (h.ok && aim.area) {
       g.fillStyle = 'rgba(255,170,80,.18)';
       g.fillRect(Math.round((h.x - aim.area) * T - cam.x), Math.round((h.y - aim.area) * T - cam.y), (2 * aim.area + 1) * T, (2 * aim.area + 1) * T);
     }
@@ -364,7 +542,8 @@ var Render = (function () {
       }
       if (f.kind === 'flash') {
         g.globalAlpha = .45 * (1 - age); g.fillStyle = f.color;
-        g.fillRect(Math.round((f.x - f.r) * T - cam.x), Math.round((f.y - f.r) * T - cam.y), (2 * f.r + 1) * T, (2 * f.r + 1) * T);
+        if (f.cells) f.cells.forEach(function (c) { g.fillRect(Math.round(c.x * T - cam.x), Math.round(c.y * T - cam.y), T, T); });
+        else g.fillRect(Math.round((f.x - f.r) * T - cam.x), Math.round((f.y - f.r) * T - cam.y), (2 * f.r + 1) * T, (2 * f.r + 1) * T);
         g.globalAlpha = 1;
         continue;
       }
@@ -377,5 +556,8 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { Renderer: Renderer, bakeGround: bakeGround, drawObject: drawObject, frameOf: frameOf };
+  return { Renderer: Renderer, bakeGround: bakeGround, drawObject: drawObject, frameOf: frameOf,
+    drawWall: drawWall, wallSegments: wallSegments, wallBaseY: wallBaseY, parseWallTok: parseWallTok,
+    connectorNodes: connectorNodes, drawWallNodes: drawWallNodes, styleHasTiles: styleHasTiles,
+    wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25 };
 })();

@@ -56,6 +56,16 @@ var Schema = (function () {
       f('pass_n', 'bool', true, 'Can leave northward'), f('pass_e', 'bool', true),
       f('pass_s', 'bool', true), f('pass_w', 'bool', true), f('notes', 'text', '')
     ] },
+    wallStyles: { collection: 'wallStyles', id: 'id', label: 'Wall styles', singular: 'wall style', authored: 'studio', fields: [
+      f('id', 'text', ''), f('name', 'text', ''),
+      f('tiles', 'image', '', 'Connection tilesheet (4x4 = 16 tiles) — autotiles corners/T/cross/caps, drawn top-down. Overrides the cap/face/colour look.'),
+      f('cap', 'image', '', 'Top sprite drawn along the wall line (1 tile wide; used when no connection tilesheet)'),
+      f('face', 'image', '', 'Front face — a 1-tile-wide strip that repeats vertically to any height (extruded look)'),
+      f('color', 'color', '#8a8f98', 'Fallback colour drawn when the sprites are missing'),
+      f('blocks_move', 'bool', true, 'Blocks walking across this edge'),
+      f('blocks_sight', 'bool', true, 'Blocks line of sight and shots across this edge'),
+      f('notes', 'text', '')
+    ] },
     kinds: { collection: 'kinds', id: null, label: 'Kinds', authored: 'studio', fields: [
       f('kind', 'text', '', 'Object kind, e.g. container'),
       f('property', 'text', '', 'Property name, or "states"'),
@@ -153,7 +163,9 @@ var Schema = (function () {
     // ---- edited by the map editor, not the Content Studio forms ----
     maps: { collection: 'maps', id: 'id', label: 'Maps', authored: 'map', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('width', 'number', 0), f('height', 'number', 0),
-      f('terrain', 'json', '', 'Compact-encoded terrain grid'), f('notes', 'text', '')
+      f('terrain', 'json', '', 'Compact-encoded terrain grid'),
+      f('vWalls', 'json', '', 'Compact-encoded vertical edge-wall grid'),
+      f('hWalls', 'json', '', 'Compact-encoded horizontal edge-wall grid'), f('notes', 'text', '')
     ] },
     mapEntities: { collection: 'mapEntities', id: 'key', label: 'Map entities', authored: 'map', fields: [
       f('map', 'ref', '', '', { ref: 'maps' }), f('key', 'text', ''),
@@ -165,7 +177,7 @@ var Schema = (function () {
   // The Game Data tab name each content type maps to (so `Content.build(tables)` keeps working:
   // records come from Firestore collections but are assembled into the same `tables` shape).
   var TAB = {
-    config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', kinds: 'Kinds',
+    config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', wallStyles: 'WallStyles', kinds: 'Kinds',
     objects: 'Objects', items: 'Items', monsters: 'Monsters', loot: 'LootTables', classes: 'Classes',
     skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances',
     maps: 'Maps', mapEntities: 'MapEntities'

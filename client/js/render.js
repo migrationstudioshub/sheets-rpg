@@ -173,6 +173,32 @@ var Render = (function () {
     else if (p.kind === 'vcap') { var vt = oy + (p.y + 1) * S - p.h * S; cap(vx - hd + voff, vt - S, vx + hd + voff, vt); } // 1-tile cap on top of the face
   }
 
+  // Walls that currently hide the player, to draw see-through. Mode: 'tiles' (just the cells over the player),
+  // 'run' (the whole contiguous E-W wall run the player is behind), 'radius' (any wall within `radius` tiles).
+  // E-W (horizontal) walls are the real occluders; N-S walls only join in 'radius' mode. A face at line y,
+  // column x, height ht covers the player when me.x === x and me.y is in [y-ht, y-1]. Returns a set keyed
+  // 'h:x:y' / 'v:x:y' matching a prim's kind (hface/hcap/vface/vcap → 'h'/'v' + its x,y).
+  function wallFadeCells(map, me, mode, radius) {
+    var set = {};
+    if (!me || mode === 'off') return set;
+    var mx = Math.round(me.x), my = Math.round(me.y), h = map.hWalls || [], v = map.vWalls || [], x, y, row;
+    if (mode === 'radius') {
+      for (y = 0; y < h.length; y++) { row = h[y] || []; for (x = 0; x < row.length; x++) if (row[x] && Math.abs(x - mx) <= radius && Math.abs(y - my) <= radius) set['h:' + x + ':' + y] = 1; }
+      for (y = 0; y < v.length; y++) { row = v[y] || []; for (x = 0; x < row.length; x++) if (row[x] && Math.abs(x - mx) <= radius && Math.abs(y - my) <= radius) set['v:' + x + ':' + y] = 1; }
+      return set;
+    }
+    for (y = my + 1; y < h.length && y <= my + 12; y++) {                 // E-W walls south of the player
+      var tok = (h[y] && h[y][mx]) ? parseWallTok(h[y][mx]) : null;
+      if (!tok || my < y - tok.height) continue;                          // its face doesn't rise over the player's cell
+      if (mode === 'run') {                                               // fade the whole contiguous run at this line
+        var x0 = mx; while (x0 - 1 >= 0 && h[y] && h[y][x0 - 1]) x0--;
+        var x1 = mx; while (h[y] && h[y][x1 + 1]) x1++;
+        for (x = x0; x <= x1; x++) set['h:' + x + ':' + y] = 1;
+      } else set['h:' + mx + ':' + y] = 1;                                // 'tiles': just the covering cell
+    }
+    return set;
+  }
+
   // ---- wall-mounted objects (layer:'wall') ----
   // A wall object hangs on ONE edge of its cell: side N/S = the horizontal wall on the cell's north/south
   // grid line, W/E = the vertical wall on its west/east line. It renders centred on that wall's visible face,
@@ -493,8 +519,23 @@ var Render = (function () {
     });
     actors.forEach(function (a) { renderables.push({ sortY: Math.round(oy + a.y * T) + T, actor: a }); });
     renderables.sort(function (p, q) { return p.sortY - q.sortY; });
+    // Walls that hide the local player are drawn see-through (config: wall_fade off|tiles|run|radius,
+    // wall_fade_radius tiles, wall_fade_alpha 0-1). Defaults: off / 3 / 0.35.
+    var cfg = c.config || {}, fadeMode = cfg.wall_fade || 'off', fadeCells = null, fadeAlpha = 0.35;
+    if (fadeMode !== 'off') {
+      var meA = null; actors.forEach(function (a) { if (a.me) meA = a; });
+      var fr = Number(cfg.wall_fade_radius); if (!(fr > 0)) fr = 3;
+      if (cfg.wall_fade_alpha !== undefined && cfg.wall_fade_alpha !== '') fadeAlpha = Number(cfg.wall_fade_alpha);
+      fadeCells = wallFadeCells(map, meA, fadeMode, fr);
+    }
     renderables.forEach(function (r) {
-      if (r.prim) { drawPrim25(g, c, r.prim, ox, oy, T); return; }
+      if (r.prim) {
+        var fk = fadeCells && fadeCells[(r.prim.kind.charAt(0) === 'h' ? 'h:' : 'v:') + r.prim.x + ':' + r.prim.y];
+        if (fk) g.globalAlpha = fadeAlpha;
+        drawPrim25(g, c, r.prim, ox, oy, T);
+        if (fk) g.globalAlpha = 1;
+        return;
+      }
       if (r.obj) {
         drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'base', now, r.obj.flip);
         if (r.obj.tall) drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'top', now, r.obj.flip);

@@ -6,6 +6,21 @@
    "notes": "Pixels per tile in the art"
   },
   {
+   "key": "wall_fade",
+   "value": "run",
+   "notes": "See through walls that hide you: off | tiles (just the covering cells) | run (the whole wall section) | radius (any wall near you)"
+  },
+  {
+   "key": "wall_fade_radius",
+   "value": 3,
+   "notes": "Tiles around the player faded when wall_fade = radius"
+  },
+  {
+   "key": "wall_fade_alpha",
+   "value": 0.35,
+   "notes": "Opacity (0-1) of a faded wall; lower = more see-through"
+  },
+  {
    "key": "view_w",
    "value": 22,
    "notes": "Tiles visible across (panoramic)"

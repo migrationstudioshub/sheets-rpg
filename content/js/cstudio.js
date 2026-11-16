@@ -14,6 +14,7 @@ var CStudio = (function () {
   var type = null;       // current content type
   var curIndex = -1;     // index into T[tab] of the record being edited
   var curLoot = null;    // selected loot-table name (loot is edited grouped by table)
+  var curKind = null;    // selected object-kind name (kinds are edited grouped by kind, not row-by-row)
   var filter = '';
   var hasAssetServer = false;   // the local Asset Studio server (asset_server.py) is reachable → offer "Rescan art"
 
@@ -146,7 +147,7 @@ var CStudio = (function () {
     var nav = $('nav'); nav.innerHTML = '';
     Schema.authored('studio').forEach(function (t) {
       var count = t === 'loot' ? lootTableNames().length : rows(t).length;
-      nav.appendChild(h('button', { className: t === type ? 'on' : '', onclick: function () { type = t; curIndex = -1; curLoot = null; filter = ''; renderList(); renderForm(); renderNav(); } },
+      nav.appendChild(h('button', { className: t === type ? 'on' : '', onclick: function () { type = t; curIndex = -1; curLoot = null; curKind = null; filter = ''; renderList(); renderForm(); renderNav(); } },
         h('span', { text: Schema.get(t).label }), h('span', { className: 'n', text: String(count) })));
     });
   }
@@ -171,6 +172,7 @@ var CStudio = (function () {
   }
   function renderList() {
     if (type === 'loot') return lootList();
+    if (type === 'kinds') return kindsList();
     var list = $('list'); list.innerHTML = '';
     var search = h('input', { placeholder: 'Search ' + Schema.get(type).label.toLowerCase() + '…', value: filter,
       oninput: function (e) { filter = e.target.value; renderList(); } });
@@ -199,6 +201,7 @@ var CStudio = (function () {
   // ---------------------------------------------------------------- the form
   function renderForm() {
     if (type === 'loot') return lootForm();
+    if (type === 'kinds') return kindsForm();
     if (type === 'objects') return objForm();
     if (type === 'appearances') return appearanceForm();
     var form = $('form'); form.innerHTML = '';
@@ -383,6 +386,29 @@ var CStudio = (function () {
           h('span', { text: ' ' + d[1] }));
       })),
       h('div', { className: 'help', text: 'Unticked = you cannot move that way across the object (e.g. a ledge you drop off but can’t climb). Ignored if the object isn’t walkable.' })));
+    // Placement layer — works for ANY kind (deco, switch, sign…): a normal object, one hung on a wall
+    // face, or a flat ground decal. This writes properties.layer, read by the renderer (layerOf).
+    form.appendChild(h('div', { className: 'sub', text: 'Placement layer' }));
+    var layer = ['wall', 'ground_decal'].indexOf(p.layer) >= 0 ? p.layer : 'object';
+    form.appendChild(h('div', { className: 'field', title: 'How this object is placed and drawn' },
+      h('label', { text: 'Layer' }),
+      h('div', { className: 'seg' }, [['object', 'Object'], ['wall', 'Wall-mounted'], ['ground_decal', 'Ground decal']].map(function (m) {
+        return h('button', { type: 'button', className: 'segbtn' + (layer === m[0] ? ' on' : ''), text: m[1],
+          onclick: function () {
+            // A wall object sits on the wall, not the floor, so default it to walkable + see-through so it
+            // doesn't block or wall off the tile in front. You can still toggle those back above.
+            if (m[0] === 'wall') { o.walkable = true; o.blocks_sight = false; }
+            setProp(o, 'layer', m[0] === 'object' ? undefined : m[0]); objForm();
+          } });
+      })),
+      h('div', { className: 'help', text: 'Object: normal, y-sorted on the ground. Wall-mounted: hangs on a wall’s visible (south-facing) face — in the map editor, paint it on the Objects layer and it snaps to the nearest wall. Choosing this sets the object walkable and see-through, so it doesn’t block the floor tile in front (the wall itself still stops you); tick those back on above if you want a solid, view-blocking panel. Ground decal: a flat mark baked into the ground.' })));
+    if (layer === 'wall') {
+      form.appendChild(h('div', { className: 'field', title: 'Default height up the wall face' },
+        h('label', { text: 'Mount height (tiles)' }),
+        h('input', { type: 'number', step: '0.1', value: p.mount == null ? '' : p.mount, style: 'width:70px', title: '0 = centred on the face, negative = lower',
+          oninput: function (e) { setProp(o, 'mount', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+        h('div', { className: 'help', text: 'Default height up the face: 0 = centred, negative = lower. Each placement can override this in the map editor.' })));
+    }
     // Container loot
     if (o.kind === 'container') form.appendChild(containerLoot(o));
     // All kind properties, collapsible
@@ -915,6 +941,77 @@ var CStudio = (function () {
     return h('div', { className: 'lootrow' }, item,
       h('span', { className: 'lootlbl', text: '%' }), chance,
       h('span', { className: 'lootlbl', text: 'qty' }), mn, h('span', { className: 'lootlbl', text: '–' }), mx, del);
+  }
+
+  // ---------------------------------------------------------------- kinds (grouped by kind, not row-by-row)
+  // The Kinds tab is stored as one row per (kind, property). Here it's edited as one entry per object KIND
+  // with its full property list — so you add a property to "deco" in one place instead of hunting rows.
+  function allKindNames() {
+    var kf = fieldDef('objects', 'kind');
+    var names = (kf && kf.options ? kf.options.slice() : []);
+    rows('kinds').forEach(function (r) { var k = String(r.kind || ''); if (k && names.indexOf(k) < 0) names.push(k); });
+    return names;
+  }
+  function kindPropRows(kind) { return rows('kinds').filter(function (r) { return String(r.kind) === kind && String(r.property) !== 'states'; }); }
+  function kindStatesRow(kind) { return rows('kinds').filter(function (r) { return String(r.kind) === kind && String(r.property) === 'states'; })[0] || null; }
+  function kindsList() {
+    var list = $('list'); list.innerHTML = '';
+    var search = h('input', { placeholder: 'Search kinds…', value: filter, oninput: function (e) { filter = e.target.value; kindsList(); } });
+    list.appendChild(h('div', { className: 'head' }, search));
+    var q = filter.toLowerCase();
+    allKindNames().forEach(function (name) {
+      if (q && name.toLowerCase().indexOf(q) < 0) return;
+      var n = kindPropRows(name).length, st = kindStatesRow(name), hasSt = st && String(st['default'] || '').trim();
+      var sub = n + ' propert' + (n === 1 ? 'y' : 'ies') + (hasSt ? ' · states' : '');
+      list.appendChild(h('button', { className: 'rec' + (name === curKind ? ' on' : ''), onclick: function () { curKind = name; kindsList(); kindsForm(); } },
+        h('div', { className: 'rbody' }, h('div', { text: name }), h('small', { text: sub }))));
+    });
+    if (!list.querySelector('.rec')) list.appendChild(h('div', { className: 'note', style: 'padding:8px', text: 'No match.' }));
+  }
+  function uniqueProp(kind) {
+    var base = 'new_property', n = base, i = 1, taken = rows('kinds').filter(function (r) { return String(r.kind) === kind; }).map(function (r) { return r.property; });
+    while (taken.indexOf(n) >= 0) n = base + '_' + (i++);
+    return n;
+  }
+  function kindsForm() {
+    var form = $('form'); form.innerHTML = '';
+    if (!curKind) { form.appendChild(h('div', { className: 'empty', text: 'Select an object kind on the left to edit its properties.' })); return; }
+    form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: curKind }), h('span', { className: 'pill', text: 'Kind' })));
+    form.appendChild(h('div', { className: 'note', style: 'margin-bottom:8px', text: 'Settings an author can give a ' + curKind + ' object — they appear in that object’s “All ' + curKind + ' properties” section. Each is read by the game from the object’s properties.' }));
+    form.appendChild(h('datalist', { id: 'dl_kindtype' }, ['text', 'number', 'bool', 'select:a|b|c', 'item', 'monster', 'loot_table'].map(function (t) { return h('option', { value: t }); })));
+    // states
+    form.appendChild(h('div', { className: 'sub', text: 'States (optional) — named looks this object can start in or switch to' }));
+    form.appendChild(kindStatesEditor());
+    // properties
+    form.appendChild(h('div', { className: 'sub', text: 'Properties' }));
+    var prs = kindPropRows(curKind);
+    if (!prs.length) form.appendChild(h('div', { className: 'note', style: 'padding:4px 0', text: 'No properties yet — click “Add property”.' }));
+    prs.forEach(function (r) { form.appendChild(kindPropRow(r)); });
+    form.appendChild(h('button', { className: 'primary', style: 'margin-top:8px', text: '+ Add property', onclick: function () {
+      rows('kinds').push({ kind: curKind, property: uniqueProp(curKind), type: 'text', 'default': '', notes: '' }); persist(); kindsForm(); kindsList();
+    } }));
+  }
+  function kindPropRow(r) {
+    var name = h('input', { value: r.property || '', placeholder: 'name', style: 'flex:1.2', title: 'Property name (the key in the object’s properties)',
+      onchange: function (e) { r.property = e.target.value.trim(); persist(); kindsList(); } });
+    var type = h('input', { value: r.type || '', list: 'dl_kindtype', placeholder: 'type', style: 'flex:1.2', title: 'Field type: text, number, bool, select:a|b|c, item, monster, loot_table',
+      oninput: function (e) { r.type = e.target.value.trim(); persist(); } });
+    var def = h('input', { value: r['default'] == null ? '' : r['default'], placeholder: 'default', style: 'flex:1', title: 'Default value (used when the author leaves it unset)', oninput: function (e) { r['default'] = e.target.value; persist(); } });
+    var notes = h('input', { value: r.notes || '', placeholder: 'help (optional)', style: 'flex:1.6', oninput: function (e) { r.notes = e.target.value; persist(); } });
+    var del = h('button', { title: 'Remove this property', text: '✕', onclick: function () { var a = rows('kinds'); a.splice(a.indexOf(r), 1); persist(); kindsForm(); kindsList(); } });
+    return h('div', { className: 'lootrow' }, name, type, def, notes, del);
+  }
+  function kindStatesEditor() {
+    var row = kindStatesRow(curKind);
+    var inp = h('input', { value: row ? String(row['default'] || '') : '', placeholder: 'e.g. closed|open  (first = default)', style: 'flex:1',
+      oninput: function (e) {
+        var v = e.target.value.trim();
+        if (!v) { if (row) { var a = rows('kinds'); a.splice(a.indexOf(row), 1); row = null; } }
+        else { if (!row) { row = { kind: curKind, property: 'states', type: '', 'default': '', notes: '' }; rows('kinds').push(row); } row['default'] = v; }
+        persist();
+      } });
+    return h('div', {}, h('div', { className: 'lootrow' }, inp),
+      h('div', { className: 'help', text: 'Pipe-separated named looks, first = default (e.g. closed|open). Each state’s sprite is set per object in its “state=sprite” field. Blank = none.' }));
   }
 
   return { init: init };

@@ -173,7 +173,100 @@ var Render = (function () {
     else if (p.kind === 'vcap') { var vt = oy + (p.y + 1) * S - p.h * S; cap(vx - hd + voff, vt - S, vx + hd + voff, vt); } // 1-tile cap on top of the face
   }
 
-  /** The object layer: 'object' (y-sorted, default), 'wall' (over a wall face) or 'ground_decal' (flat). */
+  // Walls that currently hide the player, to draw see-through. Only E-W (horizontal) walls ever fade — the
+  // thin N-S walls don't occlude. Mode: 'tiles' (just the column over the player), 'run' (the contiguous E-W
+  // wall the player is behind, up to ±radius cells each side; a gap stops it, so it never reaches a separate
+  // building's wall), 'radius' (E-W walls within `radius` tiles, south of the player only — note this bubble
+  // can fade walls of a structure you're outside of). A face at line y, column x, height ht covers the player
+  // when me.x === x and me.y is in [y-ht, y-1]. Returns a set keyed 'h:x:y' matching a prim's x,y.
+  function wallFadeCells(map, me, mode, radius) {
+    var set = {};
+    if (!me || mode === 'off') return set;
+    var mx = Math.round(me.x), my = Math.round(me.y), h = map.hWalls || [], x, y, row;
+    if (mode === 'radius') {                                             // E-W walls south of the player, within the box
+      for (y = my + 1; y <= my + radius && y < h.length; y++) { row = h[y] || []; for (x = mx - radius; x <= mx + radius; x++) if (row[x]) set['h:' + x + ':' + y] = 1; }
+      return set;
+    }
+    // 'run' fades along the CONTIGUOUS wall the player is behind, up to ±radius cells each side (radius 0/blank
+    // = the whole run). A gap stops the grow, so the fade never jumps to a separate wall — which keeps it off
+    // the walls of a building you're outside of. 'tiles' = just the covering column (span 0).
+    var span = mode === 'run' ? (radius > 0 ? radius : 1e9) : 0;
+    for (y = my + 1; y < h.length && y <= my + 12; y++) {                 // E-W walls south of the player
+      var tok = (h[y] && h[y][mx]) ? parseWallTok(h[y][mx]) : null;
+      if (!tok || my < y - tok.height) continue;                          // its face doesn't rise over the player's cell
+      var x0 = mx; while (x0 - 1 >= mx - span && h[y] && h[y][x0 - 1]) x0--;
+      var x1 = mx; while (x1 + 1 <= mx + span && h[y] && h[y][x1 + 1]) x1++;
+      for (x = x0; x <= x1; x++) set['h:' + x + ':' + y] = 1;
+    }
+    return set;
+  }
+
+  // ---- edge doors ----
+  // A door (kind 'door', layer 'wall') renders as the wall-face segment it covers (footprintW tiles wide),
+  // with the door asset composited in: drawn over the face when CLOSED, and punched OUT of the face (exact
+  // sprite shape, via destination-out) when OPEN — so an open door is a real see-through, walk-through hole
+  // the size and shape of the door, with the surrounding wall still solid. Works for multi-tile doors.
+  var _doorCv = null;
+  function doorCanvas(w, h) {
+    if (!_doorCv && typeof document !== 'undefined') _doorCv = document.createElement('canvas');
+    if (!_doorCv) return null;
+    _doorCv.width = Math.max(1, w); _doorCv.height = Math.max(1, h);     // setting size also clears it
+    return _doorCv;
+  }
+  function drawDoor(g, content, map, job, ox, oy, S) {
+    var o = job.o, e = job.e, W = job.W, open = job.open;
+    var tokStr = (map.hWalls[e.y] && map.hWalls[e.y][e.x]) || '', tok = parseWallTok(tokStr);
+    var H = (tok && tok.height) || 2, st = (tok && content.wallStyles && content.wallStyles[tok.style]) || {};
+    var faceImg = st.face && Assets.get(st.face), col = st.color || '#8a8f98';
+    var line = oy + e.y * S, fx = ox + e.x * S, fw = W * S, fh = H * S, faceTop = line - fh;
+    var off = doorCanvas(fw, fh); if (!off) return;
+    var og = off.getContext('2d'); og.imageSmoothingEnabled = false;
+    if (faceImg) { for (var yy = 0; yy < fh; yy += S) { var hh = Math.min(S, fh - yy); for (var xx = 0; xx < fw; xx += S) og.drawImage(faceImg, 0, 0, faceImg.width, Math.max(1, Math.round(faceImg.height * hh / S)), xx, yy, S, hh); } }
+    else { og.fillStyle = shade(col, -0.06); og.fillRect(0, 0, fw, fh); }
+    var dImg = o.sprite && Assets.get(o.sprite);
+    var doorH = dImg ? Math.min(fh, Math.round(dImg.height / dImg.width * fw)) : Math.min(fh, 2 * S), doorY = fh - doorH;
+    if (dImg) {
+      og.globalCompositeOperation = open ? 'destination-out' : 'source-over';       // open punches the exact door shape out of the face
+      og.drawImage(dImg, 0, 0, dImg.width, dImg.height, 0, doorY, fw, doorH);
+      og.globalCompositeOperation = 'source-over';
+    } else if (open) og.clearRect(0, doorY, fw, doorH);                              // no art: a plain rectangular hole / panel
+    else { og.fillStyle = shade(col, -0.32); og.fillRect(0, doorY, fw, doorH); og.strokeStyle = shade(col, -0.5); og.strokeRect(0.5, doorY + 0.5, fw - 1, doorH - 1); }
+    g.drawImage(off, fx, faceTop);
+  }
+
+  // ---- wall-mounted objects (layer:'wall') ----
+  // A wall object hangs on ONE edge of its cell: side N/S = the horizontal wall on the cell's north/south
+  // grid line, W/E = the vertical wall on its west/east line. It renders centred on that wall's visible face,
+  // raised toward the middle of the wall's height (data.mount nudges it up in tiles; negative lowers it), and
+  // sorts just after the face so it sits ON the wall. Collision is unchanged — the wall edge already blocks and
+  // the object's own tile stays walkable (author wall objects walkable). Interaction uses the object's cell.
+  function mountSide(e) { return String((e.data && (e.data.side || e.data.facing)) || 'N').toUpperCase().charAt(0); }
+  function mountEdge(x, y, side) {
+    if (side === 'S') return { orient: 'h', ex: x, ey: y + 1 };
+    if (side === 'W') return { orient: 'v', ex: x, ey: y };
+    if (side === 'E') return { orient: 'v', ex: x + 1, ey: y };
+    return { orient: 'h', ex: x, ey: y };                        // 'N' (default)
+  }
+  function wallHeightAt(map, ed) {
+    var grid = ed.orient === 'h' ? map.hWalls : map.vWalls, row = grid && grid[ed.ey];
+    var p = row ? parseWallTok(row[ed.ex]) : null;
+    return p ? p.height : 0;                                     // 0 = no wall there (mount one tile high)
+  }
+  /** Screen placement {dx, dy, sortY, flip} for a wall-mounted object entity. (ox,oy)=map origin, S=cell px. */
+  function wallMountPlace(map, o, e, ox, oy, S) {
+    var side = mountSide(e), ed = mountEdge(e.x, e.y, side), H = wallHeightAt(map, ed) || 1;
+    var mount = Number((e.data && e.data.mount != null) ? e.data.mount : (o.properties && o.properties.mount)) || 0;
+    if (ed.orient === 'h') {
+      var line = oy + ed.ey * S;                                 // the wall's grid line (face rises north of it)
+      var bottom = line - H * S / 2 + S / 2 - mount * S;         // centre a 1-tile sprite on the face
+      return { dx: ox + ed.ex * S, dy: bottom - S, sortY: line + 0.26, flip: false };
+    }
+    var vline = ox + ed.ex * S, vbase = oy + (ed.ey + 1) * S;    // vertical wall rises from the cell's south edge
+    var vb = vbase - H * S / 2 + S / 2 - mount * S;
+    return { dx: vline - S / 2, dy: vb - S, sortY: vbase + 0.26, flip: side === 'E' };
+  }
+
+  /** The object layer: 'object' (y-sorted, default), 'wall' (hung on an edge face) or 'ground_decal' (flat). */
   function layerOf(o) { return (o.properties && o.properties.layer) || 'object'; }
 
   /** Which sprite to show: an active state (open/empty…) wins, else the facing view, else the base sprite. */
@@ -419,10 +512,23 @@ var Render = (function () {
     // tall overflow) y-sorts by its south edge with walls and characters, so a thing north of a wall is drawn
     // entirely behind it (cap included) and a thing south of it entirely in front. 'under' = whole object
     // drawn now (always behind everyone); 'over' = saved for the foreground. Ground decals are baked in.
-    var overs = [], renderables = [];
+    var overs = [], renderables = [], doorFaces = {};
     map.entities.forEach(function (e) {
       if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
       var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
+      if (layerOf(o) === 'wall') {                                                      // hung on an edge face
+        if (o.kind === 'door') {                                                        // edge door: renders the wall face with a cutout
+          var dW = Math.max(1, o.footprintW || 1), dOpen = states[e.key] === 'open';
+          for (var dk = 0; dk < dW; dk++) doorFaces[(e.x + dk) + ',' + e.y] = 1;        // the door draws these faces (suppress the plain ones)
+          renderables.push({ sortY: oy + e.y * T + 0.25, door: { o: o, e: e, W: dW, open: dOpen } });
+          return;
+        }
+        var wst = states[e.key], wp = objPath(o, wst, null), mp = wallMountPlace(map, o, e, ox, oy, T);
+        var wed = mountEdge(e.x, e.y, mountSide(e));                                    // the wall it hangs on (so it can fade with it)
+        renderables.push({ sortY: mp.sortY, fadeKey: (wed.orient === 'h' ? 'h:' : 'v:') + wed.ex + ':' + wed.ey,
+          obj: { o: o, path: wp, dx: mp.dx, dy: mp.dy, flip: mp.flip, st: wst, tall: hasTop(o, wp) } });
+        return;
+      }
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
       var path = objPath(o, st, facing), flip = facing === 'left' || facing === 'W';
       var dx = ox + e.x * T, dy = oy + e.y * T, dz = o.draw || 'auto';
@@ -451,17 +557,45 @@ var Render = (function () {
     var prims = this.wall25 || [];
     prims.forEach(function (p) {
       if (p.x < x0 - 1 || p.x > x1 + 1 || p.y < y0 - 2 || p.y > y1 + 4) return;
+      if (p.kind === 'hface' && doorFaces[p.x + ',' + p.y]) return;             // a door draws this face region itself
       var isCap = p.kind === 'hcap' || p.kind === 'vcap';
       renderables.push({ sortY: prim25SortY(p, oy, T) + (isCap ? 0.5 : 0.25), prim: p });
     });
     actors.forEach(function (a) { renderables.push({ sortY: Math.round(oy + a.y * T) + T, actor: a }); });
     renderables.sort(function (p, q) { return p.sortY - q.sortY; });
+    // Walls that hide the local player are drawn see-through (config: wall_fade off|tiles|run|radius,
+    // wall_fade_radius tiles, wall_fade_alpha 0-1). Defaults: off / 3 / 0.35.
+    var cfg = c.config || {}, fadeMode = cfg.wall_fade || 'off', fadeCells = null, fadeAlpha = 0.35;
+    if (fadeMode !== 'off') {
+      var meA = null; actors.forEach(function (a) { if (a.me) meA = a; });
+      var fr = Number(cfg.wall_fade_radius); if (!(fr > 0)) fr = 3;
+      if (cfg.wall_fade_alpha !== undefined && cfg.wall_fade_alpha !== '') fadeAlpha = Number(cfg.wall_fade_alpha);
+      fadeCells = wallFadeCells(map, meA, fadeMode, fr);
+    }
+    // A wall object / door fades together with the wall face it hangs on (its host edge is in fadeCells).
+    function doorFaded(d) { if (!fadeCells) return false; for (var k = 0; k < d.W; k++) if (fadeCells['h:' + (d.e.x + k) + ':' + d.e.y]) return true; return false; }
     renderables.forEach(function (r) {
-      if (r.prim) { drawPrim25(g, c, r.prim, ox, oy, T); return; }
+      if (r.door) {
+        var dfk = doorFaded(r.door);
+        if (dfk) g.globalAlpha = fadeAlpha;
+        drawDoor(g, c, map, r.door, ox, oy, T);
+        if (dfk) g.globalAlpha = 1;
+        return;
+      }
+      if (r.prim) {
+        var fk = fadeCells && fadeCells[(r.prim.kind.charAt(0) === 'h' ? 'h:' : 'v:') + r.prim.x + ':' + r.prim.y];
+        if (fk) g.globalAlpha = fadeAlpha;
+        drawPrim25(g, c, r.prim, ox, oy, T);
+        if (fk) g.globalAlpha = 1;
+        return;
+      }
       if (r.obj) {
+        var ofk = r.fadeKey && fadeCells && fadeCells[r.fadeKey];
+        if (ofk) g.globalAlpha = fadeAlpha;
         drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'base', now, r.obj.flip);
         if (r.obj.tall) drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'top', now, r.obj.flip);
         drawStateMark(g, r.obj.o, r.obj.st, r.obj.dx, r.obj.dy, T);
+        if (ofk) g.globalAlpha = 1;
         return;
       }
       var a = r.actor;
@@ -559,5 +693,6 @@ var Render = (function () {
   return { Renderer: Renderer, bakeGround: bakeGround, drawObject: drawObject, frameOf: frameOf,
     drawWall: drawWall, wallSegments: wallSegments, wallBaseY: wallBaseY, parseWallTok: parseWallTok,
     connectorNodes: connectorNodes, drawWallNodes: drawWallNodes, styleHasTiles: styleHasTiles,
-    wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25 };
+    wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25,
+    layerOf: layerOf, wallMountPlace: wallMountPlace };
 })();

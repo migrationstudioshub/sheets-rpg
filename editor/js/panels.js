@@ -253,7 +253,7 @@ var Panels = (function () {
       } else {
         var byKind = {};
         Object.keys(E.content.objects).map(function (k) { return E.content.objects[k]; })
-          .filter(function (o) { return o.kind !== 'spawn'; })            // monsters have their own tab
+          .filter(function (o) { return o.kind !== 'spawn' || o.sprite; })  // plain spawns use the Monsters tab; a sprited spawn (e.g. a nest) is a real placeable object
           .filter(match).forEach(function (o) { (byKind[o.kind] = byKind[o.kind] || []).push(o); });
         Object.keys(byKind).sort().forEach(function (k) {
           listBox.appendChild(h('div', { className: 'kind', text: k }));

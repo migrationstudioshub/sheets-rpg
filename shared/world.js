@@ -304,6 +304,54 @@ var World = (function () {
     return Rl().wallBlocksMove(c, Rl().wallBetweenCells(map, ax, ay, bx, by));
   }
 
+  // ---- clicking a wall-mounted object's sprite / the hole a door leaves ----
+  // A wall object (layer 'wall') hangs on one grid-line edge and renders on that wall's FACE, which rises
+  // over the object's span of cells (footprintW for a horizontal mount) as tall as the wall — not on the
+  // floor tile its anchor sits in. So a click resolves to the object when it lands anywhere in that face
+  // box (plus the anchor floor cell), for ANY tile a multi-tile door spans. These mirror render's mountEdge.
+  function mountSideOf(e) { return String((e.data && (e.data.side || e.data.facing)) || 'N').toUpperCase().charAt(0); }
+  function mountEdgeOf(e) {
+    var s = mountSideOf(e);
+    if (s === 'S') return { orient: 'h', x: e.x, y: e.y + 1 };
+    if (s === 'W') return { orient: 'v', x: e.x, y: e.y };
+    if (s === 'E') return { orient: 'v', x: e.x + 1, y: e.y };
+    return { orient: 'h', x: e.x, y: e.y };                              // 'N' (default: wall on the cell's north line)
+  }
+  function wallWithHeight(map, ed) {
+    var p = Rl().parseWall(Rl().wallAt(map, ed.orient, ed.x, ed.y));
+    return Math.max(1, (p && p.height) || 2);
+  }
+  // The interactive wall-mounted entity whose visible footprint covers clicked cell (cx,cy), or null.
+  function wallMountAt(c, map, cx, cy) {
+    var ents = (map && map.entities) || [];
+    for (var i = 0; i < ents.length; i++) {
+      var e = ents[i], o = objOf(c, e);
+      if (!o || !o.properties || o.properties.layer !== 'wall' || !INTERACTIVE[o.kind]) continue;
+      var ed = mountEdgeOf(e), H = wallWithHeight(map, ed);
+      if (ed.orient === 'h') {
+        var w = Math.max(1, o.footprintW || 1);
+        if (cx >= e.x && cx < e.x + w && cy >= ed.y - H && cy <= Math.max(ed.y, e.y)) return e;
+      } else {
+        var hh = Math.max(1, o.footprintH || 1);
+        if (cy <= e.y && cy > e.y - hh && (cx === ed.x || cx === ed.x - 1 || cx === e.x)) return e;
+      }
+    }
+    return null;
+  }
+  // The footprint cell (either side of the wall) nearest the player, so range + facing use it, not the click.
+  function wallMountUseCell(c, map, e, p) {
+    var o = objOf(c, e), ed = mountEdgeOf(e), best = null, bd = 1e9;
+    function consider(x, y) { var d = Math.abs(p.x - x) + Math.abs(p.y - y); if (d < bd) { bd = d; best = { x: x, y: y }; } }
+    if (ed.orient === 'h') {
+      var w = Math.max(1, o.footprintW || 1);
+      for (var col = e.x; col < e.x + w; col++) { consider(col, ed.y - 1); consider(col, ed.y); }
+    } else {
+      var hh = Math.max(1, o.footprintH || 1);
+      for (var row = e.y; row > e.y - hh; row--) { consider(ed.x - 1, row); consider(ed.x, row); }
+    }
+    return best || { x: e.x, y: e.y };
+  }
+
   function walkableEntity(c, ws, mapId, e) {
     var o = objOf(c, e); if (!o) return true;
     if (o.kind === 'spawn' || o.kind === 'trigger') return true;        // invisible markers
@@ -1157,17 +1205,27 @@ var World = (function () {
    * whatever you face. verb '' = the default action; 'picklock' = try to pick its lock.
    */
   function interact(c, ws, p, now, rng, ev, players, target, verb) {
-    var map = c.maps[p.map], f = target || facingCell(p);
-    if (target && !near(p, f.x, f.y)) { ev.push({ type: 'info', to: p.id, text: 'Too far away.' }); return; }
-    if (target) faceTo(p, f.x, f.y);
-    var ms = mapState(ws, p.map), m = monsterAt(ms, f.x, f.y);
+    var map = c.maps[p.map];
+    // A click on a wall object's sprite / a door's hole resolves to that entity, and uses it from the
+    // nearest footprint cell — so range + facing are right, and any tile of a wide door works.
+    var wm = target ? wallMountAt(c, map, target.x, target.y) : null;
+    var f = wm ? wallMountUseCell(c, map, wm, p) : (target || facingCell(p));
+    if ((target || wm) && !near(p, f.x, f.y)) { ev.push({ type: 'info', to: p.id, text: 'Too far away.' }); return; }
+    if (target || wm) faceTo(p, f.x, f.y);
+    // A wall (or closed door) on the edge between you and the faced/clicked cell blocks reaching across it —
+    // you can't use or hit things through a wall. Wall-mounted objects sit ON the wall (resolved via wm), and
+    // your own cell is never across an edge, so both are exempt.
+    var blocked = !wm && (f.x !== p.x || f.y !== p.y) && moveBlockedEdge(c, map, p.x, p.y, f.x, f.y);
+    var ms = mapState(ws, p.map), m = (wm || blocked) ? null : monsterAt(ms, f.x, f.y);
     if (m && verb !== 'picklock') { attack(c, ws, p.map, p, m, now, rng, ev); return; }
-    var cells = target ? Rl().entitiesAt(map, f.x, f.y) : Rl().entitiesAt(map, f.x, f.y).concat(Rl().entitiesAt(map, p.x, p.y));
-    var ents = cells.filter(function (e) {
-      var o = objOf(c, e); return o && INTERACTIVE[o.kind];
-    });
-    var e = ents[0];
-    if (!e) { ev.push({ type: 'info', to: p.id, text: 'Nothing to use here.' }); return; }
+    var e = wm;
+    if (!e) {
+      var fced = blocked ? [] : Rl().entitiesAt(map, f.x, f.y);
+      var cells = target ? fced : fced.concat(Rl().entitiesAt(map, p.x, p.y));
+      var ents = cells.filter(function (en) { var o = objOf(c, en); return o && INTERACTIVE[o.kind]; });
+      e = ents[0];
+    }
+    if (!e) { ev.push({ type: 'info', to: p.id, text: blocked ? 'A wall is in the way.' : 'Nothing to use here.' }); return; }
     var o = objOf(c, e), pr = props(c, e);
     if (verb === 'picklock') {
       if (o.kind !== 'door' && o.kind !== 'container') { ev.push({ type: 'info', to: p.id, text: 'There is no lock.' }); return; }
@@ -1291,7 +1349,8 @@ var World = (function () {
       return out;
     }
     var ents = Rl().entitiesAt(map, x, y).filter(function (e) { var o = objOf(c, e); return o && INTERACTIVE[o.kind]; });
-    var e = ents[0];
+    var e = ents[0], at = null;
+    if (!e) { var wm = wallMountAt(c, map, x, y); if (wm) { e = wm; at = wallMountUseCell(c, map, wm, p); } }   // clicked a wall object's sprite / a door's hole
     if (e) {
       var o = objOf(c, e), pr = props(c, e), st = lk.stateOf(e), name = lower(o.name), has = function (id) { return count(p, id) > 0; };
       var locked = st === 'locked' && (o.kind === 'door' || o.kind === 'container');
@@ -1305,6 +1364,7 @@ var World = (function () {
         var verbs = { teleport: 'Enter', 'switch': 'Pull', rest: 'Rest at', sign: 'Read', craft: 'Use', npc: 'Talk to', trap: 'Look at' };
         out.push({ type: 'interact', verb: '', label: (verbs[o.kind] || 'Use') + ' the ' + name });
       }
+      if (at) out.forEach(function (a) { a.at = at; });          // act from the footprint cell, not the clicked face/hole
     }
     return out;                                                 // movement is keyboard-only: no "walk here"
   }
@@ -1388,6 +1448,6 @@ var World = (function () {
     liveState: liveState, trapPhase: trapPhase, knownSkills: knownSkills, checkTarget: checkTarget,
     viewLookup: viewLookup, canSee: canSee, snapTarget: snapTarget, actionsAt: actionsAt, lineCells: lineCells, applyStatus: applyStatus,
     rangedWeapon: rangedWeapon, shotReach: shotReach, throwLanding: throwLanding, blastCells: blastCells, pickLootTable: pickLootTable, rollLook: rollLook,
-    syncDoorEdges: syncDoorEdges, isEdgeDoor: isEdgeDoor };
+    syncDoorEdges: syncDoorEdges, isEdgeDoor: isEdgeDoor, wallMountAt: wallMountAt, wallMountUseCell: wallMountUseCell };
 })();
 if (typeof module !== 'undefined') module.exports = World;

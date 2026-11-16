@@ -905,6 +905,58 @@ test('an edge door gates its wall: closed blocks move + sight, open lets both th
   assert.ok(World.canSee(c, map, 1, 2, 1, 1, st), 'open door lets you see through');
 });
 
+test('a wide door opens from any tile it spans and from its face (hole), not just its anchor floor cell', () => {
+  const c = Content.build({
+    Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+    WallStyles: [{ id: 'brick', name: 'Brick', blocks_move: true, blocks_sight: true }],
+    Kinds: [{ kind: 'door', property: 'states', default: 'closed|open' }],
+    Objects: [{ id: 'garage', name: 'Garage Door', kind: 'door', walkable: true, properties: '{"layer":"wall","width":2}' }],
+    Maps: [{ id: 'm', name: 'M', width: 4, height: 4,
+      terrain: JSON.stringify(Array.from({ length: 4 }, () => ['grass', 'grass', 'grass', 'grass'])),
+      hWalls: JSON.stringify([[], [], ['', 'brick:2', 'brick:2', ''], []]) }]   // wall on hWalls[2], cols 1 & 2
+  });
+  const map = c.maps.m;
+  map.entities = [{ key: 'm.e1', x: 1, y: 2, ref: 'garage', data: { side: 'N' } }];  // 2-wide, anchored at col 1
+  const ws = { maps: {} };
+  const e = map.entities[0];
+  // the click resolves to the door across BOTH its columns and up its face (the hole), but not off its span
+  assert.strictEqual(World.wallMountAt(c, map, 1, 2), e, 'anchor floor cell');
+  assert.strictEqual(World.wallMountAt(c, map, 2, 2), e, 'the far (non-anchor) column');
+  assert.strictEqual(World.wallMountAt(c, map, 2, 1), e, 'the face/hole above the wall line');
+  assert.strictEqual(World.wallMountAt(c, map, 3, 2), null, 'a cell past the door span is not the door');
+  // actionsAt tags the interaction with a footprint cell to act from (not the clicked face/hole)
+  const lk = { monsterAt: () => null, stateOf: (en) => World.stateOf(c, ws, 'm', en) };
+  const p = { id: 'p1', map: 'm', x: 2, y: 3, facing: 'N', hp: 10, inventory: [], flags: {}, equipment: {} };
+  const acts = World.actionsAt(c, map, lk, p, 2, 1);                 // click the hole, one tile north, from below
+  assert.ok(acts[0] && acts[0].type === 'interact' && acts[0].at, 'clicking the hole offers "open", acting from a footprint cell');
+  // and the full action path opens it when you click the non-anchor column
+  assert.strictEqual(World.stateOf(c, ws, 'm', e), 'closed', 'starts closed');
+  World.act(c, ws, p, { type: 'interact', x: 2, y: 2 }, 1000, Math.random, [p]);
+  assert.strictEqual(World.stateOf(c, ws, 'm', e), 'open', 'clicking the far column opened the door');
+});
+
+test('you cannot interact with an object through a wall; the open side works', () => {
+  const c = Content.build({
+    Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+    WallStyles: [{ id: 'brick', name: 'Brick', blocks_move: true, blocks_sight: true }],
+    Kinds: [{ kind: 'sign', property: 'states', default: '' }],
+    Objects: [{ id: 'sign1', name: 'Sign', kind: 'sign', walkable: false, properties: '{"text":"Hello"}' }],
+    Maps: [{ id: 'm', name: 'M', width: 3, height: 3,
+      terrain: JSON.stringify(Array.from({ length: 3 }, () => ['grass', 'grass', 'grass'])),
+      hWalls: JSON.stringify([[], ['', 'brick:2', ''], [], []]) }]        // wall on hWalls[1], col 1 (between (1,1) and (1,0))
+  });
+  const map = c.maps.m;
+  map.entities = [{ key: 'm.e1', x: 1, y: 0, ref: 'sign1' }];
+  const ws = { maps: {} };
+  const p = { id: 'p1', map: 'm', x: 1, y: 1, facing: 'N', hp: 10, inventory: [], flags: {}, equipment: {} };
+  let ev = World.act(c, ws, p, { type: 'interact' }, 1000, Math.random, [p]);       // F-key: face the sign across the wall
+  assert.match(texts(ev), /wall is in the way/i, 'the wall blocks reading the sign through it');
+  assert.ok(!texts(ev).match(/Hello/), 'the sign text never shows through the wall');
+  p.x = 2; p.y = 0; p.facing = 'W';                                                // beside the sign, no wall between
+  ev = World.act(c, ws, p, { type: 'interact' }, 2000, Math.random, [p]);
+  assert.match(texts(ev), /Hello/, 'reading it from the open side works');
+});
+
 test('a wall stops a melee swing; attacking from the open side still connects', () => {
   const { s, slime } = wallArena();
   put(s, 'arena', 0, 0);

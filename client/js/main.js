@@ -273,8 +273,9 @@
       return;
     }
     if (a.type === 'interact') {
-      if (!near(cell.x, cell.y)) { log(TOO_FAR, 'info'); return; }
-      send({ type: 'interact', x: cell.x, y: cell.y, verb: a.verb });
+      var tc = a.at || cell;                                   // wall objects act from a footprint cell, not the clicked face/hole
+      if (!near(tc.x, tc.y)) { log(TOO_FAR, 'info'); return; }
+      send({ type: 'interact', x: tc.x, y: tc.y, verb: a.verb });
     }
   }
   /** Fire the equipped ranged weapon at a cell (an enemy, or anywhere). */

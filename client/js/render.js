@@ -524,7 +524,9 @@ var Render = (function () {
           return;
         }
         var wst = states[e.key], wp = objPath(o, wst, null), mp = wallMountPlace(map, o, e, ox, oy, T);
-        renderables.push({ sortY: mp.sortY, obj: { o: o, path: wp, dx: mp.dx, dy: mp.dy, flip: mp.flip, st: wst, tall: hasTop(o, wp) } });
+        var wed = mountEdge(e.x, e.y, mountSide(e));                                    // the wall it hangs on (so it can fade with it)
+        renderables.push({ sortY: mp.sortY, fadeKey: (wed.orient === 'h' ? 'h:' : 'v:') + wed.ex + ':' + wed.ey,
+          obj: { o: o, path: wp, dx: mp.dx, dy: mp.dy, flip: mp.flip, st: wst, tall: hasTop(o, wp) } });
         return;
       }
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
@@ -570,8 +572,16 @@ var Render = (function () {
       if (cfg.wall_fade_alpha !== undefined && cfg.wall_fade_alpha !== '') fadeAlpha = Number(cfg.wall_fade_alpha);
       fadeCells = wallFadeCells(map, meA, fadeMode, fr);
     }
+    // A wall object / door fades together with the wall face it hangs on (its host edge is in fadeCells).
+    function doorFaded(d) { if (!fadeCells) return false; for (var k = 0; k < d.W; k++) if (fadeCells['h:' + (d.e.x + k) + ':' + d.e.y]) return true; return false; }
     renderables.forEach(function (r) {
-      if (r.door) { drawDoor(g, c, map, r.door, ox, oy, T); return; }
+      if (r.door) {
+        var dfk = doorFaded(r.door);
+        if (dfk) g.globalAlpha = fadeAlpha;
+        drawDoor(g, c, map, r.door, ox, oy, T);
+        if (dfk) g.globalAlpha = 1;
+        return;
+      }
       if (r.prim) {
         var fk = fadeCells && fadeCells[(r.prim.kind.charAt(0) === 'h' ? 'h:' : 'v:') + r.prim.x + ':' + r.prim.y];
         if (fk) g.globalAlpha = fadeAlpha;
@@ -580,9 +590,12 @@ var Render = (function () {
         return;
       }
       if (r.obj) {
+        var ofk = r.fadeKey && fadeCells && fadeCells[r.fadeKey];
+        if (ofk) g.globalAlpha = fadeAlpha;
         drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'base', now, r.obj.flip);
         if (r.obj.tall) drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'top', now, r.obj.flip);
         drawStateMark(g, r.obj.o, r.obj.st, r.obj.dx, r.obj.dy, T);
+        if (ofk) g.globalAlpha = 1;
         return;
       }
       var a = r.actor;

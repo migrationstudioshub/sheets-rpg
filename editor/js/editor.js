@@ -321,9 +321,11 @@ var E = {
     var m = E.map(); m.entities.splice(m.entities.indexOf(ex), 1);
     if (E.selected === ex.key) E.selected = null; return true;
   }
-  /** The object used to place monsters: the first object of kind "spawn". */
+  /** The object used to place monsters from the Monsters tab: the plain invisible spawn marker.
+   *  (Sprited spawns like a nest are placed from the Objects palette; don't let them become the default.) */
   E.spawnObject = function () {
-    return Object.keys(E.content.objects).filter(function (k) { return E.content.objects[k].kind === 'spawn'; })[0] || null;
+    var spawns = Object.keys(E.content.objects).filter(function (k) { return E.content.objects[k].kind === 'spawn'; });
+    return spawns.filter(function (k) { return !E.content.objects[k].sprite; })[0] || spawns[0] || null;
   };
   function placeMonster(x, y, monster) {
     var spawn = E.spawnObject();

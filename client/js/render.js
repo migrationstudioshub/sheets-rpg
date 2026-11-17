@@ -67,8 +67,10 @@ var Render = (function () {
   }
   /** Height in px of a CUT wall: the low stub left when a wall is dropped so you can see past it. */
   function stubPx(S) { return Math.max(3, Math.round(S * 0.28)); }
-  /** Draw one wall piece. cut = draw it as a low stub instead of at its full height. */
-  function drawPrim25(g, content, p, ox, oy, S, cut) {
+  /** Draw one wall piece. cut = draw it as a low stub instead of at its full height; dark (0-1) = how much
+   *  darker to draw it (a wall surface that is indoors). */
+  function drawPrim25(g, content, p, ox, oy, S, cut, dark) {
+    function shadeOver(x0, y0, w, hgt) { if (dark > 0) { g.fillStyle = 'rgba(0,0,0,' + dark + ')'; g.fillRect(x0, y0, w, hgt); } }
     var st = (content.wallStyles && content.wallStyles[p.style]) || {}, col = st.color || '#8a8f98';
     var capImg = st.cap && Assets.get(st.cap), faceImg = st.face && Assets.get(st.face);
     // d = the cap's thickness AND the N-S wall's width (uniform): E-W cap lip is d tall, N-S wall/cap is d wide.
@@ -77,6 +79,7 @@ var Render = (function () {
       var w = x1 - x0, hgt = y1 - y0; if (hgt <= 0) return;
       if (faceImg) { for (var yy = y0; yy < y1; yy += S) { var hh = Math.min(S, y1 - yy); g.drawImage(faceImg, 0, 0, faceImg.width, Math.max(1, Math.round(faceImg.height * hh / S)), x0, yy, w, hh); } }
       else { g.fillStyle = shade(col, -0.06); g.fillRect(x0, y0, w, hgt); g.strokeStyle = shade(col, -0.24); g.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, hgt - 1); }
+      shadeOver(x0, y0, w, hgt);
       if (side) { g.fillStyle = 'rgba(0,0,0,.2)'; g.fillRect(x0, y0, w, hgt); return; }      // a side face sits in shade
       var sh = Math.min(hgt, Math.round(S * 0.55)), gr = g.createLinearGradient(0, y1 - sh, 0, y1);   // darker toward the floor
       gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.26)');
@@ -86,6 +89,7 @@ var Render = (function () {
     function cap(x0, y0, x1, y1) {
       if (capImg) g.drawImage(capImg, x0, y0, x1 - x0, y1 - y0);
       else { g.fillStyle = shade(col, 0.24); g.fillRect(x0, y0, x1 - x0, y1 - y0); g.strokeStyle = shade(col, 0.42); g.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1); }
+      shadeOver(x0, y0, x1 - x0, y1 - y0);
       g.fillStyle = 'rgba(255,255,255,.16)'; g.fillRect(x0, y0, x1 - x0, 1);                         // a lit top edge
     }
     // The drawn edge is the BASE; the face rises UP (north) by its height; the cap is a lip of thickness d.
@@ -145,7 +149,8 @@ var Render = (function () {
       }
       return false;
     }
-    return { vis: vis, seen: seen, known: known, edgeKnown: edgeKnown, cutH: cutH };
+    function indoor(x, y) { return !!zoneOf[x + ',' + y]; }
+    return { vis: vis, seen: seen, known: known, edgeKnown: edgeKnown, cutH: cutH, indoor: indoor };
   }
   /** Something the player cannot see but senses (heard, say): a faint outline that gives no detail away. */
   function drawSensed(g, ax, ay, T) {
@@ -528,6 +533,15 @@ var Render = (function () {
       g.fillStyle = roofCol;
       for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.known(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T);
     }
+    // layer 2e: indoors is darker (config indoor_dark, 0-1; 0 = off). The floor gets a veil here; whatever
+    // stands indoors — objects, characters, the wall surfaces facing into the room — is drawn darker to match
+    // in the sorted pass below (see dim), so a room reads as one dim space while outside stays bright.
+    var dark = cfg.indoor_dark === undefined || cfg.indoor_dark === '' ? 0.25 : Number(cfg.indoor_dark); if (!(dark >= 0 && dark < 1)) dark = 0.25;
+    if (dark > 0) { g.fillStyle = 'rgba(0,0,0,' + dark + ')';
+      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (sight.indoor(cx, cy) && sight.known(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T); }
+    var canFilter = dark > 0 && typeof g.filter === 'string';
+    function dim(on) { if (canFilter) g.filter = on ? 'brightness(' + (1 - dark) + ')' : 'none'; }
+    function inDark(x, y) { return dark > 0 && sight.indoor(Math.round(x), Math.round(y)); }
 
     // layer 3: collect objects for the merged back-to-front pass (layer 5). 'auto' = the WHOLE object (base +
     // tall overflow) y-sorts by its south edge with walls and characters, so a thing north of a wall is drawn
@@ -552,14 +566,14 @@ var Render = (function () {
           var dOpen = opening === 'arch' || states[e.key] === 'open';
           if (isH) {
             edges.forEach(function (q) { doorFaces[q.x + ',' + q.y] = 1; if (cut) doorGap[q.x + ',' + q.y] = 1; });   // the door draws these faces itself; on a cut wall its whole width is a gap in the stub
-            renderables.push({ sortY: oy + ed0.y * T + 0.26, door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
+            renderables.push({ sortY: oy + ed0.y * T + 0.26, dark: inDark(ed0.x, ed0.y), door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
           } else edges.forEach(function (q) { vDoor[q.x + ',' + q.y] = dOpen ? 'open' : 'shut'; });   // in a thin N-S wall: a gap, or a tinted slab
           return;
         }
         // On a cut wall, things you can use (and windows) stay standing, faint; pure decoration drops with the wall.
         if (cut && !opening && o.kind === 'deco') return;
         var wst = states[e.key], wp = objPath(o, wst, null), mp = wallMountPlace(map, o, e, ox, oy, T);
-        renderables.push({ sortY: mp.sortY, alpha: cut ? cutA : 1,
+        renderables.push({ sortY: mp.sortY, alpha: cut ? cutA : 1, dark: inDark(e.x, e.y),
           obj: { o: o, path: wp, dx: mp.dx, dy: mp.dy, flip: mp.flip, st: wst, tall: hasTop(o, wp) } });
         return;
       }
@@ -570,11 +584,13 @@ var Render = (function () {
       if (dz === 'over') {
         overs.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
       } else if (dz === 'under') {
+        dim(inDark(e.x, e.y));
         drawObject(g, o, path, dx, dy, T, 'base', now, flip);                        // always behind everyone
         if (hasTop(o, path)) drawObject(g, o, path, dx, dy, T, 'top', now, flip);
         drawStateMark(g, o, st, dx, dy, T);
+        dim(false);
       } else {
-        renderables.push({ sortY: Math.round(oy + e.y * T) + T, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
+        renderables.push({ sortY: Math.round(oy + e.y * T) + T, dark: inDark(e.x, e.y), obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
       }
     });
 
@@ -598,28 +614,33 @@ var Render = (function () {
         // A thin N-S face is likewise seen from the two cells just south of its segment (either side of the
         // line): where an outer wall's run ends against the inside of the building, both are unknown interior.
         roofed: (p.kind === 'hface' && !sight.known(p.x, p.y)) ||
-                (p.kind === 'vface' && !sight.known(p.x - 1, p.y + 1) && !sight.known(p.x, p.y + 1)) });
+                (p.kind === 'vface' && !sight.known(p.x - 1, p.y + 1) && !sight.known(p.x, p.y + 1)),
+        // An E-W wall's face and top are lit by the cell south of it; a thin N-S wall is indoors only when both
+        // cells beside it are (an inner partition) — an outer wall keeps its daylight.
+        dark: (isV ? (inDark(p.x - 1, p.y) && inDark(p.x, p.y)) : inDark(p.x, p.y)) ? dark : 0 });
     });
     actors.forEach(function (a) {
       // seen = drawn; sensed = an outline (the hook for a hearing sense); hidden = not drawn
       var how = a.me || !sight.vis ? 'seen' : World.perceive(sight.vis, o2.sensed, a.x, a.y);
       if (how === 'hidden') return;
-      renderables.push({ sortY: Math.round(oy + a.y * T) + T, actor: a, sensed: how === 'sensed' });
+      renderables.push({ sortY: Math.round(oy + a.y * T) + T, actor: a, sensed: how === 'sensed', dark: inDark(a.x, a.y) });
     });
     renderables.sort(function (p, q) { return p.sortY - q.sortY; });
     renderables.forEach(function (r) {
-      if (r.door) { drawDoor(g, c, map, r.door, ox, oy, T, cutA); return; }
+      if (r.door) { dim(r.dark); drawDoor(g, c, map, r.door, ox, oy, T, cutA); dim(false); return; }
       if (r.prim) {
         if (r.roofed && !r.cut) primRectFill(g, r.prim, ox, oy, T, roofCol);
-        else drawPrim25(g, c, r.prim, ox, oy, T, r.cut);
+        else drawPrim25(g, c, r.prim, ox, oy, T, r.cut, r.dark);
         if (r.shut) primRectFill(g, r.prim, ox, oy, T, 'rgba(46,30,16,.55)');
         return;
       }
       if (r.obj) {
         if (r.alpha < 1) g.globalAlpha = r.alpha;
+        dim(r.dark);
         drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'base', now, r.obj.flip);
         if (r.obj.tall) drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'top', now, r.obj.flip);
         drawStateMark(g, r.obj.o, r.obj.st, r.obj.dx, r.obj.dy, T);
+        dim(false);
         g.globalAlpha = 1;
         return;
       }
@@ -627,6 +648,7 @@ var Render = (function () {
       if (r.sensed) { drawSensed(g, Math.round(ox + a.x * T), Math.round(oy + a.y * T), T); return; }
       var ax = Math.round(ox + a.x * T), ay = Math.round(oy + a.y * T);
       var top = ay;                                                  // top of the drawn figure (busts rise above the tile)
+      dim(r.dark);
       if (a.layers && a.layers.length) {
         top = drawLayers(g, a.layers, ax, ay, T, a.facing === 'W', a.aim);
       } else if (a.sprite !== undefined) {
@@ -638,6 +660,7 @@ var Render = (function () {
           g.restore();
         } else g.drawImage(Assets.placeholder(a.name, '#8a2f2f', T), ax, ay);
       } else g.drawImage(Assets.hero(a.facing, a.tint || '#3d6fb6', T), ax, ay);
+      dim(false);
       if (a.statusColor) {                                           // tinted while burning, chilled, stunned...
         g.globalAlpha = .35; g.fillStyle = a.statusColor; g.fillRect(ax + 4, top + 4, T - 8, ay + T - top - 8); g.globalAlpha = 1;
       }

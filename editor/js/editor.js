@@ -60,6 +60,23 @@ var E = {
     }
     return map.overlay;
   };
+  // Roof cover: a W×H mask ('1' = roofed interior tile). Built lazily the first time it's painted; mapRows
+  // drops it when all-empty. Contiguous '1' tiles form a room hidden in-game until entered (see render.js).
+  E.ensureRoof = function (map) {
+    map = map || E.map();
+    var r = map.roof;
+    if (!r || r.length !== map.height || (r[0] && r[0].length !== map.width)) {
+      var g = [];
+      for (var y = 0; y < map.height; y++) { var row = []; for (var x = 0; x < map.width; x++) row.push((r && r[y] && r[y][x]) || ''); g.push(row); }
+      map.roof = g;
+    }
+    return map.roof;
+  };
+  function setRoof(x, y, v) {
+    var m = E.map(); if (x < 0 || y < 0 || x >= m.width || y >= m.height) return false;
+    var g = E.ensureRoof(m); if (g[y][x] === v) return false;
+    g[y][x] = v; m._roofZones = null; return true;                 // invalidate the cached room grouping
+  }
   // Edge walls live on cell boundaries. Two full grids of "styleId:height" tokens ('' = no wall), built
   // lazily the first time walls are painted: hWalls = horizontal lines ((H+1) rows × W cols), vWalls =
   // vertical lines (H rows × (W+1) cols). Kept full while editing; mapRows drops them when all-empty.
@@ -119,13 +136,15 @@ var E = {
     var ov = map.overlay;
     var hasOv = ov && ov.some(function (r) { return r && r.some(function (c) { return c; }); });
     if (hasOv) row.overlay = JSON.stringify(ov); else delete row.overlay;   // keep overlay-free maps clean
-    ['vWalls', 'hWalls'].forEach(function (k) {                              // edge walls, dropped when all-empty
+    ['vWalls', 'hWalls', 'roof'].forEach(function (k) {                      // edge walls + roof cover, dropped when all-empty
       var grid = map[k], has = grid && grid.some(function (r) { return r && r.some(function (c) { return c; }); });
       if (has) row[k] = JSON.stringify(grid); else delete row[k];
     });
     ['shapes', 'overlayShapes'].forEach(function (k) {                       // frozen shift-click shapes
       var o = map[k]; if (o && Object.keys(o).length) row[k] = JSON.stringify(o); else delete row[k];
     });
+    if (map.roof_color) row.roof_color = map.roof_color; else delete row.roof_color;   // per-map roof tint (optional)
+    if (map.spawn) row.spawn = JSON.stringify(map.spawn); else delete row.spawn;        // per-map player spawn point (optional)
     if (row.notes === undefined) row.notes = '';
     var ents = map.entities.map(function (e) {
       return { map: map.id, key: e.key, x: e.x, y: e.y, ref: e.ref,
@@ -178,6 +197,8 @@ var E = {
     return { mapId: m.id, width: m.width, height: m.height, name: m.name,
       terrain: JSON.parse(JSON.stringify(m.terrain)), overlay: JSON.parse(JSON.stringify(m.overlay || [])),
       vWalls: JSON.parse(JSON.stringify(m.vWalls || [])), hWalls: JSON.parse(JSON.stringify(m.hWalls || [])),
+      roof: JSON.parse(JSON.stringify(m.roof || [])), roof_color: m.roof_color || '',
+      spawn: m.spawn ? JSON.parse(JSON.stringify(m.spawn)) : null,
       shapes: JSON.parse(JSON.stringify(m.shapes || {})), overlayShapes: JSON.parse(JSON.stringify(m.overlayShapes || {})),
       entities: JSON.parse(JSON.stringify(m.entities)) };
   }
@@ -185,7 +206,8 @@ var E = {
     var m = E.content.maps[s.mapId]; if (!m) return;
     if (E.mapId !== s.mapId) E.openMap(s.mapId);
     m.width = s.width; m.height = s.height; m.name = s.name; m.terrain = s.terrain; m.overlay = s.overlay || [];
-    m.vWalls = s.vWalls || []; m.hWalls = s.hWalls || [];
+    m.vWalls = s.vWalls || []; m.hWalls = s.hWalls || []; m.roof = s.roof || []; m.roof_color = s.roof_color || '';
+    m.spawn = s.spawn || null;
     m.shapes = s.shapes || {}; m.overlayShapes = s.overlayShapes || {}; m.entities = s.entities;
     if (E.selected && !E.entityByKey(E.selected)) E.selected = null;
     E.markDirty('map'); Panels.all();
@@ -208,6 +230,8 @@ var E = {
   // layer, removes the entity. An empty base cell is safe: Rules treats a cell with no terrain as
   // unwalkable void (terrainAt → undefined, tryMove 'no terrain', standable false) and it draws nothing.
   function eraseAt(x, y) {
+    if (E.layer === 'spawn') return clearSpawn();
+    if (E.layer === 'roof') return setRoof(x, y, '');
     if (E.layer === 'terrain') return setTerrain(x, y, '');
     return removeObject(x, y);
   }
@@ -340,8 +364,19 @@ var E = {
   }
   E.setPaletteTab = function (t) {
     E.paletteTab = t;
-    E.layer = t === 'terrain' ? 'terrain' : t === 'walls' ? 'walls' : 'objects';
+    E.layer = t === 'terrain' ? 'terrain' : t === 'walls' ? 'walls' : t === 'roof' ? 'roof' : t === 'spawn' ? 'spawn' : 'objects';
   };
+  // Player spawn point: a single cell per map {x, y, facing} where new/respawning players start. Click to set,
+  // erase/click again on it to clear. Facing is chosen in the Start panel; it defaults to S.
+  function setSpawn(x, y) {
+    var m = E.map(); if (!m || !E.inside(x, y)) return false;
+    if (m.spawn && m.spawn.x === x && m.spawn.y === y) return false;
+    m.spawn = { x: x, y: y, facing: (m.spawn && m.spawn.facing) || 'S' };
+    if (Panels.palette) Panels.palette();
+    return true;
+  }
+  function clearSpawn() { var m = E.map(); if (!m || !m.spawn) return false; m.spawn = null; if (Panels.palette) Panels.palette(); return true; }
+  E.clearSpawn = clearSpawn;
   // ---- edge walls ----
   function wallToken(edge) {
     if (!E.brush.wall) return '';
@@ -360,6 +395,8 @@ var E = {
   }
   function paintWall(edge) { return setWall(edge, E.tool === 'erase' ? '' : wallToken(edge)); }
   function paint(x, y) {
+    if (E.layer === 'spawn') return setSpawn(x, y);
+    if (E.layer === 'roof') return setRoof(x, y, '1');
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
     if (E.paletteTab === 'monsters') return placeMonster(x, y, E.brush.monster);
     return placeObject(x, y, E.brush.object);
@@ -382,8 +419,35 @@ var E = {
       for (var x = Math.min(a.x, b.x); x <= Math.max(a.x, b.x); x++) if (fn(x, y)) changed = true;
     return changed;
   }
+  // Fill a building: flood the cells enclosed by walls from (sx,sy) and mark them as roof — or clear them,
+  // if the clicked cell is already roofed (toggle). Any wall edge is the boundary; an open route to the map
+  // edge means it isn't enclosed, so nothing is filled. This makes the roof exactly the interior, so the
+  // cover reveals only when the player is truly inside the walls (not merely under an overhang).
+  function floodRoof(sx, sy) {
+    var m = E.map(), w = m.width, h = m.height, g = E.ensureRoof(m);
+    function edgeWall(x, y, dir) { var e = Rules.wallEdge(x, y, dir); return Rules.wallAt(m, e.orient, e.x, e.y); }
+    var DIRS = [['N', 0, -1], ['S', 0, 1], ['W', -1, 0], ['E', 1, 0]];
+    var seen = {}, stack = [[sx, sy]], cells = [], escaped = false;
+    seen[sx + ',' + sy] = 1;
+    while (stack.length) {
+      var p = stack.pop(), x = p[0], y = p[1]; cells.push(p);
+      for (var i = 0; i < DIRS.length; i++) {
+        var d = DIRS[i], nx = x + d[1], ny = y + d[2];
+        if (edgeWall(x, y, d[0])) continue;                                   // a wall on this edge bounds the building
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) { escaped = true; continue; }  // open to the map edge → not enclosed
+        var k = nx + ',' + ny; if (seen[k]) continue; seen[k] = 1; stack.push([nx, ny]);
+      }
+    }
+    if (escaped) { Panels.status('Not enclosed — that area opens to the map edge. Close the walls (or add a door) around the building, then Fill again.', true); return false; }
+    var to = g[sy][sx] === '1' ? '' : '1', changed = false;                   // toggle: fill an open building, clear a roofed one
+    cells.forEach(function (cc) { if (g[cc[1]][cc[0]] !== to) { g[cc[1]][cc[0]] = to; changed = true; } });
+    if (changed) m._roofZones = null;
+    return changed;
+  }
   function flood(x, y) {
     if (!E.inside(x, y)) return false;
+    if (E.layer === 'spawn') return setSpawn(x, y);
+    if (E.layer === 'roof') return floodRoof(x, y);
     if (E.layer === 'objects') return rect({ x: x, y: y }, { x: x, y: y }, paint);
     var cells = E.cells();
     var from = cells[y][x], to = (E.tool === 'erase' && E.terrainLayer === 'overlay') ? '' : E.brush.terrain;
@@ -428,7 +492,7 @@ var E = {
     var id = 'map_' + n, fill = E.brush.terrain;
     var terrain = [];
     for (var y = 0; y < h; y++) { var row = []; for (var x = 0; x < w; x++) row.push(fill); terrain.push(row); }
-    E.content.maps[id] = { id: id, name: name || id, width: w, height: h, terrain: terrain, overlay: [], vWalls: [], hWalls: [], shapes: {}, overlayShapes: {}, entities: [] };
+    E.content.maps[id] = { id: id, name: name || id, width: w, height: h, terrain: terrain, overlay: [], vWalls: [], hWalls: [], roof: [], shapes: {}, overlayShapes: {}, entities: [] };
     E.dirty.maps[id] = true;
     E.openMap(id);
     return id;
@@ -439,6 +503,8 @@ var E = {
     m.overlay = JSON.parse(JSON.stringify(src.overlay || []));
     m.vWalls = JSON.parse(JSON.stringify(src.vWalls || []));
     m.hWalls = JSON.parse(JSON.stringify(src.hWalls || []));
+    m.roof = JSON.parse(JSON.stringify(src.roof || [])); m.roof_color = src.roof_color || '';
+    m.spawn = src.spawn ? JSON.parse(JSON.stringify(src.spawn)) : null;
     m.shapes = JSON.parse(JSON.stringify(src.shapes || {}));
     m.overlayShapes = JSON.parse(JSON.stringify(src.overlayShapes || {}));
     m.entities = src.entities.map(function (e, i) { return { key: id + '.e' + (i + 1), x: e.x, y: e.y, ref: e.ref, data: JSON.parse(JSON.stringify(e.data)) }; });
@@ -468,6 +534,7 @@ var E = {
     }
     if (m.hWalls && m.hWalls.length) m.hWalls = resizeWalls(m.hWalls, h + 1, w);
     if (m.vWalls && m.vWalls.length) m.vWalls = resizeWalls(m.vWalls, h, w + 1);
+    if (m.roof && m.roof.length) m.roof = resizeWalls(m.roof, h, w);
     m.width = w; m.height = h;
     m.entities = m.entities.filter(function (e) { return e.x < w && e.y < h; });
     ['shapes', 'overlayShapes'].forEach(function (k) {         // drop frozen shapes outside the new bounds
@@ -559,6 +626,29 @@ var E = {
       }
       g.globalAlpha = 1;
     });
+
+    // roof cover (authoring aid): tint roofed tiles so you can see what becomes a hidden black void in-game.
+    // Stronger when the Roof layer is active; dimmed otherwise so it never obscures normal editing.
+    if (m.roof && m.roof.length && E.layer === 'roof') {              // only while the Roof tab is active; otherwise the cover is fully transparent
+      g.fillStyle = 'rgba(66,105,200,0.5)';
+      for (var ry = 0; ry < m.height; ry++) { var rrow = m.roof[ry] || [];
+        for (var rx = 0; rx < m.width; rx++) if (rrow[rx]) g.fillRect(vx + rx * s, vy + ry * s, s, s); }
+    }
+
+    // player spawn marker (authoring aid): a green pin + facing arrow at the map's spawn cell. Always visible
+    // so the start point shows from any tab; brighter while the Start tab is active.
+    if (m.spawn) {
+      var spActive = E.layer === 'spawn';
+      var cxp = vx + m.spawn.x * s + s / 2, cyp = vy + m.spawn.y * s + s / 2, rad = Math.max(4, s * 0.3);
+      g.globalAlpha = spActive ? 1 : 0.65; g.fillStyle = '#3fd27a'; g.strokeStyle = '#0b3b22'; g.lineWidth = 2;
+      g.beginPath(); g.arc(cxp, cyp, rad, 0, Math.PI * 2); g.fill(); g.stroke();
+      var fd = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] }[(m.spawn.facing || 'S')] || [0, 1];
+      var px = -fd[1], py = fd[0], hw = s * 0.16;                         // facing arrow: a triangle from the rim outward
+      var tipX = cxp + fd[0] * (rad + s * 0.3), tipY = cyp + fd[1] * (rad + s * 0.3), bx = cxp + fd[0] * rad, by = cyp + fd[1] * rad;
+      g.beginPath(); g.moveTo(tipX, tipY); g.lineTo(bx + px * hw, by + py * hw); g.lineTo(bx - px * hw, by - py * hw); g.closePath(); g.fill(); g.stroke();
+      if (s >= 14) { g.fillStyle = '#0b3b22'; g.font = 'bold ' + Math.round(s * 0.5) + 'px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('P', cxp, cyp + 1); }
+      g.globalAlpha = 1;
+    }
 
     if (E.show.grid && s >= 8) {
       g.strokeStyle = 'rgba(255,255,255,.12)'; g.lineWidth = 1; g.beginPath();
@@ -837,6 +927,8 @@ var E = {
     if (k === '2') { E.setPaletteTab(E.paletteTab === 'monsters' ? 'monsters' : 'objects'); Panels.all(); E.redraw(); return; }
     if (k === '3') { E.setPaletteTab('monsters'); Panels.all(); E.redraw(); return; }
     if (k === '4') { E.setPaletteTab('walls'); Panels.all(); E.redraw(); return; }
+    if (k === '5') { E.setPaletteTab('roof'); Panels.all(); E.redraw(); return; }
+    if (k === '6') { E.setPaletteTab('spawn'); Panels.all(); E.redraw(); return; }
     if ((k === '[' || k === ']') && E.layer === 'walls') { E.wallHeight = Math.max(1, Math.min(12, (E.wallHeight || 1) + (k === ']' ? 1 : -1))); Panels.palette(); E.redraw(); return; }
     if (k === 'o' && E.layer === 'walls') { E.wallSide = E.wallSide === 'cursor' ? 'center' : 'cursor'; Panels.palette(); E.redraw(); return; }
     if (k === '0') { E.fitView(); return; }

@@ -21,6 +21,21 @@
    "notes": "Opacity (0-1) of a faded wall; lower = more see-through"
   },
   {
+   "key": "roof_reveal",
+   "value": "off",
+   "notes": "Hide roofed interiors (paint a Roof in the map editor) with a translucent roof until explored: off | permanent (a room stays revealed once you've entered) | on_exit (only the room you're currently in shows)"
+  },
+  {
+   "key": "roof_color",
+   "value": "#15121c",
+   "notes": "Default roof overlay colour over unexplored interiors (a map can override it with its own roof_color in the editor Roof tab)"
+  },
+  {
+   "key": "roof_alpha",
+   "value": 0.5,
+   "notes": "Opacity (0-1) of the roof overlay while the player is outside; lower = see the interior/player through it more"
+  },
+  {
    "key": "view_w",
    "value": 22,
    "notes": "Tiles visible across (panoramic)"

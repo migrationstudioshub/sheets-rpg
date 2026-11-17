@@ -170,7 +170,7 @@ var Panels = (function () {
 
   // ------------------------------------------------------------ palette
   var filter = '';
-  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', walls: 'Walls' };
+  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', walls: 'Walls', roof: 'Roof', spawn: 'Start' };
   // Current brush height for edge walls: set here, painted into every new segment (per-segment, so you can
   // change it and paint a taller/shorter run next). Keyboard [ and ] step it too.
   function wallHeightRow() {
@@ -197,10 +197,39 @@ var Panels = (function () {
     var box = $('palette'); box.innerHTML = '';
     var paletteTab = E.paletteTab;
     var tabs = h('div', { className: 'tabs' },
-      ['terrain', 'objects', 'monsters', 'walls'].map(function (t) {
+      ['terrain', 'objects', 'monsters', 'walls', 'roof', 'spawn'].map(function (t) {
         return h('button', { className: paletteTab === t ? 'on' : '', text: TAB_NAMES[t],
           onclick: function () { E.setPaletteTab(t); all(); E.redraw(); } });
       }));
+    if (paletteTab === 'roof') {                                      // the Roof layer has no palette: paint/erase the cover mask + pick the roof colour
+      box.appendChild(tabs);
+      box.appendChild(h('p', { className: 'note',
+        text: 'Fill (F) a building: click inside its walls and the enclosed interior becomes roof (click a roofed building again to clear it). Brush/Erase touch up single tiles. In-game a roofed interior is covered by a translucent roof until the player steps inside — set Config roof_reveal = permanent or on_exit to enable. Each enclosed building reveals as one room.' }));
+      var rm = E.map(), rcur = (rm && rm.roof_color) || '#15121c';
+      var rpick = h('input', { type: 'color', value: rcur, style: 'width:48px;height:28px;padding:1px',
+        oninput: function () { var mm = E.map(); if (!mm) return; mm.roof_color = rpick.value; E.dirty.maps[E.mapId] = true; status(); if (E.scheduleWip) E.scheduleWip(); E.redraw(); } });
+      var rreset = h('button', { text: 'Default', onclick: function () { var mm = E.map(); if (!mm) return; mm.roof_color = ''; rpick.value = '#15121c'; E.dirty.maps[E.mapId] = true; status(); if (E.scheduleWip) E.scheduleWip(); E.redraw(); } });
+      box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Roof colour' }), rpick, rreset));
+      return;
+    }
+    if (paletteTab === 'spawn') {                                    // the Start layer has no palette: click a tile to set the player spawn point
+      box.appendChild(tabs);
+      box.appendChild(h('p', { className: 'note',
+        text: 'Click a tile to set where players start on this map (and respawn, with no checkpoint). Click it again, or use Erase, to clear it. The green “P” marks the spot. If you have several maps, the game uses Config start_map; otherwise the first map with a spawn is used. Config start_x / start_y are the fallback when a map has no spawn.' }));
+      var sm = E.map(), sp = sm && sm.spawn;
+      function spStatus() { E.dirty.maps[E.mapId] = true; status(); if (E.scheduleWip) E.scheduleWip(); }
+      if (sp) {
+        box.appendChild(h('div', { className: 'row' }, h('label', { text: 'At' }), h('span', { className: 'small', text: '(' + sp.x + ', ' + sp.y + ')' })));
+        var fsel = h('select', { onchange: function () { var mm = E.map(); if (!mm || !mm.spawn) return; mm.spawn.facing = fsel.value; spStatus(); E.redraw(); } },
+          [['S', 'South (down)'], ['N', 'North (up)'], ['E', 'East (right)'], ['W', 'West (left)']].map(function (d) {
+            return h('option', { value: d[0], text: d[1], selected: (sp.facing || 'S') === d[0] }); }));
+        box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Facing' }), fsel));
+        box.appendChild(h('div', { className: 'row' }, h('button', { text: 'Clear spawn', onclick: function () { if (E.clearSpawn()) { spStatus(); palette(); E.redraw(); } } })));
+      } else {
+        box.appendChild(h('p', { className: 'small', text: 'No spawn set on this map yet — click a tile to place one.' }));
+      }
+      return;
+    }
     var defType = paletteTab === 'terrain' ? 'terrain' : paletteTab === 'monsters' ? 'monster' : paletteTab === 'walls' ? 'wallStyle' : 'object';
     var current = paletteTab === 'terrain' ? E.brush.terrain : paletteTab === 'monsters' ? E.brush.monster : paletteTab === 'walls' ? E.brush.wall : E.brush.object;
     var search = h('input', { placeholder: 'Search…', value: filter, oninput: function () { filter = search.value; list(); } });
@@ -427,10 +456,10 @@ var Panels = (function () {
         return h('option', { value: id, text: d.name + ' (' + d.kind + ')', selected: id === e.ref }); }));
     wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'object' }), objSel));
 
-    if (o && o.properties && o.properties.layer === 'wall') {   // wall-mounted object: height up the visible (south-facing) wall face
+    if (o && o.properties && o.properties.layer === 'wall') {   // wall-mounted object: standing on the wall base, raised in tiles
       wrap.appendChild(h('div', { className: 'sub', text: 'Wall mount' }));
       wrap.appendChild(field('mount', { type: 'number', 'default': 0,
-        notes: 'Height up the wall face, in tiles (0 = centred, negative = lower).' },
+        notes: 'Raise off the wall base, in tiles (0 = standing on the base). Pixel nudges are set on the object in the Content Studio.' },
         e.data.mount, function (v) { setProp(e.key, E.mapId, 'mount', v); inspector(); E.redraw(); }, { entity: e }));
     }
 

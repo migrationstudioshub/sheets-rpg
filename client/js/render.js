@@ -34,13 +34,6 @@ var Render = (function () {
     var p = String(tok).split(':');
     return { style: p[0], height: Math.max(1, parseInt(p[1], 10) || 1), side: p[2] || 'c' };
   }
-  /** Every wall segment on a map as {orient:'h'|'v', x, y, style, height}. */
-  function wallSegments(map) {
-    var out = [], h = map.hWalls || [], v = map.vWalls || [], y, x, row, p;
-    for (y = 0; y < h.length; y++) { row = h[y] || []; for (x = 0; x < row.length; x++) { p = parseWallTok(row[x]); if (p) out.push({ orient: 'h', x: x, y: y, style: p.style, height: p.height }); } }
-    for (y = 0; y < v.length; y++) { row = v[y] || []; for (x = 0; x < row.length; x++) { p = parseWallTok(row[x]); if (p) out.push({ orient: 'v', x: x, y: y, style: p.style, height: p.height }); } }
-    return out;
-  }
   // Nudge a #rrggbb colour lighter (f>0) or darker (f<0), for cap vs face contrast.
   function shade(hex, f) {
     var m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return hex || '#8a8f98';
@@ -48,97 +41,20 @@ var Render = (function () {
     function a(v) { return Math.max(0, Math.min(255, Math.round(v + 255 * f))); }
     return 'rgb(' + a(r) + ',' + a(gg) + ',' + a(b) + ')';
   }
-  // The screen y a segment sorts by (its southernmost / nearest-camera point), for occlusion ordering.
-  function wallBaseY(seg, oy, S) { return oy + (seg.orient === 'h' ? seg.y : seg.y + 1) * S; }
-  /**
-   * Draw one wall segment. Horizontal (E-W) segments show a front face rising `height` tiles above the
-   * grid line plus a cap; vertical (N-S) segments show a thin raised slab seen edge-on. Art (face strip +
-   * cap) is used when loaded, else the style colour. S = cell size in px; (ox,oy) = map origin on screen.
-   */
-  function drawWall(g, content, seg, ox, oy, S) {
-    var st = content.wallStyles && content.wallStyles[seg.style];
-    var col = (st && st.color) || '#8a8f98', H = seg.height * S, capH = Math.max(2, Math.round(S * 0.16));
-    var faceImg = st && st.face && Assets.get(st.face), capImg = st && st.cap && Assets.get(st.cap);
-    if (seg.orient === 'h') {
-      var x = ox + seg.x * S, yl = oy + seg.y * S, top = yl - H;
-      if (faceImg) { for (var yy = top; yy < yl; yy += S) { var hh = Math.min(S, yl - yy); g.drawImage(faceImg, 0, 0, faceImg.width, Math.max(1, Math.round(faceImg.height * hh / S)), x, yy, S, hh); } }
-      else { g.fillStyle = shade(col, -0.08); g.fillRect(x, top, S, H); g.strokeStyle = shade(col, -0.25); g.lineWidth = 1; g.strokeRect(x + 0.5, top + 0.5, S - 1, H - 1); }
-      if (capImg) g.drawImage(capImg, x, top - capH, S, capH * 2);
-      else { g.fillStyle = shade(col, 0.22); g.fillRect(x, top - capH, S, capH); }
-    } else {
-      var b = Math.max(2, Math.round(S * 0.14)), vx = ox + seg.x * S, yt = oy + seg.y * S, vtop = yt - H;
-      g.fillStyle = shade(col, -0.08); g.fillRect(vx - b, vtop, 2 * b, S + H);
-      g.strokeStyle = shade(col, -0.25); g.lineWidth = 1; g.strokeRect(vx - b + 0.5, vtop + 0.5, 2 * b - 1, S + H - 1);
-      if (capImg) g.drawImage(capImg, vx - b, vtop - capH, 2 * b, capH * 2);
-      else { g.fillStyle = shade(col, 0.22); g.fillRect(vx - b, vtop - capH, 2 * b, capH); }
-    }
-  }
-
-  // ---- connection autotiling for edge walls ----
-  // A wall style with a `tiles` sheet is drawn top-down and autotiled at grid NODES: one tile per node
-  // where walls meet, chosen by which of the node's four directions carry a wall (N=1,E=2,S=4,W=8). The
-  // sheet is 4x4 (16 tiles; tile index = the mask). This joins straights, corners, T-junctions, crosses
-  // and end-caps without any neighbour-blob cell logic.
-  function styleHasTiles(content, style) {
-    var s = content.wallStyles && content.wallStyles[style];
-    return s && s.tiles ? s : null;
-  }
-  // The four edges incident on node (nx,ny): N = vWall above, S = vWall below, E = hWall right, W = hWall
-  // left. filter(token) keeps only edges that count (e.g. only connector-style walls).
-  function nodeAt(map, nx, ny, filter) {
-    function tok(orient, x, y) {
-      var grid = orient === 'h' ? map.hWalls : map.vWalls, row = grid && grid[y], t = (row && row[x]) || '';
-      return t && (!filter || filter(t)) ? t : '';
-    }
-    var N = tok('v', nx, ny - 1), E = tok('h', nx, ny), S = tok('v', nx, ny), W = tok('h', nx - 1, ny);
-    return { mask: (N ? 1 : 0) | (E ? 2 : 0) | (S ? 4 : 0) | (W ? 8 : 0), token: N || E || S || W };
-  }
-  /** Every grid node that a connector-style wall touches, as {nx, ny, mask, style}. */
-  function connectorNodes(content, map) {
-    var out = [];
-    function keep(t) { return !!styleHasTiles(content, parseWallTok(t).style); }
-    for (var ny = 0; ny <= map.height; ny++) for (var nx = 0; nx <= map.width; nx++) {
-      var n = nodeAt(map, nx, ny, keep);
-      if (n.mask) out.push({ nx: nx, ny: ny, mask: n.mask, style: parseWallTok(n.token).style });
-    }
-    return out;
-  }
-  /** Draw the autotiled top-down connector tiles (one per node), centred on grid intersections. */
-  function drawWallNodes(g, content, nodes, ox, oy, S) {
-    nodes.forEach(function (n) {
-      var st = content.wallStyles && content.wallStyles[n.style]; if (!st) return;
-      var img = st.tiles && Assets.get(st.tiles);
-      var dx = ox + (n.nx - 0.5) * S, dy = oy + (n.ny - 0.5) * S;
-      if (img) {
-        var ts = img.width / 4, col = n.mask % 4, row = Math.floor(n.mask / 4);
-        g.drawImage(img, col * ts, row * ts, ts, ts, dx, dy, S, S);
-      } else {   // sheet not loaded yet: a colour band in the connected directions keeps the shape visible
-        var hw = Math.max(2, Math.round(S * 0.18)), cx = dx + S / 2, cy = dy + S / 2;
-        g.fillStyle = st.color || '#8a8f98';
-        if (n.mask & 1) g.fillRect(cx - hw, dy, 2 * hw, S / 2 + hw);
-        if (n.mask & 4) g.fillRect(cx - hw, cy - hw, 2 * hw, S / 2 + hw);
-        if (n.mask & 2) g.fillRect(cx - hw, cy - hw, S / 2 + hw, 2 * hw);
-        if (n.mask & 8) g.fillRect(dx, cy - hw, S / 2 + hw, 2 * hw);
-        if (!n.mask) g.fillRect(cx - hw, cy - hw, 2 * hw, 2 * hw);
-      }
-    });
-  }
-
-  // ---- 2.5D cap + face walls (the height-field look) ----
-  // A wall style WITHOUT a connector `tiles` sheet is drawn in 2.5D: each segment is a FACE (its height in
-  // tiles, hanging south toward the camera) plus a 1-tile CAP on top. E-W segments are full cell width; N-S
-  // segments are thin. Contiguous N-S segments overlap, each offset one tile south, the southern drawn on
-  // top — so their caps stack upward and only the southernmost face stays fully visible (the receding look).
-  /** 2.5D draw primitives (cap/face pieces) for every wall whose style has no connector sheet. */
+  // ---- walls with height (cap + face) ----
+  // Every wall segment is a FACE (its height in tiles, rising north from its grid line, seen from the
+  // south) plus a CAP on top. E-W segments are full cell width; N-S segments are thin. Contiguous N-S
+  // segments overlap, each one tile further south and drawn on top, so their caps stack into a receding
+  // top and only the southernmost face shows. Depth is faked: the cap is lit, the face darkens toward the
+  // floor and under the cap's lip, side (N-S) faces are darker, and E-W walls drop a soft shadow south.
+  /** Draw primitives (cap/face pieces) for every wall on the map. */
   function wall25(content, map) {
-    function flat(s) { var st = content.wallStyles && content.wallStyles[s]; return st && st.tiles; }
     var out = [], h = map.hWalls || [], v = map.vWalls || [], y, x, row, p;
-    for (y = 0; y < h.length; y++) { row = h[y] || []; for (x = 0; x < row.length; x++) { p = parseWallTok(row[x]); if (!p || flat(p.style)) continue;
+    for (y = 0; y < h.length; y++) { row = h[y] || []; for (x = 0; x < row.length; x++) { p = parseWallTok(row[x]); if (!p) continue;
       out.push({ kind: 'hcap', x: x, y: y, h: p.height, style: p.style });
       out.push({ kind: 'hface', x: x, y: y, h: p.height, style: p.style });
     } }
-    for (y = 0; y < v.length; y++) { row = v[y] || []; for (x = 0; x < row.length; x++) { p = parseWallTok(row[x]); if (!p || flat(p.style)) continue;
-      // Every N-S segment is a full face + 1-tile cap; contiguous ones overlap and the southern draws on top.
+    for (y = 0; y < v.length; y++) { row = v[y] || []; for (x = 0; x < row.length; x++) { p = parseWallTok(row[x]); if (!p) continue;
       out.push({ kind: 'vface', x: x, y: y, h: p.height, style: p.style, side: p.side });
       out.push({ kind: 'vcap', x: x, y: y, h: p.height, style: p.style, side: p.side });
     } }
@@ -149,81 +65,102 @@ var Render = (function () {
     if (p.kind === 'hcap' || p.kind === 'hface') return oy + p.y * S;      // E-W: the drawn line
     return oy + (p.y + 1) * S;                                             // N-S: south edge of the drawn cell
   }
-  function drawPrim25(g, content, p, ox, oy, S) {
+  /** Height in px of a CUT wall: the low stub left when a wall is dropped so you can see past it. */
+  function stubPx(S) { return Math.max(3, Math.round(S * 0.28)); }
+  /** Draw one wall piece. cut = draw it as a low stub instead of at its full height. */
+  function drawPrim25(g, content, p, ox, oy, S, cut) {
     var st = (content.wallStyles && content.wallStyles[p.style]) || {}, col = st.color || '#8a8f98';
     var capImg = st.cap && Assets.get(st.cap), faceImg = st.face && Assets.get(st.face);
     // d = the cap's thickness AND the N-S wall's width (uniform): E-W cap lip is d tall, N-S wall/cap is d wide.
-    var d = Math.max(4, Math.round(S * 0.32)), hd = Math.round(d / 2);
-    function face(x0, y0, x1, y1) {
-      if (faceImg) { for (var yy = y0; yy < y1; yy += S) { var hh = Math.min(S, y1 - yy); g.drawImage(faceImg, 0, 0, faceImg.width, Math.max(1, Math.round(faceImg.height * hh / S)), x0, yy, x1 - x0, hh); } }
-      else { g.fillStyle = shade(col, -0.06); g.fillRect(x0, y0, x1 - x0, y1 - y0); g.strokeStyle = shade(col, -0.24); g.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1); }
+    var d = Math.max(4, Math.round(S * 0.32)), hd = Math.round(d / 2), H = cut ? stubPx(S) : p.h * S;
+    function face(x0, y0, x1, y1, side) {
+      var w = x1 - x0, hgt = y1 - y0; if (hgt <= 0) return;
+      if (faceImg) { for (var yy = y0; yy < y1; yy += S) { var hh = Math.min(S, y1 - yy); g.drawImage(faceImg, 0, 0, faceImg.width, Math.max(1, Math.round(faceImg.height * hh / S)), x0, yy, w, hh); } }
+      else { g.fillStyle = shade(col, -0.06); g.fillRect(x0, y0, w, hgt); g.strokeStyle = shade(col, -0.24); g.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, hgt - 1); }
+      if (side) { g.fillStyle = 'rgba(0,0,0,.2)'; g.fillRect(x0, y0, w, hgt); return; }      // a side face sits in shade
+      var sh = Math.min(hgt, Math.round(S * 0.55)), gr = g.createLinearGradient(0, y1 - sh, 0, y1);   // darker toward the floor
+      gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,.26)');
+      g.fillStyle = gr; g.fillRect(x0, y1 - sh, w, sh);
+      g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(x0, y0, w, Math.max(1, Math.round(S * 0.06)));      // the cap lip's shadow
     }
     function cap(x0, y0, x1, y1) {
       if (capImg) g.drawImage(capImg, x0, y0, x1 - x0, y1 - y0);
       else { g.fillStyle = shade(col, 0.24); g.fillRect(x0, y0, x1 - x0, y1 - y0); g.strokeStyle = shade(col, 0.42); g.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1); }
+      g.fillStyle = 'rgba(255,255,255,.16)'; g.fillRect(x0, y0, x1 - x0, 1);                         // a lit top edge
     }
-    // The drawn edge is the BASE; the face rises UP (north) by height; the cap is a thin lip of thickness d.
+    // The drawn edge is the BASE; the face rises UP (north) by its height; the cap is a lip of thickness d.
     // N-S walls can be shifted fully onto the left/right tile: side 'r' → body in the right tile (near edge on
     // the line), 'l' → left tile, else straddles the line centred. Offset is purely visual (collision stays on the line).
     var bx = ox + p.x * S, vx = ox + p.x * S;
     var voff = p.side === 'r' ? hd : p.side === 'l' ? -hd : 0;
-    if (p.kind === 'hface') { var hb = oy + p.y * S; face(bx, hb - p.h * S, bx + S, hb); }
-    else if (p.kind === 'hcap') { var ht = oy + p.y * S - p.h * S; cap(bx, ht - d, bx + S, ht); }
-    else if (p.kind === 'vface') { var vb = oy + (p.y + 1) * S; face(vx - hd + voff, vb - p.h * S, vx + hd + voff, vb); }   // thin face, rising h tiles north
-    else if (p.kind === 'vcap') { var vt = oy + (p.y + 1) * S - p.h * S; cap(vx - hd + voff, vt - S, vx + hd + voff, vt); } // 1-tile cap on top of the face
+    if (p.kind === 'hface') { var hb = oy + p.y * S; face(bx, hb - H, bx + S, hb, false); }
+    else if (p.kind === 'hcap') { var ht = oy + p.y * S - H; cap(bx, ht - d, bx + S, ht); }
+    else if (p.kind === 'vface') { var vb = oy + (p.y + 1) * S; face(vx - hd + voff, vb - H, vx + hd + voff, vb, true); }   // thin face, rising north
+    else if (p.kind === 'vcap') { var vt = oy + (p.y + 1) * S - H; cap(vx - hd + voff, vt - S, vx + hd + voff, vt); }      // 1-tile cap on top of the face
+  }
+  // The soft shadow an E-W wall drops on the floor just south of it (one cached strip per cell size).
+  var _shadow = {};
+  function shadowStrip(S) {
+    if (_shadow[S] || typeof document === 'undefined') return _shadow[S];
+    var cv = document.createElement('canvas'), hh = Math.max(2, Math.round(S * 0.36)); cv.width = S; cv.height = hh;
+    var sg = cv.getContext('2d'), gr = sg.createLinearGradient(0, 0, 0, hh);
+    gr.addColorStop(0, 'rgba(0,0,0,.34)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    sg.fillStyle = gr; sg.fillRect(0, 0, S, hh);
+    return (_shadow[S] = cv);
   }
 
-  // Walls that currently hide the player, to draw see-through. Only E-W (horizontal) walls ever fade — the
-  // thin N-S walls don't occlude. Mode: 'tiles' (just the column over the player), 'run' (the contiguous E-W
-  // wall the player is behind, up to ±radius cells each side; a gap stops it, so it never reaches a separate
-  // building's wall), 'radius' (E-W walls within `radius` tiles, south of the player only — note this bubble
-  // can fade walls of a structure you're outside of). A face at line y, column x, height ht covers the player
-  // when me.x === x and me.y is in [y-ht, y-1]. Returns a set keyed 'h:x:y' matching a prim's x,y.
-  function wallFadeCells(map, me, mode, radius) {
-    var set = {};
-    if (!me || mode === 'off') return set;
-    var mx = Math.round(me.x), my = Math.round(me.y), h = map.hWalls || [], x, y, row;
-    if (mode === 'radius') {                                             // E-W walls south of the player, within the box
-      for (y = my + 1; y <= my + radius && y < h.length; y++) { row = h[y] || []; for (x = mx - radius; x <= mx + radius; x++) if (row[x]) set['h:' + x + ':' + y] = 1; }
-      return set;
+  // ---- what the local player sees and knows (the ONE place occlusion is decided) ----
+  // opts.vis      {"x,y":1} cells in the player's line of sight right now (World.visibleCells); null = no
+  //               sight system, everything counts as seen.
+  // opts.memory   {"x,y":1} cells seen earlier this session.
+  // opts.explored {zoneId:1} rooms the player has been inside (persisted by the referee).
+  // A map's roof grid marks INDOOR cells. Each cell is then one of:
+  //   seen     in sight now — drawn normally, creatures included
+  //   known    not in sight, but outdoors or remembered — layout drawn dimmed, creatures hidden
+  //   unknown  indoors and never seen — covered by the roof
+  // cutH answers the one cutaway question: should this E-W wall drop to a stub? Yes when it stands south of
+  // the player (between them and the camera) and its face would cover a cell the player currently sees that
+  // is either in the player's own room or within `radius` tiles of them. So the front wall of the room you
+  // are in drops, the wall you are standing behind drops, and a building you look at from outside stays whole.
+  function makeSight(map, me, opts, radius) {
+    var vis = opts.vis || null, memory = opts.memory, explored = opts.explored;
+    var zoneOf = (map.roof && typeof World !== 'undefined' && World.roofZones) ? World.roofZones(map) : {};
+    var mx = me ? Math.round(me.x) : -99, my = me ? Math.round(me.y) : -99;
+    var curZone = me ? (zoneOf[mx + ',' + my] || null) : null;
+    function seen(x, y) { return !vis || !!vis[x + ',' + y]; }
+    function known(x, y) {
+      var k = x + ',' + y, z = zoneOf[k];
+      if (!vis || !z) return true;
+      return !!(vis[k] || (memory && memory[k]) || (explored && explored[z]));
     }
-    // 'run' fades along the CONTIGUOUS wall the player is behind, up to ±radius cells each side (radius 0/blank
-    // = the whole run). A gap stops the grow, so the fade never jumps to a separate wall — which keeps it off
-    // the walls of a building you're outside of. 'tiles' = just the covering column (span 0).
-    var span = mode === 'run' ? (radius > 0 ? radius : 1e9) : 0;
-    for (y = my + 1; y < h.length && y <= my + 12; y++) {                 // E-W walls south of the player
-      var tok = (h[y] && h[y][mx]) ? parseWallTok(h[y][mx]) : null;
-      if (!tok || my < y - tok.height) continue;                          // its face doesn't rise over the player's cell
-      var x0 = mx; while (x0 - 1 >= mx - span && h[y] && h[y][x0 - 1]) x0--;
-      var x1 = mx; while (x1 + 1 <= mx + span && h[y] && h[y][x1 + 1]) x1++;
-      for (x = x0; x <= x1; x++) set['h:' + x + ':' + y] = 1;
+    function edgeKnown(orient, x, y) {                      // a wall shows when either cell beside it is known
+      return orient === 'h' ? (known(x, y - 1) || known(x, y)) : (known(x - 1, y) || known(x, y));
     }
-    return set;
+    function cutH(x, y, h) {
+      if (!me || y <= my) return false;
+      for (var yy = y - 1; yy >= y - h && yy >= 0; yy--) {
+        if (!seen(x, yy)) continue;
+        if (Math.max(Math.abs(x - mx), Math.abs(yy - my)) <= radius) return true;
+        if (curZone && zoneOf[x + ',' + yy] === curZone) return true;
+      }
+      return false;
+    }
+    return { vis: vis, seen: seen, known: known, edgeKnown: edgeKnown, cutH: cutH };
+  }
+  /** Something the player cannot see but senses (heard, say): a faint outline that gives no detail away. */
+  function drawSensed(g, ax, ay, T) {
+    g.save();
+    g.strokeStyle = 'rgba(255,255,255,.6)'; g.lineWidth = 1; if (g.setLineDash) g.setLineDash([3, 3]);
+    g.beginPath(); g.ellipse(ax + T / 2, ay + T * 0.35, T * 0.28, T * 0.55, 0, 0, Math.PI * 2); g.stroke();
+    g.restore();
   }
 
-  // ---- roof cover (hidden interiors) ----
-  // A map's roof grid marks interior tiles; contiguous tiles form a "room" (World.roofZones) that is drawn
-  // as a black void until revealed. Config `roof_reveal`: 'off' (no hiding), 'permanent' (a room stays
-  // revealed once you've been inside — me.explored), 'on_exit' (only the room you're currently in shows).
-  // Returns a {"x,y":1} set of covered cells, or null when nothing is hidden. me = the local player's actor.
-  function roofCover(map, content, me, explored) {
-    var mode = (content.config && content.config.roof_reveal) || 'off';
-    if (mode === 'off' || !map.roof || typeof World === 'undefined' || !World.roofZones) return null;
-    var zoneOf = World.roofZones(map);
-    var cur = me ? World.roofZoneAt(map, Math.round(me.x), Math.round(me.y)) : null;
-    var covered = null;
-    Object.keys(zoneOf).forEach(function (cell) {
-      var z = zoneOf[cell], shown = (z === cur) || (mode === 'permanent' && explored && explored[z]);
-      if (!shown) { (covered = covered || {})[cell] = 1; }
-    });
-    return covered;
-  }
-
-  // ---- edge doors ----
-  // A door (kind 'door', layer 'wall') renders as the wall-face segment it covers (footprintW tiles wide),
-  // with the door asset composited in: drawn over the face when CLOSED, and punched OUT of the face (exact
-  // sprite shape, via destination-out) when OPEN — so an open door is a real see-through, walk-through hole
-  // the size and shape of the door, with the surrounding wall still solid. Works for multi-tile doors.
+  // ---- doors and archways in E-W walls ----
+  // A door / archway fixture renders as the wall-face span it covers (W tiles wide) with the door asset
+  // composited in: drawn over the face when CLOSED, and punched OUT of the face (exact sprite shape, via
+  // destination-out) when OPEN — so an open door is a real see-through hole the shape of the door. When its
+  // wall is CUT the wall pass draws the stub and the door alone stays standing, faint, so it can still be
+  // found and clicked. job = {o, e, ed (its first edge), W, open, cut}.
   var _doorCv = null;
   function doorCanvas(w, h) {
     if (!_doorCv && typeof document !== 'undefined') _doorCv = document.createElement('canvas');
@@ -231,12 +168,12 @@ var Render = (function () {
     _doorCv.width = Math.max(1, w); _doorCv.height = Math.max(1, h);     // setting size also clears it
     return _doorCv;
   }
-  function drawDoor(g, content, map, job, ox, oy, S, roofCol, roofA) {
-    var o = job.o, e = job.e, W = job.W, open = job.open;
-    var tokStr = (map.hWalls[e.y] && map.hWalls[e.y][e.x]) || '', tok = parseWallTok(tokStr);
+  function drawDoor(g, content, map, job, ox, oy, S, cutA) {
+    var o = job.o, ed = job.ed, W = job.W, open = job.open;
+    var tok = parseWallTok((map.hWalls && map.hWalls[ed.y] && map.hWalls[ed.y][ed.x]) || '');
     var H = (tok && tok.height) || 2, st = (tok && content.wallStyles && content.wallStyles[tok.style]) || {};
     var faceImg = st.face && Assets.get(st.face), col = st.color || '#8a8f98';
-    var line = oy + e.y * S, fx = ox + e.x * S, fw = W * S, fh = H * S, faceTop = line - fh;
+    var line = oy + ed.y * S, fx = ox + ed.x * S, fw = W * S, fh = H * S, faceTop = line - fh;
     // The door asset at its NATURAL size (32px/tile), centred over the opening's width and BOTTOM-ANCHORED on
     // the wall's base line, with the same offset_x/offset_y pixel nudges as other wall objects. One rect, reused
     // for both the closed panel and the open cutout, so the punched hole always lines up with the drawn door.
@@ -246,17 +183,12 @@ var Render = (function () {
     var dw = dImg0 ? Math.round(dImg0.width * sc) : S;
     var dh = dImg0 ? Math.round(dImg0.height * sc) : Math.min(fh, 2 * S);
     var doorLeft = fx + (fw - dw) / 2 + offX, doorBottom = line + offY, doorTop = doorBottom - dh;
-    if (job.roofed) {                                     // a door on a back/interior wall: the wall matches the roof
-      g.globalAlpha = roofA; g.fillStyle = roofCol;        // silhouette (translucent roof colour), only the door shows
-      g.fillRect(fx, faceTop, fw, Math.max(0, doorTop - faceTop));            // wall above the opening
-      g.fillRect(fx, doorBottom, fw, Math.max(0, line - doorBottom));         // wall below it (if nudged up)
-      if (!open) g.fillRect(doorLeft, doorTop, dw, dh);                       // roof colour behind a (possibly transparent) panel
+    if (job.cut) {
+      g.globalAlpha = open ? cutA * 0.5 : cutA;
+      if (dImg0) g.drawImage(dImg0, 0, 0, dImg0.width, dImg0.height, doorLeft, doorTop, dw, dh);
+      else { g.fillStyle = shade(col, -0.32); g.fillRect(doorLeft, doorTop, dw, dh); g.strokeStyle = shade(col, -0.5); g.strokeRect(doorLeft + 0.5, doorTop + 0.5, dw - 1, dh - 1); }
       g.globalAlpha = 1;
-      if (!open) {                                         // the door panel, opaque, so it reads as a door through the roof
-        if (dImg0) g.drawImage(dImg0, 0, 0, dImg0.width, dImg0.height, doorLeft, doorTop, dw, dh);
-        else { g.fillStyle = shade(col, -0.32); g.fillRect(doorLeft, doorTop, dw, dh); g.strokeStyle = shade(col, -0.5); g.strokeRect(doorLeft + 0.5, doorTop + 0.5, dw - 1, dh - 1); }
-      }
-      return;                                              // open: the opening stays clear — you see through to behind the wall
+      return;
     }
     // Buffer sized to the union of the wall face and the door rect, so a nudge never clips the cutout.
     var uL = Math.min(fx, doorLeft), uT = Math.min(faceTop, doorTop);
@@ -276,8 +208,8 @@ var Render = (function () {
     g.drawImage(off, uL, uT);
   }
 
-  // Fill a colour over a wall prim's drawn area (mirrors drawPrim25's rects) — an interior/back wall under the
-  // roof is painted the roof colour so the building reads as one silhouette instead of leaving a gap to ground.
+  // Fill a colour over a wall prim's drawn area (mirrors drawPrim25's rects) — used to tint a closed door
+  // set in a thin N-S wall.
   function primRectFill(g, p, ox, oy, S, col) {
     var d = Math.max(4, Math.round(S * 0.32)), hd = Math.round(d / 2), voff = p.side === 'r' ? hd : p.side === 'l' ? -hd : 0;
     g.fillStyle = col;
@@ -288,7 +220,21 @@ var Render = (function () {
   }
 
 
-  // ---- wall-mounted objects (layer:'wall') ----
+  // ---- wall fixtures (layer:'wall') ----
+  /** What kind of opening a fixture is: 'door' | 'window' | 'arch' | '' (same rule as World.openingOf). */
+  function openingOf(o) {
+    if (layerOf(o) !== 'wall') return '';
+    if (o.kind === 'door') return 'door';
+    var t = o.properties && o.properties.opening;
+    return t === 'window' || t === 'arch' ? t : '';
+  }
+  /** Every edge a fixture spans, as [{orient, x, y}] (same rule as World.fixtureEdges). */
+  function fixtureEdges(o, e) {
+    var ed = mountEdge(e.x, e.y, mountSide(e)), out = [], k;
+    if (ed.orient === 'h') { var w = Math.max(1, o.footprintW || 1); for (k = 0; k < w; k++) out.push({ orient: 'h', x: ed.ex + k, y: ed.ey }); }
+    else { var hh = Math.max(1, o.footprintH || 1); for (k = 0; k < hh; k++) out.push({ orient: 'v', x: ed.ex, y: ed.ey - k }); }
+    return out;
+  }
   // A wall object hangs on ONE edge of its cell: side N/S = the horizontal wall on the cell's north/south
   // grid line, W/E = the vertical wall on its west/east line. Its sprite is drawn at its natural size (like a
   // floor object, 32px/tile) with its BOTTOM EDGE anchored on that wall's base grid line — so it stands on the
@@ -525,8 +471,7 @@ var Render = (function () {
     this.mapId = map.id;
     this.ground = bakeGround(this.content, map);
     var content = this.content;
-    this.wallNodes = connectorNodes(content, map);                                   // connector-style walls (flat top-down autotiled)
-    this.wall25 = wall25(content, map);                                              // the rest: 2.5D cap + face pieces
+    this.wall25 = wall25(content, map);                                              // every wall as cap + face pieces
     var c = this.content, animated = [];
     map.terrain.forEach(function (row, y) { row.forEach(function (tid, x) {
       var t = c.terrain[tid]; if (t && t.frames > 1 && t.sprite && !t.autotile) animated.push({ x: x, y: y, t: t });
@@ -537,7 +482,8 @@ var Render = (function () {
   /**
    * cam = top-left of the view in pixels (may be fractional while walking).
    * actors = [{x, y (tiles, fractional while moving), facing, name?, sprite?, tint?, hp?, maxHp?, me?}]
-   * opts = {states: {entityKey: state}, hidden: function(entity) -> true to skip drawing it}
+   * opts = {states: {entityKey: state}, hidden: function(entity) -> true to skip drawing it,
+   *         vis, memory, explored, sensed: what the local player sees / remembers (see makeSight)}
    */
   Renderer.prototype.draw = function (cam, actors, opts) {
     var c = this.content, map = this.map, g = this.g, T = c.config.tile_size || 32;
@@ -559,59 +505,63 @@ var Render = (function () {
       g.drawImage(img, f.sx, 0, f.sw, f.fh, ox + a.x * T, oy + a.y * T, T, T);
     });
 
+    // ---- sight: what the local player sees / knows this frame (see makeSight) ----
+    var cfg = c.config || {}, o2 = opts || {};
+    var meActor = null; actors.forEach(function (a) { if (a.me) meActor = a; });
+    var cutR = Number(cfg.wall_cut_radius); if (!(cutR >= 0)) cutR = 3;
+    var cutA = Number(cfg.wall_cut_alpha); if (!(cutA > 0 && cutA <= 1)) cutA = 0.45;
+    var fogA = cfg.fog_alpha === undefined || cfg.fog_alpha === '' ? 0.32 : Number(cfg.fog_alpha); if (!(fogA >= 0 && fogA <= 1)) fogA = 0.32;
+    var roofCol = (map.roof_color) || cfg.roof_color || '#15121c';
+    var sight = makeSight(map, meActor, o2, cutR);
+    var prims = this.wall25 || [];
+
+    // layer 2c: the soft shadow each E-W wall drops on the floor south of it
+    var strip = shadowStrip(T);
+    if (strip) prims.forEach(function (p) {
+      if (p.kind !== 'hface' || p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1 || p.y >= map.height) return;
+      if (sight.edgeKnown('h', p.x, p.y)) g.drawImage(strip, ox + p.x * T, oy + p.y * T);
+    });
+    // layer 2d: fog and roof over the ground — a dim veil on cells out of sight, the roof on unknown interiors
+    var cx, cy, xa = Math.max(0, x0), xb = Math.min(map.width - 1, x1), ya = Math.max(0, y0), yb = Math.min(map.height - 1, y1);
+    if (sight.vis) {
+      if (fogA > 0) { g.fillStyle = 'rgba(0,0,0,' + fogA + ')';
+        for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.seen(cx, cy) && sight.known(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T); }
+      g.fillStyle = roofCol;
+      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.known(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T);
+    }
+
     // layer 3: collect objects for the merged back-to-front pass (layer 5). 'auto' = the WHOLE object (base +
     // tall overflow) y-sorts by its south edge with walls and characters, so a thing north of a wall is drawn
     // entirely behind it (cap included) and a thing south of it entirely in front. 'under' = whole object
     // drawn now (always behind everyone); 'over' = saved for the foreground. Ground decals are baked in.
-    // Roof cover: tiles inside an unexplored room are hidden under the roof — a translucent coloured overlay
-    // (the "roof") sits over them and over the interior/back walls, always see-through while the player is
-    // outside, so the building reads as a shaded shell with its interior dimly hidden. Objects/monsters on
-    // covered tiles are hidden; doors still render (and an OPEN door clears the overlay off the floor just
-    // inside, so you can see in through it). A wall/mount/object is "under the roof" when its cell is covered.
-    var meActor = null; actors.forEach(function (a) { if (a.me) meActor = a; });
-    var cover = roofCover(map, c, meActor, opts && opts.explored);
-    function covered(x, y) { return cover ? !!cover[x + ',' + y] : false; }
-    // Roof overlay look: per-map roof_color wins, then a global config roof_color, then a dark default.
-    // roof_alpha = how opaque the roof is while outside (0 invisible, 1 fully hides); default half.
-    var roofCol = (map.roof_color) || (c.config && c.config.roof_color) || '#15121c';
-    var roofA = Number(c.config && c.config.roof_alpha); if (!(roofA >= 0 && roofA <= 1)) roofA = 0.5;
-    var openFloor = {};                                       // "x,y" floor cells shown clear through an open door
-    // Inside a building: the room the local player stands in has ALL its walls (and their doors/windows/mounts)
-    // drawn see-through, so the whole room is visible at once — not just the one segment the player is behind.
-    var roofMode = (c.config && c.config.roof_reveal) || 'off';
-    var curZone = (roofMode !== 'off' && meActor && typeof World !== 'undefined' && World.roofZoneAt)
-      ? World.roofZoneAt(map, Math.round(meActor.x), Math.round(meActor.y)) : null;
-    var zoneOf = curZone ? World.roofZones(map) : null;       // "x,y" -> zone id
-    function insideWall(orient, x, y) {                        // true if this edge bounds the player's current room
-      if (!curZone) return false;
-      return orient === 'h' ? (zoneOf[x + ',' + (y - 1)] === curZone || zoneOf[x + ',' + y] === curZone)
-                            : (zoneOf[(x - 1) + ',' + y] === curZone || zoneOf[x + ',' + y] === curZone);
-    }
-    function insideEdge(key) { if (!key || !curZone) return false; var q = key.split(':'); return insideWall(q[0], +q[1], +q[2]); }
-
-    var overs = [], renderables = [], doorFaces = {};
+    // Anything on an unknown (roofed, never seen) cell is not drawn at all.
+    function wallH(q) { var t = parseWallTok(((q.orient === 'h' ? map.hWalls : map.vWalls) || [])[q.y] && ((q.orient === 'h' ? map.hWalls : map.vWalls)[q.y][q.x])); return t ? t.height : 2; }
+    var overs = [], renderables = [], doorFaces = {}, vDoor = {};
     map.entities.forEach(function (e) {
       if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
       var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
-      if (layerOf(o) === 'wall') {                                                      // hung on an edge face
-        if (o.kind === 'door') {                                                        // edge door: renders the wall face with a cutout
-          var dW = Math.max(1, o.footprintW || 1), dOpen = states[e.key] === 'open';    // covered or not, a door always shows (seen through the roof fade)
-          for (var dk = 0; dk < dW; dk++) doorFaces[(e.x + dk) + ',' + e.y] = 1;        // the door draws these faces (suppress the plain ones)
-          if (dOpen && cover) for (var rk = 0; rk < dW; rk++) {                         // open door → clear the roof off the floor just inside, so you see in
-            var cxr = e.x + rk, inY = covered(cxr, e.y) ? e.y : (covered(cxr, e.y - 1) ? e.y - 1 : null);
-            if (inY !== null) openFloor[cxr + ',' + inY] = 1;
-          }
-          renderables.push({ sortY: oy + e.y * T + 0.25, door: { o: o, e: e, W: dW, open: dOpen, roofed: covered(e.x, e.y) } });
+      if (layerOf(o) === 'wall') {                                        // a fixture on a wall edge
+        var opening = openingOf(o), edges = fixtureEdges(o, e), ed0 = edges[0], isH = ed0.orient === 'h';
+        // A plain mount belongs to the cell it is seen from (its own); an opening shows from either side.
+        var show = sight.known(e.x, e.y) || (opening && edges.some(function (q) { return sight.edgeKnown(q.orient, q.x, q.y); }));
+        if (!show) return;
+        var cut = isH && edges.some(function (q) { return sight.cutH(q.x, q.y, wallH(q)); });
+        if (opening === 'door' || opening === 'arch') {
+          var dOpen = opening === 'arch' || states[e.key] === 'open';
+          if (isH) {
+            if (!cut) edges.forEach(function (q) { doorFaces[q.x + ',' + q.y] = 1; });   // the door draws these faces itself
+            renderables.push({ sortY: oy + ed0.y * T + 0.26, door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
+          } else edges.forEach(function (q) { vDoor[q.x + ',' + q.y] = dOpen ? 'open' : 'shut'; });   // in a thin N-S wall: a gap, or a tinted slab
           return;
         }
-        if (covered(e.x, e.y)) return;                                                  // a non-door mount (window…) on a hidden wall stays hidden
+        // On a cut wall, things you can use (and windows) stay standing, faint; pure decoration drops with the wall.
+        if (cut && !opening && o.kind === 'deco') return;
         var wst = states[e.key], wp = objPath(o, wst, null), mp = wallMountPlace(map, o, e, ox, oy, T);
-        var wed = mountEdge(e.x, e.y, mountSide(e));                                    // the wall it hangs on (so it can fade with it)
-        renderables.push({ sortY: mp.sortY, fadeKey: (wed.orient === 'h' ? 'h:' : 'v:') + wed.ex + ':' + wed.ey,
+        renderables.push({ sortY: mp.sortY, alpha: cut ? cutA : 1,
           obj: { o: o, path: wp, dx: mp.dx, dy: mp.dy, flip: mp.flip, st: wst, tall: hasTop(o, wp) } });
         return;
       }
-      if (covered(e.x, e.y)) return;                                                    // an object inside an unexplored room
+      if (!sight.known(e.x, e.y)) return;                                 // inside a room never seen
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
       var path = objPath(o, st, facing), flip = facing === 'left' || facing === 'W';
       var dx = ox + e.x * T, dy = oy + e.y * T, dz = o.draw || 'auto';
@@ -626,97 +576,45 @@ var Render = (function () {
       }
     });
 
-    // layer 4b: connector-style walls, drawn top-down (autotiled) over the ground, under characters
-    if (this.wallNodes && this.wallNodes.length) {
-      var vis = this.wallNodes.filter(function (n) { return n.nx >= x0 - 1 && n.nx <= x1 + 1 && n.ny >= y0 - 1 && n.ny <= y1 + 2; });
-      drawWallNodes(g, c, vis, ox, oy, T);
-    }
-
-    // layer 5: whole objects, 2.5D wall segments (face + cap), and characters, merged and drawn back-to-front
-    // by their nearest-camera (south) edge. A wall gets a sub-pixel bias (face +0.25, cap +0.5) so that, at the
+    // layer 5: whole objects, wall pieces (face + cap), and characters, merged and drawn back-to-front by
+    // their nearest-camera (south) edge. A wall gets a sub-pixel bias (face +0.25, cap +0.5) so that, at the
     // SAME base line, it draws after — and therefore over — an object or character sharing that line: anyone
     // standing right against a wall is one row north of it, i.e. behind it, so the wall must win that tie.
     // (Anything genuinely in front of the wall is a full tile further south, so the bias never flips it.)
-    var prims = this.wall25 || [], hW = map.hWalls || [], vW = map.vWalls || [];
-    // An N-S wall shows only the face of its SOUTHERNMOST segment (the rest sit under the always-opaque caps),
-    // so one decision per straight run, taken at its south end. It's an OUTER wall (solid) when the E-W wall it
-    // meets there is itself outer (not roofed), INNER (translucent) when that E-W wall is roofed; with no E-W
-    // wall at the end, a run that's surrounded by roof is inner. An E-W wall is "roofed" when its south cell is
-    // covered. (Ambiguous only when a run ends between two E-W walls that disagree — a layout to avoid.)
-    function nsFaceRoofed(x, y) {
-      var ey = y; while (vW[ey + 1] && vW[ey + 1][x]) ey++;                    // south end of this straight N-S run
-      var hy = ey + 1, wW = hW[hy] && hW[hy][x - 1], wE = hW[hy] && hW[hy][x];
-      if (wW || wE) return wW ? covered(x - 1, hy) : covered(x, hy);          // decided by the E-W wall at the south end
-      return covered(x - 1, ey) && covered(x, ey);                            // no E-W wall there: surrounded by roof ⇒ inner
-    }
     prims.forEach(function (p) {
       if (p.x < x0 - 1 || p.x > x1 + 1 || p.y < y0 - 2 || p.y > y1 + 4) return;
-      if (p.kind === 'hface' && doorFaces[p.x + ',' + p.y]) return;             // a door draws this face region itself
       var isCap = p.kind === 'hcap' || p.kind === 'vcap', isV = p.kind === 'vface' || p.kind === 'vcap';
-      // Caps are always opaque material (never roof-coloured, never faded). Only FACES join the translucent
-      // roof: an E-W face whose south (interior) cell is covered, or an N-S face per nsFaceRoofed above.
-      var roofed = false;
-      if (cover && !isCap) roofed = isV ? nsFaceRoofed(p.x, p.y) : covered(p.x, p.y);
-      renderables.push({ sortY: prim25SortY(p, oy, T) + (isCap ? 0.5 : 0.25), prim: p, roofed: roofed, roofCap: isCap });
+      var vd = isV ? vDoor[p.x + ',' + p.y] : null;
+      if (vd === 'open') return;                                                // an open door / arch in a thin wall: a gap
+      if (!sight.edgeKnown(isV ? 'v' : 'h', p.x, p.y)) return;                  // a wall wholly inside unknown rooms
+      if (p.kind === 'hface' && doorFaces[p.x + ',' + p.y]) return;             // a door draws this face region itself
+      renderables.push({ sortY: prim25SortY(p, oy, T) + (isCap ? 0.5 : 0.25), prim: p,
+        cut: !isV && sight.cutH(p.x, p.y, p.h), shut: vd === 'shut' && !isCap });
     });
     actors.forEach(function (a) {
-      if (!a.me && covered(Math.round(a.x), Math.round(a.y))) return;           // a monster/player inside an unexplored room
-      renderables.push({ sortY: Math.round(oy + a.y * T) + T, actor: a });
-    });
-    if (cover) Object.keys(cover).forEach(function (cell) {                      // the black void itself, over the ground
-      var xy = cell.split(','), cx = +xy[0], cy = +xy[1];
-      if (cx < x0 - 1 || cx > x1 + 1 || cy < y0 - 1 || cy > y1 + 1) return;
-      renderables.push({ sortY: oy + cy * T + T, cover: { x: cx, y: cy } });
+      // seen = drawn; sensed = an outline (the hook for a hearing sense); hidden = not drawn
+      var how = a.me || !sight.vis ? 'seen' : World.perceive(sight.vis, o2.sensed, a.x, a.y);
+      if (how === 'hidden') return;
+      renderables.push({ sortY: Math.round(oy + a.y * T) + T, actor: a, sensed: how === 'sensed' });
     });
     renderables.sort(function (p, q) { return p.sortY - q.sortY; });
-    // Walls that hide the local player are drawn see-through (config: wall_fade off|tiles|run|radius,
-    // wall_fade_radius tiles, wall_fade_alpha 0-1). Defaults: off / 3 / 0.35.
-    var cfg = c.config || {}, fadeMode = cfg.wall_fade || 'off', fadeCells = null, fadeAlpha = 0.35;
-    if (cfg.wall_fade_alpha !== undefined && cfg.wall_fade_alpha !== '') fadeAlpha = Number(cfg.wall_fade_alpha);  // also used for the inside-a-room fade
-    if (fadeMode !== 'off') {
-      var meA = null; actors.forEach(function (a) { if (a.me) meA = a; });
-      var fr = Number(cfg.wall_fade_radius); if (!(fr > 0)) fr = 3;
-      fadeCells = wallFadeCells(map, meA, fadeMode, fr);
-    }
-    // A wall object / door fades together with the wall face it hangs on — when the player is behind it
-    // (host edge in fadeCells) or when it's a wall of the room the player is currently inside (insideWall).
-    function doorFaded(d) { for (var k = 0; k < d.W; k++) { var hx = d.e.x + k; if ((fadeCells && fadeCells['h:' + hx + ':' + d.e.y]) || insideWall('h', hx, d.e.y)) return true; } return false; }
     renderables.forEach(function (r) {
-      if (r.cover) {                                                        // unexplored interior floor: an OPAQUE roof (unless an open door clears it)
-        if (!openFloor[r.cover.x + ',' + r.cover.y]) {
-          g.fillStyle = roofCol; g.fillRect(ox + r.cover.x * T, oy + r.cover.y * T, T, T);
-        }
-        return;
-      }
-      if (r.door) {
-        var dfk = !r.door.roofed && doorFaded(r.door);
-        if (dfk) g.globalAlpha = fadeAlpha;
-        drawDoor(g, c, map, r.door, ox, oy, T, roofCol, roofA);
-        if (dfk) g.globalAlpha = 1;
-        return;
-      }
+      if (r.door) { drawDoor(g, c, map, r.door, ox, oy, T, cutA); return; }
       if (r.prim) {
-        if (r.roofed) {                                                      // a back/interior wall face: the translucent roof silhouette (see player behind through it)
-          g.globalAlpha = roofA; primRectFill(g, r.prim, ox, oy, T, roofCol); g.globalAlpha = 1;
-          return;
-        }
-        var orient = r.prim.kind.charAt(0) === 'h' ? 'h' : 'v';          // a roof cap keeps its material and never fades
-        var fk = !r.roofCap && ((fadeCells && fadeCells[orient + ':' + r.prim.x + ':' + r.prim.y]) || insideWall(orient, r.prim.x, r.prim.y));
-        if (fk) g.globalAlpha = fadeAlpha;
-        drawPrim25(g, c, r.prim, ox, oy, T);
-        if (fk) g.globalAlpha = 1;
+        drawPrim25(g, c, r.prim, ox, oy, T, r.cut);
+        if (r.shut) primRectFill(g, r.prim, ox, oy, T, 'rgba(46,30,16,.55)');
         return;
       }
       if (r.obj) {
-        var ofk = r.fadeKey && ((fadeCells && fadeCells[r.fadeKey]) || insideEdge(r.fadeKey));
-        if (ofk) g.globalAlpha = fadeAlpha;
+        if (r.alpha < 1) g.globalAlpha = r.alpha;
         drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'base', now, r.obj.flip);
         if (r.obj.tall) drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'top', now, r.obj.flip);
         drawStateMark(g, r.obj.o, r.obj.st, r.obj.dx, r.obj.dy, T);
-        if (ofk) g.globalAlpha = 1;
+        g.globalAlpha = 1;
         return;
       }
       var a = r.actor;
+      if (r.sensed) { drawSensed(g, Math.round(ox + a.x * T), Math.round(oy + a.y * T), T); return; }
       var ax = Math.round(ox + a.x * T), ay = Math.round(oy + a.y * T);
       var top = ay;                                                  // top of the drawn figure (busts rise above the tile)
       if (a.layers && a.layers.length) {
@@ -809,8 +707,6 @@ var Render = (function () {
   };
 
   return { Renderer: Renderer, bakeGround: bakeGround, drawObject: drawObject, frameOf: frameOf,
-    drawWall: drawWall, wallSegments: wallSegments, wallBaseY: wallBaseY, parseWallTok: parseWallTok,
-    connectorNodes: connectorNodes, drawWallNodes: drawWallNodes, styleHasTiles: styleHasTiles,
-    wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25,
+    parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace };
 })();

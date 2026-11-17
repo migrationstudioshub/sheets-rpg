@@ -896,11 +896,11 @@ test('an edge door gates its wall: closed blocks move + sight, open lets both th
   map.entities = [{ key: 'm.e1', x: 1, y: 2, ref: 'door1', data: { side: 'N' } }];   // on edge hWalls[2][1]
   const ws = { maps: {} };
   const st = (e) => World.stateOf(c, ws, 'm', e);
-  World.syncDoorEdges(c, ws, 'm');                                   // default state = 'closed'
+  World.syncEdges(c, ws, 'm');                                       // default state = 'closed'
   assert.strictEqual(Rules.tryMove(c, map, 1, 2, 'N', {}).ok, false, 'closed door blocks the step north');
   assert.ok(!World.canSee(c, map, 1, 2, 1, 1, st), 'closed door blocks sight across its edge');
   World.mapState(ws, 'm').states['m.e1'] = 'open';
-  World.syncDoorEdges(c, ws, 'm');
+  World.syncEdges(c, ws, 'm');
   assert.strictEqual(Rules.tryMove(c, map, 1, 2, 'N', {}).ok, true, 'open door lets you walk through the wall');
   assert.ok(World.canSee(c, map, 1, 2, 1, 1, st), 'open door lets you see through');
 });
@@ -1017,6 +1017,61 @@ test('a monster cannot melee you through a wall, but can when adjacent in the op
   slime.last = step;
   World.advance(s.c, s.ws, 'arena', [p], step * 2, mid, []);
   assert.ok(p.hp < 100, 'with no wall between, the adjacent monster hits');
+});
+
+test('wall openings: a window passes sight but not feet, an archway passes both, the plain wall neither', () => {
+  const row = ['grass', 'grass', 'grass', 'grass', 'grass'];
+  const c = Content.build({
+    Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+    WallStyles: [{ id: 'brick', name: 'Brick', blocks_move: true, blocks_sight: true }],
+    Objects: [
+      { id: 'win', name: 'Window', kind: 'deco', walkable: true, properties: '{"layer":"wall","opening":"window"}' },
+      { id: 'arch', name: 'Arch', kind: 'deco', walkable: true, properties: '{"layer":"wall","opening":"arch"}' },
+      { id: 'torch', name: 'Torch', kind: 'deco', walkable: true, properties: '{"layer":"wall"}' }],
+    Maps: [{ id: 'm', name: 'M', width: 5, height: 5, terrain: JSON.stringify([row, row, row, row, row]),
+      hWalls: JSON.stringify([[], [], ['brick:2', 'brick:2', 'brick:2', 'brick:2', 'brick:2'], [], [], []]) }]
+  });
+  const map = c.maps.m;
+  map.entities = [
+    { key: 'm.e1', x: 1, y: 2, ref: 'win', data: { side: 'N' } },
+    { key: 'm.e2', x: 3, y: 2, ref: 'arch', data: { side: 'N' } },
+    { key: 'm.e3', x: 4, y: 2, ref: 'torch', data: { side: 'N' } }];
+  const ws = { maps: {} }, st = (e) => World.stateOf(c, ws, 'm', e);
+  World.syncEdges(c, ws, 'm');
+  assert.strictEqual(Rules.tryMove(c, map, 1, 2, 'N', {}).ok, false, 'you cannot climb through a window');
+  assert.ok(World.canSee(c, map, 1, 2, 1, 1, st), 'you can see through a window');
+  assert.strictEqual(Rules.tryMove(c, map, 3, 2, 'N', {}).ok, true, 'an archway lets you walk through');
+  assert.ok(World.canSee(c, map, 3, 2, 3, 1, st), 'and see through');
+  assert.strictEqual(Rules.tryMove(c, map, 2, 2, 'N', {}).ok, false, 'the plain wall still blocks');
+  assert.strictEqual(Rules.tryMove(c, map, 4, 2, 'N', {}).ok, false, 'a plain mount (torch) leaves its wall solid');
+  assert.ok(!World.canSee(c, map, 4, 2, 4, 1, st), 'and opaque');
+});
+
+test('visibility: you see your side of a wall and through its openings, not through the wall itself', () => {
+  const row = ['grass', 'grass', 'grass', 'grass', 'grass'];
+  const c = Content.build({
+    Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+    WallStyles: [{ id: 'brick', name: 'Brick', blocks_move: true, blocks_sight: true }],
+    Kinds: [{ kind: 'door', property: 'states', default: 'closed|open' }],
+    Objects: [{ id: 'door1', name: 'Door', kind: 'door', walkable: true, properties: '{"layer":"wall"}' }],
+    Maps: [{ id: 'm', name: 'M', width: 5, height: 5, terrain: JSON.stringify([row, row, row, row, row]),
+      hWalls: JSON.stringify([[], [], ['brick:2', 'brick:2', 'brick:2', 'brick:2', 'brick:2'], [], [], []]) }]
+  });
+  const map = c.maps.m;
+  map.entities = [{ key: 'm.e1', x: 2, y: 2, ref: 'door1', data: { side: 'N' } }];
+  const ws = { maps: {} }, st = (e) => World.stateOf(c, ws, 'm', e);
+  World.syncEdges(c, ws, 'm');
+  let vis = World.visibleCells(c, map, 2, 4, 8, st);
+  assert.ok(vis['2,4'] && vis['0,2'] && vis['4,3'], 'everything on your side of the wall is visible');
+  for (let x = 0; x < 5; x++) for (let y = 0; y < 2; y++) assert.ok(!vis[x + ',' + y], 'nothing beyond the closed wall: ' + x + ',' + y);
+  World.mapState(ws, 'm').states['m.e1'] = 'open';
+  World.syncEdges(c, ws, 'm');
+  vis = World.visibleCells(c, map, 2, 4, 8, st);
+  assert.ok(vis['2,1'] && vis['2,0'], 'the open door shows the strip beyond it');
+  assert.ok(!vis['0,1'] && !vis['4,1'], 'but not the corners of the room behind the wall');
+  assert.strictEqual(World.perceive(vis, null, 2, 1), 'seen');
+  assert.strictEqual(World.perceive(vis, null, 0, 1), 'hidden');
+  assert.strictEqual(World.perceive(vis, { '0,1': 1 }, 0, 1), 'sensed', 'another sense (hearing, later) turns hidden into an outline');
 });
 
 console.log(`\n${passed} world tests passed`);

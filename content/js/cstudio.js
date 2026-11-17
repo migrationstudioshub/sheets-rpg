@@ -407,6 +407,18 @@ var CStudio = (function () {
       })),
       h('div', { className: 'help', text: 'Object: normal, y-sorted on the ground. Wall-mounted: hangs on a wall’s visible (south-facing) face — in the map editor, paint it on the Objects layer and it snaps to the nearest wall. Choosing this sets the object walkable and see-through, so it doesn’t block the floor tile in front (the wall itself still stops you); tick those back on above if you want a solid, view-blocking panel. Ground decal: a flat mark baked into the ground.' })));
     if (layer === 'wall') {
+      // What the object does to the wall it sits on. A door is always a door (kind = door); anything else can
+      // be a plain mount, a window (see through, can't walk through) or an archway (always open).
+      var opening = o.kind === 'door' ? 'door' : (p.opening === 'window' || p.opening === 'arch' ? p.opening : 'none');
+      form.appendChild(h('div', { className: 'field' },
+        h('label', { text: 'Opening in the wall' }),
+        o.kind === 'door'
+          ? h('div', { className: 'help', text: 'Door: closed, it blocks walking and sight like the wall; open, you can walk and see through.' })
+          : h('div', { className: 'seg' }, [['none', 'None (hangs on the wall)'], ['window', 'Window'], ['arch', 'Archway']].map(function (m) {
+              return h('button', { type: 'button', className: 'segbtn' + (opening === m[0] ? ' on' : ''), text: m[1],
+                onclick: function () { setProp(o, 'opening', m[0] === 'none' ? undefined : m[0]); objForm(); } });
+            })),
+        o.kind === 'door' ? null : h('div', { className: 'help', text: 'None: decoration or a switch on the wall; the wall behaves as normal. Window: you can see and shoot through it but not walk through. Archway: an always-open gap you can walk and see through.' })));
       form.appendChild(h('div', { className: 'field', title: 'Raise the object off the wall base, in whole tiles' },
         h('label', { text: 'Raise off base (tiles)' }),
         h('input', { type: 'number', step: '0.1', value: p.mount == null ? '' : p.mount, style: 'width:70px', title: '0 = standing on the wall base; each tile lifts it higher',

@@ -282,42 +282,25 @@ var World = (function () {
   }
 
   // ------------------------------------------------------------ space
-  // ---- edge doors ----
-  // A door placed on a wall (kind 'door', layer 'wall') gates the wall EDGES it spans rather than blocking a
-  // tile: its cell (x,y) covers footprintW cells east, i.e. hWalls[y][x .. x+w-1]. We fold its open/closed
-  // state onto those edges in a transient overlay (map._doorEdges, keyed 'h'+x+','+y), rebuilt before each
-  // action/tick; the movement and sight edge checks consult it, so an OPEN door opens its edge even through a
-  // wall, and a CLOSED/locked door seals it. Such a door does NOT block its own tile (it sits on the wall line).
-  function isEdgeDoor(o) { return !!(o && o.kind === 'door' && o.properties && o.properties.layer === 'wall'); }
-  function buildDoorEdges(c, ws, mapId) {
-    var map = c.maps[mapId], out = {};
-    if (map) (map.entities || []).forEach(function (e) {
-      var o = objOf(c, e); if (!isEdgeDoor(o)) return;
-      var open = stateOf(c, ws, mapId, e) === 'open', w = Math.max(1, o.footprintW || 1);
-      for (var k = 0; k < w; k++) out['h' + (e.x + k) + ',' + e.y] = open ? 'open' : 'closed';
-    });
-    return out;
+  // ---- wall fixtures: everything that lives ON a wall edge ----
+  // A wall fixture is a placed object whose definition has properties.layer === 'wall'. It is anchored to one
+  // grid-line edge by its cell + data.side: N/S = the horizontal edge on the cell's north/south line, W/E =
+  // the vertical edge on its west/east line. A wide fixture spans footprintW edges east (horizontal) or
+  // footprintH edges north (vertical). A fixture may be an OPENING, which replaces what its edges let through:
+  //   door   (kind 'door')                 closed: no walk, no sight · open: both
+  //   window (properties.opening 'window') never walk, always sight
+  //   arch   (properties.opening 'arch')   always both
+  // Anything else (torch, painting, switch) is a plain mount and changes nothing about the edge.
+  // syncEdges folds the openings into map._edgeOv, which Rules.edgeBlocked consults — so movement, sight,
+  // shots and visibility all read one answer. A fixture never blocks its own floor cell.
+  function isWallFixture(o) { return !!(o && o.properties && o.properties.layer === 'wall'); }
+  function openingOf(o) {
+    if (!isWallFixture(o)) return '';
+    if (o.kind === 'door') return 'door';
+    var t = o.properties.opening;
+    return t === 'window' || t === 'arch' ? t : '';
   }
-  function syncDoorEdges(c, ws, mapId) { var m = c.maps[mapId]; if (m) m._doorEdges = buildDoorEdges(c, ws, mapId); }
-  // The edge between two orthogonally-adjacent cells, as {orient, x, y} into the wall grids (null if not adjacent).
-  function sharedEdge(ax, ay, bx, by) {
-    if (ax === bx && Math.abs(ay - by) === 1) return { orient: 'h', x: ax, y: Math.max(ay, by) };
-    if (ay === by && Math.abs(ax - bx) === 1) return { orient: 'v', x: Math.max(ax, bx), y: ay };
-    return null;
-  }
-  function doorOnEdge(map, orient, x, y) { return (map && map._doorEdges && map._doorEdges[orient + x + ',' + y]) || null; }
-  // Does moving across the edge between two adjacent cells blocked? A door on that edge overrides the wall.
-  function moveBlockedEdge(c, map, ax, ay, bx, by) {
-    var e = sharedEdge(ax, ay, bx, by), d = e && doorOnEdge(map, e.orient, e.x, e.y);
-    if (d) return d === 'closed';
-    return Rl().wallBlocksMove(c, Rl().wallBetweenCells(map, ax, ay, bx, by));
-  }
-
-  // ---- clicking a wall-mounted object's sprite / the hole a door leaves ----
-  // A wall object (layer 'wall') hangs on one grid-line edge and renders on that wall's FACE, which rises
-  // over the object's span of cells (footprintW for a horizontal mount) as tall as the wall — not on the
-  // floor tile its anchor sits in. So a click resolves to the object when it lands anywhere in that face
-  // box (plus the anchor floor cell), for ANY tile a multi-tile door spans. These mirror render's mountEdge.
+  function isEdgeDoor(o) { return openingOf(o) === 'door'; }
   function mountSideOf(e) { return String((e.data && (e.data.side || e.data.facing)) || 'N').toUpperCase().charAt(0); }
   function mountEdgeOf(e) {
     var s = mountSideOf(e);
@@ -326,16 +309,45 @@ var World = (function () {
     if (s === 'E') return { orient: 'v', x: e.x + 1, y: e.y };
     return { orient: 'h', x: e.x, y: e.y };                              // 'N' (default: wall on the cell's north line)
   }
+  /** Every edge a fixture occupies, as [{orient, x, y}]. */
+  function fixtureEdges(o, e) {
+    var ed = mountEdgeOf(e), out = [], k;
+    if (ed.orient === 'h') { var w = Math.max(1, (o && o.footprintW) || 1); for (k = 0; k < w; k++) out.push({ orient: 'h', x: ed.x + k, y: ed.y }); }
+    else { var hh = Math.max(1, (o && o.footprintH) || 1); for (k = 0; k < hh; k++) out.push({ orient: 'v', x: ed.x, y: ed.y - k }); }
+    return out;
+  }
+  /** The opening overlay for a map: {edgeKey: {move, sight, key}} (true = blocked). stateFn(entity) -> state. */
+  function buildEdgeOv(c, map, stateFn) {
+    var out = {}, R = Rl();
+    if (map) (map.entities || []).forEach(function (e) {
+      var o = objOf(c, e), kind = openingOf(o); if (!kind) return;
+      var shut = kind === 'door' && stateFn(e) !== 'open';
+      var rec = { move: kind === 'window' || shut, sight: shut, key: e.key };
+      fixtureEdges(o, e).forEach(function (ed) { out[R.edgeKey(ed.orient, ed.x, ed.y)] = rec; });
+    });
+    return out;
+  }
+  function syncEdges(c, ws, mapId) {
+    var m = c.maps[mapId]; if (m) m._edgeOv = buildEdgeOv(c, m, function (e) { return stateOf(c, ws, mapId, e); });
+  }
+  /** The client's version: same overlay, built from its view (stateFn = viewLookup(...).stateOf). */
+  function syncEdgesView(c, map, stateFn) { if (map) map._edgeOv = buildEdgeOv(c, map, stateFn); }
+  function moveBlockedEdge(c, map, ax, ay, bx, by) { return Rl().blockedBetween(c, map, ax, ay, bx, by, 'move'); }
+
+  // ---- clicking a wall fixture's sprite / the hole a door leaves ----
+  // A fixture renders on its wall's FACE, which rises over its span of cells as tall as the wall — not on
+  // the floor tile its anchor sits in. So a click resolves to it when it lands anywhere in that face box
+  // (plus the anchor floor cell), for ANY tile a multi-tile door spans.
   function wallWithHeight(map, ed) {
     var p = Rl().parseWall(Rl().wallAt(map, ed.orient, ed.x, ed.y));
     return Math.max(1, (p && p.height) || 2);
   }
-  // The interactive wall-mounted entity whose visible footprint covers clicked cell (cx,cy), or null.
+  // The interactive wall fixture whose visible footprint covers clicked cell (cx,cy), or null.
   function wallMountAt(c, map, cx, cy) {
     var ents = (map && map.entities) || [];
     for (var i = 0; i < ents.length; i++) {
       var e = ents[i], o = objOf(c, e);
-      if (!o || !o.properties || o.properties.layer !== 'wall' || !INTERACTIVE[o.kind]) continue;
+      if (!isWallFixture(o) || !INTERACTIVE[o.kind]) continue;
       var ed = mountEdgeOf(e), H = wallWithHeight(map, ed);
       if (ed.orient === 'h') {
         var w = Math.max(1, o.footprintW || 1);
@@ -349,15 +361,12 @@ var World = (function () {
   }
   // The footprint cell (either side of the wall) nearest the player, so range + facing use it, not the click.
   function wallMountUseCell(c, map, e, p) {
-    var o = objOf(c, e), ed = mountEdgeOf(e), best = null, bd = 1e9;
+    var o = objOf(c, e), best = null, bd = 1e9;
     function consider(x, y) { var d = Math.abs(p.x - x) + Math.abs(p.y - y); if (d < bd) { bd = d; best = { x: x, y: y }; } }
-    if (ed.orient === 'h') {
-      var w = Math.max(1, o.footprintW || 1);
-      for (var col = e.x; col < e.x + w; col++) { consider(col, ed.y - 1); consider(col, ed.y); }
-    } else {
-      var hh = Math.max(1, o.footprintH || 1);
-      for (var row = e.y; row > e.y - hh; row--) { consider(ed.x - 1, row); consider(ed.x, row); }
-    }
+    fixtureEdges(o, e).forEach(function (ed) {
+      if (ed.orient === 'h') { consider(ed.x, ed.y - 1); consider(ed.x, ed.y); }
+      else { consider(ed.x - 1, ed.y); consider(ed.x, ed.y); }
+    });
     return best || { x: e.x, y: e.y };
   }
 
@@ -455,7 +464,7 @@ var World = (function () {
   /** Moves the world on to `now`: timers, respawns, monsters wandering, chasing and attacking. */
   function advance(c, ws, mapId, players, now, rng, ev) {
     var map = c.maps[mapId]; if (!map) return;
-    syncDoorEdges(c, ws, mapId);                          // refresh the door-edge overlay monster AI reads
+    syncEdges(c, ws, mapId);                              // refresh the opening overlay monster AI reads
     var ms = ensureMonsters(c, ws, mapId, now, rng);
     Object.keys(ms.timers).forEach(function (k) {
       var t = ms.timers[k]; if (now >= t.at) { setState(ws, mapId, k, t.state); delete ms.timers[k]; }
@@ -725,19 +734,15 @@ var World = (function () {
   // one of its two edges. A lone wall (or a wall's end) still lets a diagonal slip past, but two collinear
   // segments forming a straight barrier correctly seal the diagonal that crosses them. `blk(c, token)`
   // chooses which walls count: sight for shots and sight-skills, movement for melee/physical reach.
-  function edgeBlocks(c, map, a, b, blk) {
+  function edgeBlocks(c, map, a, b, what) {
     var R = Rl();
-    function w(ax, ay, bx, by) {
-      var e = sharedEdge(ax, ay, bx, by), d = e && doorOnEdge(map, e.orient, e.x, e.y);
-      if (d) return d === 'closed';                                     // a door overrides the wall on its edge
-      return blk(c, R.wallBetweenCells(map, ax, ay, bx, by));
-    }
+    function w(ax, ay, bx, by) { return R.blockedBetween(c, map, ax, ay, bx, by, what); }
     if (a.x === b.x || a.y === b.y) return w(a.x, a.y, b.x, b.y);
     return (w(a.x, a.y, b.x, a.y) || w(b.x, a.y, b.x, b.y)) &&
            (w(a.x, a.y, a.x, b.y) || w(a.x, b.y, b.x, b.y));
   }
-  function edgeBlocksSight(c, map, a, b) { return edgeBlocks(c, map, a, b, Rl().wallBlocksSight); }
-  function edgeBlocksMove(c, map, a, b) { return edgeBlocks(c, map, a, b, Rl().wallBlocksMove); }
+  function edgeBlocksSight(c, map, a, b) { return edgeBlocks(c, map, a, b, 'sight'); }
+  function edgeBlocksMove(c, map, a, b) { return edgeBlocks(c, map, a, b, 'move'); }
   // Is the straight line between two cells clear? `edgeFn` picks the wall rule: sight for seeing/shooting,
   // movement for a thrown item's flight and a blast's reach (an explosion is stopped by any solid wall).
   function clearLine(c, map, x0, y0, x1, y1, stateFn, edgeFn) {
@@ -747,6 +752,40 @@ var World = (function () {
     return true;
   }
   function canSee(c, map, x0, y0, x1, y1, stateFn) { return clearLine(c, map, x0, y0, x1, y1, stateFn, edgeBlocksSight); }
+
+  // ------------------------------------------------------------ visibility (what a player can see)
+  // The set of cells visible from (px,py): every cell within `radius` with a clear sight line — the SAME
+  // line-of-sight rule combat uses, so "I can see it" and "I can shoot it" never disagree. Returns
+  // {"x,y": 1}. The caller must have the opening overlay current (syncEdges / syncEdgesView).
+  // A second pass adds cells that sit right beside a visible cell with nothing sight-blocking between them
+  // and that lie no further from the viewer — it fills the one-cell notches straight sight lines leave
+  // along walls, without ever leaking through one.
+  function visibleCells(c, map, px, py, radius, stateFn) {
+    var out = {}, r = radius > 0 ? radius : 16, x, y;
+    var xa = Math.max(0, px - r), xb = Math.min(map.width - 1, px + r), ya = Math.max(0, py - r), yb = Math.min(map.height - 1, py + r);
+    for (y = ya; y <= yb; y++) for (x = xa; x <= xb; x++)
+      if (canSee(c, map, px, py, x, y, stateFn)) out[x + ',' + y] = 1;
+    var add = [];
+    for (y = ya; y <= yb; y++) for (x = xa; x <= xb; x++) {
+      if (out[x + ',' + y]) continue;
+      var d = Math.abs(x - px) + Math.abs(y - py), nb = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]];
+      for (var i = 0; i < 4; i++) {
+        var nx = nb[i][0], ny = nb[i][1];
+        if (!out[nx + ',' + ny] || Math.abs(nx - px) + Math.abs(ny - py) >= d) continue;
+        if (blocksSight(c, map, nx, ny, stateFn) || Rl().blockedBetween(c, map, nx, ny, x, y, 'sight')) continue;
+        add.push(x + ',' + y); break;
+      }
+    }
+    add.forEach(function (k) { out[k] = 1; });
+    return out;
+  }
+  // How a viewer perceives something standing on a cell: 'seen' (in sight), 'sensed' (not in sight, but
+  // known by another sense — drawn as an outline) or 'hidden'. `sensed` is an optional {"x,y":1} set; no
+  // sense fills it yet — it is the hook a future hearing sense plugs into.
+  function perceive(vis, sensed, x, y) {
+    var k = Math.round(x) + ',' + Math.round(y);
+    return !vis || vis[k] ? 'seen' : (sensed && sensed[k] ? 'sensed' : 'hidden');
+  }
   // Where a thrown item ends up when aimed at (tx,ty): it travels along the line and stops at the first
   // solid wall or blocker it cannot pass, detonating against it rather than the throw being refused.
   function throwLanding(c, map, px, py, tx, ty, stateFn) {
@@ -1356,7 +1395,7 @@ var World = (function () {
     var ev = [];
     if (!action || !c.maps[p.map]) return ev;
     players = players || [p];
-    syncDoorEdges(c, ws, p.map);                          // refresh the door-edge overlay this action reads
+    syncEdges(c, ws, p.map);                              // refresh the opening overlay this action reads
     if (action.type === 'move') {
       var dirs = (action.dirs || []).slice(0, 20);
       for (var i = 0; i < dirs.length; i++) {
@@ -1502,7 +1541,9 @@ var World = (function () {
     liveState: liveState, trapPhase: trapPhase, knownSkills: knownSkills, checkTarget: checkTarget,
     viewLookup: viewLookup, canSee: canSee, snapTarget: snapTarget, actionsAt: actionsAt, lineCells: lineCells, applyStatus: applyStatus,
     rangedWeapon: rangedWeapon, shotReach: shotReach, throwLanding: throwLanding, blastCells: blastCells, pickLootTable: pickLootTable, rollLook: rollLook,
-    syncDoorEdges: syncDoorEdges, isEdgeDoor: isEdgeDoor, wallMountAt: wallMountAt, wallMountUseCell: wallMountUseCell,
+    syncEdges: syncEdges, syncEdgesView: syncEdgesView, isEdgeDoor: isEdgeDoor, isWallFixture: isWallFixture, openingOf: openingOf,
+    mountEdgeOf: mountEdgeOf, fixtureEdges: fixtureEdges, wallMountAt: wallMountAt, wallMountUseCell: wallMountUseCell,
+    visibleCells: visibleCells, perceive: perceive,
     roofZoneAt: roofZoneAt, roofZones: roofZones };
 })();
 if (typeof module !== 'undefined') module.exports = World;

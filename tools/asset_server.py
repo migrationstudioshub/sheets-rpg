@@ -282,10 +282,10 @@ def tile_suggest(kind, name, plain=False):
                 "(grass, road, water) on the OVERLAY layer above it."
                 % (name, name.replace("_", " "), name))
     if kind == "wall":
-        return ("Tilesets  id=%s  image=art/tilesets/%s_top_auto.png  columns=8  layout=blob47_craftpix\n"
-                "Terrain   id=%s  autotile=%s  color=#2b2b2b  pass_n/e/s/w = 0 (walls block)\n"
-                "Face auto-renders from art/tilesets/%s_face.png (filename convention)."
-                % (name, name, name, name, name))
+        return ("WallStyles  id=%s  name=%s  face=art/tilesets/%s_face.png  cap=art/tilesets/%s_cap.png\n"
+                "            color=#8a8f98  blocks_move=1  blocks_sight=1\n"
+                "Paste into the Content Studio's Wall styles — the 2.5D cap+face edge-wall look."
+                % (name, name.replace("_", " "), name, name))
     return ("Tilesets  id=%s  image=art/tilesets/%s_auto.png  columns=8  layout=blob47_craftpix\n"
             "Terrain   id=%s  autotile=%s  color=<avg>  pass_n/e/s/w = 1\n"
             "Variety layer + base tile auto-render from art/tilesets/%s{_details,_decals,}.png + scatter.json."
@@ -301,8 +301,9 @@ def tile_make(req):
     if not NAME_RE.match(name):
         return {"error": "Name must be snake_case (lowercase letters, numbers, underscores)."}
     key = read_key() or (req.get("google_api") or "").strip()
-    if kind == "ground" and not key:
-        return {"error": "no_key"}                  # walls are procedural, no Gemini needed
+    wall_ai = kind == "wall" and bool((req.get("what") or "").strip())   # a wall described in words -> Nano Banana
+    if (kind == "ground" or wall_ai) and not key:
+        return {"error": "no_key"}                  # procedural walls (no description) need no Gemini
     if key:
         os.environ["GOOGLE_API"] = key
     os.makedirs(TILE_OUT, exist_ok=True)
@@ -341,9 +342,15 @@ def tile_make(req):
             material = (req.get("material") or "brick").strip()
             if not re.match(r"^[a-z_]+$", material):
                 return {"error": "Bad material."}
-            run_pipe(TILE_TOOLS, "make_tileset.py",
-                     ["wall", "--name", name, "--material", material, "--under", under])
-            want = {"top": name + "_top_auto.png", "face": name + "_face.png",
+            argv = ["wall", "--name", name, "--material", material, "--under", under]
+            what = (req.get("what") or "").strip()
+            if what:                                 # described in words -> Nano Banana front-on texture
+                argv += ["--what", what]
+                colours = (req.get("colours") or "").strip()
+                if colours:
+                    argv += ["--colours", colours]
+            run_pipe(TILE_TOOLS, "make_tileset.py", argv)
+            want = {"face": name + "_face.png", "cap": name + "_cap.png",
                     "review": "review_" + name + ".png"}
 
     images = {}
@@ -370,7 +377,7 @@ def tile_save(req):
     if not NAME_RE.match(name):
         return {"error": "Bad name."}
     suffixes = ((".png",) if plain
-                else ("_top_auto.png", "_face.png") if kind == "wall"
+                else ("_face.png", "_cap.png") if kind == "wall"
                 else (".png", "_auto.png", "_details.png", "_decals.png"))
     present = [name + s for s in suffixes if os.path.exists(os.path.join(TILE_OUT, name + s))]
     if not present:

@@ -26,9 +26,13 @@
     "art/sprites/objects/door_wood_0.png",
     "art/sprites/objects/door_wood_1.png",
     "art/sprites/objects/fridge.png",
+    "art/sprites/objects/fridge_2.png",
+    "art/sprites/objects/garage_door_test.png",
     "art/sprites/objects/king_size_bed.png",
     "art/sprites/objects/kitchen_sink.png",
+    "art/sprites/objects/kitchen_sink_2.png",
     "art/sprites/objects/kitchen_stove.png",
+    "art/sprites/objects/kitchen_stove_2.png",
     "art/sprites/objects/safe_small.png",
     "art/sprites/objects/safe_small_1.png",
     "art/sprites/objects/table.png",
@@ -97,6 +101,7 @@
     "art/tilesets/asphalt_auto.png",
     "art/tilesets/asphalt_decals.png",
     "art/tilesets/asphalt_details.png",
+    "art/tilesets/brick_wall_cap.png",
     "art/tilesets/brick_wall_face.png",
     "art/tilesets/dirt.png",
     "art/tilesets/dirt_auto.png",
@@ -119,7 +124,12 @@
     "art/tilesets/sidewalk_details.png",
     "art/tilesets/wall_brick_face.png",
     "art/tilesets/wall_brick_top_auto.png",
+    "art/tilesets/wall_bricks.png",
     "art/tilesets/wall_concrete_face.png",
-    "art/tilesets/wall_concrete_top_auto.png"
+    "art/tilesets/wall_concrete_top_auto.png",
+    "art/tilesets/wall_demo_cap.png",
+    "art/tilesets/wall_demo_face.png",
+    "art/tilesets/wood_wall_cap.png",
+    "art/tilesets/wood_wall_face.png"
   ]
 }

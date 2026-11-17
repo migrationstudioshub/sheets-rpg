@@ -11,8 +11,9 @@ Ground (Nano Banana texture -> plain base + variety layer -> 8x8 autotile sheet)
            --colours "cool dark steel greys, patches of rust"  (say the material's colours)
            --raw <png>  reuse an existing texture image instead of generating one (no credits)
 
-Wall (procedural bricks, no credits):
-  python3 make_tileset.py wall --name wall_concrete --material concrete
+Wall (edge-wall FACE 32x32 + CAP 32x16 for the 2.5D renderer):
+  python3 make_tileset.py wall --name wall_concrete --material concrete        # procedural, no credits
+  python3 make_tileset.py wall --name wall_brick --what "weathered red brick"  # Nano Banana (needs a key)
 
 Writes, in ../out/tiles/:
   <name>.png               plain base tile (32x32, wraps)
@@ -21,7 +22,7 @@ Writes, in ../out/tiles/:
   <name>_decals.png        bigger decals (32x32 cells), interior cells only
   scatter.json             updated with this terrain's entry (sheet, count, cols, chance)
   review_<name>.png        test patch at 2x: this terrain as an island with edges + variety layer, and its sheet
-Walls: <name>_top_auto.png (8x8 sheet), <name>_face.png (4 cols x 2 rows), review_<name>.png
+Walls: <name>_face.png (32x32, wraps both ways), <name>_cap.png (32x16), review_<name>.png
 """
 import argparse, json, os, shutil, sys
 from PIL import Image, ImageDraw
@@ -112,39 +113,61 @@ def ground(a):
     print(f"done {a.name}: {n_details} details, {n_decals} decals\n  review: {out}")
 
 
-def wall(a):
-    import make_wall
-    m = make_wall.MATERIALS[a.material]
-    prefix = f"{TILES}/{a.name}"
-    Image.fromarray(make_wall.face_strip(make_wall.brick_face(m), m)).save(prefix + "_face.png")
-    Image.fromarray(make_wall.cap_tile(m)).save(prefix + "_top.png")
-    autotile.build(prefix + "_top.png", prefix + "_top_auto.png", style="rim")
-    # review: a small room, tops + 2-tile faces under the lowest wall row
-    import numpy as np
-    from tile_preview import signatures, cell_sig
-    walls = ["..........", ".WWWWWWWW.", ".W......W.", ".W......W.", ".WWWWWWWW.", "..........",
-             "..........", ".........."]
-    img = render(["a" * 10] * 8, {"a": f"{TILES}/{a.under}_auto.png"}, base="a")
-    wm = np.array([[c == "W" for c in r] for r in walls])
-    sig = signatures()
-    top = Image.open(prefix + "_top_auto.png").convert("RGBA")
+def wall_review(name, under, prefix, S=32, H=2):
+    """Draw face+cap as real 2.5D edge walls (the same primitives as shared/render.js drawPrim25):
+    an E-W run, an N-S run and a corner, on the ground, at 2x."""
+    W_t, H_t = 11, 8
+    try:
+        img = render(["a" * W_t] * H_t, {"a": f"{TILES}/{under}_auto.png"}, base="a").convert("RGBA")
+    except Exception:
+        img = Image.new("RGBA", (W_t * S, H_t * S), (26, 30, 36, 255))
     face = Image.open(prefix + "_face.png").convert("RGBA")
-    N = 32
-    for y in range(8):
-        for x in range(10):
-            if wm[y, x]:
-                r, c = sig.get(cell_sig(wm, y, x), sig[(False,) * 8])
-                img.alpha_composite(top.crop((c * N, r * N, c * N + N, r * N + N)), (x * N, y * N))
-    for y in range(8):
-        for x in range(10):
-            if wm[y, x] and (y + 1 >= 8 or not wm[y + 1, x]):
-                l = x > 0 and wm[y, x - 1] and not (y + 1 < 8 and wm[y + 1, x - 1])
-                rr = x + 1 < 10 and wm[y, x + 1] and not (y + 1 < 8 and wm[y + 1, x + 1])
-                col = {(False, False): 0, (False, True): 1, (True, True): 2, (True, False): 3}[(l, rr)]
-                img.alpha_composite(face.crop((col * N, 0, col * N + N, 64)), (x * N, (y + 1) * N))
-    out = f"{TILES}/review_{a.name}.png"
+    cap = Image.open(prefix + "_cap.png").convert("RGBA")
+    d = max(4, round(S * 0.32)); hd = round(d / 2)
+    hW = [(x, 3) for x in range(1, 5)] + [(x, 5) for x in range(7, 10)]
+    vW = [(1, y) for y in range(3, 7)] + [(9, y) for y in range(3, 6)]
+    prims = [("hcap", x, y) for x, y in hW] + [("hface", x, y) for x, y in hW] \
+          + [("vface", x, y) for x, y in vW] + [("vcap", x, y) for x, y in vW]
+    def sy(p):
+        k, x, y = p
+        base = y * S if k in ("hcap", "hface") else (y + 1) * S
+        return base + (0.5 if k in ("hcap", "vcap") else 0.25)
+    prims.sort(key=sy)
+    def pf(x0, y0, x1, y1):
+        w = x1 - x0; f = face.resize((w, S), Image.NEAREST); yy = y0
+        while yy < y1:
+            hh = min(S, y1 - yy); img.alpha_composite(f.crop((0, 0, w, hh)), (x0, yy)); yy += S
+    def pc(x0, y0, x1, y1):
+        img.alpha_composite(cap.resize((x1 - x0, y1 - y0), Image.NEAREST), (x0, y0))
+    for k, x, y in prims:
+        if k == "hface": hb = y * S; pf(x * S, hb - H * S, x * S + S, hb)
+        elif k == "hcap": ht = y * S - H * S; pc(x * S, ht - d, x * S + S, ht)
+        elif k == "vface": vb = (y + 1) * S; pf(x * S - hd, vb - H * S, x * S + hd, vb)
+        elif k == "vcap": vt = (y + 1) * S - H * S; pc(x * S - hd, vt - S, x * S + hd, vt)
+    out = f"{TILES}/review_{name}.png"
     img.resize((img.width * 2, img.height * 2), Image.NEAREST).save(out)
-    print(f"done {a.name}\n  review: {out}")
+
+
+def wall(a):
+    """Edge-wall face + cap. AI (Nano Banana front-on texture, palette-locked and quilted seamless)
+    when a description and a key are given; otherwise a procedural material."""
+    import make_wall
+    import numpy as np
+    prefix = f"{TILES}/{a.name}"
+    use_ai = bool(a.what) and os.environ.get("GOOGLE_API")
+    if use_ai:
+        raw = a.raw or make_wall.gen_face(a.name, a.what, a.colours)
+        make_wall.ai_cut(raw, prefix + "_face.png")
+        face = np.array(Image.open(prefix + "_face.png").convert("RGB"))
+    else:
+        face = make_wall.proc_face(a.material)
+        Image.fromarray(face).save(prefix + "_face.png")
+    Image.fromarray(make_wall.derive_cap(face)).save(prefix + "_cap.png")
+    wall_review(a.name, a.under, prefix)
+    print(f"done {a.name} ({'AI: ' + a.what if use_ai else a.material})\n"
+          f"  WallStyles  id={a.name}  name={a.name.replace('_', ' ')}  "
+          f"face=art/tilesets/{a.name}_face.png  cap=art/tilesets/{a.name}_cap.png\n"
+          f"  review: {TILES}/review_{a.name}.png")
 
 
 if __name__ == "__main__":
@@ -165,7 +188,7 @@ if __name__ == "__main__":
     ap.add_argument("--details-chance", type=float, default=0.4)
     ap.add_argument("--decals-chance", type=float, default=0.06)
     ap.add_argument("--under", default="asphalt", help="terrain the review patch sits on")
-    ap.add_argument("--material", default="brick", help="wall: brick | concrete (see make_wall.MATERIALS)")
+    ap.add_argument("--material", default="brick", help="wall: brick|concrete|wood|stone|metal (make_wall.MATS); the procedural look when --what is blank")
     a = ap.parse_args()
     os.makedirs(TILES, exist_ok=True)
     if a.kind == "ground":

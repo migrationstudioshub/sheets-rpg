@@ -44,8 +44,8 @@
   .row label { width: 48px; color: var(--dim); }
   .row.small { color: var(--dim); font-size: 12px; }
   .buttons { flex-wrap: wrap; }
-  .tabs { display: flex; gap: 4px; margin-bottom: 6px; }
-  .tabs button { flex: 1; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+  .tabs button { flex: 1 1 auto; min-width: 48px; }
   .items { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin: 6px 0; max-height: 46vh; overflow: auto; }
   .item { display: flex; align-items: center; gap: 6px; text-align: left; padding: 3px; overflow: hidden; }
   .item span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

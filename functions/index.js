@@ -52,6 +52,7 @@ async function mergeMaps(content) {
     content.maps[m.id] = { id: m.id, name: m.name || m.id, width: m.width, height: m.height,
       terrain: MapCode.decode(m.terrain), overlay: MapCode.decode(m.overlay || []),
       vWalls: MapCode.decode(m.vWalls || []), hWalls: MapCode.decode(m.hWalls || []),
+      roof: MapCode.decode(m.roof || []), roof_color: m.roof_color || '', spawn: m.spawn || null,
       shapes: m.shapes || {}, overlayShapes: m.overlayShapes || {}, entities: m.entities || [] };
   });
 }
@@ -98,6 +99,7 @@ async function publishMap(map, key) {
     width: Number(map.width) || 0, height: Number(map.height) || 0,
     terrain: map.terrain, overlay: map.overlay || null,
     vWalls: map.vWalls || null, hWalls: map.hWalls || null,
+    roof: map.roof || null, roof_color: map.roof_color || null, spawn: map.spawn || null,
     shapes: map.shapes || null, overlayShapes: map.overlayShapes || null,
     entities: Array.isArray(map.entities) ? map.entities : [],
     updatedAt: Date.now()

@@ -377,6 +377,10 @@ var CStudio = (function () {
       h('label', { text: 'Vertical nudge (px)' }),
       h('input', { type: 'number', value: p.offset_y == null ? '' : p.offset_y, style: 'width:70px', title: 'Pixels: negative = up, positive = down', oninput: function (e) { setProp(o, 'offset_y', e.target.value === '' ? undefined : Number(e.target.value)); } }),
       h('div', { className: 'help', text: 'Shifts the sprite vertically in pixels (negative = up, positive = down) — e.g. -6 to sit a centred object slightly higher on its tile.' })));
+    form.appendChild(h('div', { className: 'field', title: 'Nudge the sprite left or right without moving its tile' },
+      h('label', { text: 'Horizontal nudge (px)' }),
+      h('input', { type: 'number', value: p.offset_x == null ? '' : p.offset_x, style: 'width:70px', title: 'Pixels: negative = left, positive = right', oninput: function (e) { setProp(o, 'offset_x', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+      h('div', { className: 'help', text: 'Shifts the sprite horizontally in pixels (negative = left, positive = right) — handy to line a door or window up on its wall.' })));
     form.appendChild(h('div', { className: 'field', title: 'Block leaving/entering this walkable object in a direction (one-way)' },
       h('label', { text: 'Can pass (walkable objects only)' }),
       h('div', { className: 'lootrow' }, [['n', 'N'], ['e', 'E'], ['s', 'S'], ['w', 'W']].map(function (d) {
@@ -403,11 +407,11 @@ var CStudio = (function () {
       })),
       h('div', { className: 'help', text: 'Object: normal, y-sorted on the ground. Wall-mounted: hangs on a wall’s visible (south-facing) face — in the map editor, paint it on the Objects layer and it snaps to the nearest wall. Choosing this sets the object walkable and see-through, so it doesn’t block the floor tile in front (the wall itself still stops you); tick those back on above if you want a solid, view-blocking panel. Ground decal: a flat mark baked into the ground.' })));
     if (layer === 'wall') {
-      form.appendChild(h('div', { className: 'field', title: 'Default height up the wall face' },
-        h('label', { text: 'Mount height (tiles)' }),
-        h('input', { type: 'number', step: '0.1', value: p.mount == null ? '' : p.mount, style: 'width:70px', title: '0 = centred on the face, negative = lower',
+      form.appendChild(h('div', { className: 'field', title: 'Raise the object off the wall base, in whole tiles' },
+        h('label', { text: 'Raise off base (tiles)' }),
+        h('input', { type: 'number', step: '0.1', value: p.mount == null ? '' : p.mount, style: 'width:70px', title: '0 = standing on the wall base; each tile lifts it higher',
           oninput: function (e) { setProp(o, 'mount', e.target.value === '' ? undefined : Number(e.target.value)); } }),
-        h('div', { className: 'help', text: 'Default height up the face: 0 = centred, negative = lower. Each placement can override this in the map editor.' })));
+        h('div', { className: 'help', text: 'The sprite is drawn at its own size with its bottom edge on the wall base. This lifts it up in whole tiles (e.g. 1 for a window a tile up); fine-tune with the pixel nudges above. Each placement can override it in the map editor.' })));
     }
     // Container loot
     if (o.kind === 'container') form.appendChild(containerLoot(o));

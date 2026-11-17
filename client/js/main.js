@@ -7,6 +7,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var api = Api.create(), content, renderer;
   var me = null;                         // this player (position predicted locally)
+  var seenZones = {};                    // rooms the local player has stepped into, per map — for permanent roof reveal in the view (merged with the server's record)
   var view = { states: {}, monsters: [], players: [] };
   var since = -1;                        // last event number seen
   var shown = { x: 0, y: 0 };            // drawn position, eases toward me.x/y
@@ -743,7 +744,14 @@
       timed.forEach(function (e) { states[e.key] = World.liveState(content, e, clock, view.states); });
     }
     lastCam = cam;
-    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity });
+    // Remember the room the local player is standing in, so 'permanent' roof reveal keeps it visible after they
+    // leave — immediately and without waiting on the server, merged with the server's persisted `explored`.
+    if (me && World.roofZoneAt) {
+      var curZ = World.roofZoneAt(map, Math.round(me.x), Math.round(me.y));
+      if (curZ) (seenZones[me.map] || (seenZones[me.map] = {}))[curZ] = 1;
+    }
+    var explored = Object.assign({}, me && me.explored && me.explored[me.map], me && seenZones[me.map]);
+    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored });
     if (armed) renderer.drawAim(cam, aimOverlay());
     else if (throwing) renderer.drawAim(cam, throwOverlay());
     // a ready gun shows no on-canvas aim — the crosshair cursor is the aim (see updateCursor)

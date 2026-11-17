@@ -957,6 +957,28 @@ test('you cannot interact with an object through a wall; the open side works', (
   assert.match(texts(ev), /Hello/, 'reading it from the open side works');
 });
 
+test('roof rooms group by contiguity, and stepping inside records the room as explored', () => {
+  // two separate roofed rooms: A = (1,1),(2,1),(1,2),(2,2); B = (4,1),(4,2). Column 3 is open between them.
+  var roof = [['', '', '', '', '', ''], ['', '1', '1', '', '1', ''], ['', '1', '1', '', '1', ''], ['', '', '', '', '', '']];
+  const c = Content.build({
+    Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+    Maps: [{ id: 'm', name: 'M', width: 6, height: 4,
+      terrain: JSON.stringify(Array.from({ length: 4 }, () => Array.from({ length: 6 }, () => 'grass'))),
+      roof: JSON.stringify(roof) }]
+  });
+  const map = c.maps.m;
+  // contiguous tiles share one stable zone id (its top-left-most cell); separate rooms differ; open tiles are null
+  assert.strictEqual(World.roofZoneAt(map, 1, 1), World.roofZoneAt(map, 2, 2), 'one room spans its contiguous tiles');
+  assert.strictEqual(World.roofZoneAt(map, 1, 1), '1,1', 'the room id is its top-left-most cell');
+  assert.notStrictEqual(World.roofZoneAt(map, 4, 1), World.roofZoneAt(map, 1, 1), 'the far room is a different zone');
+  assert.strictEqual(World.roofZoneAt(map, 0, 0), null, 'an un-roofed tile has no zone');
+  // stepping into room A records it on the player (persisted, per map); room B stays hidden
+  const ws = { maps: {} };
+  const p = { id: 'p1', map: 'm', x: 1, y: 0, facing: 'S', hp: 10, inventory: [], flags: {}, explored: {}, equipment: {} };
+  World.act(c, ws, p, { type: 'move', dirs: ['S'] }, 1000, Math.random, [p]);
+  assert.deepStrictEqual(p.explored.m, { '1,1': 1 }, 'walked into room A: it is now explored (room B is not)');
+});
+
 test('a wall stops a melee swing; attacking from the open side still connects', () => {
   const { s, slime } = wallArena();
   put(s, 'arena', 0, 0);

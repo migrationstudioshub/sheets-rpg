@@ -98,14 +98,22 @@ var World = (function () {
   }
   function xpFor(c, level) { var r = c.levels.filter(function (x) { return x.level === level; })[0]; return r ? r.xp : null; }
 
+  // The map a brand-new / respawning player starts on: the configured start_map, else the first map that has
+  // an authored spawn point (set in the map editor), else the first map. start_x/start_y stay the fallback pos.
+  function startMap(c) {
+    if (c.config.start_map && c.maps[c.config.start_map]) return c.maps[c.config.start_map];
+    var ks = Object.keys(c.maps), withSpawn = ks.filter(function (k) { return c.maps[k] && c.maps[k].spawn; })[0];
+    return c.maps[withSpawn] || c.maps[ks[0]];
+  }
   function newPlayer(c, id, name, cls) {
     var p = { id: id, name: name, 'class': c.classes[cls] ? cls : (c.config.start_class || Object.keys(c.classes)[0] || ''),
-      map: '', x: 0, y: 0, facing: 'S', level: 1, xp: 0, gold: 0, inventory: [], equipment: {}, flags: {}, respawn: '',
+      map: '', x: 0, y: 0, facing: 'S', level: 1, xp: 0, gold: 0, inventory: [], equipment: {}, flags: {}, explored: {}, respawn: '',
       // cosmetic paper-doll choices (character creation will let players pick these)
       hair: c.config.start_hair || '', hairColor: c.config.start_hair_color || 'hair_brown' };
-    var map = c.maps[c.config.start_map] || c.maps[Object.keys(c.maps)[0]];
-    var at = Rl().nearestStandable(c, map, Number(c.config.start_x) || 0, Number(c.config.start_y) || 0);
-    p.map = map.id; p.x = at.x; p.y = at.y;
+    var map = startMap(c), sp = map && map.spawn;                           // the map's own spawn point wins over config.start_x/y
+    var sx = sp ? Number(sp.x) || 0 : Number(c.config.start_x) || 0, sy = sp ? Number(sp.y) || 0 : Number(c.config.start_y) || 0;
+    var at = Rl().nearestStandable(c, map, sx, sy);
+    p.map = map.id; p.x = at.x; p.y = at.y; p.facing = (sp && sp.facing) || 'S';
     p.hp = stats(c, p).maxHp; p.mp = stats(c, p).maxMp;
     p.hunger = 100; p.thirst = 100;
     p.cooldowns = {}; p.statuses = []; p.mags = {}; p.abilities = ['', '']; p.belt = ['', '', '', '', ''];
@@ -123,7 +131,7 @@ var World = (function () {
   function normalize(c, p) {
     function obj(v, d) { if (v && typeof v === 'object') return v; try { return v ? JSON.parse(v) : d; } catch (e) { return d; } }
     p.inventory = obj(p.inventory, []); if (!Array.isArray(p.inventory)) p.inventory = [];
-    p.equipment = obj(p.equipment, {}); p.flags = obj(p.flags, {});
+    p.equipment = obj(p.equipment, {}); p.flags = obj(p.flags, {}); p.explored = obj(p.explored, {});
     p.cooldowns = obj(p.cooldowns, {}); p.statuses = obj(p.statuses, []); if (!Array.isArray(p.statuses)) p.statuses = [];
     p.mags = obj(p.mags, {}); if (!p.mags || typeof p.mags !== 'object' || Array.isArray(p.mags)) p.mags = {};   // rounds loaded per gun
     p.abilities = obj(p.abilities, null); p.belt = obj(p.belt, null);
@@ -546,7 +554,10 @@ var World = (function () {
   function respawnPoint(c, p) {
     var pos = String(p.respawn || '').split(':');
     if (pos.length === 3 && c.maps[pos[0]]) return { map: pos[0], x: Number(pos[1]), y: Number(pos[2]) };
-    return { map: c.config.start_map, x: Number(c.config.start_x) || 0, y: Number(c.config.start_y) || 0 };
+    var sm = startMap(c), sp = sm && sm.spawn;                              // no checkpoint: fall back to the start map's spawn
+    return { map: sm ? sm.id : c.config.start_map,
+      x: sp ? Number(sp.x) || 0 : Number(c.config.start_x) || 0,
+      y: sp ? Number(sp.y) || 0 : Number(c.config.start_y) || 0, facing: sp && sp.facing };
   }
   function die(c, ws, p, ev) {
     var lost = Math.floor(p.gold * (Number(c.config.death_gold_loss) || 0));
@@ -554,7 +565,7 @@ var World = (function () {
     ev.push({ type: 'death', map: p.map, x: p.x, y: p.y, to: p.id, text: 'You were defeated' + (lost ? ' and lost ' + lost + ' gold' : '') + '.' });
     var r = respawnPoint(c, p), map = c.maps[r.map] || c.maps[Object.keys(c.maps)[0]];
     var at = Rl().nearestStandable(c, map, r.x, r.y);
-    p.map = map.id; p.x = at.x; p.y = at.y; p.facing = 'S'; p.hp = stats(c, p).maxHp;
+    p.map = map.id; p.x = at.x; p.y = at.y; p.facing = r.facing || 'S'; p.hp = stats(c, p).maxHp;
   }
   /** Hunger and thirst drain over time; at zero they gnaw at your health. Set to 0 in Config to disable. */
   function survivalTick(c, ws, p, now, hDecay, tDecay, starveDmg, starveMs, ev) {
@@ -1074,8 +1085,47 @@ var World = (function () {
   }
 
   // ------------------------------------------------------------ player actions
+  // ---- roof cover (hidden interiors) ----
+  // A map's roof grid ('1' = a roofed interior tile) groups into "rooms": connected roofed tiles that are
+  // NOT separated by a wall. So an interior wall splits one roofed building into separate rooms, each of
+  // which stays a black void until the player steps inside IT (not merely the building). roofZoneAt returns a
+  // STABLE id for the room at (x,y) — its top-most, then left-most cell "x,y" — or null. Cached on the map;
+  // the client and the referee compute them identically. See render.js for drawing the cover.
+  function roofTile(map, x, y) { var g = map && map.roof, row = g && g[y]; return !!(row && row[x]); }
+  function roofZones(map) {
+    if (map._roofZones) return map._roofZones;
+    var g = (map && map.roof) || [], h = g.length, seen = {}, zoneOf = {};
+    function k(x, y) { return x + ',' + y; }
+    for (var y = 0; y < h; y++) {
+      var row = g[y] || [];
+      for (var x = 0; x < row.length; x++) {
+        if (!row[x] || seen[k(x, y)]) continue;
+        var stack = [[x, y]], cells = [], id = k(x, y);                 // id = first (top-left-most) cell of the room
+        seen[id] = true;
+        while (stack.length) {
+          var pt = stack.pop(), px = pt[0], py = pt[1]; cells.push(pt);
+          [[px + 1, py], [px - 1, py], [px, py + 1], [px, py - 1]].forEach(function (n) {
+            var gr = g[n[1]]; if (!gr || !gr[n[0]] || seen[k(n[0], n[1])]) return;
+            if (Rl().wallBetweenCells(map, px, py, n[0], n[1])) return;  // a wall divides rooms, even with continuous roof
+            seen[k(n[0], n[1])] = true; stack.push(n);
+          });
+        }
+        cells.forEach(function (cc) { zoneOf[k(cc[0], cc[1])] = id; });
+      }
+    }
+    map._roofZones = zoneOf;
+    return zoneOf;
+  }
+  function roofZoneAt(map, x, y) { return roofTile(map, x, y) ? (roofZones(map)[x + ',' + y] || null) : null; }
+  // Record that this player has now been inside the room they stand in (persisted per player, per map).
+  function markExplored(c, p) {
+    var z = roofZoneAt(c.maps[p.map], p.x, p.y); if (!z) return;
+    var ex = p.explored || (p.explored = {}); (ex[p.map] || (ex[p.map] = {}))[z] = 1;
+  }
+
   function onStep(c, ws, p, now, ev) {
     var map = c.maps[p.map], moved = false;
+    markExplored(c, p);                                                // stepped into a room? remember it
     Rl().entitiesAt(map, p.x, p.y).forEach(function (e) {
       if (moved) return;
       var o = objOf(c, e); if (!o) return;
@@ -1439,6 +1489,9 @@ var World = (function () {
       skills: usableSkills(c, p), abilities: p.abilities, belt: p.belt, mags: p.mags || {}, cooldowns: p.cooldowns || {},
       statuses: (p.statuses || []).map(function (st) { return { id: st.id, until: st.until }; }),
       xpNext: xpFor(c, p.level + 1), xpThis: xpFor(c, p.level) || 0, gold: p.gold,
+      // rooms this player has entered (per map) — the client needs it so `roof_reveal: permanent` keeps
+      // explored rooms revealed across reloads, not just within one session's live accumulation.
+      explored: p.explored || {},
       inventory: p.inventory, equipment: p.equipment, respawn: p.respawn };
   }
 
@@ -1448,6 +1501,7 @@ var World = (function () {
     liveState: liveState, trapPhase: trapPhase, knownSkills: knownSkills, checkTarget: checkTarget,
     viewLookup: viewLookup, canSee: canSee, snapTarget: snapTarget, actionsAt: actionsAt, lineCells: lineCells, applyStatus: applyStatus,
     rangedWeapon: rangedWeapon, shotReach: shotReach, throwLanding: throwLanding, blastCells: blastCells, pickLootTable: pickLootTable, rollLook: rollLook,
-    syncDoorEdges: syncDoorEdges, isEdgeDoor: isEdgeDoor, wallMountAt: wallMountAt, wallMountUseCell: wallMountUseCell };
+    syncDoorEdges: syncDoorEdges, isEdgeDoor: isEdgeDoor, wallMountAt: wallMountAt, wallMountUseCell: wallMountUseCell,
+    roofZoneAt: roofZoneAt, roofZones: roofZones };
 })();
 if (typeof module !== 'undefined') module.exports = World;

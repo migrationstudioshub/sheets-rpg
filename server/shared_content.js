@@ -140,9 +140,17 @@ var Content = (function () {
       // it has height rows × width+1 cols. Absent/empty on maps without walls. See Rules wall helpers.
       var vWalls = decodeGrid(json(r.vWalls, []));
       var hWalls = decodeGrid(json(r.hWalls, []));
+      // Roof cover: a W×H mask ('1' = a roofed interior tile, '' = open). Contiguous roofed tiles form a
+      // "room" that is hidden (drawn as a black void) until the player steps inside. Absent/empty on maps
+      // with no interiors to hide. See World.roofZoneAt (zones) and render.js (drawing the cover).
+      var roof = decodeGrid(json(r.roof, []));
       // Frozen autotile shapes from shift-click mapping: sparse { "x,y": mask } per layer, render-only.
       c.maps[id] = { id: id, name: str(r.name) || id, width: num(r.width, grid[0] ? grid[0].length : 0),
-        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls,
+        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls, roof: roof,
+        roof_color: str(r.roof_color),
+        // Optional player spawn point {x, y, facing}: where new/respawning players start on this map (set in
+        // the map editor). Absent on maps without one, which then fall back to Config start_x/start_y.
+        spawn: json(r.spawn, null),
         shapes: json(r.shapes, {}), overlayShapes: json(r.overlayShapes, {}), entities: [] };
     });
 

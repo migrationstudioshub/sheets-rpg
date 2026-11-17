@@ -44,18 +44,20 @@ var Tileset = (function () {
     var kind = h('select', { onchange: refreshConditional }, [
       h('option', { value: 'ground', text: 'Ground terrain (autotile)' }),
       h('option', { value: 'plain', text: 'Plain tile (no autotiling)' }),
-      h('option', { value: 'wall', text: 'Wall (top + face)' })
+      h('option', { value: 'wall', text: 'Wall (cap + face, 2.5D)' })
     ]);
     var name = h('input', { placeholder: 'snake_case id, e.g. gravel or wall_concrete' });
     var what = h('textarea', { rows: 2, placeholder: 'the surface, e.g. "loose grey gravel, small stones, a few weeds"' });
     var decals = h('input', { placeholder: 'six marks, e.g. "a rock, a weed clump, a bolt, a puddle, pebbles, a crushed can"' });
-    var material = h('select', {}, [h('option', { value: 'brick', text: 'brick' }), h('option', { value: 'concrete', text: 'concrete' })]);
+    var material = h('select', {}, ['brick', 'concrete', 'wood', 'stone', 'metal'].map(function (v) { return h('option', { value: v, text: v }); }));
+    var colours = h('input', { placeholder: 'optional, e.g. "cold grey concrete, rust streaks"' });
     var pattern = h('input', { type: 'checkbox' });
-    fields = { kind: kind, name: name, what: what, decals: decals, material: material, pattern: pattern };
+    fields = { kind: kind, name: name, what: what, decals: decals, material: material, colours: colours, pattern: pattern };
 
-    var whatField = field('Surface', what, 'What the ground is. Fills the tile edge to edge, no borders.');
+    var whatField = field('Surface', what, 'What it looks like, edge to edge, no borders. For a wall, describe it to paint with Nano Banana — or leave blank to use the material below.');
     var decalsField = field('Decals (optional)', decals, 'Bigger marks scattered on interior cells. One Gemini image.');
-    var matField = field('Material', material, 'Walls are procedural (no Gemini key needed).');
+    var matField = field('Material', material, 'Procedural wall look, used when the description is blank (no key needed).');
+    var coloursField = field('Colours (optional)', colours, 'Nudge the Nano Banana palette, e.g. "cold grey concrete, rust streaks".');
     var patternField = h('div', { className: 'field check' }, pattern,
       h('label', { text: 'Built surface — keep seams/welds/joints (metal plates, planks, tiles, pavers)' }));
 
@@ -63,14 +65,14 @@ var Tileset = (function () {
       h('div', { className: 'form' },
         field('Kind', kind),
         field('Name', name, 'Lowercase, numbers, underscores. Becomes the file names.'),
-        whatField, patternField, decalsField, matField,
+        whatField, patternField, decalsField, matField, coloursField,
         h('div', { className: 'inline' },
           h('button', { className: 'primary', text: 'Generate', onclick: generate }),
           h('button', { text: 'API key…', title: 'Set up the Gemini key (opens a local file)', onclick: showKeySetup })),
         h('div', { id: 'tilestatus', className: 'note' }),
         h('div', { className: 'note sub', text: 'Needs the local server running. Saves into art/tilesets/ and merges scatter.json.' })
       ));
-    form._whatField = whatField; form._decalsField = decalsField; form._matField = matField; form._patternField = patternField;
+    form._whatField = whatField; form._decalsField = decalsField; form._matField = matField; form._coloursField = coloursField; form._patternField = patternField;
 
     outEl = h('div', { className: 'gearout' });
     root = h('div', { id: 'tilesetview', className: 'makerview' }, form, outEl);
@@ -80,12 +82,13 @@ var Tileset = (function () {
   }
 
   function refreshConditional() {
-    var kind = fields.kind.value, ground = kind === 'ground', plain = kind === 'plain';
+    var kind = fields.kind.value, ground = kind === 'ground', plain = kind === 'plain', wall = kind === 'wall';
     var f = root.querySelector('.gearform');
-    f._whatField.style.display = (ground || plain) ? '' : 'none';   // both need a surface texture
+    f._whatField.style.display = (ground || plain || wall) ? '' : 'none';   // walls can be described (AI) too
     f._patternField.style.display = (ground || plain) ? '' : 'none';
     f._decalsField.style.display = ground ? '' : 'none';            // plain tiles have no scatter layer
-    f._matField.style.display = kind === 'wall' ? '' : 'none';
+    f._matField.style.display = wall ? '' : 'none';
+    f._coloursField.style.display = wall ? '' : 'none';
   }
 
   // ---- shared key handling (same local server + localStorage key as the Gear view) ----
@@ -125,12 +128,13 @@ var Tileset = (function () {
     var sel = fields.kind.value, plain = sel === 'plain', kind = plain ? 'ground' : sel;
     var body = { kind: kind, plain: plain, name: fields.name.value.trim() };
     if (kind === 'ground') { body.what = fields.what.value.trim(); body.pattern = fields.pattern.checked; if (!plain) body.decals = fields.decals.value.trim(); }
-    else { body.material = fields.material.value; }
+    else { body.material = fields.material.value; body.what = fields.what.value.trim(); body.colours = fields.colours.value.trim(); }
     if (!/^[a-z0-9_]+$/.test(body.name)) { setStatus('Name must be snake_case (lowercase letters, numbers, underscores).', 'bad'); return; }
     if (kind === 'ground' && !body.what) { setStatus('Describe the ' + (plain ? 'tile' : 'ground') + ' surface.', 'bad'); return; }
     var k = localStorage.getItem(KEY_LS); if (k) body.google_api = k;
 
-    setStatus('Generating ' + sel + '… (Nano Banana takes a few seconds)', 'dirty');
+    var ai = kind === 'ground' || (sel === 'wall' && body.what);
+    setStatus('Generating ' + sel + (ai ? '… (Nano Banana takes a few seconds)' : '… (procedural)'), 'dirty');
     outEl.innerHTML = '';
     fetch('/tile/make', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function (r) { return r.json(); })
@@ -148,8 +152,9 @@ var Tileset = (function () {
     var head = h('div', { className: 'gearcard-head' }, h('strong', { text: res.name }), '  ·  ' + (res.plain ? 'plain tile' : res.kind));
     var prev = h('div', { className: 'gearprev' });
     if (im.review) prev.appendChild(h('img', { src: dataUrl(im.review.b64), className: 'gearreview', alt: 'review' }));
-    var sheet = im.auto || im.top;
+    var sheet = im.auto || im.top || im.face;
     if (sheet) prev.appendChild(h('img', { src: dataUrl(sheet.b64), className: 'gearreview', alt: 'sheet', style: 'image-rendering:pixelated;max-width:256px' }));
+    if (im.cap) prev.appendChild(h('img', { src: dataUrl(im.cap.b64), className: 'gearreview', alt: 'cap', style: 'image-rendering:pixelated;max-width:128px' }));
 
     var nameInput = h('input', { value: res.name, style: 'max-width:200px' });
     var saved = h('div', { className: 'note' });

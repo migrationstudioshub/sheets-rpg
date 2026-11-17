@@ -159,8 +159,8 @@ var Render = (function () {
   // A door / archway fixture renders as the wall-face span it covers (W tiles wide) with the door asset
   // composited in: drawn over the face when CLOSED, and punched OUT of the face (exact sprite shape, via
   // destination-out) when OPEN — so an open door is a real see-through hole the shape of the door. When its
-  // wall is CUT the wall pass draws the stub and the door alone stays standing, faint, so it can still be
-  // found and clicked. job = {o, e, ed (its first edge), W, open, cut}.
+  // wall is CUT the stub is left out across the door's whole width, so the doorway reads as a gap; a closed
+  // door stands in that gap, solid, and an open one leaves it empty. job = {o, e, ed (its first edge), W, open, cut}.
   var _doorCv = null;
   function doorCanvas(w, h) {
     if (!_doorCv && typeof document !== 'undefined') _doorCv = document.createElement('canvas');
@@ -183,11 +183,10 @@ var Render = (function () {
     var dw = dImg0 ? Math.round(dImg0.width * sc) : S;
     var dh = dImg0 ? Math.round(dImg0.height * sc) : Math.min(fh, 2 * S);
     var doorLeft = fx + (fw - dw) / 2 + offX, doorBottom = line + offY, doorTop = doorBottom - dh;
-    if (job.cut) {
-      g.globalAlpha = open ? cutA * 0.5 : cutA;
+    if (job.cut) {                                        // the wall pass leaves the doorway clear of stub
+      if (open) return;                                   // open: just the gap
       if (dImg0) g.drawImage(dImg0, 0, 0, dImg0.width, dImg0.height, doorLeft, doorTop, dw, dh);
       else { g.fillStyle = shade(col, -0.32); g.fillRect(doorLeft, doorTop, dw, dh); g.strokeStyle = shade(col, -0.5); g.strokeRect(doorLeft + 0.5, doorTop + 0.5, dw - 1, dh - 1); }
-      g.globalAlpha = 1;
       return;
     }
     // Buffer sized to the union of the wall face and the door rect, so a nudge never clips the cutout.
@@ -209,7 +208,7 @@ var Render = (function () {
   }
 
   // Fill a colour over a wall prim's drawn area (mirrors drawPrim25's rects) — used to tint a closed door
-  // set in a thin N-S wall.
+  // set in a thin N-S wall, and to put the roof over an interior wall face that has not been seen.
   function primRectFill(g, p, ox, oy, S, col) {
     var d = Math.max(4, Math.round(S * 0.32)), hd = Math.round(d / 2), voff = p.side === 'r' ? hd : p.side === 'l' ? -hd : 0;
     g.fillStyle = col;
@@ -536,7 +535,7 @@ var Render = (function () {
     // drawn now (always behind everyone); 'over' = saved for the foreground. Ground decals are baked in.
     // Anything on an unknown (roofed, never seen) cell is not drawn at all.
     function wallH(q) { var t = parseWallTok(((q.orient === 'h' ? map.hWalls : map.vWalls) || [])[q.y] && ((q.orient === 'h' ? map.hWalls : map.vWalls)[q.y][q.x])); return t ? t.height : 2; }
-    var overs = [], renderables = [], doorFaces = {}, vDoor = {};
+    var overs = [], renderables = [], doorFaces = {}, doorGap = {}, vDoor = {};
     map.entities.forEach(function (e) {
       if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
       var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
@@ -546,10 +545,13 @@ var Render = (function () {
         var show = sight.known(e.x, e.y) || (opening && edges.some(function (q) { return sight.edgeKnown(q.orient, q.x, q.y); }));
         if (!show) return;
         var cut = isH && edges.some(function (q) { return sight.cutH(q.x, q.y, wallH(q)); });
+        // An opening in an inside face the player has never seen (the cell south of it is unknown) stays under
+        // the roof with its wall; it only shows once that wall drops, i.e. when it is in the player's view.
+        if (isH && opening && !cut && !sight.known(ed0.x, ed0.y)) return;
         if (opening === 'door' || opening === 'arch') {
           var dOpen = opening === 'arch' || states[e.key] === 'open';
           if (isH) {
-            if (!cut) edges.forEach(function (q) { doorFaces[q.x + ',' + q.y] = 1; });   // the door draws these faces itself
+            edges.forEach(function (q) { doorFaces[q.x + ',' + q.y] = 1; if (cut) doorGap[q.x + ',' + q.y] = 1; });   // the door draws these faces itself; on a cut wall its whole width is a gap in the stub
             renderables.push({ sortY: oy + ed0.y * T + 0.26, door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
           } else edges.forEach(function (q) { vDoor[q.x + ',' + q.y] = dOpen ? 'open' : 'shut'; });   // in a thin N-S wall: a gap, or a tinted slab
           return;
@@ -588,8 +590,15 @@ var Render = (function () {
       if (vd === 'open') return;                                                // an open door / arch in a thin wall: a gap
       if (!sight.edgeKnown(isV ? 'v' : 'h', p.x, p.y)) return;                  // a wall wholly inside unknown rooms
       if (p.kind === 'hface' && doorFaces[p.x + ',' + p.y]) return;             // a door draws this face region itself
+      if (p.kind === 'hcap' && doorGap[p.x + ',' + p.y]) return;                // a doorway in a cut wall: no stub across it
       renderables.push({ sortY: prim25SortY(p, oy, T) + (isCap ? 0.5 : 0.25), prim: p,
-        cut: !isV && sight.cutH(p.x, p.y, p.h), shut: vd === 'shut' && !isCap });
+        cut: !isV && sight.cutH(p.x, p.y, p.h), shut: vd === 'shut' && !isCap,
+        // An E-W wall's face is the side seen from the cell SOUTH of it. If that cell is an unknown interior,
+        // the face is an inside wall the player has never seen: the roof covers it (the cap still outlines the building).
+        // A thin N-S face is likewise seen from the two cells just south of its segment (either side of the
+        // line): where an outer wall's run ends against the inside of the building, both are unknown interior.
+        roofed: (p.kind === 'hface' && !sight.known(p.x, p.y)) ||
+                (p.kind === 'vface' && !sight.known(p.x - 1, p.y + 1) && !sight.known(p.x, p.y + 1)) });
     });
     actors.forEach(function (a) {
       // seen = drawn; sensed = an outline (the hook for a hearing sense); hidden = not drawn
@@ -601,7 +610,8 @@ var Render = (function () {
     renderables.forEach(function (r) {
       if (r.door) { drawDoor(g, c, map, r.door, ox, oy, T, cutA); return; }
       if (r.prim) {
-        drawPrim25(g, c, r.prim, ox, oy, T, r.cut);
+        if (r.roofed && !r.cut) primRectFill(g, r.prim, ox, oy, T, roofCol);
+        else drawPrim25(g, c, r.prim, ox, oy, T, r.cut);
         if (r.shut) primRectFill(g, r.prim, ox, oy, T, 'rgba(46,30,16,.55)');
         return;
       }

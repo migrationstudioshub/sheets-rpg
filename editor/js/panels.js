@@ -42,9 +42,7 @@ var Panels = (function () {
     } else if (type === 'wallStyle') {
       var ws = E.content.wallStyles && E.content.wallStyles[id];
       g.fillStyle = '#20242c'; g.fillRect(0, 0, T(), T());
-      if (ws && ws.tiles && Render.drawWallNodes) {   // connector style: show the horizontal-straight tile
-        Render.drawWallNodes(g, E.content, [{ nx: 0.5, ny: 0.5, mask: 10, style: id }], 0, 0, T());
-      } else if (Render.drawPrim25) {                 // 2.5D style: a cap over a face, rising from the base
+      if (Render.drawPrim25) {                        // a cap over a face, rising from the base
         var s = Math.round(T() * 0.58), ox = Math.round((T() - s) / 2), base = Math.round(T() * 0.92);
         Render.drawPrim25(g, E.content, { kind: 'hface', x: 0, y: base / s, h: 1, style: id }, ox, 0, s);
         Render.drawPrim25(g, E.content, { kind: 'hcap', x: 0, y: base / s, h: 1, style: id }, ox, 0, s);
@@ -204,7 +202,7 @@ var Panels = (function () {
     if (paletteTab === 'roof') {                                      // the Roof layer has no palette: paint/erase the cover mask + pick the roof colour
       box.appendChild(tabs);
       box.appendChild(h('p', { className: 'note',
-        text: 'Fill (F) a building: click inside its walls and the enclosed interior becomes roof (click a roofed building again to clear it). Brush/Erase touch up single tiles. In-game a roofed interior is covered by a translucent roof until the player steps inside — set Config roof_reveal = permanent or on_exit to enable. Each enclosed building reveals as one room.' }));
+        text: 'Roof marks the tiles that are INDOORS. Fill (F) a building: click inside its walls and the enclosed interior becomes roof (click a roofed building again to clear it). Brush/Erase touch up single tiles. In-game an indoor tile stays under the roof until the player actually sees it — through a door, a window, or by walking in — and is remembered afterwards.' }));
       var rm = E.map(), rcur = (rm && rm.roof_color) || '#15121c';
       var rpick = h('input', { type: 'color', value: rcur, style: 'width:48px;height:28px;padding:1px',
         oninput: function () { var mm = E.map(); if (!mm) return; mm.roof_color = rpick.value; E.dirty.maps[E.mapId] = true; status(); if (E.scheduleWip) E.scheduleWip(); E.redraw(); } });

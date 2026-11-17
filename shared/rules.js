@@ -96,6 +96,28 @@ var Rules = (function () {
     return s ? s.blocksSight !== false : true;
   }
 
+  // THE edge question. Does the grid-line edge (orient 'h'|'v', x, y) block `what` ('move' | 'sight')?
+  // An opening fixture on the edge (door / window / archway) overrides the wall under it: map._edgeOv is a
+  // transient overlay {key: {move, sight}} (true = blocked) that World.syncEdges rebuilds from the current
+  // door states. Everything — walking, line of sight, shots, visibility — asks this one function.
+  function edgeKey(orient, x, y) { return orient + x + ',' + y; }
+  function edgeBlocked(content, map, orient, x, y, what) {
+    var ov = map._edgeOv && map._edgeOv[edgeKey(orient, x, y)];
+    if (ov) return what === 'sight' ? ov.sight : ov.move;
+    var tok = wallAt(map, orient, x, y);
+    return what === 'sight' ? wallBlocksSight(content, tok) : wallBlocksMove(content, tok);
+  }
+  // The edge shared by two orthogonally-adjacent cells, as {orient, x, y} (null if not adjacent).
+  function sharedEdge(ax, ay, bx, by) {
+    if (ax === bx && Math.abs(ay - by) === 1) return { orient: 'h', x: ax, y: Math.max(ay, by) };
+    if (ay === by && Math.abs(ax - bx) === 1) return { orient: 'v', x: Math.max(ax, bx), y: ay };
+    return null;
+  }
+  function blockedBetween(content, map, ax, ay, bx, by, what) {
+    var e = sharedEdge(ax, ay, bx, by);
+    return e ? edgeBlocked(content, map, e.orient, e.x, e.y, what) : false;
+  }
+
   /**
    * Can something at (x, y) on map step in direction dir? Returns {ok, x, y, reason}.
    * opts (optional): walkable(entity) overrides object walkability (e.g. an open door);
@@ -108,11 +130,12 @@ var Rules = (function () {
     if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) return { ok: false, x: x, y: y, reason: 'edge' };
     var from = terrainAt(content, map, x, y), to = terrainAt(content, map, nx, ny);
     if (!to) return { ok: false, x: x, y: y, reason: 'no terrain' };
-    // Edge wall on the boundary blocks the step; a door on that edge overrides it (open = pass, closed = block).
-    // map._doorEdges is a transient overlay the world sets each action/tick (keyed 'h'/'v' + x + ',' + y).
-    var dEdge = wallEdge(x, y, dir), de = map._doorEdges;
-    var door = dEdge && de ? de[dEdge.orient + dEdge.x + ',' + dEdge.y] : null;
-    if (door ? door === 'closed' : wallBlocksMove(content, wallBetween(map, x, y, dir))) return { ok: false, x: x, y: y, reason: door ? 'door' : 'wall' };
+    // The edge being crossed: a wall blocks the step unless an opening on it says otherwise (see edgeBlocked).
+    var dEdge = wallEdge(x, y, dir);
+    if (edgeBlocked(content, map, dEdge.orient, dEdge.x, dEdge.y, 'move')) {
+      var isOv = map._edgeOv && map._edgeOv[edgeKey(dEdge.orient, dEdge.x, dEdge.y)];
+      return { ok: false, x: x, y: y, reason: isOv ? 'door' : 'wall' };
+    }
     if (from && !from.pass[d.out]) return { ok: false, x: x, y: y, reason: 'blocked side' };
     if (!to.pass[d.into]) return { ok: false, x: x, y: y, reason: 'blocked' };
     // Leaving the current cell: a walkable object here can block one of its edges (one-way).
@@ -174,6 +197,7 @@ var Rules = (function () {
   return { DIRS: DIRS, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt, blockersAt: blockersAt,
     terrainAt: terrainAt, standable: standable, nearestStandable: nearestStandable,
     parseWall: parseWall, wallAt: wallAt, wallEdge: wallEdge, wallBetween: wallBetween, wallBetweenCells: wallBetweenCells,
-    wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight };
+    wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight,
+    edgeKey: edgeKey, edgeBlocked: edgeBlocked, sharedEdge: sharedEdge, blockedBetween: blockedBetween };
 })();
 if (typeof module !== 'undefined') module.exports = Rules;

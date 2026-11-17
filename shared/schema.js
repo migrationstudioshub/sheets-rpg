@@ -57,8 +57,7 @@ var Schema = (function () {
     ] },
     wallStyles: { collection: 'wallStyles', id: 'id', label: 'Wall styles', singular: 'wall style', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''),
-      f('tiles', 'image', '', 'Connection tilesheet (4x4 = 16 tiles) — autotiles corners/T/cross/caps, drawn top-down. Overrides the cap/face/colour look.'),
-      f('cap', 'image', '', 'Top sprite drawn along the wall line (1 tile wide; used when no connection tilesheet)'),
+      f('cap', 'image', '', 'Top sprite drawn along the top of the wall (1 tile wide)'),
       f('face', 'image', '', 'Front face — a 1-tile-wide strip that repeats vertically to any height (extruded look)'),
       f('color', 'color', '#8a8f98', 'Fallback colour drawn when the sprites are missing'),
       f('blocks_move', 'bool', true, 'Blocks walking across this edge'),

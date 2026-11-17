@@ -6,34 +6,34 @@
    "notes": "Pixels per tile in the art"
   },
   {
-   "key": "wall_fade",
-   "value": "run",
-   "notes": "See through walls that hide you: off | tiles (just your column) | run (the wall you're behind, up to wall_fade_radius tiles each side) | radius (any wall near you, south-facing)"
+   "key": "sight",
+   "value": "on",
+   "notes": "Line of sight: on | off. On = you only see creatures in your line of sight, indoor tiles (painted Roof in the map editor) stay under the roof until seen, and walls in your way drop to stubs. Off = everything is always shown."
   },
   {
-   "key": "wall_fade_radius",
+   "key": "sight_radius",
+   "value": 16,
+   "notes": "How far (tiles) the player can see"
+  },
+  {
+   "key": "fog_alpha",
+   "value": 0.32,
+   "notes": "Darkness (0-1) of the veil over tiles that are out of sight; 0 = no veil"
+  },
+  {
+   "key": "wall_cut_radius",
    "value": 3,
-   "notes": "Tiles each side of the player that fade: the window half-width for run, the bubble size for radius"
+   "notes": "A wall that hides something you can see within this many tiles of you drops to a stub (the walls of the room you are in always do)"
   },
   {
-   "key": "wall_fade_alpha",
-   "value": 0.35,
-   "notes": "Opacity (0-1) of a faded wall; lower = more see-through"
-  },
-  {
-   "key": "roof_reveal",
-   "value": "off",
-   "notes": "Hide roofed interiors (paint a Roof in the map editor) with a translucent roof until explored: off | permanent (a room stays revealed once you've entered) | on_exit (only the room you're currently in shows)"
+   "key": "wall_cut_alpha",
+   "value": 0.45,
+   "notes": "Opacity (0-1) of doors, windows and switches left standing on a wall that has dropped to a stub"
   },
   {
    "key": "roof_color",
    "value": "#15121c",
-   "notes": "Default roof overlay colour over unexplored interiors (a map can override it with its own roof_color in the editor Roof tab)"
-  },
-  {
-   "key": "roof_alpha",
-   "value": 0.5,
-   "notes": "Opacity (0-1) of the roof overlay while the player is outside; lower = see the interior/player through it more"
+   "notes": "Colour of the roof drawn over indoor tiles the player has never seen (a map can override it with its own roof_color in the editor Roof tab)"
   },
   {
    "key": "view_w",

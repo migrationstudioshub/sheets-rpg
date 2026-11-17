@@ -179,7 +179,7 @@ var E = {
       Object.keys(o.spriteStates).forEach(function (s) { paths.push(o.spriteStates[s]); });
     });
     Object.keys(c.wallStyles || {}).forEach(function (k) {
-      var w = c.wallStyles[k]; [w.tiles, w.cap, w.face].forEach(function (p) { if (p) paths.push(p); });
+      var w = c.wallStyles[k]; [w.cap, w.face].forEach(function (p) { if (p) paths.push(p); });
     });
     return Promise.all(paths.map(Assets.load));
   };
@@ -592,12 +592,9 @@ var E = {
 
     // Objects and 2.5D edge walls share ONE back-to-front pass (by south edge), exactly as the game draws
     // them, so a thing north of a wall is hidden behind it and one south of it sits in front — live, as you
-    // paint. (Flat 'tiles'-style walls stay a top-down underlay; the face+cap walls are what interleave.)
+    // paint.
     var objDim = E.layer === 'terrain' && E.tool !== 'select' ? 0.55 : 1;
     var wallAlpha = E.layer === 'walls' ? 1 : 0.85;   // walls dimmed a touch unless their layer is active
-    if (Render.connectorNodes) {
-      g.globalAlpha = wallAlpha; Render.drawWallNodes(g, c, Render.connectorNodes(c, m), vx, vy, s); g.globalAlpha = 1;
-    }
     var items = [];
     if (E.show.objects) m.entities.forEach(function (e) {
       var eo = c.objects[e.ref];
@@ -627,7 +624,7 @@ var E = {
       g.globalAlpha = 1;
     });
 
-    // roof cover (authoring aid): tint roofed tiles so you can see what becomes a hidden black void in-game.
+    // roof cover (authoring aid): tint roofed tiles so you can see what counts as indoors (under the roof until seen) in-game.
     // Stronger when the Roof layer is active; dimmed otherwise so it never obscures normal editing.
     if (m.roof && m.roof.length && E.layer === 'roof') {              // only while the Roof tab is active; otherwise the cover is fully transparent
       g.fillStyle = 'rgba(66,105,200,0.5)';

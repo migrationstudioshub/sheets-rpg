@@ -74,6 +74,15 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
 - Item id `gold` means money. Tall objects: `sprite_top`. Animation: `frames` + `frame_ms` (horizontal strip).
 - Skills: target `enemy|ally|self|tile|around`, `range`, `area`, `los`, `effect damage|heal|none`, amount = `power + scale × stat(atk|level)`, `status`, `dash`, `projectile`.
 
+- **Walls, fixtures, sight** (one model, Nov 2026): walls are edge tokens `style:height` in `hWalls`/`vWalls`. Anything on a
+  wall is a **fixture** = an object with `properties.layer: 'wall'`, anchored by cell + `data.side`; it may be an
+  **opening** (kind `door`, or `properties.opening: window|arch`). `World.syncEdges` folds openings into `map._edgeOv`
+  and **`Rules.edgeBlocked(…, 'move'|'sight')` is the only edge question** (movement, LoS, shots, visibility).
+  `World.visibleCells` = what a player sees (same LoS as combat); `World.perceive` → `seen|sensed|hidden` (`sensed` is the
+  unused hook for a hearing sense). The client decides all occlusion in `Render.makeSight`: roof grid = "indoors",
+  unknown indoor cells get the roof, out-of-sight cells a fog veil, and `cutH` drops E-W walls to stubs. Config:
+  `sight` on|off, `sight_radius`, `fog_alpha`, `wall_cut_radius`, `wall_cut_alpha`, `roof_color`.
+
 **Important:** the owner now edits the live Game Data spreadsheet. `tools/build_gamedata.py` and `data/*.xlsx`
 only describe the *starting* data. **Never tell the owner to re-import GameData.xlsx** once they have made edits — it would
 wipe them. For a new tab or column: make the code tolerate its absence (sensible defaults), and give the owner the

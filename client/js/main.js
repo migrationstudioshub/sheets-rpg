@@ -7,7 +7,9 @@
   var $ = function (id) { return document.getElementById(id); };
   var api = Api.create(), content, renderer;
   var me = null;                         // this player (position predicted locally)
-  var seenZones = {};                    // rooms the local player has stepped into, per map — for permanent roof reveal in the view (merged with the server's record)
+  var seenZones = {};                    // rooms the local player has stepped into, per map (merged with the server's record)
+  var seenCells = {};                    // cells the local player has had in sight this session, per map — what they remember
+  var sight = { key: '', at: 0, vis: null };   // the current line-of-sight set (World.visibleCells), recomputed when something changes
   var view = { states: {}, monsters: [], players: [] };
   var since = -1;                        // last event number seen
   var shown = { x: 0, y: 0 };            // drawn position, eases toward me.x/y
@@ -744,14 +746,30 @@
       timed.forEach(function (e) { states[e.key] = World.liveState(content, e, clock, view.states); });
     }
     lastCam = cam;
-    // Remember the room the local player is standing in, so 'permanent' roof reveal keeps it visible after they
-    // leave — immediately and without waiting on the server, merged with the server's persisted `explored`.
+    // Remember the room the local player is standing in — immediately and without waiting on the server,
+    // merged with the server's persisted `explored`.
     if (me && World.roofZoneAt) {
       var curZ = World.roofZoneAt(map, Math.round(me.x), Math.round(me.y));
       if (curZ) (seenZones[me.map] || (seenZones[me.map] = {}))[curZ] = 1;
     }
     var explored = Object.assign({}, me && me.explored && me.explored[me.map], me && seenZones[me.map]);
-    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored });
+    // What the player can see right now. Config `sight` = off turns the whole system off (everything shown).
+    // Recomputed when the player changes cell or the world's states change (and at least every 250 ms, so a
+    // door predicted open is picked up); the opening overlay it reads also keeps move prediction honest.
+    var vis = null, mem = null;
+    if (me && String(content.config.sight || 'on') !== 'off') {
+      var sKey = me.map + ':' + me.x + ',' + me.y, tNow = Date.now();
+      if (sight.key !== sKey || sight.states !== view.states || tNow - sight.at > 250) {
+        var lkS = World.viewLookup(content, map, view, me);
+        World.syncEdgesView(content, map, lkS.stateOf);
+        var sr = Number(content.config.sight_radius); if (!(sr > 0)) sr = 16;
+        sight = { key: sKey, states: view.states, at: tNow, vis: World.visibleCells(content, map, me.x, me.y, sr, lkS.stateOf) };
+        mem = seenCells[me.map] || (seenCells[me.map] = {});
+        for (var vk in sight.vis) mem[vk] = 1;
+      }
+      vis = sight.vis; mem = seenCells[me.map];
+    }
+    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null });
     if (armed) renderer.drawAim(cam, aimOverlay());
     else if (throwing) renderer.drawAim(cam, throwOverlay());
     // a ready gun shows no on-canvas aim — the crosshair cursor is the aim (see updateCursor)

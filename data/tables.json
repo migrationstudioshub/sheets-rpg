@@ -21,6 +21,11 @@
    "notes": "Darkness (0-1) of the veil over tiles that are out of sight; 0 = no veil"
   },
   {
+   "key": "indoor_dark",
+   "value": 0.25,
+   "notes": "How much darker (0-1) indoor tiles (painted Roof in the map editor) are drawn than outdoors, with everything standing in them; 0 = same as outdoors"
+  },
+  {
    "key": "wall_cut_radius",
    "value": 3,
    "notes": "A wall that hides something you can see within this many tiles of you drops to a stub (the walls of the room you are in always do)"

@@ -579,6 +579,23 @@ var CStudio = (function () {
           h('div', { className: 'help', text: 'Shown while the door is open (e.g. the empty frame). Leave empty and an open door is just a hole in the wall.' })));
       }
       if (fl.key === 'sprite' && o.kind === 'door') form.insertBefore(el, form.lastChild); else form.appendChild(el);
+      if (fl.key === 'sprite' && o.kind === 'door') {
+        // On a N-S wall a door is seen edge-on and shown as a doorstep on the floor: its own two pictures for that,
+        // the "step" and "step_open" entries of sprite_states.
+        var stepPick = function (key, label, help) {
+          var now = (stPairs().filter(function (q) { return q[0] === key; })[0] || [])[1] || '';
+          return h('div', { className: 'field' }, h('label', { text: label }),
+            imageControl(o, { key: 'sprite_states' }, now, function (v) {
+              var list = stPairs().filter(function (q) { return q[0] !== key; }); if (v) list.push([key, v]);
+              o.sprite_states = list.map(function (q) { return q[0] + '=' + q[1]; }).join('; '); persist();
+              if (statesInput) statesInput.value = o.sprite_states;
+            }),
+            h('div', { className: 'help', text: help }));
+        };
+        form.appendChild(h('div', { className: 'sub', text: 'On a north-south wall — the doorstep' }));
+        form.appendChild(stepPick('step', 'doorstep-closed', 'Shown, lying on the floor across the wall line, when this door is placed on a north-south wall (in the map editor or built by a player). Empty = the sprite-closed picture is laid down instead.'));
+        form.appendChild(stepPick('step_open', 'doorstep-open', 'The same doorstep while the door is open. Empty = the doorstep-closed picture.'));
+      }
       if (fl.key === 'sprite' && o.kind !== 'door' && propsObj(o).layer !== 'wall') {
         // Other directions: the main sprite is the object FACING SOUTH; these are the "north" and "side" entries of
         // sprite_states. With either one set the object can be turned (map editor and build mode: T / Shift+wheel).

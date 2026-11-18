@@ -38,7 +38,7 @@ var Api = (function () {
     if (p.map !== from) World.advance(c, ws, p.map, [p], now, Math.random, ev);
     World.record(ws, ev);
     this.save();
-    return Promise.resolve({ player: World.publicPlayer(c, p), world: World.view(c, ws, p.map, p, [p]),
+    return Promise.resolve({ player: World.publicPlayer(c, p), world: World.view(c, ws, p.map, p, [p], p.map !== from || since === -1 ? -1 : this.structRev),
       events: World.eventsFor(ws, since, p), seq: ws.seq });
   };
   Offline.prototype.resume = function () {
@@ -90,8 +90,10 @@ var Api = (function () {
       return this.call({ action: 'load', token: r.token });
     }.bind(this));
   };
-  Online.prototype.act = function (action, since) { return this.call({ action: 'act', token: this.token, 'do': action, since: since }); };
-  Online.prototype.poll = function (since) { return this.call({ action: 'poll', token: this.token, since: since }); };
+  // structRev: the revision of the map's structure layer (built / damaged / destroyed things) this client
+  // already holds — set by the game after each answer — so the server only re-sends the layer when it changed.
+  Online.prototype.act = function (action, since) { return this.call({ action: 'act', token: this.token, 'do': action, since: since, structRev: this.structRev }); };
+  Online.prototype.poll = function (since) { return this.call({ action: 'poll', token: this.token, since: since, structRev: this.structRev }); };
   /**
    * Listen for live updates to one map (monsters and players), pushed by the server through Firebase.
    * onWorld({map, now, seq, monsters, players}) runs on every change. Returns a function that stops listening.

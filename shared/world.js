@@ -44,6 +44,193 @@ var World = (function () {
     if (m.monsters === undefined) m.monsters = null;
     return m;
   }
+  // ------------------------------------------------------------ the structure layer
+  // Per map, next to states/monsters: what players built and what has been damaged or destroyed.
+  //   struct = { rev, n, walls: {edgeKey: {tok, hp, max, ...}}, ents: [built entities], dmg: {key: hp lost by an
+  //              AUTHORED wall/object}, gone: {key: 1 = an authored wall/object that was destroyed} }
+  // rev goes up on every change. See docs/BASE_BUILDING.md (5, 6).
+  var NO_STRUCT = { rev: 0, n: 0, walls: {}, ents: [], dmg: {}, gone: {} };
+  function structOf(ws, mapId) {
+    var ms = mapState(ws, mapId), st = ms.struct || (ms.struct = {});
+    st.rev = st.rev || 0; st.n = st.n || 0;
+    st.walls = st.walls || {}; st.ents = st.ents || []; st.dmg = st.dmg || {}; st.gone = st.gone || {};
+    return st;
+  }
+  function touchStruct(st) { st.rev = (st.rev || 0) + 1; }
+  function edgeOfKey(key) { var m = /^([hv])(\d+),(\d+)$/.exec(String(key)); return m ? { orient: m[1], x: Number(m[2]), y: Number(m[3]) } : null; }
+  // A wall grid with the layer applied: destroyed edges emptied, built walls added. Copies only the rows it changes.
+  function overlayGrid(grid, st, orient) {
+    var out = grid || [], copied = {}, k;
+    function put(key, tok) {
+      var ed = edgeOfKey(key); if (!ed || ed.orient !== orient) return;
+      if (out === (grid || [])) out = out.slice();
+      if (!copied[ed.y]) { out[ed.y] = (out[ed.y] || []).slice(); copied[ed.y] = 1; }
+      while (out[ed.y].length < ed.x) out[ed.y].push('');
+      out[ed.y][ed.x] = tok;
+    }
+    for (k in st.gone) put(k, '');
+    for (k in st.walls) put(k, st.walls[k].tok);
+    return out;
+  }
+  /**
+   * THE MAP THE RULES USE: the authored map with the structure layer applied. A fresh object (its own
+   * derived caches) per layer revision; the authored map itself is never changed. Shared by the referee
+   * (via liveMap) and the client (which gets the layer in its view), so both agree on what blocks.
+   */
+  function liveMapFromStruct(c, base, st) {
+    if (!base || !st || !st.rev) return base;
+    var cache = base._live;
+    if (cache && cache.rev === st.rev && cache.of === st) return cache.map;
+    var m = Object.create(base);
+    m.hWalls = overlayGrid(base.hWalls, st, 'h');
+    m.vWalls = overlayGrid(base.vWalls, st, 'v');
+    m.entities = base.entities.filter(function (e) { return !st.gone[e.key]; }).concat(st.ents || []);
+    m._block = null; m._edgeOv = null; m._struct = st;
+    // not enumerable: the content object is sent to clients as JSON and must not drag live state along
+    Object.defineProperty(base, '_live', { value: { rev: st.rev, of: st, map: m }, enumerable: false, writable: true, configurable: true });
+    return m;
+  }
+  function liveMap(c, ws, mapId) {
+    var base = c.maps[mapId]; if (!base) return null;
+    var ms = ws && ws.maps && ws.maps[mapId], st = ms && ms.struct;
+    if (!st || !st.rev) return base;
+    var m = liveMapFromStruct(c, base, st);
+    if (!m._edgeOv) m._edgeOv = buildEdgeOv(c, m, function (e) { return stateOf(c, ws, mapId, e); });
+    return m;
+  }
+  function publicStruct(st) {
+    return { rev: st.rev || 0, walls: st.walls || {}, dmg: st.dmg || {}, gone: st.gone || {},
+      ents: (st.ents || []).map(function (e) { var o = {}; Object.keys(e).forEach(function (k) { if (k !== 'inv') o[k] = e[k]; }); return o; }) };
+  }
+
+  // ---- health: what a wall or object can take ----
+  // A target is {t:'wall', orient, x, y} or {t:'ent', key}. resolveOn answers what it is and how hurt it is,
+  // from a map (authored or live) plus the layer — so the referee and the client's menus/drawing agree.
+  var NO_HP_KINDS = { spawn: 1, trigger: 1, teleport: 1, npc: 1, sign: 1 };
+  // damage multiplier by what hits (row) and what it is made of (column)
+  var MULT = {
+    melee:   { wood: 1,   metal: 0.25, stone: 0.25, glass: 2 },
+    bullet:  { wood: 0.5, metal: 0.1,  stone: 0.1,  glass: 3 },
+    blast:   { wood: 2,   metal: 1,    stone: 1,    glass: 4 },
+    fire:    { wood: 1,   metal: 0,    stone: 0,    glass: 0 },
+    monster: { wood: 1,   metal: 0.5,  stone: 0.5,  glass: 2 }
+  };
+  function resolveOn(c, map, st, t) {
+    if (!map || !t) return null;
+    st = st || NO_STRUCT;
+    var key, rec, max;
+    if (t.t === 'wall') {
+      key = Rl().edgeKey(t.orient, t.x, t.y); rec = st.walls[key] || null;
+      var tok = rec ? rec.tok : (st.gone[key] ? '' : Rl().wallAt(map, t.orient, t.x, t.y));
+      if (!tok) return null;
+      var style = (c.wallStyles && c.wallStyles[Rl().parseWall(tok).style]) || {};
+      max = rec ? Number(rec.max) || 0 : Number(style.hp) || 0;
+      return { t: 'wall', key: key, orient: t.orient, x: t.x, y: t.y, built: !!rec, rec: rec, name: lower(style.name || 'wall'),
+        max: max, hp: rec ? Number(rec.hp) || 0 : max - (Number(st.dmg[key]) || 0),
+        armor: Number(style.armor) || 0, material: style.material || 'stone', salvage: style.salvage || '',
+        by: rec ? rec.by : null, can: max > 0 && (!!rec || !!style.breakable) };
+    }
+    key = t.key;
+    if (st.gone[key]) return null;
+    var e = (map.entities || []).filter(function (x) { return x.key === key; })[0]; if (!e) return null;
+    var o = objOf(c, e); if (!o) return null;
+    var pr = o.properties || {};
+    rec = (st.ents || []).indexOf(e) >= 0 ? e : null;
+    max = rec ? Number(rec.max) || 0 : Number(pr.hp) || 0;
+    return { t: 'ent', key: key, e: e, x: e.x, y: e.y, built: !!rec, rec: rec, name: lower(o.name), obj: o,
+      max: max, hp: rec ? Number(rec.hp) || 0 : max - (Number(st.dmg[key]) || 0),
+      armor: Number(pr.armor) || 0, material: pr.material || 'wood', salvage: pr.salvage || '',
+      by: rec ? rec.by : null, can: max > 0 && !yes(pr.indestructible) && !NO_HP_KINDS[o.kind] };
+  }
+  /** Client-side: the same answer from the map it draws (the layer hangs on a live map as map._struct). */
+  function structInfo(c, map, t) { return resolveOn(c, map, map && map._struct, t); }
+  function resolveTarget(c, ws, mapId, t) { return resolveOn(c, liveMap(c, ws, mapId), structOf(ws, mapId), t); }
+
+  /** A wall or object is destroyed: it leaves the map (and takes the fixtures hanging on it along). */
+  function destroyStructure(c, ws, mapId, tg, src, ev) {
+    var st = structOf(ws, mapId), ms = mapState(ws, mapId), map = liveMap(c, ws, mapId);
+    function dropEnt(key) {
+      var i = -1; st.ents.forEach(function (b, n) { if (b.key === key) i = n; });
+      if (i >= 0) st.ents.splice(i, 1); else st.gone[key] = 1;
+      delete st.dmg[key]; delete ms.states[key]; delete ms.timers[key];
+    }
+    if (tg.t === 'wall') {
+      // whatever hangs on this stretch of wall (a door, a window, a torch) goes with it
+      (map.entities || []).forEach(function (e) {
+        var o = objOf(c, e);
+        if (isWallFixture(o) && fixtureEdges(o, e).some(function (q) { return q.orient === tg.orient && q.x === tg.x && q.y === tg.y; })) dropEnt(e.key);
+      });
+      if (st.walls[tg.key]) delete st.walls[tg.key]; else st.gone[tg.key] = 1;
+      delete st.dmg[tg.key];
+    } else dropEnt(tg.key);
+    touchStruct(st); ws.dirty = true;
+    ev.push({ type: 'struct', map: mapId, op: 'break', key: tg.key, x: tg.x, y: tg.y });
+    if (src && src.player) {
+      ev.push({ type: 'info', to: src.player.id, text: 'The ' + tg.name + ' breaks.' });
+      if (tg.salvage) list(tg.salvage).forEach(function (g) { give(c, src.player, g.item, g.qty, ev); });
+    }
+  }
+  /**
+   * Hurt a wall or object. src = {kind: 'melee'|'bullet'|'blast'|'fire'|'monster', by: id, player: the
+   * player object when a player did it}. Returns null when the thing cannot be damaged at all, else
+   * {dealt, destroyed, tg}.
+   */
+  function damageStructure(c, ws, mapId, t, amount, src, ev) {
+    var tg = resolveTarget(c, ws, mapId, t);
+    if (!tg || !tg.can || tg.hp <= 0) return null;
+    src = src || {};
+    // other players' structures are safe from players unless the game allows it (config pvp_structures)
+    if (src.player && tg.by && tg.by !== src.player.id && !yes(c.config.pvp_structures)) return null;
+    var mult = (MULT[src.kind] || {})[tg.material]; if (mult === undefined) mult = 1;
+    var dealt = Math.max(0, Math.round(amount * mult) - tg.armor);
+    if (dealt <= 0) return { dealt: 0, destroyed: false, tg: tg };
+    var st = structOf(ws, mapId), left = tg.hp - dealt;
+    if (tg.built) tg.rec.hp = Math.max(0, left); else st.dmg[tg.key] = (Number(st.dmg[tg.key]) || 0) + dealt;
+    touchStruct(st); ws.dirty = true;
+    ev.push({ type: 'hit', map: mapId, x: tg.x, y: tg.y, amount: dealt, struct: tg.key, hp: Math.max(0, left), max: tg.max });
+    if (left <= 0) destroyStructure(c, ws, mapId, tg, src, ev);
+    return { dealt: dealt, destroyed: left <= 0, tg: tg };
+  }
+  /** What stands on a wall edge, as a target: the door/window fixture there if it can be hurt, else the wall. */
+  function edgeTarget(c, map, st, orient, x, y) {
+    var fx = (map.entities || []).filter(function (e) {
+      var o = objOf(c, e);
+      return isWallFixture(o) && fixtureEdges(o, e).some(function (q) { return q.orient === orient && q.x === x && q.y === y; });
+    }).map(function (e) { return resolveOn(c, map, st, { t: 'ent', key: e.key }); }).filter(function (g) { return g && g.can; })[0];
+    if (fx) return { t: 'ent', key: fx.key };
+    var w = resolveOn(c, map, st, { t: 'wall', orient: orient, x: x, y: y });
+    return w && w.can ? { t: 'wall', orient: orient, x: x, y: y } : null;
+  }
+  /**
+   * What a melee swing from p at the neighbouring cell (x,y) would hit, if not a creature: the wall or
+   * fixture on the edge between them, else a solid object standing in that cell. null = nothing breakable.
+   */
+  function strikeTarget(c, map, p, x, y) {
+    var st = map && map._struct, ed = Rl().sharedEdge(p.x, p.y, x, y);
+    if (!map || !ed) return null;
+    var onEdge = edgeTarget(c, map, st, ed.orient, ed.x, ed.y);
+    if (onEdge) return onEdge;
+    if (Rl().edgeBlocked(c, map, ed.orient, ed.x, ed.y, 'move')) return null;          // an unbreakable wall is in the way
+    var hit = Rl().blockersAt(c, map, x, y).filter(function (e) { return !isWallFixture(objOf(c, e)); })
+      .map(function (e) { return resolveOn(c, map, st, { t: 'ent', key: e.key }); }).filter(function (g) { return g && g.can; })[0];
+    return hit ? { t: 'ent', key: hit.key } : null;
+  }
+  function structureDamageOf(c, p, weapon) {
+    if (weapon && Number(weapon.structureDmg) > 0) return Number(weapon.structureDmg);
+    var k = c.config.structure_dmg_scale === undefined || c.config.structure_dmg_scale === '' ? 0.5 : Number(c.config.structure_dmg_scale);
+    return Math.max(1, Math.round(stats(c, p).atk * (k >= 0 ? k : 0.5)));
+  }
+  /** A melee swing at a wall or object (same pace as a basic attack). */
+  function strike(c, ws, p, t, now, rng, ev) {
+    if (now < (p.nextAttack || 0)) return false;
+    p.nextAttack = now + (Number(c.config.attack_ms) || 0);
+    var res = damageStructure(c, ws, p.map, t, structureDamageOf(c, p, c.items[(p.equipment || {}).weapon]), { kind: 'melee', by: p.id, player: p }, ev);
+    if (!res) ev.push({ type: 'info', to: p.id, text: 'You can\'t damage that.' });
+    else if (!res.dealt) ev.push({ type: 'info', to: p.id, text: 'You can\'t even scratch the ' + res.tg.name + '.' });
+    else if (!res.destroyed) ev.push({ type: 'info', to: p.id, text: 'You hit the ' + res.tg.name + ' for ' + res.dealt + '.' });
+    return true;
+  }
+
   function entity(c, mapId, key) {
     var m = c.maps[mapId];
     return m ? m.entities.filter(function (e) { return e.key === key; })[0] : null;
@@ -318,6 +505,17 @@ var World = (function () {
   /** The opening overlay for a map: {edgeKey: {move, sight, key}} (true = blocked). stateFn(entity) -> state. */
   function buildEdgeOv(c, map, stateFn) {
     var out = {}, R = Rl();
+    // A wall beaten below the breach point has holes in it: you can see and shoot through, not walk through.
+    var st0 = map && map._struct;
+    if (st0) {
+      var bp = c.config.breach_at_pct === undefined || c.config.breach_at_pct === '' ? 0.33 : Number(c.config.breach_at_pct);
+      Object.keys(st0.dmg || {}).concat(Object.keys(st0.walls || {})).forEach(function (k) {
+        var ed = edgeOfKey(k); if (!ed) return;
+        var g = resolveOn(c, map, st0, { t: 'wall', orient: ed.orient, x: ed.x, y: ed.y });
+        if (g && g.max > 0 && g.hp > 0 && g.hp / g.max < bp && R.edgeBlocked(c, { hWalls: map.hWalls, vWalls: map.vWalls }, ed.orient, ed.x, ed.y, 'move'))
+          out[k] = { move: true, sight: false, breach: true };
+      });
+    }
     if (map) (map.entities || []).forEach(function (e) {
       var o = objOf(c, e), kind = openingOf(o); if (!kind) return;
       var shut = kind === 'door' && stateFn(e) !== 'open';
@@ -328,7 +526,7 @@ var World = (function () {
     return out;
   }
   function syncEdges(c, ws, mapId) {
-    var m = c.maps[mapId]; if (m) m._edgeOv = buildEdgeOv(c, m, function (e) { return stateOf(c, ws, mapId, e); });
+    var m = liveMap(c, ws, mapId); if (m) m._edgeOv = buildEdgeOv(c, m, function (e) { return stateOf(c, ws, mapId, e); });
   }
   /** The client's version: same overlay, built from its view (stateFn = viewLookup(...).stateOf). */
   function syncEdgesView(c, map, stateFn) { if (map) map._edgeOv = buildEdgeOv(c, map, stateFn); }
@@ -396,7 +594,7 @@ var World = (function () {
     };
   }
   function free(c, ws, mapId, x, y, self) {
-    var map = c.maps[mapId];
+    var map = liveMap(c, ws, mapId);
     if (!map || x < 0 || y < 0 || x >= map.width || y >= map.height) return false;
     var t = Rl().terrainAt(c, map, x, y);
     if (!t || !(t.pass.n || t.pass.e || t.pass.s || t.pass.w)) return false;
@@ -430,7 +628,7 @@ var World = (function () {
    * (edited in the editor or in Game Data): unchanged monsters stay where they are.
    */
   function ensureMonsters(c, ws, mapId, now, rng) {
-    var ms = mapState(ws, mapId), map = c.maps[mapId];
+    var ms = mapState(ws, mapId), map = liveMap(c, ws, mapId);
     if (!map) { ms.monsters = ms.monsters || []; return ms; }
     var want = [];
     map.entities.forEach(function (e) {
@@ -463,8 +661,9 @@ var World = (function () {
 
   /** Moves the world on to `now`: timers, respawns, monsters wandering, chasing and attacking. */
   function advance(c, ws, mapId, players, now, rng, ev) {
-    var map = c.maps[mapId]; if (!map) return;
+    if (!c.maps[mapId]) return;
     syncEdges(c, ws, mapId);                              // refresh the opening overlay monster AI reads
+    var map = liveMap(c, ws, mapId);
     var ms = ensureMonsters(c, ws, mapId, now, rng);
     Object.keys(ms.timers).forEach(function (k) {
       var t = ms.timers[k]; if (now >= t.at) { setState(ws, mapId, k, t.state); delete ms.timers[k]; }
@@ -900,18 +1099,19 @@ var World = (function () {
     if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return { ok: false, reason: 'Out of the map.' };
     if (tx === p.x && ty === p.y) return { ok: false, reason: 'Pick a target.' };
     if (cheb(p.x, p.y, tx, ty) > w.range) return { ok: false, reason: 'Too far away. Move closer with the movement keys.' };
-    var line = lineCells(p.x, p.y, tx, ty).slice(1), cells = [], prev = { x: p.x, y: p.y };
+    var line = lineCells(p.x, p.y, tx, ty).slice(1), cells = [], prev = { x: p.x, y: p.y }, stop = null;
     for (var i = 0; i < line.length; i++) {
       var cx = line[i].x, cy = line[i].y;
       if (cheb(p.x, p.y, cx, cy) > w.range) break;
-      if (edgeBlocksSight(c, map, prev, line[i])) break;          // an edge wall stops the shot before this cell
+      if (edgeBlocksSight(c, map, prev, line[i])) { stop = { edge: Rl().sharedEdge(prev.x, prev.y, cx, cy) }; break; }   // an edge wall stops the shot before this cell
       cells.push(line[i]);
-      if (blocksSight(c, map, cx, cy, lk.stateOf) && !(cx === tx && cy === ty)) break;   // a wall stops the shot here
+      if (blocksSight(c, map, cx, cy, lk.stateOf)) { stop = { cell: { x: cx, y: cy } }; if (!(cx === tx && cy === ty)) break; }   // a wall stops the shot here
       prev = line[i];
     }
     var last = cells[cells.length - 1];
     if (lk.monsterAt(tx, ty) && !(last && last.x === tx && last.y === ty)) return { ok: false, reason: 'Something is in the way.' };
-    return { ok: true, cells: cells, weapon: w };
+    // stop = what ended the bullet's flight, if a wall edge or a solid cell did (the shot damages it)
+    return { ok: true, cells: cells, weapon: w, stop: stop };
   }
 
   function cast(c, ws, p, a, now, rng, ev, players) {
@@ -922,7 +1122,7 @@ var World = (function () {
     if (now < ((p.cooldowns || {})[sk.id] || 0)) return say(sk.name + ' is not ready yet.');
     if ((Number(p.mp) || 0) < sk.mp) return say('Not enough mana for ' + sk.name + '.');
     if (sk.ammo && count(p, sk.ammo) < sk.ammoCost) return say('Out of ' + lower(itemName(c, sk.ammo)) + '.');
-    var mapId = p.map, map = c.maps[mapId], lk = serverLookup(c, ws, mapId, players);
+    var mapId = p.map, map = liveMap(c, ws, mapId), lk = serverLookup(c, ws, mapId, players);
     var self = sk.target === 'self' || sk.target === 'around';
     var tx = self ? p.x : Math.round(Number(a.x)), ty = self ? p.y : Math.round(Number(a.y));
     if (isNaN(tx) || isNaN(ty)) return say('Pick a target.');
@@ -1015,7 +1215,7 @@ var World = (function () {
     if (hasStatus(p, 'stun')) return say('You are stunned.');
     var fire = Number(w.fireMs) || Number(c.config.attack_ms) || 0;
     if (now < ((p.cooldowns || {})._shoot || 0)) return;        // still cycling: ignore quietly
-    var map = c.maps[p.map], lk = serverLookup(c, ws, p.map, players);
+    var map = liveMap(c, ws, p.map), lk = serverLookup(c, ws, p.map, players);
     var tx = Math.round(Number(a.x)), ty = Math.round(Number(a.y));
     if (isNaN(tx) || isNaN(ty)) return say('Pick a target.');
     var reach = shotReach(c, map, p, tx, ty, lk);
@@ -1041,6 +1241,17 @@ var World = (function () {
     }
     ev.push({ type: 'shoot', map: p.map, by: p.id, from: { x: p.x, y: p.y }, to: { x: end.x, y: end.y },
       aim: { x: tx, y: ty }, color: w.tint || '#ffd36b' });
+    // A bullet that was stopped by a wall, door or solid object (rather than spent on a creature) damages it.
+    if (reach.stop && hits < pen) {
+      var st1 = map._struct, bt = null;
+      if (reach.stop.edge) bt = edgeTarget(c, map, st1, reach.stop.edge.orient, reach.stop.edge.x, reach.stop.edge.y);
+      else if (reach.stop.cell) {
+        var bc = Rl().blockersAt(c, map, reach.stop.cell.x, reach.stop.cell.y).filter(function (e) { var o = objOf(c, e); return o && !isWallFixture(o); })
+          .map(function (e) { return resolveOn(c, map, st1, { t: 'ent', key: e.key }); }).filter(function (g) { return g && g.can; })[0];
+        if (bc) bt = { t: 'ent', key: bc.key };
+      }
+      if (bt) damageStructure(c, ws, p.map, bt, structureDamageOf(c, p, w), { kind: 'bullet', by: p.id, player: p }, ev);
+    }
   }
 
   /** Throw a belt item (grenade/molotov) at (x,y): area damage + status, up to throw_range away. */
@@ -1051,7 +1262,7 @@ var World = (function () {
     if (count(p, id) < 1) return say('Out of ' + lower(it.name) + '.');
     if (hasStatus(p, 'stun')) return say('You are stunned.');
     if (now < ((p.cooldowns || {})._throw || 0)) return;
-    var map = c.maps[p.map], tx = Math.round(Number(a.x)), ty = Math.round(Number(a.y));
+    var map = liveMap(c, ws, p.map), tx = Math.round(Number(a.x)), ty = Math.round(Number(a.y));
     if (isNaN(tx) || isNaN(ty)) return say('Pick a spot.');
     if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return say('Out of the map.');
     if (cheb(p.x, p.y, tx, ty) > (it.throwRange || 4)) return say('Too far away. Move closer with the movement keys.');
@@ -1075,7 +1286,29 @@ var World = (function () {
       }
       if (it.throwStatus) applyStatus(c, m, it.throwStatus, Number(it.throwStatusMs) || 3000, now, p.id);
     });
-    if (!mons.length) say('The ' + lower(it.name) + ' goes off, hitting nothing.');
+    // The blast also batters the walls, doors and objects it reaches (worked out before anything breaks, so a
+    // wall still shields what is behind it from this same blast).
+    var broke = 0;
+    if (Number(it.throwPower) > 0) {
+      var reached = blastCells(c, map, land.x, land.y, area, stateFn), seenT = {}, targets = [], R2 = Rl();
+      var addT = function (t, key) { if (!seenT[key]) { seenT[key] = 1; targets.push(t); } };
+      reached.forEach(function (cell) {
+        R2.blockersAt(c, map, cell.x, cell.y).forEach(function (e) { if (!isWallFixture(objOf(c, e))) addT({ t: 'ent', key: e.key }, e.key); });
+        [['h', cell.x, cell.y], ['h', cell.x, cell.y + 1], ['v', cell.x, cell.y], ['v', cell.x + 1, cell.y]].forEach(function (q) {
+          addT({ t: 'wall', orient: q[0], x: q[1], y: q[2] }, R2.edgeKey(q[0], q[1], q[2]));
+        });
+      });
+      (map.entities || []).forEach(function (e) {
+        var o = objOf(c, e);
+        if (isWallFixture(o) && fixtureEdges(o, e).some(function (q) { return seenT[R2.edgeKey(q.orient, q.x, q.y)]; })) targets.unshift({ t: 'ent', key: e.key });
+      });
+      targets.forEach(function (t) {
+        var r1 = damageStructure(c, ws, p.map, t, Number(it.throwPower), { kind: 'blast', by: p.id, player: p }, ev);
+        if (r1 && r1.dealt) broke++;
+        if (it.burns && !(r1 && r1.destroyed)) { var r2 = damageStructure(c, ws, p.map, t, Number(it.throwPower) / 2, { kind: 'fire', by: p.id, player: p }, ev); if (r2 && r2.dealt) broke++; }
+      });
+    }
+    if (!mons.length && !broke) say('The ' + lower(it.name) + ' goes off, hitting nothing.');
   }
 
   /** Rearrange a bar. bar 'ability' = the 2 Q/E skill slots; 'belt' = the 5 item slots. */
@@ -1176,7 +1409,7 @@ var World = (function () {
   }
 
   function onStep(c, ws, p, now, ev) {
-    var map = c.maps[p.map], moved = false;
+    var map = liveMap(c, ws, p.map), moved = false;
     markExplored(c, p);                                                // stepped into a room? remember it
     Rl().entitiesAt(map, p.x, p.y).forEach(function (e) {
       if (moved) return;
@@ -1307,7 +1540,7 @@ var World = (function () {
    * whatever you face. verb '' = the default action; 'picklock' = try to pick its lock.
    */
   function interact(c, ws, p, now, rng, ev, players, target, verb) {
-    var map = c.maps[p.map];
+    var map = liveMap(c, ws, p.map);
     // A click on a wall object's sprite / a door's hole resolves to that entity, and uses it from the
     // nearest footprint cell — so range + facing are right, and any tile of a wide door works.
     var wm = target ? wallMountAt(c, map, target.x, target.y) : null;
@@ -1422,7 +1655,7 @@ var World = (function () {
       for (var i = 0; i < dirs.length; i++) {
         var dir = dirs[i]; if (!Rl().DIRS[dir]) continue;
         p.facing = dir;
-        var r = Rl().tryMove(c, c.maps[p.map], p.x, p.y, dir, moveOpts(c, ws, p.map, players, p));
+        var r = Rl().tryMove(c, liveMap(c, ws, p.map), p.x, p.y, dir, moveOpts(c, ws, p.map, players, p));
         if (r.ok) { p.x = r.x; p.y = r.y; if (onStep(c, ws, p, now, ev)) break; }
         else if (r.reason === 'occupied' && r.who.monster) attack(c, ws, p.map, p, r.who.monster, now, rng, ev);
       }
@@ -1431,10 +1664,14 @@ var World = (function () {
       interact(c, ws, p, now, rng, ev, players, tgt, action.verb || '');
     } else if (action.type === 'attack') {
       var ax = Math.round(Number(action.x)), ay = Math.round(Number(action.y)), am = monsterAt(mapState(ws, p.map), ax, ay);
-      if (!am) ev.push({ type: 'info', to: p.id, text: 'Nothing to attack there.' });
+      var amap = liveMap(c, ws, p.map), wallHere = near(p, ax, ay) && moveBlockedEdge(c, amap, p.x, p.y, ax, ay);
+      // No creature to hit (or a wall between you and it): a breakable wall, door or object there takes the swing.
+      var sTarget = (!am || wallHere) && near(p, ax, ay) && !(ax === p.x && ay === p.y) ? strikeTarget(c, amap, p, ax, ay) : null;
+      if (sTarget) { faceTo(p, ax, ay); strike(c, ws, p, sTarget, now, rng, ev); }
+      else if (!am) ev.push({ type: 'info', to: p.id, text: 'Nothing to attack there.' });
       else if (!near(p, ax, ay)) ev.push({ type: 'info', to: p.id, text: 'Too far away.' });
       // A wall on the shared edge stops a melee swing, just as it stops a step (near() is orthogonal only).
-      else if (moveBlockedEdge(c, c.maps[p.map], p.x, p.y, ax, ay)) ev.push({ type: 'info', to: p.id, text: 'A wall is in the way.' });
+      else if (wallHere) ev.push({ type: 'info', to: p.id, text: 'A wall is in the way.' });
       else { faceTo(p, ax, ay); attack(c, ws, p.map, p, am, now, rng, ev); }
     }
     else if (action.type === 'use') useItem(c, ws, p, action.item, now, ev);
@@ -1477,12 +1714,17 @@ var World = (function () {
       }
       if (at) out.forEach(function (a) { a.at = at; });          // act from the footprint cell, not the clicked face/hole
     }
+    // A breakable wall, door or object right next to you can be attacked (listed after any way to use it).
+    if (near(p, x, y) && !(x === p.x && y === p.y)) {
+      var stg = strikeTarget(c, map, p, x, y), sinfo = stg && structInfo(c, map, stg);
+      if (sinfo) out.push({ type: 'attack', verb: '', label: 'Attack the ' + sinfo.name });
+    }
     return out;                                                 // movement is keyboard-only: no "walk here"
   }
 
   // ------------------------------------------------------------ what a player sees
-  function view(c, ws, mapId, p, players) {
-    var ms = mapState(ws, mapId), states = {}, map = c.maps[mapId], now = Date.now();
+  function view(c, ws, mapId, p, players, structRev) {
+    var ms = mapState(ws, mapId), states = {}, map = liveMap(c, ws, mapId), now = Date.now();
     Object.keys(ms.states).forEach(function (k) { states[k] = ms.states[k]; });
     if (map) map.entities.forEach(function (e) {
       var o = objOf(c, e), k = kindOf(c, e); if (!o || !k || !k.states.length) return;
@@ -1494,8 +1736,11 @@ var World = (function () {
       var s = stateOf(c, ws, mapId, e);
       if (s !== k.states[0]) states[e.key] = s; else delete states[e.key];
     });
+    // The structure layer travels with the view only when this client is behind (it sends the revision it has).
+    var sv = ms.struct, srev = sv ? sv.rev || 0 : 0;
     return {
       map: mapId, states: states, now: now,
+      structRev: srev, struct: srev && structRev !== srev ? publicStruct(sv) : undefined,
       monsters: (ms.monsters || []).filter(function (m) { return !m.dead; }).map(function (m) {
         var d = c.monsters[m.ref];
         return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing,
@@ -1565,6 +1810,8 @@ var World = (function () {
     syncEdges: syncEdges, syncEdgesView: syncEdgesView, isEdgeDoor: isEdgeDoor, isWallFixture: isWallFixture, openingOf: openingOf,
     mountEdgeOf: mountEdgeOf, fixtureEdges: fixtureEdges, wallMountAt: wallMountAt, wallMountUseCell: wallMountUseCell,
     visibleCells: visibleCells, perceive: perceive,
-    roofZoneAt: roofZoneAt, roofZones: roofZones };
+    roofZoneAt: roofZoneAt, roofZones: roofZones,
+    liveMap: liveMap, liveMapFromStruct: liveMapFromStruct, structOf: structOf, publicStruct: publicStruct,
+    structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure };
 })();
 if (typeof module !== 'undefined') module.exports = World;

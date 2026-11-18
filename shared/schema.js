@@ -62,6 +62,11 @@ var Schema = (function () {
       f('color', 'color', '#8a8f98', 'Fallback colour drawn when the sprites are missing'),
       f('blocks_move', 'bool', true, 'Blocks walking across this edge'),
       f('blocks_sight', 'bool', true, 'Blocks line of sight and shots across this edge'),
+      f('hp', 'number', 0, 'Health of one wall segment. 0 = cannot be damaged'),
+      f('armor', 'number', 0, 'Taken off every hit'),
+      f('material', 'select', 'stone', 'What it is made of: decides how hard blows, bullets, blasts and fire land', { options: ['wood', 'metal', 'stone', 'glass'] }),
+      f('breakable', 'bool', false, 'Walls of this style painted in the map editor can be damaged (needs hp above 0)'),
+      f('salvage', 'text', '', 'Items handed to whoever breaks it, e.g. wood:2; nails:1'),
       f('notes', 'text', '')
     ] },
     kinds: { collection: 'kinds', id: null, label: 'Kinds', authored: 'studio', fields: [
@@ -104,6 +109,8 @@ var Schema = (function () {
       f('falloff', 'number', 0, 'Damage lost per extra hit (0–1)'),
       f('throw_range', 'number', 0), f('throw_area', 'number', 0), f('throw_power', 'number', 0),
       f('throw_status', 'ref', '', '', { ref: 'statuses' }), f('throw_status_ms', 'number', 0),
+      f('structure_dmg', 'number', 0, 'Damage per hit to walls and objects (0 = half its attack)'),
+      f('burns', 'bool', false, 'Throwables: the blast also burns wooden walls and objects'),
       f('on_use', 'textarea', '', 'Data-driven action list')
     ] },
     monsters: { collection: 'monsters', id: 'id', label: 'Monsters', authored: 'studio', fields: [

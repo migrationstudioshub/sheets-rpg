@@ -151,8 +151,9 @@ exports.game = onRequest({ region: 'us-central1', cors: true, secrets: [EDITOR_K
     switch (body.action) {
       case 'join': out = await join(body.name, body['class']); break;
       case 'load': out = await step(body.token, null, -1); break;
-      case 'poll': out = await step(body.token, null, body.since); break;
-      case 'act':  out = await step(body.token, body['do'], body.since); break;
+      case 'poll': out = await step(body.token, null, body.since, body.structRev); break;
+      case 'act':  out = await step(body.token, body['do'], body.since, body.structRev); break;
+      case 'resetStructures': requireEditor(body.key); out = await referee.resetStructures(body.map); break;
       case 'save': out = { ok: true }; break;                 // state is persisted every step already
       case 'content': out = { content: await getContent() }; break;
       case 'records': out = await records(); break;

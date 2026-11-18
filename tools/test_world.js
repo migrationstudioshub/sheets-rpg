@@ -1141,4 +1141,147 @@ test('a window in a N-S wall: you peek through it only when standing at it', () 
   assert.ok(!World.canSee(c, map, 1, 1, 3, 1, st), 'and so is the next row');
 });
 
+// ---------------------------------------------------------------- structures: health, damage, destruction
+// A small arena: 7x7 open ground, a wall along the north edge of row 3 — planks (breakable) on x 0-3, brick
+// (not breakable) on x 4-6 — with a wooden door in the plank wall at x=1, and a crate standing at (5,1).
+function arena() {
+  const t = JSON.parse(JSON.stringify(tables));
+  const row = Array(7).fill('til_1');
+  t.WallStyles.push({ id: 'planks', name: 'Plank wall', color: '#775533', blocks_move: true, blocks_sight: true, hp: 20, armor: 0, material: 'wood', breakable: true, salvage: 'potion:1' });
+  t.WallStyles.push({ id: 'hardbrick', name: 'Old brick', color: '#884433', blocks_move: true, blocks_sight: true, hp: 100, armor: 0, material: 'stone', breakable: false });
+  t.Objects.push({ id: 't_door', name: 'Shed door', kind: 'door', walkable: true, properties: '{"layer":"wall","hp":12,"material":"wood"}' });
+  t.Objects.push({ id: 't_crate', name: 'Crate', kind: 'deco', walkable: false, blocks_sight: true, properties: '{"hp":10,"material":"wood"}' });
+  t.Objects.push({ id: 't_rock', name: 'Boulder', kind: 'deco', walkable: false, blocks_sight: true, properties: '{}' });
+  const wall = ['planks:2', 'planks:2', 'planks:2', 'planks:2', 'hardbrick:2', 'hardbrick:2', 'hardbrick:2'];
+  t.Maps.push({ id: 'arena', name: 'Arena', width: 7, height: 7, terrain: JSON.stringify(Array(7).fill(row)),
+    hWalls: JSON.stringify([[], [], [], wall, [], [], [], []]) });
+  t.MapEntities.push({ map: 'arena', key: 'arena.e1', x: 1, y: 3, ref: 't_door', data: '{"side":"N"}' });
+  t.MapEntities.push({ map: 'arena', key: 'arena.e2', x: 5, y: 1, ref: 't_crate', data: '' });
+  t.MapEntities.push({ map: 'arena', key: 'arena.e3', x: 6, y: 5, ref: 't_rock', data: '' });
+  const c = Content.build(t), ws = { maps: {} };
+  const p = World.newPlayer(c, 'p1', 'Tester', 'warrior');
+  const s = { c, ws, p };
+  put(s, 'arena', 2, 3, 'N');
+  return s;
+}
+const liveOf = (s) => { World.syncEdges(s.c, s.ws, 'arena'); return World.liveMap(s.c, s.ws, 'arena'); };
+const stOf = (s) => (e) => World.stateOf(s.c, s.ws, 'arena', e);
+const WALL = (x) => ({ t: 'wall', orient: 'h', x: x, y: 3 });
+
+test('nothing built or broken: the rules use the authored map itself, untouched', () => {
+  const s = arena(), base = s.c.maps.arena;
+  assert.strictEqual(World.liveMap(s.c, s.ws, 'arena'), base);
+  const before = JSON.stringify([base.hWalls, base.entities]);
+  World.damageStructure(s.c, s.ws, 'arena', WALL(2), 5, { kind: 'melee' }, []);
+  const live = World.liveMap(s.c, s.ws, 'arena');
+  assert.notStrictEqual(live, base, 'once something changed, the rules get the map with the changes applied');
+  assert.strictEqual(JSON.stringify([base.hWalls, base.entities]), before, 'the authored map is never altered');
+  assert.strictEqual(JSON.stringify(s.c.maps).indexOf('_live'), -1, 'live state does not leak into the content sent to clients');
+});
+
+test('a breakable wall: cracks, then holes you can see through, then it is gone', () => {
+  const s = arena(), ev = [];
+  assert.strictEqual(Rules.tryMove(s.c, liveOf(s), 2, 3, 'N', {}).ok, false);
+  assert.ok(!World.canSee(s.c, liveOf(s), 2, 3, 2, 2, stOf(s)));
+  World.damageStructure(s.c, s.ws, 'arena', WALL(2), 8, { kind: 'melee' }, ev);          // 12 of 20 left
+  assert.strictEqual(World.structInfo(s.c, liveOf(s), WALL(2)).hp, 12);
+  assert.ok(!World.canSee(s.c, liveOf(s), 2, 3, 2, 2, stOf(s)), 'cracked, still solid to the eye');
+  World.damageStructure(s.c, s.ws, 'arena', WALL(2), 7, { kind: 'melee' }, ev);          // 5 of 20: under a third
+  assert.ok(World.canSee(s.c, liveOf(s), 2, 3, 2, 2, stOf(s)), 'breached: you can see through the holes');
+  assert.strictEqual(Rules.tryMove(s.c, liveOf(s), 2, 3, 'N', {}).ok, false, 'but not walk through');
+  const r = World.damageStructure(s.c, s.ws, 'arena', WALL(2), 9, { kind: 'melee', player: s.p }, ev);
+  assert.ok(r.destroyed);
+  assert.strictEqual(Rules.tryMove(s.c, liveOf(s), 2, 3, 'N', {}).ok, true, 'destroyed: the way is open');
+  assert.strictEqual(World.structInfo(s.c, liveOf(s), WALL(2)), null);
+  assert.ok(World.count(s.p, 'potion') >= 3, 'whoever broke it gets its salvage');
+  assert.strictEqual(Rules.tryMove(s.c, liveOf(s), 3, 3, 'N', {}).ok, false, 'the segment next to it still stands');
+});
+
+test('a wall style that is not breakable takes no damage, whatever hits it', () => {
+  const s = arena();
+  assert.strictEqual(World.damageStructure(s.c, s.ws, 'arena', WALL(5), 500, { kind: 'blast' }, []), null);
+  assert.strictEqual(World.structInfo(s.c, liveOf(s), WALL(5)).hp, 100);
+  assert.strictEqual(World.liveMap(s.c, s.ws, 'arena'), s.c.maps.arena, 'and nothing was recorded');
+});
+
+test('swinging at a wall: the attack action hits what is in the way; a shut door goes down and stays down', () => {
+  const s = arena();
+  put(s, 'arena', 1, 3, 'N');
+  assert.deepStrictEqual(World.strikeTarget(s.c, liveOf(s), s.p, 1, 2), { t: 'ent', key: 'arena.e1' }, 'the door on that edge, not the wall behind it');
+  let now = 1000, ev = [];
+  for (let i = 0; i < 5 && World.structInfo(s.c, liveOf(s), { t: 'ent', key: 'arena.e1' }); i++) { now += 2000; ev = ev.concat(act(s, { type: 'attack', x: 1, y: 2 }, now)); }
+  assert.match(texts(ev), /You hit the shed door for 5/);           // warrior attack 9, half of it against structures
+  assert.match(texts(ev), /The shed door breaks/);
+  assert.strictEqual(World.structInfo(s.c, liveOf(s), { t: 'ent', key: 'arena.e1' }), null);
+  assert.ok(!liveOf(s).entities.some(e => e.key === 'arena.e1'), 'the door is no longer on the map');
+  assert.strictEqual(Rules.tryMove(s.c, liveOf(s), 1, 3, 'N', {}).ok, false, 'the wall it hung on still stands');
+  put(s, 'arena', 5, 3, 'N');
+  assert.match(texts(act(s, { type: 'attack', x: 5, y: 2 }, now + 5000)), /Nothing to attack there/, 'unbreakable brick is not a target');
+  put(s, 'arena', 5, 2, 'N');
+  assert.match(texts(act(s, { type: 'attack', x: 5, y: 1 }, now + 9000)), /You hit the crate for 5/, 'a solid object in the next tile is');
+  put(s, 'arena', 6, 4, 'S');
+  assert.match(texts(act(s, { type: 'attack', x: 6, y: 5 }, now + 12000)), /Nothing to attack there/, 'an object with no health is not');
+});
+
+test('breaking a wall takes the door hanging on it along', () => {
+  const s = arena();
+  World.mapState(s.ws, 'arena').states['arena.e1'] = 'open';
+  World.damageStructure(s.c, s.ws, 'arena', WALL(1), 99, { kind: 'melee' }, []);
+  const live = liveOf(s);
+  assert.ok(!live.entities.some(e => e.key === 'arena.e1'));
+  assert.strictEqual(World.mapState(s.ws, 'arena').states['arena.e1'], undefined, 'its state is forgotten too');
+  assert.strictEqual(Rules.tryMove(s.c, live, 1, 3, 'N', {}).ok, true);
+});
+
+test('a blast batters what it reaches, and a wall shields what is behind it', () => {
+  const s = arena();
+  put(s, 'arena', 2, 6, 'N');
+  World.give(s.c, s.p, 'grenade', 2, []);
+  act(s, { type: 'throw', item: 'grenade', x: 2, y: 3 }, 1000);          // lands against the plank wall from the south
+  const live = liveOf(s);
+  assert.strictEqual(World.structInfo(s.c, live, WALL(2)), null, 'grenade 18 x2 against wood: the planks it reached are gone');
+  assert.strictEqual(World.structInfo(s.c, live, WALL(5)).hp, 100, 'the brick is untouched');
+  assert.strictEqual(World.structInfo(s.c, live, { t: 'ent', key: 'arena.e2' }).hp, 10, 'the crate beyond the wall was shielded');
+});
+
+test('a bullet stopped by a wall damages it; one spent on a creature does not', () => {
+  const s = hero('survivor');
+  const c = s.c, map = c.maps.map_3;
+  c.wallStyles.planks = { id: 'planks', name: 'Plank wall', hp: 20, armor: 0, material: 'wood', breakable: true, blocksMove: true, blocksSight: true };
+  // find a spot with three clear cells to the north, and wall off the edge two cells up
+  let at = null;
+  for (let y = 4; y < map.height && !at; y++) for (let x = 0; x < map.width && !at; x++) {
+    const ok = [0, 1, 2, 3].every(d => Rules.standable(c, map, x, y - d) && !Rules.blockersAt(c, map, x, y - d).length) &&
+      [0, 1, 2].every(d => !Rules.blockedBetween(c, map, x, y - d, x, y - d - 1, 'sight'));
+    if (ok) at = { x, y };
+  }
+  assert.ok(at, 'the seed map has a clear lane');
+  while (map.hWalls.length <= at.y) map.hWalls.push([]);
+  map.hWalls[at.y - 1] = (map.hWalls[at.y - 1] || []).slice(); while (map.hWalls[at.y - 1].length < at.x) map.hWalls[at.y - 1].push('');
+  map.hWalls[at.y - 1][at.x] = 'planks:2';                                // north edge of the cell one step north
+  s.p.x = at.x; s.p.y = at.y;
+  const wall = { t: 'wall', orient: 'h', x: at.x, y: at.y - 1 };
+  World.act(c, s.ws, s.p, { type: 'shoot', x: at.x, y: at.y - 3 }, 5000, mid, [s.p]);
+  const hp1 = World.structInfo(c, World.liveMap(c, s.ws, 'map_3'), wall).hp;
+  assert.ok(hp1 < 20, 'the shot was stopped by the planks and chipped them');
+  const m = World.mapState(s.ws, 'map_3').monsters[0];
+  m.dead = false; m.hp = 999; m.x = at.x; m.y = at.y - 1;                  // a creature in front of the wall
+  World.act(c, s.ws, s.p, { type: 'shoot', x: at.x, y: at.y - 1 }, 9000, mid, [s.p]);
+  assert.ok(m.hp < 999, 'the creature took the bullet');
+  assert.strictEqual(World.structInfo(c, World.liveMap(c, s.ws, 'map_3'), wall).hp, hp1, 'and the wall behind it took nothing');
+});
+
+test('the structure layer is sent to a client only when it is behind', () => {
+  const s = arena();
+  let v = World.view(s.c, s.ws, 'arena', s.p, [s.p], undefined);
+  assert.strictEqual(v.structRev, 0); assert.strictEqual(v.struct, undefined);
+  World.damageStructure(s.c, s.ws, 'arena', WALL(2), 5, { kind: 'melee' }, []);
+  v = World.view(s.c, s.ws, 'arena', s.p, [s.p], 0);
+  assert.strictEqual(v.structRev, 1);
+  assert.strictEqual(v.struct.dmg['h2,3'], 5, 'behind: the layer comes along');
+  assert.strictEqual(World.view(s.c, s.ws, 'arena', s.p, [s.p], 1).struct, undefined, 'up to date: just the revision number');
+  const client = World.liveMapFromStruct(s.c, s.c.maps.arena, JSON.parse(JSON.stringify(v.struct)));
+  assert.strictEqual(World.structInfo(s.c, client, WALL(2)).hp, 15, 'the client works out the same health from what it was sent');
+});
+
 console.log(`\n${passed} world tests passed`);

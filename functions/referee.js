@@ -119,7 +119,7 @@ function create(deps) {
   }
 
   /** One game step: catch the world up, run the player's action (if any), persist, report back. */
-  async function step(token, action, since) {
+  async function step(token, action, since, structRev) {
     const content = await getContent();
     const now = clock();
     const all = await readPlayers();
@@ -157,7 +157,8 @@ function create(deps) {
 
     const ws = { seq: last.ms.seq, log: last.ms.log, maps: {} };
     ws.maps[p.map] = last.ms;
-    return { player: World.publicPlayer(content, p), world: World.view(content, ws, p.map, p, last.players),
+    // structRev = the structure-layer revision the client already has; after a map change it knows nothing
+    return { player: World.publicPlayer(content, p), world: World.view(content, ws, p.map, p, last.players, last !== first ? -1 : structRev),
       events: events, seq: last.ms.seq };
   }
 
@@ -173,7 +174,19 @@ function create(deps) {
     return { token: p.token, player: World.publicPlayer(content, p) };
   }
 
-  return { step: step, join: join, migrateLegacy: migrateLegacy };
+  /** Owner tool: wipe everything built, damaged or destroyed on one map, back to the authored map. */
+  async function resetStructures(mapId) {
+    if (!/^[A-Za-z0-9_-]+$/.test(String(mapId || ''))) throw new Error('bad map id');
+    const result = await db.ref('state/maps/' + mapId).transaction(cur => {
+      const ms = parseVal(cur, null); if (!ms) return cur == null ? undefined : cur;
+      const old = ms.struct || {};
+      ms.struct = { rev: (old.rev || 0) + 1, n: old.n || 0, walls: {}, ents: [], dmg: {}, gone: {} };
+      return JSON.stringify(ms);
+    }, undefined, false);
+    return { ok: true, map: mapId, changed: !!(result && result.committed) };
+  }
+
+  return { step: step, join: join, migrateLegacy: migrateLegacy, resetStructures: resetStructures };
 }
 
 module.exports = { create: create };

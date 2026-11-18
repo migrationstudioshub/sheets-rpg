@@ -573,10 +573,10 @@ var Render = (function () {
           } else edges.forEach(function (q) { vDoor[q.x + ',' + q.y] = dOpen ? 'open' : 'shut'; });   // in a thin N-S wall: a gap, or a tinted slab
           return;
         }
-        // On a cut wall, things you can use (and windows) stay standing, faint; pure decoration drops with the wall.
+        // On a cut wall, windows stay standing (solid) and things you can use stay too (faint); pure decoration drops with the wall.
         if (cut && !opening && o.kind === 'deco') return;
         var wst = states[e.key], wp = objPath(o, wst, null), mp = wallMountPlace(map, o, e, ox, oy, T);
-        renderables.push({ sortY: mp.sortY, alpha: cut ? cutA : 1, dark: inDark(e.x, e.y),
+        renderables.push({ sortY: mp.sortY, alpha: cut && !opening ? cutA : 1, dark: inDark(e.x, e.y),   // a window stands solid like a door; other fixtures go faint
           obj: { o: o, path: wp, dx: mp.dx, dy: mp.dy, flip: mp.flip, st: wst, tall: hasTop(o, wp) } });
         return;
       }

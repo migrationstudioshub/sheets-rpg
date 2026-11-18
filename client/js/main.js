@@ -765,7 +765,7 @@
         var sr = Number(content.config.sight_radius); if (!(sr > 0)) sr = 16;
         sight = { key: sKey, states: view.states, at: tNow, vis: World.visibleCells(content, map, me.x, me.y, sr, lkS.stateOf) };
         mem = seenCells[me.map] || (seenCells[me.map] = {});
-        for (var vk in sight.vis) mem[vk] = 1;
+        for (var vk in sight.vis) if (sight.vis[vk] === 1) mem[vk] = 1;   // 2 = a peek through a window: seen now, not remembered
       }
       vis = sight.vis; mem = seenCells[me.map];
     }

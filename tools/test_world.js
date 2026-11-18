@@ -1032,7 +1032,7 @@ test('a monster cannot melee you through a wall, but can when adjacent in the op
   assert.ok(p.hp < 100, 'with no wall between, the adjacent monster hits');
 });
 
-test('wall openings: a window passes sight but not feet, an archway passes both, the plain wall neither', () => {
+test('wall openings: a window shows through only to someone standing at it, an archway passes both, the plain wall neither', () => {
   const row = ['grass', 'grass', 'grass', 'grass', 'grass'];
   const c = Content.build({
     Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
@@ -1052,7 +1052,17 @@ test('wall openings: a window passes sight but not feet, an archway passes both,
   const ws = { maps: {} }, st = (e) => World.stateOf(c, ws, 'm', e);
   World.syncEdges(c, ws, 'm');
   assert.strictEqual(Rules.tryMove(c, map, 1, 2, 'N', {}).ok, false, 'you cannot climb through a window');
-  assert.ok(World.canSee(c, map, 1, 2, 1, 1, st), 'you can see through a window');
+  assert.ok(World.canSee(c, map, 1, 2, 1, 1, st), 'standing at a window you can see through it');
+  assert.ok(World.canSee(c, map, 1, 2, 1, 0, st), 'straight ahead');
+  assert.ok(!World.canSee(c, map, 1, 2, 0, 1, st) && !World.canSee(c, map, 1, 2, 2, 0, st), 'but only a narrow cone: not off to the side');
+  const pk = World.visibleCells(c, map, 1, 2, 8, st);
+  assert.strictEqual(pk['1,1'], 2, 'cells seen through the window are marked as a peek');
+  assert.strictEqual(pk['1,3'], 1, 'cells on your own side are plainly seen');
+  assert.ok(World.canSee(c, map, 1, 1, 1, 3, st), 'from the other side too');
+  assert.ok(!World.canSee(c, map, 1, 3, 1, 1, st), 'one step back from the window it is just wall');
+  assert.ok(!World.canSee(c, map, 0, 2, 1, 1, st), 'and so it is from the next column');
+  const vw = World.visibleCells(c, map, 1, 4, 8, st);
+  assert.ok(!vw['1,1'] && !vw['1,0'], 'nothing behind the window is visible from a distance');
   assert.strictEqual(Rules.tryMove(c, map, 3, 2, 'N', {}).ok, true, 'an archway lets you walk through');
   assert.ok(World.canSee(c, map, 3, 2, 3, 1, st), 'and see through');
   assert.strictEqual(Rules.tryMove(c, map, 2, 2, 'N', {}).ok, false, 'the plain wall still blocks');

@@ -101,8 +101,23 @@ var Rules = (function () {
   // transient overlay {key: {move, sight}} (true = blocked) that World.syncEdges rebuilds from the current
   // door states. Everything — walking, line of sight, shots, visibility — asks this one function.
   function edgeKey(orient, x, y) { return orient + x + ',' + y; }
-  function edgeBlocked(content, map, orient, x, y, what) {
+  // A window is a PEEK opening (ov.peek): it only passes sight for a viewer standing right at it — in one of
+  // the two cells the window's edge separates — and only along a narrow cone straight out from the window:
+  // a target may sit one cell off the window's line per PEEK_SLOPE cells of distance. `from` = the viewer's
+  // cell and what they look at, {x, y, tx, ty}; without it a window is opaque.
+  var PEEK_SLOPE = 4;
+  function edgeBlocked(content, map, orient, x, y, what, from) {
     var ov = map._edgeOv && map._edgeOv[edgeKey(orient, x, y)];
+    if (ov && what === 'sight' && ov.peek) {
+      if (!from) return true;
+      var at = orient === 'h' ? from.x === x && (from.y === y || from.y === y - 1)
+                              : from.y === y && (from.x === x || from.x === x - 1);
+      if (!at) return true;
+      if (from.tx == null) return false;
+      var off = orient === 'h' ? Math.abs(from.tx - x) : Math.abs(from.ty - y);          // sideways from the window's line
+      var out = orient === 'h' ? Math.abs(from.ty - from.y) : Math.abs(from.tx - from.x); // distance straight out
+      return off * PEEK_SLOPE > out;
+    }
     if (ov) return what === 'sight' ? ov.sight : ov.move;
     var tok = wallAt(map, orient, x, y);
     return what === 'sight' ? wallBlocksSight(content, tok) : wallBlocksMove(content, tok);
@@ -113,9 +128,9 @@ var Rules = (function () {
     if (ay === by && Math.abs(ax - bx) === 1) return { orient: 'v', x: Math.max(ax, bx), y: ay };
     return null;
   }
-  function blockedBetween(content, map, ax, ay, bx, by, what) {
+  function blockedBetween(content, map, ax, ay, bx, by, what, from) {
     var e = sharedEdge(ax, ay, bx, by);
-    return e ? edgeBlocked(content, map, e.orient, e.x, e.y, what) : false;
+    return e ? edgeBlocked(content, map, e.orient, e.x, e.y, what, from) : false;
   }
 
   /**

@@ -631,6 +631,19 @@ test('hunger and thirst drain over time; eating and drinking restore them', () =
   assert.match(texts(act(s, { type: 'use', item: 'ration' })), /not hungry/);
 });
 
+test('time away from the game costs no food, water or health', () => {
+  const s = fresh();
+  World.advance(s.c, s.ws, 'map_3', [s.p], 0, mid, []);
+  World.advance(s.c, s.ws, 'map_3', [s.p], 8 * 3600 * 1000, mid, []);  // back after eight hours logged out
+  assert.strictEqual(s.p.hunger, 100); assert.strictEqual(s.p.thirst, 100);
+  World.advance(s.c, s.ws, 'map_3', [s.p], 8 * 3600 * 1000 + 60000, mid, []);   // a minute of play drains as usual
+  assert.ok(Math.abs(s.p.hunger - 99.4) < 1e-6);
+  s.p.hunger = 0; const hp0 = s.p.hp;
+  World.advance(s.c, s.ws, 'map_3', [s.p], 8 * 3600 * 1000 + 63000, mid, []);   // starving: first bite scheduled
+  World.advance(s.c, s.ws, 'map_3', [s.p], 30 * 3600 * 1000, mid, []);          // ...then away for a day
+  assert.strictEqual(s.p.hp, hp0, 'no starvation damage piles up while away');
+});
+
 test('an empty stomach gnaws at your health', () => {
   const s = fresh();
   World.advance(s.c, s.ws, 'map_3', [s.p], 60000, mid, []);            // clock now at 60 s

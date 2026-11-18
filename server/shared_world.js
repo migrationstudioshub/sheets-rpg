@@ -579,6 +579,11 @@ var World = (function () {
   }
   /** Hunger and thirst drain over time; at zero they gnaw at your health. Set to 0 in Config to disable. */
   function survivalTick(c, ws, p, now, hDecay, tDecay, starveDmg, starveMs, ev) {
+    // Time only passes for a player who is in the game. A playing client checks in every few seconds, so a
+    // gap longer than AWAY_MS means they were logged out: that stretch costs no food or water, and the
+    // starvation clock starts afresh instead of landing all its missed bites at once.
+    var AWAY_MS = 120000;
+    if (p.lastSurvival != null && now - p.lastSurvival > AWAY_MS) { p.lastSurvival = now; p.nextStarve = 0; }
     if (p.lastSurvival != null) {
       var secs = Math.max(0, now - p.lastSurvival) / 1000;
       if (hDecay) p.hunger = Math.max(0, (Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)) - hDecay * secs / 60);

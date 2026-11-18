@@ -9,15 +9,31 @@ on a kind-craft object), the `craft` action, `World.recipesFor`, the crafting pa
 harvestable objects (`properties.harvest` / `harvest_tool` / `respawn_s`) that grow back. Phase 3: the Blueprints table,
 `World.canBuild` / `blueprintsFor`, the `build` / `work` / `dismantle` / `upgrade` / `store` actions, frames, repair,
 storage containers and rubble, build mode in the client (key B, ghost preview, F works on a frame), the storage panel,
-and the No-build tab in the map editor (`map.nobuild`). Phases 4-5 planned.
+and the No-build tab in the map editor (`map.nobuild`). Phase 4: claims (object kind `claim`, `World.claimsOn` /
+`claimAt` / `mayUse` / `isMember` / `mayDismantle`, the `claim` action, the members panel, claim outlines in build mode).
+Phase 5 planned.
 Written 18 Nov 2026.
+
+**Deviations in Phase 4:** the claim helpers take a **live map** (`claimAt(c, map, x, y)`, `mayUse(c, map, p, x, y)`),
+not `ws, mapId`, so the client's ghost and menus ask the same question. A claim record carries `owner` (name) and
+`members: [{id, name}]`. **Members are added by name among the players on the same map** (the `players` list `act`
+already gets) — no referee change; offline there is nobody to add. The player record keeps `claims: [{map, key}]`;
+entries are checked against what stands on the map when the player is on it (`heldClaims`), so a claim destroyed while
+its owner is on another map frees the slot only once they return there. **Who may damage what (owner said "start",
+did not object):** inside a claim, non-members cannot damage anything except harvestables, unless `pvp_structures` is
+on; outside claims anyone can damage anything built; taking apart: your own, unowned things, or anything inside a base
+you belong to (the flag itself: owner only). Extra placement rules for a claim: not within its radius of the map's own
+doors / containers / teleports (switch: Config `claim_open_land` = off lets players claim existing buildings), the
+map's arrival point, another player's structures, or another claim's land. Also fixed here: `yes()` did not accept
+`on`, so `pvp_structures: on` never took effect in Phase 3; and using (F / click) an unfinished frame of a usable
+object (door, crate, station, flag) now works on it instead of opening it.
 
 **Deviations in Phase 3:** `work`, `dismantle` and `upgrade` take `target` (`{t:'wall', orient, x, y}` or `{t:'ent', key}`);
 pressing use (F) with nothing usable in front works on the frame / damaged thing you face. No hold-to-work and no
 rotation key yet. Building is not predicted (the client waits for the reply). **Who may damage what:** until claims
 exist (Phase 4) `World.protectedFrom` returns false, so any player can damage any built structure; taking apart is
 limited to the builder unless `pvp_structures` is on. Phase 4 must make `protectedFrom` true inside a claim the player
-is not a member of — this is the owner-confirmed reading of decision 3 only if they agree (still to confirm).
+is not a member of (done — see Phase 4).
 **Gotcha fixed here:** the live map is `Object.create(authoredMap)`, so every cache hung on a map (`_at`, `_block`,
 `_edgeOv`) must be reset as an OWN property in `liveMapFromStruct`, or it silently reads the authored map's.
 

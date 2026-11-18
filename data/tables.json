@@ -173,7 +173,7 @@
   {
    "key": "pvp_structures",
    "value": "off",
-   "notes": "on = players can damage structures other players built; off = only their own and the map's"
+   "notes": "off = inside a claimed base only its owner and members can damage things; on = anyone can (raids). Outside claims anyone can always damage what was built"
   },
   {
    "key": "station_range",
@@ -224,6 +224,31 @@
    "key": "structure_cap_per_player",
    "value": 150,
    "notes": "Most structures one player can have built on one map"
+  },
+  {
+   "key": "claim_max_per_player",
+   "value": 1,
+   "notes": "How many base claims one player may hold (all maps together)"
+  },
+  {
+   "key": "claim_max_members",
+   "value": 8,
+   "notes": "Most members the owner can add to one claim"
+  },
+  {
+   "key": "claim_open_land",
+   "value": "on",
+   "notes": "on = a claim cannot be placed with any of the map's own doors, chests or teleports inside its radius; off = players may claim existing buildings (their authored doors and chests stay usable by everyone)"
+  },
+  {
+   "key": "object_kinds",
+   "value": "",
+   "notes": "Extra object kinds, separated by commas (e.g. furniture, wreck). They appear in Objects → kind and in the Kinds tab, where you can give them properties. A kind the rules do not know behaves like deco"
+  },
+  {
+   "key": "move_burst",
+   "value": 6,
+   "notes": "How many steps a player may take in one go before the referee makes them wait (walking speed itself is move_ms). Stops speed cheats; raise it only if honest players on slow connections get pulled back"
   }
  ],
  "Tilesets": [
@@ -1255,6 +1280,13 @@
    "type": "states",
    "default": "lit|unlit",
    "notes": "Campfires and workbenches"
+  },
+  {
+   "kind": "claim",
+   "property": "claim_radius",
+   "type": "number",
+   "default": 8,
+   "notes": "Base claims: tiles around the claim that belong to its builder"
   }
  ],
  "Objects": [
@@ -2223,6 +2255,20 @@
    "properties": "{\"storage\":99}",
    "on_interact": "",
    "notes": "Left behind when a storage container is destroyed; holds what was in it"
+  },
+  {
+   "id": "obj_claim",
+   "name": "Claim flag",
+   "kind": "claim",
+   "sprite": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"hp\":60,\"material\":\"wood\",\"claim_radius\":6}",
+   "on_interact": "",
+   "notes": "Built by players: marks the land around it as their base"
   }
  ],
  "Maps": [
@@ -3923,6 +3969,106 @@
    "y": 4,
    "ref": "blood",
    "data": "{\"cell\": 2}"
+  }
+ ],
+ "ItemTypes": [
+  {
+   "id": "material",
+   "name": "Material",
+   "equip": false,
+   "slot": "",
+   "shoot": false,
+   "consume": false,
+   "cooldown_s": 0,
+   "throw": false,
+   "ammo": false,
+   "tool": false,
+   "properties": "",
+   "notes": ""
+  },
+  {
+   "id": "weapon",
+   "name": "Weapon",
+   "equip": true,
+   "slot": "weapon",
+   "shoot": true,
+   "consume": false,
+   "cooldown_s": 0,
+   "throw": false,
+   "ammo": false,
+   "tool": true,
+   "properties": "",
+   "notes": ""
+  },
+  {
+   "id": "armor",
+   "name": "Armor",
+   "equip": true,
+   "slot": "armor",
+   "shoot": false,
+   "consume": false,
+   "cooldown_s": 0,
+   "throw": false,
+   "ammo": false,
+   "tool": false,
+   "properties": "",
+   "notes": ""
+  },
+  {
+   "id": "consumable",
+   "name": "Consumable",
+   "equip": false,
+   "slot": "",
+   "shoot": false,
+   "consume": true,
+   "cooldown_s": 0,
+   "throw": false,
+   "ammo": false,
+   "tool": false,
+   "properties": "",
+   "notes": ""
+  },
+  {
+   "id": "throwable",
+   "name": "Throwable",
+   "equip": false,
+   "slot": "",
+   "shoot": false,
+   "consume": false,
+   "cooldown_s": 0,
+   "throw": true,
+   "ammo": false,
+   "tool": false,
+   "properties": "",
+   "notes": ""
+  },
+  {
+   "id": "ammo",
+   "name": "Ammo",
+   "equip": false,
+   "slot": "",
+   "shoot": false,
+   "consume": false,
+   "cooldown_s": 0,
+   "throw": false,
+   "ammo": true,
+   "tool": false,
+   "properties": "",
+   "notes": ""
+  },
+  {
+   "id": "key",
+   "name": "Key",
+   "equip": false,
+   "slot": "",
+   "shoot": false,
+   "consume": false,
+   "cooldown_s": 0,
+   "throw": false,
+   "ammo": false,
+   "tool": false,
+   "properties": "",
+   "notes": ""
   }
  ],
  "Items": [
@@ -6244,6 +6390,24 @@
    "notes": "",
    "id": "bp_workbench",
    "name": "Workbench"
+  },
+  {
+   "category": "other",
+   "places": "object",
+   "wall_style": "",
+   "wall_height": 2,
+   "object": "obj_claim",
+   "cost": "wood:4, cloth:2",
+   "work": 4,
+   "tool": "",
+   "station": "",
+   "needs_wall": true,
+   "upgrade_of": "",
+   "unlock": "",
+   "icon": "",
+   "notes": "",
+   "id": "bp_claim",
+   "name": "Claim flag"
   }
  ]
 }

@@ -70,7 +70,7 @@ var Schema = (function () {
       f('salvage', 'text', '', 'Items handed to whoever breaks it, e.g. wood:2, nails:1'),
       f('notes', 'text', '')
     ] },
-    kinds: { collection: 'kinds', id: null, label: 'Kinds', authored: 'studio', fields: [
+    kinds: { collection: 'kinds', id: null, label: 'Object Kinds', authored: 'studio', fields: [
       f('kind', 'text', '', 'Object kind, e.g. container'),
       f('property', 'text', '', 'Property name, or "states"'),
       f('type', 'text', '', 'Field type for the editor'),
@@ -78,7 +78,7 @@ var Schema = (function () {
     ] },
     objects: { collection: 'objects', id: 'id', label: 'Objects', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''),
-      f('kind', 'select', 'deco', 'What it does', { options: ['deco', 'container', 'door', 'switch', 'trap', 'rest', 'sign', 'npc', 'spawn', 'teleport', 'trigger', 'craft'] }),
+      f('kind', 'select', 'deco', 'What it does', { options: ['deco', 'container', 'door', 'switch', 'trap', 'rest', 'sign', 'npc', 'spawn', 'teleport', 'trigger', 'craft', 'claim'] }),
       f('sprite', 'image', ''),
       f('sprite_states', 'text', '', 'state=sprite pairs, e.g. open=url; empty=url'),
       f('frames', 'number', 1), f('frame_ms', 'number', 200),
@@ -89,10 +89,23 @@ var Schema = (function () {
     ] },
 
     // ---- the types the owner most wants to author ----
+    itemTypes: { collection: 'itemTypes', id: 'id', label: 'Item Types', singular: 'item type', authored: 'studio', fields: [
+      f('id', 'text', '', 'Short name the items refer to: lower-case letters, numbers and _'), f('name', 'text', '', 'Heading shown in the Items list'),
+      f('equip', 'bool', false, 'Can be equipped: worn or held in a slot. Shows slot, worn art, attack, defence'),
+      f('slot', 'text', '', 'Where items of this type go when equipped (weapon, armor, helm…). An item can name its own slot'),
+      f('shoot', 'bool', false, 'A ranged weapon when equipped and given a range: fires on click. Shows range, ammo, magazine, aim'),
+      f('consume', 'bool', false, 'Can be used: one is used up each time. Shows heal, mana, hunger, thirst, on_use'),
+      f('cooldown_s', 'number', 0, 'Seconds to wait before using another of the same item (0 = none). An item can set its own'),
+      f('throw', 'bool', false, 'Can be thrown from the belt. Shows the throw fields'),
+      f('ammo', 'bool', false, 'Is ammunition. Only shows the ammo fields (pierce, falloff) on the item'),
+      f('tool', 'bool', false, 'Often a tool. Only shows the tool fields (tool tags, structure damage) on the item'),
+      f('properties', 'propdefs', '', 'Extra settings of your own for items of this type. The game stores them with the item; no rule reads them yet'),
+      f('notes', 'text', '')
+    ] },
     items: { collection: 'items', id: 'id', label: 'Items', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('sprite', 'image', ''),
       f('type', 'select', 'material', '', { options: ['material', 'weapon', 'armor', 'consumable', 'throwable', 'ammo', 'key'] }),
-      f('slot', 'text', '', 'Equip slot (weapon, armor, helm…)'),
+      f('slot', 'text', '', 'Equip slot (weapon, armor, helm…). Empty = the slot of its type'),
       f('worn_sprite', 'image', '', 'Paper-doll layer when equipped'),
       f('default_tint', 'text', '', 'Tint preset for the worn layer'),
       f('stack_max', 'number', 99), f('value', 'number', 0, 'Gold value'),
@@ -113,7 +126,9 @@ var Schema = (function () {
       f('tool', 'text', '', 'Tool tags this item counts as, e.g. hammer or axe (recipes and harvesting can require one)'),
       f('structure_dmg', 'number', 0, 'Damage per hit to walls and objects (0 = half its attack)'),
       f('burns', 'bool', false, 'Throwables: the blast also burns wooden walls and objects'),
-      f('on_use', 'textarea', '', 'Data-driven action list')
+      f('on_use', 'textarea', '', 'Data-driven action list'),
+      f('cooldown_s', 'number', '', 'Seconds to wait before using another one (empty = the cooldown of its type)'),
+      f('props', 'itemprops', '', 'The extra settings its type defines')
     ] },
     monsters: { collection: 'monsters', id: 'id', label: 'Monsters', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('sprite', 'image', ''),
@@ -174,10 +189,10 @@ var Schema = (function () {
       f('wall_style', 'ref', '', 'For walls: the wall style it builds', { ref: 'wallStyles' }),
       f('wall_height', 'number', 2, 'For walls: height in tiles'),
       f('object', 'ref', '', 'For objects: the object it builds', { ref: 'objects' }),
-      f('cost', 'text', '', 'Materials used up, e.g. wood:4, nails:2'),
+      f('cost', 'items', '', 'Materials used up to build it'),
       f('work', 'number', 4, 'How many times you must work on the frame to finish it (0 = built at once)'),
-      f('tool', 'text', '', 'Tool tag needed to build, repair and take it apart, e.g. hammer'),
-      f('station', 'text', '', 'Station id that must be nearby to place it (empty = anywhere)'),
+      f('tool', 'choice', '', 'Tool needed to build, repair and take it apart (empty = bare hands). Lists the tool tags your items carry', { from: 'tools' }),
+      f('station', 'choice', '', 'Station that must be nearby to place it (empty = anywhere). Lists the objects of kind craft that have a station id', { from: 'stations' }),
       f('needs_wall', 'bool', true, 'Wall-mounted objects (doors, windows): the spot must already have a wall'),
       f('upgrade_of', 'ref', '', 'This is an upgrade of that blueprint: it can be applied to one already built', { ref: 'blueprints' }),
       f('unlock', 'text', '', 'Condition to know it, e.g. level:3 or flag:found_plans'),
@@ -186,10 +201,10 @@ var Schema = (function () {
     ] },
     recipes: { collection: 'recipes', id: 'id', label: 'Recipes', singular: 'recipe', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('category', 'text', '', 'Group shown in the crafting panel'),
-      f('inputs', 'text', '', 'What it uses up, e.g. wood:2, nails:4'),
-      f('outputs', 'text', '', 'What you get, e.g. plank:1'),
-      f('station', 'text', '', 'Station id needed nearby (an object of kind craft with that station id). Empty = made by hand anywhere'),
-      f('tool', 'text', '', 'Tool tag needed in the bag (not used up), e.g. hammer'),
+      f('inputs', 'items', '', 'What it uses up'),
+      f('outputs', 'items', '', 'What you get'),
+      f('station', 'choice', '', 'Station needed nearby (empty = made by hand anywhere). Lists the objects of kind craft that have a station id', { from: 'stations' }),
+      f('tool', 'choice', '', 'Tool needed in the bag, not used up (empty = none). Lists the tool tags your items carry', { from: 'tools' }),
       f('time_s', 'number', 0, 'Seconds before you can craft again (0 = instant)'),
       f('unlock', 'text', '', 'Condition to know it, e.g. level:3 or flag:found_blueprint'),
       f('notes', 'text', '')
@@ -212,7 +227,7 @@ var Schema = (function () {
   // The Game Data tab name each content type maps to (so `Content.build(tables)` keeps working:
   // records come from Firestore collections but are assembled into the same `tables` shape).
   var TAB = {
-    config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', wallStyles: 'WallStyles', kinds: 'Kinds',
+    config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', wallStyles: 'WallStyles', kinds: 'Kinds', itemTypes: 'ItemTypes',
     objects: 'Objects', items: 'Items', monsters: 'Monsters', loot: 'LootTables', classes: 'Classes',
     skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes', blueprints: 'Blueprints',
     maps: 'Maps', mapEntities: 'MapEntities'

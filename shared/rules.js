@@ -9,6 +9,18 @@ var Rules = (function () {
     S: { dx: 0, dy: 1, out: 's', into: 'n' },
     W: { dx: -1, dy: 0, out: 'w', into: 'e' }
   };
+  // Diagonal steps. DIRS stays the four straight ones (facing, walls and "next to" are all four-way); a diagonal is
+  // only ever a way to MOVE, made of the two straight steps a and b, and allowed only when both ways round the
+  // corner are open (see tryDiag). It covers ~1.4 tiles, so it costs 1.4 steps of time.
+  var DIAG = {
+    NE: { dx: 1, dy: -1, a: 'N', b: 'E' }, SE: { dx: 1, dy: 1, a: 'S', b: 'E' },
+    SW: { dx: -1, dy: 1, a: 'S', b: 'W' }, NW: { dx: -1, dy: -1, a: 'N', b: 'W' }
+  };
+  var DIAG_COST = 1.4;
+  function isDir(dir) { return !!(DIRS[dir] || DIAG[dir]); }
+  function stepCost(dir) { return DIAG[dir] ? DIAG_COST : 1; }
+  /** Which of the four ways a character faces after stepping dir: a diagonal keeps a facing it already agrees with, else looks sideways. */
+  function faceFor(dir, cur) { var g = DIAG[dir]; if (!g) return dir; return cur === g.a || cur === g.b ? cur : g.b; }
 
   function entitiesAt(map, x, y) {
     if (!map._at) {
@@ -134,11 +146,77 @@ var Rules = (function () {
   }
 
   /**
+   * Is reaching from cell A to a NEIGHBOURING cell B (to use or hit what is there) stopped by a wall or shut door?
+   * Straight neighbours: the edge between them. Diagonal neighbours: any of the four edges that meet at the
+   * corner they share — the same "both ways round must be open" rule a diagonal step obeys, so nobody swings or
+   * reaches round the end of a wall. (blockedBetween itself stays straight-only: sight asks it about diagonals.)
+   */
+  function reachBlocked(content, map, ax, ay, bx, by, what) {
+    what = what || 'move';
+    if (Math.abs(bx - ax) === 1 && Math.abs(by - ay) === 1)
+      return blockedBetween(content, map, ax, ay, bx, ay, what) || blockedBetween(content, map, bx, ay, bx, by, what) ||
+             blockedBetween(content, map, ax, ay, ax, by, what) || blockedBetween(content, map, ax, by, bx, by, what);
+    return blockedBetween(content, map, ax, ay, bx, by, what);
+  }
+  /**
    * Can something at (x, y) on map step in direction dir? Returns {ok, x, y, reason}.
    * opts (optional): walkable(entity) overrides object walkability (e.g. an open door);
    *                  occupied(x, y) returns who stands there (a monster or player), which blocks.
    */
+  // ---- objects that can be turned (a chair seen from the north, the south or the side) ----
+  // An object is authored FACING SOUTH: its main picture and its blocked sides (pass_n/e/s/w) describe that view.
+  // sprite_states may add "north=" and "side=" pictures (side = facing east; west is the same picture mirrored).
+  // A placed one carries data.facing N|E|S|W, and its blocked sides turn with it.
+  var TURN = ['S', 'W', 'N', 'E'];                          // clockwise, starting from the authored view
+  var OLD_FACING = { DOWN: 'S', UP: 'N', LEFT: 'W', RIGHT: 'E', SIDE: 'E', SOUTH: 'S', NORTH: 'N', WEST: 'W', EAST: 'E' };
+  /** Normalised facing of a placed object ('S' when it has none). Accepts the older words (down, side, left…). */
+  function facingOf(e) {
+    var f = String((e && e.data && e.data.facing) || (typeof e === 'string' ? e : '') || '').toUpperCase();
+    return OLD_FACING[f] || (TURN.indexOf(f) >= 0 ? f : 'S');
+  }
+  function turnPics(o) {
+    var st = (o && o.spriteStates) || {};
+    return { north: st.north || st.N || st.up || '', south: st.south || st.S || st.down || '', side: st.side || st.E || st.east || '' };
+  }
+  /** Can this object be turned? Only if it has a picture for another direction. */
+  function turnable(o) { var t = turnPics(o); return !!(t.north || t.side); }
+  /** The picture for a facing, and whether to mirror it: {path, flip}. */
+  function facingSprite(o, facing) {
+    var t = turnPics(o), f = facingOf(facing);
+    if (f === 'N' && t.north) return { path: t.north, flip: false };
+    if ((f === 'E' || f === 'W') && t.side) return { path: t.side, flip: f === 'W' };
+    return { path: (f === 'S' && t.south) || o.sprite, flip: false };
+  }
+  /** The next facing, clockwise (dir 1) or anticlockwise (dir -1). */
+  function nextFacing(f, dir) { return TURN[(TURN.indexOf(facingOf(f)) + (dir < 0 ? 3 : 1)) % 4]; }
+  /** The sides of a placed object you may cross, turned with it: {n, e, s, w}. */
+  function passOf(o, e) {
+    var p = o.pass, k = TURN.indexOf(facingOf(e));
+    if (!k || !p) return p;
+    var side = ['n', 'e', 's', 'w'], out = {};
+    side.forEach(function (a, i) { out[side[(i + k) % 4]] = p[a]; });   // a quarter turn clockwise moves north's rule to the east
+    return out;
+  }
+
+  // A diagonal step is allowed only if you could also get there by either pair of straight steps (a then b, and
+  // b then a): no wall, shut door, solid object or blocked side on either way round. So nobody slips between two
+  // walls that meet at a corner or past a door frame. Creatures standing on the two side cells are not walls:
+  // only the cell you land on must be free.
+  function tryDiag(content, map, x, y, g, opts) {
+    var free = null, k;
+    if (opts) { free = {}; for (k in opts) if (k !== 'occupied') free[k] = opts[k]; }
+    function way(first, second) {
+      var r1 = tryMove(content, map, x, y, first, free);
+      return r1.ok ? tryMove(content, map, r1.x, r1.y, second, free) : r1;
+    }
+    var w = way(g.a, g.b); if (w.ok) w = way(g.b, g.a);
+    if (!w.ok) return { ok: false, x: x, y: y, reason: w.reason, entity: w.entity, corner: true };
+    var nx = x + g.dx, ny = y + g.dy, who = opts && opts.occupied ? opts.occupied(nx, ny) : null;
+    if (who) return { ok: false, x: x, y: y, reason: 'occupied', who: who, tx: nx, ty: ny };
+    return { ok: true, x: nx, y: ny };
+  }
   function tryMove(content, map, x, y, dir, opts) {
+    if (DIAG[dir]) return tryDiag(content, map, x, y, DIAG[dir], opts);
     var d = DIRS[dir];
     if (!d) return { ok: false, x: x, y: y, reason: 'bad direction' };
     var nx = x + d.dx, ny = y + d.dy;
@@ -158,7 +236,7 @@ var Rules = (function () {
     for (var h = 0; h < hereObjs.length; h++) {
       var ho = content.objects[hereObjs[h].ref];
       var hwalk = opts && opts.walkable ? opts.walkable(hereObjs[h]) : !(ho && !ho.walkable);
-      if (hwalk && ho && ho.pass && !ho.pass[d.out]) return { ok: false, x: x, y: y, reason: 'object side', entity: hereObjs[h].key };
+      if (hwalk && ho && ho.pass && !passOf(ho, hereObjs[h])[d.out]) return { ok: false, x: x, y: y, reason: 'object side', entity: hereObjs[h].key };
     }
     var ents = blockersAt(content, map, nx, ny);
     for (var i = 0; i < ents.length; i++) {
@@ -166,7 +244,7 @@ var Rules = (function () {
       var walk = opts && opts.walkable ? opts.walkable(ents[i]) : !(o && !o.walkable);
       if (!walk) return { ok: false, x: x, y: y, reason: 'object', entity: ents[i].key, tx: nx, ty: ny };
       // Entering the target cell: a walkable object there can block the edge you'd come in through.
-      if (o && o.pass && !o.pass[d.into]) return { ok: false, x: x, y: y, reason: 'object side', entity: ents[i].key, tx: nx, ty: ny };
+      if (o && o.pass && !passOf(o, ents[i])[d.into]) return { ok: false, x: x, y: y, reason: 'object side', entity: ents[i].key, tx: nx, ty: ny };
     }
     if (opts && opts.occupied) {
       var who = opts.occupied(nx, ny);
@@ -181,8 +259,8 @@ var Rules = (function () {
     if (!map) return player;
     var p = { map: player.map, x: player.x, y: player.y, facing: player.facing || 'S' };
     (dirs || []).slice(0, 20).forEach(function (dir) {
-      if (!DIRS[dir]) return;
-      p.facing = dir;
+      if (!isDir(dir)) return;
+      p.facing = faceFor(dir, p.facing);
       var r = tryMove(content, map, p.x, p.y, dir);
       if (r.ok) { p.x = r.x; p.y = r.y; }
     });
@@ -209,10 +287,11 @@ var Rules = (function () {
     return { x: x, y: y };
   }
 
-  return { DIRS: DIRS, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt, blockersAt: blockersAt,
+  return { DIRS: DIRS, DIAG: DIAG, isDir: isDir, stepCost: stepCost, faceFor: faceFor, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt, blockersAt: blockersAt,
     terrainAt: terrainAt, standable: standable, nearestStandable: nearestStandable,
     parseWall: parseWall, wallAt: wallAt, wallEdge: wallEdge, wallBetween: wallBetween, wallBetweenCells: wallBetweenCells,
     wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight,
-    edgeKey: edgeKey, edgeBlocked: edgeBlocked, sharedEdge: sharedEdge, blockedBetween: blockedBetween };
+    edgeKey: edgeKey, edgeBlocked: edgeBlocked, sharedEdge: sharedEdge, blockedBetween: blockedBetween, reachBlocked: reachBlocked,
+    facingOf: facingOf, turnable: turnable, facingSprite: facingSprite, nextFacing: nextFacing, passOf: passOf };
 })();
 if (typeof module !== 'undefined') module.exports = Rules;

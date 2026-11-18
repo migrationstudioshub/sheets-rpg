@@ -60,6 +60,27 @@ var Content = (function () {
     return out;
   }
 
+  // The item types every game starts with. The ItemTypes tab (Content Studio → Item Types) replaces or adds to
+  // them; with no such tab the game behaves exactly as it did when these names were wired into the rules.
+  //   equip = can be worn/held (slot = where) · shoot = a held one with range fires · consume = used up on use
+  //   throw = thrown from the belt · ammo / tool = only decide which fields the item form shows
+  var ITEM_TYPES = [
+    { id: 'material', name: 'Material' },
+    { id: 'weapon', name: 'Weapon', equip: true, slot: 'weapon', shoot: true, tool: true },
+    { id: 'armor', name: 'Armor', equip: true, slot: 'armor' },
+    { id: 'consumable', name: 'Consumable', consume: true },
+    { id: 'throwable', name: 'Throwable', throw: true },
+    { id: 'ammo', name: 'Ammo', ammo: true },
+    { id: 'key', name: 'Key' }
+  ];
+  function itemType(r) {
+    var props = json(r.properties, []);
+    return { id: str(r.id), name: str(r.name) || str(r.id), equip: bool(r.equip), slot: str(r.slot), shoot: bool(r.shoot),
+      consume: bool(r.consume), cooldownS: Math.max(0, num(r.cooldown_s, 0)), throw: bool(r.throw), ammo: bool(r.ammo), tool: bool(r.tool),
+      properties: (Array.isArray(props) ? props : []).filter(function (d) { return d && str(d.name); })
+        .map(function (d) { return { name: str(d.name), type: str(d.type) || 'text', def: d.def == null ? '' : d.def, notes: str(d.notes) }; }) };
+  }
+
   function build(tables) {
     var c = { config: {}, tilesets: {}, autotile: {}, terrain: {}, kinds: {}, objects: {}, maps: {} };
 
@@ -166,10 +187,23 @@ var Content = (function () {
     });
 
     c.items = {}; c.monsters = {}; c.loot = {}; c.classes = {}; c.levels = []; c.appearances = {};
+    c.itemTypes = {};
+    ITEM_TYPES.concat(tables.ItemTypes || []).forEach(function (r) { var ty = itemType(r); if (ty.id) c.itemTypes[ty.id] = ty; });
     (tables.Items || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
-      c.items[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), type: str(r.type) || 'material',
-        slot: str(r.slot), wornSprite: str(r.worn_sprite), defaultTint: str(r.default_tint),
+      // What the item can do comes from its type's ticks, not the type's name. A type nobody defined keeps the
+      // old reading (a slot means it can be equipped), so nothing already in a game changes.
+      var tyId = str(r.type) || 'material', ty = c.itemTypes[tyId];
+      var slot = ty ? (ty.equip ? (str(r.slot) || ty.slot) : '') : str(r.slot);
+      var props = {}, own = json(r.props, {});
+      if (ty) ty.properties.forEach(function (d) { props[d.name] = d.def; });
+      Object.keys(own && typeof own === 'object' ? own : {}).forEach(function (k) { props[k] = own[k]; });
+      c.items[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), type: tyId,
+        can: { equip: !!slot, shoot: ty ? ty.shoot : tyId === 'weapon', consume: ty ? ty.consume : tyId === 'consumable', throw: ty ? ty.throw : tyId === 'throwable' },
+        // seconds to wait before using another of the same item (the item's own value, else its type's)
+        cooldownMs: Math.max(0, num(r.cooldown_s, ty ? ty.cooldownS : 0)) * 1000,
+        props: props,
+        slot: slot, wornSprite: str(r.worn_sprite), defaultTint: str(r.default_tint),
         stackMax: num(r.stack_max, 99), value: num(r.value, 0),
         atk: num(r.atk, 0), def: num(r.def, 0), heal: num(r.heal, 0), mp: num(r.mp, 0),
         hunger: num(r.hunger, 0), thirst: num(r.thirst, 0),
@@ -314,6 +348,6 @@ var Content = (function () {
     return hash({ row: row, ents: ents });
   }
 
-  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash };
+  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES };
 })();
 if (typeof module !== 'undefined') module.exports = Content;

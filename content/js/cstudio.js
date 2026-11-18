@@ -49,6 +49,25 @@ var CStudio = (function () {
   function spritePath(s) { return /^(https?:|data:)/.test(s) ? s : '../' + String(s).replace(/^\//, ''); }
 
   // ---------------------------------------------------------------- load / persist
+  // A game published before Item Types existed has none stored: start from the built-in ones (what the rules
+  // assume anyway), so they can be edited. Nothing is saved until the owner changes something.
+  function typeRow(d) {
+    var r = Schema.defaults('itemTypes');
+    Object.keys(d).forEach(function (k) { r[k] = d[k]; });
+    return r;
+  }
+  function seedItemTypes() {
+    var ty = rows('itemTypes');
+    if (!ty.length) Content.ITEM_TYPES.forEach(function (d) { ty.push(typeRow(d)); });
+    var cfg = rows('config'), old = cfg.filter(function (c) { return c.key === 'item_types'; })[0];   // the short-lived Config list of names
+    if (old) {
+      String(old.value || '').split(/[,;]/).map(function (x) { return x.trim(); }).filter(Boolean).forEach(function (id) {
+        if (!ty.some(function (t) { return t.id === id; })) ty.push(typeRow({ id: id, name: id.charAt(0).toUpperCase() + id.slice(1) }));
+      });
+      cfg.splice(cfg.indexOf(old), 1);
+    }
+  }
+  function itemTypeRow(id) { return rows('itemTypes').filter(function (t) { return t.id === id; })[0] || null; }
   function init() {
     if (!FUN) { $('top').textContent = 'No FUNCTIONS_URL in client/js/config.js — cannot reach the content server.'; return; }
     renderTop('Loading…');
@@ -59,7 +78,7 @@ var CStudio = (function () {
       : ContentStore.loadRecords(FUN)
     ).then(function (tables) {
       T = tables || {};
-      Schema.list().forEach(function (t) { if (!Array.isArray(T[tab(t)])) T[tab(t)] = []; });
+      Schema.list().forEach(function (t) { if (!Array.isArray(T[tab(t)])) T[tab(t)] = []; }); seedItemTypes();
       type = Schema.authored('studio')[0];
       restoreView();
       renderAll();
@@ -130,7 +149,7 @@ var CStudio = (function () {
     if (!confirm('Discard your local draft and reload the live content?')) return;
     ContentStore.clearDraft();
     ContentStore.loadRecords(FUN).then(function (tables) {
-      T = tables || {}; Schema.list().forEach(function (t) { if (!Array.isArray(T[tab(t)])) T[tab(t)] = []; });
+      T = tables || {}; Schema.list().forEach(function (t) { if (!Array.isArray(T[tab(t)])) T[tab(t)] = []; }); seedItemTypes();
       curIndex = -1; renderAll(); setStatus('Loaded live content.', 'clean');
     });
   }
@@ -169,12 +188,27 @@ var CStudio = (function () {
   function renderAll() { renderTop(); renderNav(); renderList(); renderForm(); }
   function renderNav() {
     var nav = $('nav'); nav.innerHTML = '';
-    Schema.authored('studio').forEach(function (t) {
-      var count = t === 'loot' ? lootTableNames().length : rows(t).length;
+    var all = Schema.authored('studio'), placed = {};   // (the menu)
+    var groups = NAV_GROUPS.map(function (g) { return [g[0], g[1].filter(function (t) { placed[t] = 1; return all.indexOf(t) >= 0; })]; });
+    groups.push(['Other', all.filter(function (t) { return !placed[t]; })]);          // a new type nobody filed yet still shows
+    groups.forEach(function (g) {
+      if (g[1].length) nav.appendChild(h('div', { className: 'navgroup', text: g[0] }));
+      g[1].forEach(navButton);
+    });
+    function navButton(t) {
+      var count = t === 'loot' ? lootTableNames().length : t === 'kinds' ? allKindNames().length : t === 'config' ? rows(t).filter(shownConfig).length : rows(t).length;
       nav.appendChild(h('button', { className: t === type ? 'on' : '', onclick: function () { type = t; curIndex = -1; curLoot = null; curKind = null; filter = ''; renderList(); renderForm(); renderNav(); } },
         h('span', { text: Schema.get(t).label }), h('span', { className: 'n', text: String(count) })));
-    });
+    }
   }
+  var NAV_GROUPS = [
+    ['Setup', ['config', 'kinds', 'itemTypes', 'levels']],
+    ['World', ['tilesets', 'terrain', 'wallStyles', 'objects']],
+    ['Things', ['items', 'loot', 'blueprints', 'recipes']],
+    ['Characters', ['classes', 'skills', 'statuses', 'monsters', 'appearances']]
+  ];
+  // object_kinds is kept in Config but edited from the Object Kinds card, so the Config list leaves it out.
+  function shownConfig(r) { return r.key !== 'object_kinds'; }
   // The thumbnail for a list card: the row's art. Terrain shows its sprite (or its autotile's tileset
   // image); everything else shows the first image-typed field that has a value.
   function rowThumbSrc(t, r) {
@@ -212,8 +246,21 @@ var CStudio = (function () {
         list.appendChild(h('div', { className: 'listgroup', text: grp[0] }));
         members.forEach(function (ri) { list.appendChild(recCard(type, ri[0], ri[1], idf)); });
       });
+    } else if (type === 'items') {                 // one group per item type, in the order of the type dropdown
+      var order = optionsOf('items', fieldDef('items', 'type')), groups = {};
+      all.forEach(function (r, i) {
+        if (!matches(r)) return;
+        var k = String(r.type || '').trim();
+        if (order.indexOf(k) < 0) order.push(k);   // a type not in the dropdown (or none) still gets its own group, last
+        (groups[k] = groups[k] || []).push([r, i]);
+      });
+      order.forEach(function (k) {
+        if (!groups[k]) return;
+        list.appendChild(h('div', { className: 'listgroup', text: (k ? (itemTypeRow(k) && itemTypeRow(k).name) || k.charAt(0).toUpperCase() + k.slice(1) : 'No type') + '  (' + groups[k].length + ')' }));
+        groups[k].forEach(function (ri) { list.appendChild(recCard(type, ri[0], ri[1], idf)); });
+      });
     } else {
-      all.forEach(function (r, i) { if (matches(r)) list.appendChild(recCard(type, r, i, idf)); });
+      all.forEach(function (r, i) { if (matches(r) && (type !== 'config' || shownConfig(r))) list.appendChild(recCard(type, r, i, idf)); });
     }
     if (!list.querySelector('.rec')) list.appendChild(h('div', { className: 'note', style: 'padding:8px', text: all.length ? 'No match.' : 'Nothing here yet — click New.' }));
   }
@@ -231,12 +278,16 @@ var CStudio = (function () {
     if (type === 'appearances') return appearanceForm();
     var form = $('form'); form.innerHTML = '';
     if (curIndex < 0 || !rows(type)[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select a ' + (Schema.get(type).singular || Schema.get(type).label.toLowerCase().replace(/s$/, '')) + ', or click New.' })); return; }
-    var r = rows(type)[curIndex], def = Schema.get(type);
+    var r = rows(type)[curIndex], def = Schema.get(type), hiddenCount = 0;
     form.appendChild(h('div', { className: 'formhead' },
       h('h2', { text: rowLabel(type, r) }),
       h('span', { className: 'pill', text: def.label }),
       h('span', { className: 'sp', style: 'margin-left:auto' }),
       h('button', { title: 'Delete this record', text: '🗑 Delete', onclick: function () {
+        if (type === 'itemTypes') {
+          var used = rows('items').filter(function (i) { return r.id && i.type === r.id; }).length;
+          if (used) { alert(used + ' item' + (used === 1 ? ' is' : 's are') + ' of type "' + r.id + '". Give ' + (used === 1 ? 'it' : 'them') + ' another type first.'); return; }
+        }
         if (!confirm('Delete this ' + (def.singular || 'record') + '?')) return;
         rows(type).splice(curIndex, 1); curIndex = -1; persist(); renderNav(); renderList(); renderForm();
       } })));
@@ -245,15 +296,65 @@ var CStudio = (function () {
         if (fl.key === 'sprite') form.appendChild(tileModeField(r));   // a Base Tile / Autotile toggle replaces both
         return;
       }
+      if (type === 'items' && !showAllItemFields && itemFieldHidden(r, fl)) { hiddenCount++; return; }
       form.appendChild(fieldEl(r, fl));
     });
+    if (type === 'items' && (hiddenCount || showAllItemFields)) {
+      form.appendChild(h('div', { className: 'note', style: 'margin-top:10px' },
+        h('span', { text: showAllItemFields ? 'Showing every field. ' : hiddenCount + ' field' + (hiddenCount === 1 ? ' is' : 's are') + ' hidden because the type “' + r.type + '” does not use them. ' }),
+        h('button', { text: showAllItemFields ? 'Hide unused fields' : 'Show all fields', onclick: function () { showAllItemFields = !showAllItemFields; renderForm(); } })));
+    }
+  }
+  // Which tick on its type makes an item field worth showing. Fields not listed always show; a field that
+  // already holds a value shows whatever the type says, so nothing set is ever out of sight.
+  var showAllItemFields = false;
+  var ITEM_FIELD_NEEDS = {
+    slot: 'equip', worn_sprite: 'equip', default_tint: 'equip', atk: 'equip', def: 'equip', equip_if: 'equip',
+    range: 'shoot', ammo: 'shoot', ammo_cost: 'shoot', fire_ms: 'shoot', clip: 'shoot', fire_mode: 'shoot', aim: 'shoot',
+    heal: 'consume', mp: 'consume', hunger: 'consume', thirst: 'consume', on_use: 'consume', cooldown_s: 'consume',
+    throw_range: 'throw', throw_area: 'throw', throw_power: 'throw', throw_status: 'throw', throw_status_ms: 'throw', burns: 'throw',
+    penetration: 'ammo', falloff: 'ammo', tool: 'tool', structure_dmg: 'tool'
+  };
+  function typePropDefs(ty) {
+    var v = ty ? ty.properties : null;
+    if (typeof v === 'string') { try { v = JSON.parse(v || '[]'); } catch (e) { v = []; } }
+    return Array.isArray(v) ? v : [];
+  }
+  function itemFieldHidden(r, fl) {
+    var ty = itemTypeRow(r.type); if (!ty) return false;
+    if (fl.key === 'props') return !typePropDefs(ty).length;
+    var need = ITEM_FIELD_NEEDS[fl.key]; if (!need || Content.bool(ty[need])) return false;
+    var v = r[fl.key];
+    return v == null || v === '' || v === 0 || v === '0' || v === false || v === fl.def;
   }
 
+  // Extra choices the owner adds in Config: item_types (Items → type) and object_kinds (Objects → kind), comma-separated.
+  function configList(key) {
+    var row = (T.Config || []).filter(function (c) { return c.key === key; })[0];
+    return String(row && row.value != null ? row.value : '').split(/[,;]/).map(function (x) { return x.trim(); }).filter(Boolean);
+  }
+  function optionsOf(t, fl) {
+    if (t === 'items' && fl.key === 'type') { var ids = rows('itemTypes').map(function (x) { return x.id; }).filter(Boolean); if (ids.length) return ids; }
+    var opts = (fl.options || []).slice(), key = t === 'objects' && fl.key === 'kind' ? 'object_kinds' : '';
+    if (key) configList(key).forEach(function (x) { if (opts.indexOf(x) < 0) opts.push(x); });
+    return opts;
+  }
   function fieldEl(r, fl) {
     var control, val = r[fl.key];
     if (fl.type === 'looks') return looksField(r, fl);
     if (fl.type === 'aim') return aimField(r, fl);
-    function change(v) { r[fl.key] = v; persist(); if (fl.key === idField(type) || fl.key === 'name') { renderNav(); renderList(); } }
+    if (fl.type === 'items') return itemsField(r, fl);
+    if (fl.type === 'choice') return choiceField(r, fl);
+    function change(v) {
+      var was = r[fl.key]; r[fl.key] = v;
+      if (type === 'itemTypes' && fl.key === 'id' && was && v && !rows('itemTypes').some(function (t) { return t !== r && t.id === was; }))
+        rows('items').forEach(function (i) { if (i.type === was) i.type = v; });          // items follow a renamed type
+      persist();
+      if (fl.key === idField(type) || fl.key === 'name') { renderNav(); renderList(); }
+      else if (type === 'items' && fl.key === 'type') { renderList(); renderForm(); }       // other fields apply to the new type
+    }
+    if (fl.type === 'propdefs') return propDefsField(r, fl);
+    if (fl.type === 'itemprops') return itemPropsField(r, fl);
     if (fl.type === 'bool') {
       control = h('input', { type: 'checkbox', checked: !!val, onchange: function (e) { change(e.target.checked); } });
       return h('div', { className: 'field', title: fl.help || '' }, h('label', { className: 'row' }, control, h('span', { text: '  ' + fl.key }), fl.help ? h('span', { className: 'help', text: '— ' + fl.help }) : null));
@@ -267,7 +368,7 @@ var CStudio = (function () {
           change(v);
         } });
     } else if (fl.type === 'select') {
-      var opts = fl.options.slice(); if (val && opts.indexOf(val) < 0) opts.unshift(val);
+      var opts = optionsOf(type, fl); if (val && opts.indexOf(val) < 0) opts.unshift(val);
       control = h('select', { onchange: function (e) { change(e.target.value); } },
         h('option', { value: '', text: '—' }), opts.map(function (o) { return h('option', { value: o, text: o, selected: o === val }); }));
     } else if (fl.type === 'image') {
@@ -281,6 +382,101 @@ var CStudio = (function () {
       control = h('input', { type: 'text', value: val == null ? '' : val, oninput: function (e) { change(e.target.value); } });
     }
     return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key + (fl.type === 'ref' ? '  → ' + fl.ref : '') }), control,
+      fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+  }
+
+  // Item Types → properties: the extra settings a type gives its items (name, kind of value, default, help).
+  function propDefsField(r, fl) {
+    var list = typePropDefs(r).map(function (d) { return { name: d.name || '', type: d.type || 'text', def: d.def == null ? '' : d.def, notes: d.notes || '' }; });
+    var box = h('div', {});
+    function save() { r[fl.key] = list.length ? JSON.stringify(list) : ''; persist(); }
+    function draw() {
+      box.innerHTML = '';
+      box.appendChild(h('datalist', { id: 'dl_ptype' }, ['text', 'number', 'bool', 'select:a|b|c', 'item'].map(function (t) { return h('option', { value: t }); })));
+      list.forEach(function (d, i) {
+        box.appendChild(h('div', { className: 'row', style: 'margin-bottom:4px' },
+          h('input', { value: d.name, placeholder: 'name', style: 'flex:1.2;min-width:0', title: 'Property name', onchange: function (e) { d.name = e.target.value.trim().replace(/\s+/g, '_'); e.target.value = d.name; save(); } }),
+          h('input', { value: d.type, list: 'dl_ptype', placeholder: 'type', style: 'flex:1;min-width:0', title: 'text, number, bool, select:a|b|c or item', onchange: function (e) { d.type = e.target.value.trim() || 'text'; save(); } }),
+          h('input', { value: d.def, placeholder: 'default', style: 'flex:1;min-width:0', title: 'Value when the item leaves it unset', oninput: function (e) { d.def = e.target.value; save(); } }),
+          h('input', { value: d.notes, placeholder: 'help (optional)', style: 'flex:1.6;min-width:0', oninput: function (e) { d.notes = e.target.value; save(); } }),
+          h('button', { text: '✕', title: 'Remove', onclick: function () { list.splice(i, 1); save(); draw(); } })));
+      });
+      box.appendChild(h('button', { text: '+ Add property', onclick: function () { list.push({ name: '', type: 'text', def: '', notes: '' }); draw(); } }));
+    }
+    draw();
+    return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }), box, fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+  }
+  // Items → the values for those properties (kept in the item's props, only what differs from the default).
+  function itemPropsField(r, fl) {
+    var ty = itemTypeRow(r.type), defs = typePropDefs(ty).filter(function (d) { return d && d.name; }), vals = {};
+    try { vals = typeof r.props === 'string' ? JSON.parse(r.props || '{}') : (r.props || {}); } catch (e) { vals = {}; }
+    var box = h('div', { className: 'field' }, h('div', { className: 'sub', text: ((ty && ty.name) || r.type || 'Type') + ' properties' }));
+    if (!defs.length) box.appendChild(h('div', { className: 'help', text: 'This type defines none. Add them in Item Types.' }));
+    defs.forEach(function (d) {
+      var k = { property: d.name, type: d.type || 'text', def: d.def };
+      box.appendChild(h('div', { className: 'field', title: d.notes || '' }, h('label', { text: d.name }),
+        propInput(k, vals[d.name] === undefined && k.type === 'bool' ? Content.bool(d.def) : vals[d.name], function (v) {
+          if (v === undefined || v === '') delete vals[d.name]; else vals[d.name] = v;
+          r.props = Object.keys(vals).length ? JSON.stringify(vals) : ''; persist();
+        }),
+        d.notes ? h('div', { className: 'help', text: d.notes }) : null));
+    });
+    return box;
+  }
+
+  // A dropdown fed by the draft itself: the tool tags items carry, or the station ids of craft objects.
+  function choicesFor(from) {
+    var out = [], seen = {};
+    function add(value, label) { if (value && !seen[value]) { seen[value] = out.length + 1; out.push({ value: value, names: [label] }); } else if (value) out[seen[value] - 1].names.push(label); }
+    if (from === 'tools') (T.Items || []).forEach(function (it) {
+      String(it.tool || '').split(/[;,]/).forEach(function (tag) { add(tag.trim(), it.name || it.id); });
+    });
+    if (from === 'stations') (T.Objects || []).forEach(function (o) { if (o.kind === 'craft') add(String(propsObj(o).station || '').trim(), o.name || o.id); });
+    return out;
+  }
+  function choiceField(r, fl) {
+    var val = r[fl.key] == null ? '' : String(r[fl.key]), opts = choicesFor(fl.from);
+    var known = !val || opts.some(function (o) { return o.value === val; });
+    var none = !opts.length ? (fl.from === 'tools' ? 'No item has a tool tag yet: give an item one in Items → tool.' : 'No station yet: make an object of kind craft and give it a station id.') : '';
+    return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }),
+      h('select', { style: known ? '' : 'border-color:var(--bad)', onchange: function (e) { r[fl.key] = e.target.value; persist(); renderForm(); } },
+        h('option', { value: '', text: '— none —' }),
+        known ? null : h('option', { value: val, text: val + ' (missing)', selected: true }),
+        opts.map(function (o) { return h('option', { value: o.value, text: o.value + '  (' + o.names.join(', ') + ')', selected: o.value === val }); })),
+      fl.help ? h('div', { className: 'help', text: fl.help }) : null,
+      none ? h('div', { className: 'help', style: 'color:var(--bad)', text: none }) : null);
+  }
+
+  // A list of "item + amount" rows (blueprint cost, recipe inputs/outputs). Stored as the same text the rules
+  // read ("wood:4, nails:2"), so nothing else changes; a row with no item picked yet is simply not saved.
+  function itemsField(r, fl) {
+    var list = String(r[fl.key] == null ? '' : r[fl.key]).split(/[,;]/).map(function (part) {
+      var bits = part.trim().split(':'), q = parseInt(bits[1], 10);
+      return bits[0] ? { item: bits[0].trim(), qty: q > 0 ? q : 1 } : null;
+    }).filter(Boolean);
+    var items = (T.Items || []).filter(function (x) { return x.id; }), box = h('div', {});
+    function save() {
+      r[fl.key] = list.filter(function (g) { return g.item; }).map(function (g) { return g.item + ':' + g.qty; }).join(', ');
+      persist();
+    }
+    function draw() {
+      box.innerHTML = '';
+      list.forEach(function (g, i) {
+        var known = !g.item || items.some(function (x) { return x.id === g.item; });
+        box.appendChild(h('div', { className: 'row', style: 'margin-bottom:4px' },
+          h('select', { style: 'flex:1;min-width:0' + (known ? '' : ';border-color:var(--bad)'), title: known ? '' : 'There is no item with this id', onchange: function (e) { g.item = e.target.value; save(); draw(); } },
+            h('option', { value: '', text: '— pick an item —' }),
+            known ? null : h('option', { value: g.item, text: g.item + ' (missing item)', selected: true }),
+            items.map(function (x) { return h('option', { value: x.id, text: (x.name || x.id) + '  (' + x.id + ')', selected: x.id === g.item }); })),
+          h('input', { type: 'number', min: 1, step: 1, value: g.qty, style: 'width:80px', title: 'Amount',
+            oninput: function (e) { var q = parseInt(e.target.value, 10); g.qty = q > 0 ? q : 1; save(); },
+            onchange: function (e) { e.target.value = g.qty; } }),
+          h('button', { text: '✕', title: 'Remove', onclick: function () { list.splice(i, 1); save(); draw(); } })));
+      });
+      box.appendChild(h('button', { text: '+ Add item', onclick: function () { list.push({ item: '', qty: 1 }); draw(); } }));
+    }
+    draw();
+    return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }), box,
       fl.help ? h('div', { className: 'help', text: fl.help }) : null);
   }
 
@@ -383,6 +579,24 @@ var CStudio = (function () {
           h('div', { className: 'help', text: 'Shown while the door is open (e.g. the empty frame). Leave empty and an open door is just a hole in the wall.' })));
       }
       if (fl.key === 'sprite' && o.kind === 'door') form.insertBefore(el, form.lastChild); else form.appendChild(el);
+      if (fl.key === 'sprite' && o.kind !== 'door' && propsObj(o).layer !== 'wall') {
+        // Other directions: the main sprite is the object FACING SOUTH; these are the "north" and "side" entries of
+        // sprite_states. With either one set the object can be turned (map editor and build mode: T / Shift+wheel).
+        var dirPairs = function () { var out = []; String(o.sprite_states || '').split(';').forEach(function (q) { var i = q.indexOf('='); if (i > 0) out.push([q.slice(0, i).trim(), q.slice(i + 1).trim()]); }); return out; };
+        var dirPick = function (key, label, help) {
+          var now = (dirPairs().filter(function (q) { return q[0] === key; })[0] || [])[1] || '';
+          return h('div', { className: 'field' }, h('label', { text: label }),
+            imageControl(o, { key: 'sprite_states' }, now, function (v) {
+              var list = dirPairs().filter(function (q) { return q[0] !== key; }); if (v) list.push([key, v]);
+              o.sprite_states = list.map(function (q) { return q[0] + '=' + q[1]; }).join('; '); persist();
+              if (statesInput) statesInput.value = o.sprite_states;
+            }),
+            h('div', { className: 'help', text: help }));
+        };
+        form.appendChild(h('div', { className: 'sub', text: 'Other directions (optional) — makes the object turnable' }));
+        form.appendChild(dirPick('north', 'sprite facing north', 'The main sprite above is the object facing south (towards the camera). This one is its back.'));
+        form.appendChild(dirPick('side', 'sprite facing side', 'Facing east. West is this picture mirrored, so three pictures cover all four directions. Turn with T or Shift+wheel in the map editor and in build mode.'));
+      }
     });
     // Footprint — the solid tiles this object blocks (bottom-left anchored). w×h, default 1×1.
     // Non-walkable objects block their whole footprint, not just the anchor tile. Width auto-fills
@@ -430,7 +644,7 @@ var CStudio = (function () {
           h('input', { type: 'checkbox', checked: open, title: d[1], onchange: function (e) { setProp(o, 'pass_' + d[0], e.target.checked ? undefined : false); } }),
           h('span', { text: ' ' + d[1] }));
       })),
-      h('div', { className: 'help', text: 'Unticked = you cannot move that way across the object (e.g. a ledge you drop off but can’t climb). Ignored if the object isn’t walkable.' })));
+      h('div', { className: 'help', text: 'Unticked = you cannot move that way across the object (e.g. a ledge you drop off but can’t climb). Ignored if the object isn’t walkable. Set it for the object facing south: when the object is turned, the blocked sides turn with it.' })));
     // Placement layer — works for ANY kind (deco, switch, sign…): a normal object, one hung on a wall
     // face, or a flat ground decal. This writes properties.layer, read by the renderer (layerOf).
     // Durability — can this object be damaged and broken? Stored in properties (hp, armor, material, ...).
@@ -458,6 +672,13 @@ var CStudio = (function () {
         h('input', { type: 'number', min: 0, value: p.respawn_s == null ? '' : p.respawn_s, style: 'width:70px', title: 'Seconds until it grows back (empty = the Config default)', oninput: function (e) { setProp(o, 'respawn_s', e.target.value === '' ? undefined : Number(e.target.value)); } })),
       h('div', { className: 'help', text: 'Harvest: set it (with health) on a tree, a wreck, a bush — breaking it gives these items, and it comes back after a while instead of being gone for good.' }),
       h('div', { className: 'help', text: 'Health 0 or empty = this object cannot be damaged. With health, players can break it by attacking, shooting or blasting it; whoever breaks it gets the salvage. Spawns, triggers, teleports, signs and NPCs never break.' })));
+    if (o.kind === 'claim') {
+      form.appendChild(h('div', { className: 'sub', text: 'Base claim' }));
+      form.appendChild(h('div', { className: 'field' },
+        h('label', { text: 'claim radius (tiles)' }),
+        h('input', { type: 'number', min: 1, value: p.claim_radius == null ? '' : p.claim_radius, placeholder: '8', oninput: function (e) { setProp(o, 'claim_radius', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+        h('div', { className: 'help', text: 'A player who builds this (through a blueprint) owns the land this many tiles around it: only they and the members they add can build, open built doors and crates, or damage things there. A claim cannot be placed near the map\'s own doors, chests, teleports or arrival point.' })));
+    }
     if (o.kind === 'craft') {
       form.appendChild(h('div', { className: 'sub', text: 'Crafting station' }));
       form.appendChild(h('div', { className: 'field' },
@@ -1038,7 +1259,7 @@ var CStudio = (function () {
   // with its full property list — so you add a property to "deco" in one place instead of hunting rows.
   function allKindNames() {
     var kf = fieldDef('objects', 'kind');
-    var names = (kf && kf.options ? kf.options.slice() : []);
+    var names = kf ? optionsOf('objects', kf) : [];
     rows('kinds').forEach(function (r) { var k = String(r.kind || ''); if (k && names.indexOf(k) < 0) names.push(k); });
     return names;
   }
@@ -1047,7 +1268,7 @@ var CStudio = (function () {
   function kindsList() {
     var list = $('list'); list.innerHTML = '';
     var search = h('input', { placeholder: 'Search kinds…', value: filter, oninput: function (e) { filter = e.target.value; kindsList(); } });
-    list.appendChild(h('div', { className: 'head' }, search));
+    list.appendChild(h('div', { className: 'head' }, search, h('button', { className: 'primary', title: 'New object kind', text: '+ New', onclick: addKind })));
     var q = filter.toLowerCase();
     allKindNames().forEach(function (name) {
       if (q && name.toLowerCase().indexOf(q) < 0) return;
@@ -1063,11 +1284,51 @@ var CStudio = (function () {
     while (taken.indexOf(n) >= 0) n = base + '_' + (i++);
     return n;
   }
+  // Kinds the owner made (as opposed to the ones the rules know) are listed in Config → object_kinds.
+  function builtinKind(name) { return (fieldDef('objects', 'kind').options || []).indexOf(name) >= 0; }
+  function setCustomKinds(names) {
+    var cfg = rows('config'), row = cfg.filter(function (c) { return c.key === 'object_kinds'; })[0];
+    if (!row) { row = { key: 'object_kinds', value: '', notes: 'Object kinds added in the Content Studio (Object Kinds card)' }; cfg.push(row); }
+    row.value = names.join(', ');
+  }
+  function addKind() {
+    var all = allKindNames(), n = 1, name = 'new_kind';
+    while (all.indexOf(name) >= 0) name = 'new_kind_' + (++n);
+    setCustomKinds(configList('object_kinds').concat([name]));
+    curKind = name; filter = ''; persist(); renderNav(); kindsList(); kindsForm();
+  }
+  function renameKind(to) {
+    to = String(to || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!to || to === curKind) return '';
+    if (allKindNames().indexOf(to) >= 0) return 'There is already a kind called "' + to + '".';
+    var from = curKind;
+    setCustomKinds(configList('object_kinds').map(function (k) { return k === from ? to : k; }));
+    rows('kinds').forEach(function (r) { if (String(r.kind) === from) r.kind = to; });
+    rows('objects').forEach(function (o) { if (o.kind === from) o.kind = to; });
+    curKind = to; persist(); renderNav(); kindsList(); kindsForm();
+    return '';
+  }
+  function deleteKind() {
+    var name = curKind, used = rows('objects').filter(function (o) { return o.kind === name; }).length;
+    if (used) { alert(used + ' object' + (used === 1 ? ' is' : 's are') + ' of kind "' + name + '". Give ' + (used === 1 ? 'it' : 'them') + ' another kind first.'); return; }
+    if (!confirm('Delete the object kind "' + name + '" and its properties?')) return;
+    setCustomKinds(configList('object_kinds').filter(function (k) { return k !== name; }));
+    var a = rows('kinds'); for (var i = a.length - 1; i >= 0; i--) if (String(a[i].kind) === name) a.splice(i, 1);
+    curKind = null; persist(); renderNav(); kindsList(); kindsForm();
+  }
   function kindsForm() {
     rememberView();
     var form = $('form'); form.innerHTML = '';
     if (!curKind) { form.appendChild(h('div', { className: 'empty', text: 'Select an object kind on the left to edit its properties.' })); return; }
-    form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: curKind }), h('span', { className: 'pill', text: 'Kind' })));
+    var own = !builtinKind(curKind);
+    form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: curKind }), h('span', { className: 'pill', text: own ? 'Object kind' : 'Built-in object kind' }),
+      own ? h('button', { title: 'Delete this kind', text: '🗑 Delete', style: 'margin-left:auto', onclick: deleteKind }) : null));
+    if (own) {
+      var warn = h('div', { className: 'help', style: 'color:var(--bad)' });
+      form.appendChild(h('div', { className: 'field' }, h('label', { text: 'name' }),
+        h('input', { type: 'text', value: curKind, onchange: function (e) { var err = renameKind(e.target.value); if (err) { warn.textContent = err; e.target.value = curKind; } } }),
+        h('div', { className: 'help', text: 'Lower-case letters, numbers and _ only. Objects of this kind follow the new name. A kind you add has no behaviour of its own in the game: it is a label with its own properties.' }), warn));
+    }
     form.appendChild(h('div', { className: 'note', style: 'margin-bottom:8px', text: 'Settings an author can give a ' + curKind + ' object — they appear in that object’s “All ' + curKind + ' properties” section. Each is read by the game from the object’s properties.' }));
     form.appendChild(h('datalist', { id: 'dl_kindtype' }, ['text', 'number', 'bool', 'select:a|b|c', 'item', 'monster', 'loot_table'].map(function (t) { return h('option', { value: t }); })));
     // states

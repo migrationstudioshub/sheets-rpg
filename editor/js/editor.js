@@ -472,8 +472,10 @@ var E = {
   }
 
   // ------------------------------------------------------------ maps
+  var LAST_MAP_KEY = 'sheetsrpg.editorLastMap';   // the map last opened, so a reload comes back to it
   E.openMap = function (id) {
     E.mapId = id; E.selected = null; E.groundDirty = true;
+    try { localStorage.setItem(LAST_MAP_KEY, id); } catch (e) {}
     if (!E.mode || E.mode.type !== 'pos') E.mode = null;   // picking a destination may switch maps
     E.fitView(); Panels.all(); E.redraw();
   };
@@ -969,8 +971,10 @@ var E = {
     // open right away; repaint as images arrive instead of waiting for slow image hosts
     E.loadArt().then(function () { E.groundDirty = true; E.redraw(); Panels.palette(); Panels.inspector(); });
   }).then(function () {
-    var want = new URLSearchParams(location.search).get('map');
-    E.mapId = E.content.maps[want] ? want : Object.keys(E.content.maps)[0];
+    // ?map= wins; otherwise the map that was open last time (if it still exists); otherwise the first one
+    var want = new URLSearchParams(location.search).get('map'), last = null;
+    try { last = localStorage.getItem(LAST_MAP_KEY); } catch (e) {}
+    E.mapId = E.content.maps[want] ? want : E.content.maps[last] ? last : Object.keys(E.content.maps)[0];
     Panels.all(); E.openMap(E.mapId);
     Panels.status(E.source === 'draft' ? 'opened your draft from this browser' :
       E.source === 'wip' ? 'restored your unsaved changes (not yet published)' :

@@ -160,6 +160,10 @@ function ensureToolView() {
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
   toolView.setBackgroundColor('#14161b');
+  // The map editor warns before unloading with unsaved edits. With no dialog to answer here, that warning
+  // silently blocks switching tabs. The editor autosaves its unsaved work locally and restores it when it
+  // reloads, so let the page go.
+  toolView.webContents.on('will-prevent-unload', (e) => e.preventDefault());
   toolView.webContents.setWindowOpenHandler(({ url }) => {
     // A Play-test (map editor / Content Studio) opens the offline game with window.open. It has already
     // written the offline draft first, so instead of spawning a separate window, load it straight into

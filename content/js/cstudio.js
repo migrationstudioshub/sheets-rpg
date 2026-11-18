@@ -16,6 +16,7 @@ var CStudio = (function () {
   var curLoot = null;    // selected loot-table name (loot is edited grouped by table)
   var curKind = null;    // selected object-kind name (kinds are edited grouped by kind, not row-by-row)
   var filter = '';
+  var VIEW_LS = 'sheetsrpg.studioView';   // which type + record was open, so a reload comes back to it
   var hasAssetServer = false;   // the local Asset Studio server (asset_server.py) is reachable → offer "Rescan art"
 
   function h(tag, props) {
@@ -60,10 +61,33 @@ var CStudio = (function () {
       T = tables || {};
       Schema.list().forEach(function (t) { if (!Array.isArray(T[tab(t)])) T[tab(t)] = []; });
       type = Schema.authored('studio')[0];
+      restoreView();
       renderAll();
+      var on = $('list').querySelector('.rec.on'); if (on) on.scrollIntoView({ block: 'center' });
       probeAssetServer();                                       // reveal "Rescan art" if the local art server is up
       setStatus(draft ? 'Editing your local draft.' : 'Loaded live content.', draft ? 'dirty' : 'clean');
     }).catch(function (e) { renderTop('Load failed'); setStatus('Could not load content: ' + e.message, 'bad'); });
+  }
+  // Remember the open type + record (called whenever the form is drawn). Records are remembered by id
+  // where the type has one, so the right one comes back even if rows were added or removed meanwhile.
+  function rememberView() {
+    if (!type) return;
+    var idf = idField(type), r = curIndex >= 0 ? rows(type)[curIndex] : null;
+    try {
+      localStorage.setItem(VIEW_LS, JSON.stringify({ type: type, index: curIndex, id: r && idf && r[idf] != null ? String(r[idf]) : null, loot: curLoot, kind: curKind }));
+    } catch (e) {}
+  }
+  function restoreView() {
+    var v = null;
+    try { v = JSON.parse(localStorage.getItem(VIEW_LS)); } catch (e) {}
+    if (!v || Schema.authored('studio').indexOf(v.type) < 0) return;
+    type = v.type;
+    if (type === 'loot') { curLoot = lootTableNames().indexOf(v.loot) >= 0 ? v.loot : null; return; }
+    if (type === 'kinds') { curKind = allKindNames().indexOf(v.kind) >= 0 ? v.kind : null; return; }
+    var all = rows(type), idf = idField(type), i = -1;
+    if (v.id != null && idf) all.forEach(function (r, n) { if (i < 0 && String(r[idf]) === v.id) i = n; });
+    else if (v.index >= 0 && v.index < all.length) i = v.index;
+    curIndex = i;
   }
   function persist() { ContentStore.setDraft(T); setStatus('Draft saved in this browser (unpublished).', 'dirty'); }
   document.addEventListener('click', function () { if (typeof closePickers === 'function') closePickers(); });   // close any open visual dropdown
@@ -200,6 +224,7 @@ var CStudio = (function () {
 
   // ---------------------------------------------------------------- the form
   function renderForm() {
+    rememberView();
     if (type === 'loot') return lootForm();
     if (type === 'kinds') return kindsForm();
     if (type === 'objects') return objForm();
@@ -925,6 +950,7 @@ var CStudio = (function () {
     curLoot = name; persist(); renderNav(); lootList(); lootForm();
   }
   function lootForm() {
+    rememberView();
     var form = $('form'); form.innerHTML = '';
     if (!curLoot) { form.appendChild(h('div', { className: 'empty', text: 'Select a loot table, or click New.' })); return; }
     var entries = rows('loot').filter(function (r) { return String(r.table) === curLoot; });
@@ -990,6 +1016,7 @@ var CStudio = (function () {
     return n;
   }
   function kindsForm() {
+    rememberView();
     var form = $('form'); form.innerHTML = '';
     if (!curKind) { form.appendChild(h('div', { className: 'empty', text: 'Select an object kind on the left to edit its properties.' })); return; }
     form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: curKind }), h('span', { className: 'pill', text: 'Kind' })));

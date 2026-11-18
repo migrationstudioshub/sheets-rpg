@@ -51,7 +51,7 @@ A game action is sent as `do` (not `action`!): `{type: 'move', dirs} | {type: 'i
 `POST {action: join|load|poll|act|save, ...}`.
 - **Functions** (`FUNCTIONS_URL` set — the live default): play goes to the Cloud Function (~220 ms); content still
   loads from `API_URL`; the live world is **pushed** over Firebase (`FIREBASE_URL`), so polling is a slow heartbeat.
-  State lives in the Realtime Database: `players/<token>` and `state/world` are **JSON strings** (their keys hold
+  State lives in the Realtime Database: `players/<token>` and `state/maps/<mapId>` (one record per map, written in a transaction) are **JSON strings** (their keys hold
   `.`, which RTDB forbids in keys); `world/<mapId>` is a plain object clients read.
 - **Online** (`API_URL` set, `FUNCTIONS_URL` empty): the Apps Script referee checks everything (~1.5 s). Same action
   protocol; also `GET ?action=content|tables|reload`. With `FIREBASE_URL` set it also writes the pushed live world.
@@ -96,7 +96,7 @@ for offline mode by updating `build_gamedata.py` too.
 - Anything that decides what is allowed goes in `shared/` so client prediction and the server agree
   (e.g. `World.checkTarget`, `World.actionsAt`, `World.viewLookup` vs `serverLookup`).
 - Entity keys (`map_3.e9`) are stable ids that links refer to (lever targets, WorldState rows); never renumber them.
-  They contain `.`, which the Realtime Database forbids in **keys** — so the Cloud Function stores `players`/`state/world`
+  They contain `.`, which the Realtime Database forbids in **keys** — so the Cloud Function stores `players`/`state/maps/<mapId>`
   as JSON strings, not trees (see `functions/index.js`).
 - After editing `shared/`, run `tools/sync_server.sh` (it regenerates **both** `server/shared_*.js` and
   `functions/shared/`); `tools/test.js` fails if the `server/` copies are stale. Changing `shared/` means
@@ -122,7 +122,8 @@ for offline mode by updating `build_gamedata.py` too.
 - Explain things in plain terms; the owner reads summaries, not diffs. Test in a real browser before handing over.
 
 ## Testing (in Claude's cloud workspace)
-- `node tools/test.js` (server, fake SpreadsheetApp/CacheService) and `node tools/test_world.js` (game rules) must pass.
+- `node tools/test.js` (server, fake SpreadsheetApp/CacheService), `node tools/test_world.js` (game rules) and
+  `node tools/test_functions.js` (the Cloud Function's step, `functions/referee.js`, on a fake database) must pass.
 - Browser: Playwright with `/usr/bin/google-chrome` against `python3 -m http.server 8765` started from the repo root
   **in the same shell command** (background servers get killed between commands). imgur is blocked in the sandbox, so
   art shows as lettered placeholders and pages wait ~8 s for image timeouts; wait for `#log` text before acting.
@@ -145,8 +146,8 @@ deploy secrets locked to `main` · editor refuses to overwrite sheet edits made 
 Next: **M5 multiplayer** — the fast referee + push already make other players move in real time; still want chat,
 party/ally targeting UX, and drawing other players nicely (the `paper-doll-sprites` branch is layered player sprites,
 unmerged) · **M6 story**: NPC dialogue (Dialogue tab), shops, quests.
-Open follow-ups from the referee work: world-level writes are still **last-write-wins** under truly simultaneous
-actions (player-position clobber is fixed); no **Sheet→RTDB character migration**; a smoother idle-monster tick
+Open follow-ups from the referee work: world writes are now **per map, in a transaction** (`functions/referee.js`), so simultaneous actions on a map
+no longer overwrite each other; player records are still last-write-wins per player; no **Sheet→RTDB character migration**; a smoother idle-monster tick
 (Cloud Scheduler's 1-min minimum rules out a true server tick; idle monsters rely on the client heartbeat).
 Also: an art pipeline script for `art/inbox/`; real skill icons; editor screens for Items/Skills/Classes (today via the sheet).
 

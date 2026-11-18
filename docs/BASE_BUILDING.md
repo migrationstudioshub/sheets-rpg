@@ -1,6 +1,7 @@
 # Base building, damage and crafting — implementation spec
 
-Status: **planned, nothing built** (written 18 Nov 2026). This document is the hand-over for whoever
+Status: **Phase 0 built** (per-map state + transactions, `functions/referee.js`, tests in
+`tools/test_functions.js`); Phases 1-5 planned. Written 18 Nov 2026. This document is the hand-over for whoever
 implements it — a person or an agent. It is self-contained: read `CLAUDE.md` first (project rules), then
 this. Line numbers are from the day of writing and will drift; function names are the stable reference.
 

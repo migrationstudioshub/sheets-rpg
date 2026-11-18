@@ -336,6 +336,33 @@ var Render = (function () {
   /** How far (px) the N-S wall on the west edge of cell (x,y) is drawn off its grid line: a wall painted
    *  "cursor side" sits half its thickness to the left ('l') or right ('r'); a centred wall, or none, is 0.
    *  Anything standing on that wall shifts by the same amount so it stays on the wall. */
+  // A staircase (kind 'stairs'): drawn flat on the floor along its run, under everyone. Its picture is authored
+  // climbing NORTH (the main sprite, taller than a tile); sprite_states "side=" climbs east (mirrored for west)
+  // and "south=" climbs south. With no picture for its direction it is drawn as plain steps, so it works before
+  // there is art.
+  function drawStairs(g, c, o, e, ox, oy, T, now) {
+    var R = typeof Rules !== 'undefined' ? Rules : null; if (!R) return;
+    var dir = R.stairDir(e), d = R.DIRS[dir], n = Math.max(1, Math.round(Number((e.data && e.data.length) || (o.properties || {}).length) || 2));
+    var st = o.spriteStates || {}, path = dir === 'N' ? o.sprite : dir === 'S' ? (st.south || '') : (st.side || ''), img = path && Assets.get(path);
+    if (img && img.width) {
+      var ax = e.x - (dir === 'W' ? n - 1 : 0), ay = e.y + (dir === 'S' ? n - 1 : 0);     // the sprite's bottom-left tile
+      drawObject(g, o, path, ox + ax * T, oy + ay * T, T, 'base', now, dir === 'W');
+      drawObject(g, o, path, ox + ax * T, oy + ay * T, T, 'top', now, dir === 'W');
+      return;
+    }
+    for (var i = 0; i < n; i++) {
+      var x = ox + (e.x + i * d.dx) * T, y = oy + (e.y + i * d.dy) * T, steps = 4;
+      g.fillStyle = '#4a3b2c'; g.fillRect(x, y, T, T);
+      for (var k = 0; k < steps; k++) {
+        var t = (i * steps + k) / (n * steps), lum = Math.round(92 + 70 * t), w = T / steps;      // lighter as it climbs
+        g.fillStyle = 'rgb(' + lum + ',' + Math.round(lum * 0.8) + ',' + Math.round(lum * 0.62) + ')';
+        if (dir === 'N') g.fillRect(x + 2, y + T - (k + 1) * w + 1, T - 4, w - 2);
+        else if (dir === 'S') g.fillRect(x + 2, y + k * w + 1, T - 4, w - 2);
+        else if (dir === 'E') g.fillRect(x + k * w + 1, y + 2, w - 2, T - 4);
+        else g.fillRect(x + T - (k + 1) * w + 1, y + 2, w - 2, T - 4);
+      }
+    }
+  }
   // A door in a N-S wall is seen edge-on, so it is shown as a doorstep lying on the floor across the wall line.
   // A door can carry its own doorstep pictures (sprite_states "step=" closed, "step_open=" open; the Content
   // Studio's doorstep pickers); without them its ordinary closed / open pictures are laid down instead.
@@ -592,6 +619,18 @@ var Render = (function () {
     });
     below.sort(function (a, b) { return b.dz - a.dz; });                             // lowest floor first
     this.below = below;
+    // Stage 3: from the ground or a lower floor, the floors ABOVE show as the upper part of the building — their
+    // walls, and a roof over whatever is marked roofed up there (an unroofed part, a terrace, shows its floor).
+    var above = [];
+    if ((map.z || 0) >= 0 && map.floors) Object.keys(map.floors).forEach(function (k) {
+      var fz = Number(k), fm = content.maps[map.floors[k]];
+      if (!fm || fz <= (map.z || 0)) return;
+      var b = cache[fm.id] || (cache[fm.id] = { map: fm, ground: bakeGround(content, fm), prims: wall25(content, fm) });
+      if (!b.sorted) b.sorted = b.prims.slice().sort(function (p, q) { return prim25SortY(p, 0, 32) - prim25SortY(q, 0, 32); });
+      above.push({ dz: fz - (map.z || 0), map: fm, ground: b.ground, prims: b.sorted });
+    });
+    above.sort(function (a, b) { return a.dz - b.dz; });                             // nearest floor first, higher ones over it
+    this.above = above;
     var c = this.content, animated = [];
     map.terrain.forEach(function (row, y) { row.forEach(function (tid, x) {
       var t = c.terrain[tid]; if (t && t.frames > 1 && t.sprite && !t.autotile) animated.push({ x: x, y: y, t: t });
@@ -618,7 +657,9 @@ var Render = (function () {
         var yy = oy + Math.round(f.dz * storey * T), items = [];
         g.drawImage(f.ground, ox, yy);
         (f.map.entities || []).forEach(function (e) {
-          var o = c.objects[e.ref]; if (!o || layerOf(o) === 'wall' || layerOf(o) === 'ground_decal' || !o.sprite) return;
+          var o = c.objects[e.ref]; if (!o) return;
+          if (o.kind === 'stairs') { drawStairs(g, c, o, e, ox, yy, T, nowB); return; }
+          if (layerOf(o) === 'wall' || layerOf(o) === 'ground_decal' || !o.sprite) return;
           var fs = e.data && e.data.facing && typeof Rules !== 'undefined' ? Rules.facingSprite(o, e) : { path: o.sprite, flip: false };
           items.push({ sortY: e.y * T + T, o: o, path: fs.path, flip: fs.flip, dx: ox + e.x * T, dy: yy + e.y * T });
         });
@@ -630,6 +671,12 @@ var Render = (function () {
         });
       });
       g.fillStyle = 'rgba(6,8,14,0.5)'; g.fillRect(0, 0, this.canvas.width, this.canvas.height);   // what is below is dimmer than where you stand
+      // …except the creatures down there that you have a clear view of (opts.floorActors): they stand out
+      ((opts && opts.floorActors) || []).forEach(function (f) {
+        if (f.dz >= 0) return;
+        var fy = oy + Math.round(-f.dz * storey * T);
+        f.actors.forEach(function (a) { paintActor(a, Math.round(ox + a.x * T), Math.round(fy + a.y * T), false); });
+      });
     }
     // On an upper floor a cell with no terrain is open air: nothing of this floor (fog, roof, indoor shade) is drawn there.
     var sparse = map.z > 0;
@@ -786,6 +833,7 @@ var Render = (function () {
         return;
       }
       if (!sight.known(e.x, e.y)) return;                                 // inside a room never seen
+      if (o.kind === 'stairs') { dim(inDark(e.x, e.y)); drawStairs(g, c, o, e, ox, oy, T, now); dim(false); return; }
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
       var path = objPath(o, st, facing), flip = facing === 'left' || (!!facing && Rules.facingOf(String(facing)) === 'W');
       if (!path && e.bp !== undefined) path = '#built';              // something a player built with no art yet: show a lettered box, never nothing
@@ -866,9 +914,13 @@ var Render = (function () {
       }
       var a = r.actor;
       if (r.sensed) { drawSensed(g, Math.round(ox + a.x * T), Math.round(oy + a.y * T), T); return; }
-      var ax = Math.round(ox + a.x * T), ay = Math.round(oy + a.y * T);
+      // climbing a staircase: drawn part-way up to the floor above
+      paintActor(a, Math.round(ox + a.x * T), Math.round(oy + a.y * T) - Math.round(Rules.stairHeight(c, map, a.x, a.y) * WALL_H * T), r.dark);
+    });
+    /** Draw one character (a player or a monster) with its tile's top-left at (ax, ay): figure, status tint, health bar, name. */
+    function paintActor(a, ax, ay, isDark) {
       var top = ay;                                                  // top of the drawn figure (busts rise above the tile)
-      dim(r.dark);
+      dim(isDark);
       if (a.layers && a.layers.length) {
         top = drawLayers(g, a.layers, ax, ay, T, a.facing === 'W', a.aim);
       } else if (a.sprite !== undefined) {
@@ -894,7 +946,7 @@ var Render = (function () {
         g.fillStyle = 'rgba(0,0,0,.6)'; g.fillText(a.name, ax + T / 2 + 1, top - 5);
         g.fillStyle = a.me ? '#fff' : '#bfe0ff'; g.fillText(a.name, ax + T / 2, top - 6);
       }
-    });
+    }
 
     // layer 5c: 'over' objects — the whole sprite sits in front of everything (foreground foliage, railings)
     // Anything damaged and in sight shows how much it has left.
@@ -926,6 +978,40 @@ var Render = (function () {
       drawObject(g, t.o, t.path, t.dx, t.dy, T, 'base', now, t.flip);
       if (hasTop(t.o, t.path)) drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now, t.flip);
     });
+
+    // layer 6: the floors above (docs/FLOORS.md stage 3). Seen from outside they are the upper part of the
+    // building, each a wall-height higher on the screen. Standing indoors, or under one of them, they are not
+    // drawn at all — like a roof, they would only hide the room you are in. Outside, the part that would cover
+    // the player's surroundings goes faint (the same cut-away walls get), so a tall building never hides you.
+    var ups = this.above || [];
+    if (ups.length) {
+      var mx = meActor ? Math.round(meActor.x) : -999, my = meActor ? Math.round(meActor.y) : -999;
+      var beneath = !!meActor && (sight.indoor(mx, my) || ups.some(function (f) { return !!(f.map.terrain[my] && f.map.terrain[my][mx]); }));
+      if (!beneath) ups.forEach(function (f) {
+        var lift = f.dz * WALL_H, fy = oy - Math.round(lift * T), fm = f.map, fr = fm.roof || [];
+        function faint(x, y) { return !!meActor && Math.abs(x - mx) <= cutR && Math.abs(y - lift - my) <= cutR + 1; }
+        var ra = Math.max(0, y0 + lift), rb = Math.min(fm.height - 1, y1 + lift + 1), ca = Math.max(0, x0), cb = Math.min(fm.width - 1, x1);
+        for (var ry = ra; ry <= rb; ry++) for (var rx = ca; rx <= cb; rx++) {
+          if (!(fm.terrain[ry] && fm.terrain[ry][rx])) continue;
+          g.globalAlpha = faint(rx, ry) ? cutA * 0.5 : 1;
+          var rf = fr[ry] && fr[ry][rx];
+          if (rf && rf !== '0') { g.fillStyle = (fm.roof_color) || roofCol; g.fillRect(ox + rx * T, fy + ry * T, T, T); }
+          else g.drawImage(f.ground, rx * T, ry * T, T, T, ox + rx * T, fy + ry * T, T, T);
+        }
+        f.prims.forEach(function (p) {
+          if (p.x < ca - 1 || p.x > cb + 1 || p.y < ra - 1 || p.y > rb + 3) return;
+          g.globalAlpha = faint(p.x, p.y) ? cutA * 0.5 : 1;
+          drawPrim25(g, c, p, ox, fy, T, false, 0);
+        });
+        g.globalAlpha = 1;
+      });
+      // whoever stands up there in plain view (at a balcony's edge, at a window) is drawn whether or not the floor is
+      (o2.floorActors || []).forEach(function (f) {
+        if (f.dz <= 0) return;
+        var ay2 = oy - Math.round(f.dz * WALL_H * T);
+        f.actors.forEach(function (a) { paintActor(a, Math.round(ox + a.x * T), Math.round(ay2 + a.y * T), false); });
+      });
+    }
   };
 
   /** Aiming: cells in range, the line to the cursor, the cell under it (green = can cast) and the area it would hit. */
@@ -1047,5 +1133,5 @@ var Render = (function () {
 
   return { Renderer: Renderer, bakeGround: bakeGround, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
-    layerOf: layerOf, wallMountPlace: wallMountPlace, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
+    layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

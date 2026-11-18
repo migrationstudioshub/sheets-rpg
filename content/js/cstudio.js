@@ -689,6 +689,13 @@ var CStudio = (function () {
         h('input', { type: 'number', min: 0, value: p.respawn_s == null ? '' : p.respawn_s, style: 'width:70px', title: 'Seconds until it grows back (empty = the Config default)', oninput: function (e) { setProp(o, 'respawn_s', e.target.value === '' ? undefined : Number(e.target.value)); } })),
       h('div', { className: 'help', text: 'Harvest: set it (with health) on a tree, a wreck, a bush — breaking it gives these items, and it comes back after a while instead of being gone for good.' }),
       h('div', { className: 'help', text: 'Health 0 or empty = this object cannot be damaged. With health, players can break it by attacking, shooting or blasting it; whoever breaks it gets the salvage. Spawns, triggers, teleports, signs and NPCs never break.' })));
+    if (o.kind === 'stairs') {
+      form.appendChild(h('div', { className: 'sub', text: 'Staircase' }));
+      form.appendChild(h('div', { className: 'field' },
+        h('label', { text: 'length (tiles)' }),
+        h('input', { type: 'number', min: 1, max: 8, value: p.length == null ? '' : p.length, placeholder: '2', oninput: function (e) { setProp(o, 'length', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+        h('div', { className: 'help', text: 'A staircase joins the floor it stands on to the floor above. It lies along this many tiles, starting at its own tile (the foot). Players walk onto the foot, up the run, and step off the far end onto the floor above. The main sprite is the staircase climbing NORTH, as tall as its length; in sprite_states, "side=" is it climbing east (west is mirrored) and "south=" climbing south. Without art it is drawn as plain steps. In the map editor, T or Shift+wheel turns it.' })));
+    }
     if (o.kind === 'claim') {
       form.appendChild(h('div', { className: 'sub', text: 'Base claim' }));
       form.appendChild(h('div', { className: 'field' },

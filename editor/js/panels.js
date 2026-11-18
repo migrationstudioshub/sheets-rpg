@@ -273,7 +273,7 @@ var Panels = (function () {
               if (E.clearStamp) E.clearStamp(); }
             else if (type === 'monster') { E.brush.monster = d.id; E.layer = 'objects'; }
             else if (type === 'wallStyle') { E.brush.wall = d.id; E.layer = 'walls'; }
-            else { E.brush.object = d.id; E.layer = 'objects'; }
+            else { E.brush.object = d.id; E.layer = 'objects'; if (E.content.objects[d.id] && E.content.objects[d.id].kind === 'stairs') E.brushFacing = 'N'; }   // stairs climb north unless turned (T)
             if (E.tool === 'select' || E.tool === 'pick' || E.tool === 'erase') E.tool = type === 'terrain' ? 'rect' : 'brush';
             toolbar(); list(); E.redraw();
           },
@@ -481,7 +481,13 @@ var Panels = (function () {
       Object.keys(E.content.objects).map(function (id) { var d = E.content.objects[id];
         return h('option', { value: id, text: d.name + ' (' + d.kind + ')', selected: id === e.ref }); }));
     wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'object' }), objSel));
-    if (o && Rules.turnable(o) && !(o.properties && o.properties.layer === 'wall')) {      // a chair and the like: which way it faces
+    if (o && o.kind === 'stairs') {                                                       // a staircase: which way it climbs, and its stairwell
+      var sNow = Rules.stairDir(e), sSel = h('select', { title: 'T or Shift+wheel also turns it', onchange: function () { setProp(e.key, E.mapId, 'facing', sSel.value); inspector(); E.redraw(); } },
+        [['N', 'North (up the screen)'], ['E', 'East'], ['S', 'South'], ['W', 'West']].map(function (d) { return h('option', { value: d[0], text: d[1], selected: d[0] === sNow }); }));
+      var sNote = h('div', { className: 'note', text: 'You get on at its own tile walking this way; stepping off the far end puts you on the floor above, one tile further on (the dashed box). The floor above must be empty over the stairs.' });
+      wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'climbs toward' }), sSel, sNote,
+        h('button', { text: 'Open the stairwell above', onclick: function () { sNote.textContent = E.openStairwell(e); E.redraw(); status(); } })));
+    } else if (o && Rules.turnable(o) && !(o.properties && o.properties.layer === 'wall')) {      // a chair and the like: which way it faces
       var fNow = Rules.facingOf(e), fSel = h('select', { title: 'T or Shift+wheel also turns it', onchange: function () { setProp(e.key, E.mapId, 'facing', fSel.value === 'S' ? undefined : fSel.value); E.redraw(); } },
         [['S', 'South (as drawn)'], ['W', 'West'], ['N', 'North'], ['E', 'East']].map(function (d) { return h('option', { value: d[0], text: d[1], selected: d[0] === fNow }); }));
       wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'facing' }), fSel));

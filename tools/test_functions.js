@@ -169,6 +169,47 @@ test('walking to another map answers with that map\'s event number and view', as
   assert.strictEqual(r2.player.map, to); assert.ok(r2.seq >= r.seq);
 });
 
+test('floors: a monster following a player upstairs is handed from one floor\'s record to the other\'s', async () => {
+  // a two-floor hall with a staircase: foot (4,6), run to (4,5), landing (4,4) on the floor above
+  const t = JSON.parse(JSON.stringify(tables));
+  const full = Array(10).fill(Array(10).fill('til_1'));
+  const upper = Array.from({ length: 10 }, (_, y) => Array.from({ length: 10 }, (_, x) => (x >= 2 && x <= 7 && y >= 1 && y <= 6 && !(x === 4 && (y === 6 || y === 5)) ? 'til_1' : '')));
+  t.Objects.push({ id: 'obj_stairs', name: 'Stairs', kind: 'stairs', sprite: '', walkable: false, properties: JSON.stringify({ length: 2 }) });
+  t.Maps.push({ id: 'hall', name: 'Hall', width: 10, height: 10, terrain: JSON.stringify(full) });
+  t.Maps.push({ id: 'hall_z1', name: 'Hall', width: 10, height: 10, terrain: JSON.stringify(upper), floor_of: 'hall', z: 1 });
+  t.MapEntities.push({ map: 'hall', key: 'hall.e1', x: 4, y: 6, ref: 'obj_stairs', data: '' });
+  const content = Content.build(t), db = fakeDb();
+  let now = 2000000;
+  const referee = Referee.create({ db, World, getContent: async () => content, now: () => now, random: () => 0.5 });
+  const j = await referee.join('Ana', '');
+  const rec = playerRec(db, j.token);
+  Object.assign(rec, { map: 'hall', x: 4, y: 5, facing: 'N' });           // standing on the head of the stairs
+  await db.ref('players/' + j.token).set(JSON.stringify(rec));
+  now += 1000; await referee.step(j.token, null, -1);                    // the ground floor's record now exists
+  const ref = Object.keys(content.monsters)[0], def = content.monsters[ref];
+  const ground = mapRec(db, 'hall');
+  ground.monsters = (ground.monsters || []).concat([{ id: 'hall.m1', ref, x: 4, y: 8, hp: def.hp, last: now, facing: 'N', spawn: '', engaged: rec.id }]);
+  await db.ref('state/maps/hall').set(JSON.stringify(ground));
+
+  now += 1000;
+  const up = await referee.step(j.token, { type: 'move', dirs: ['N'] }, 0);
+  assert.deepStrictEqual([up.player.map, up.player.x, up.player.y], ['hall_z1', 4, 4], 'the player is upstairs');
+  assert.strictEqual(playerRec(db, j.token).wake.map, 'hall', 'and the floor they left is to be kept moving');
+  assert.ok(mapRec(db, 'hall').monsters.find(m => m.id === 'hall.m1').follow, 'the monster was told to follow');
+  // the player walks on upstairs; each of their steps also moves the floor below, though nobody is on it
+  now += 1000; await referee.step(j.token, { type: 'move', dirs: ['N', 'N'] }, 0);
+  let guest = null;
+  for (let i = 0; i < 12 && !guest; i++) {
+    now += def.moveMs + 50;
+    const r = await referee.step(j.token, null, 0);
+    guest = (r.world.monsters || []).find(m => /^hall\.m1~/.test(m.id)) || null;
+  }
+  assert.ok(guest, 'it arrives on the floor above and is in the player\'s view');
+  const upRec = mapRec(db, 'hall_z1');
+  assert.ok(upRec.monsters.some(m => m.guest && m.engaged === rec.id) && !(upRec.arrivals || []).length, 'it is in the upper floor\'s record, taken in');
+  assert.ok(mapRec(db, 'hall').monsters.find(m => m.id === 'hall.m1').dead, 'and counts as lost on the floor below');
+});
+
 (async () => {
   for (const t of queue) { await t.fn(); passed++; console.log('ok -', t.name); }
   console.log(`\n${passed} function tests passed`);

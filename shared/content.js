@@ -135,7 +135,7 @@ var Content = (function () {
       var id = str(r.id); if (!id) return;
       var pr = json(r.properties, {});
       c.objects[id] = { id: id, name: str(r.name) || id, kind: str(r.kind) || 'deco',
-        sprite: str(r.sprite), spriteStates: pairs(r.sprite_states), walkable: bool(r.walkable),
+        sprite: str(r.sprite), spriteStates: pairs(r.sprite_states), walkable: str(r.kind) === 'stairs' ? true : bool(r.walkable),   // stairs are always walked on
         blocksSight: bool(r.blocks_sight),
         // Collision footprint in tiles (w×h, bottom-left anchored); authored in the Content Studio as
         // properties.width / properties.height, default 1. Rules.blockersAt blocks the whole footprint.

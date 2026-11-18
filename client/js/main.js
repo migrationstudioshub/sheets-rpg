@@ -108,6 +108,7 @@
     var p = res.player;
     var moving = queue.some(function (a) { return a.type === 'move'; });
     if (!me || p.map !== me.map) {
+      floorWait = 0;
       me = p; view = res.world; struct = null; takeStruct(res.world); handleEvents(res.events);
       return enterMap();
     }
@@ -135,9 +136,42 @@
     if (w.players) view.players = w.players.filter(function (q) { return q.id !== me.id; });
     if (w.now) clockOffset = w.now - Date.now();
   }
+  // The other floors of the building you are in: what stands on each, so the ones you have a clear view of can be
+  // drawn. Online each floor's public view is pushed on its own; offline and on a LAN it comes with the answer.
+  var floorWorlds = {}, floorUnwatch = [];
   function watchLive() {
     if (liveUnwatch) { liveUnwatch(); liveUnwatch = null; }
-    if (api.watchMap && me) liveUnwatch = api.watchMap(me.map, mergeLiveWorld);
+    floorUnwatch.forEach(function (stop) { stop(); }); floorUnwatch = []; floorWorlds = {};
+    if (!api.watchMap || !me) return;
+    liveUnwatch = api.watchMap(me.map, mergeLiveWorld);
+    World.floorsOf(content, me.map).forEach(function (f) {
+      if (f.id !== me.map) floorUnwatch.push(api.watchMap(f.id, function (w) { if (w && w.map === f.id) floorWorlds[f.id] = w; }));
+    });
+  }
+  /** Creatures on other floors that you can see from where you stand: [{ dz, actors }] for the renderer. */
+  function floorActors() {
+    var out = [], map = mapOf(), myZ = map.z || 0, fam = World.floorsOf(content, me.map);
+    if (fam.length < 2) return out;
+    var sf = lookup().stateOf;
+    fam.forEach(function (f) {
+      if (f.id === me.map) return;
+      var w = floorWorlds[f.id] || (view.floors && view.floors[f.id]); if (!w) return;
+      var fm = content.maps[f.id], dz = f.z - myZ, list = [];
+      if (!fm._edgeOv) World.syncEdgesView(content, fm, function () { return ''; });   // its windows and arches, so sight through them works both ways
+      var rad = World.sightRadius(content, dz < 0 ? map : fm);
+      function inView(x, y) { return dz < 0 ? World.seesAcross(content, map, me.x, me.y, fm, x, y, rad, sf) : World.seesAcross(content, fm, x, y, map, me.x, me.y, rad); }
+      (w.monsters || []).forEach(function (m) {
+        if (!inView(m.x, m.y)) return;
+        var d = content.monsters[m.ref] || { name: m.ref, sprite: '' }, lay = monsterLayers(m);
+        list.push({ x: m.x, y: m.y, facing: m.facing, name: d.name, sprite: lay ? '' : (d.sprite || ''), layers: lay || undefined, hp: m.hp, maxHp: m.maxHp });
+      });
+      (w.players || []).forEach(function (q) {
+        if (q.id === me.id || !inView(q.x, q.y)) return;
+        list.push({ x: q.x, y: q.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp });
+      });
+      if (list.length) out.push({ dz: dz, actors: list });
+    });
+    return out;
   }
 
   var COLORS = { hit: '#ff6b5b', heal: '#6fe08a', loot: '#ffd65a', level: '#ffd65a', kill: '#ffffff', death: '#ff6b5b' };
@@ -217,6 +251,7 @@
       .catch(function (e) { inFlight = false; setNet('connection problem: ' + e.message, true); });
   }
 
+  var floorWait = 0;                                      // when a step onto another floor was sent (no stepping until it lands)
   var lastCost = 1;                                       // what the last step cost (1 straight, 1.4 diagonal): paces the next one
   /** The direction the held movement keys add up to: the latest vertical and the latest horizontal key, together a diagonal. */
   function heldDir() {
@@ -233,6 +268,11 @@
     if (!r.ok && g) {                                     // a diagonal that is blocked slides along whichever straight way is open
       var ra = Rules.tryMove(content, mapOf(), me.x, me.y, g.a, opts), rb = ra.ok ? null : Rules.tryMove(content, mapOf(), me.x, me.y, g.b, opts);
       if (ra.ok) { dir = g.a; r = ra; } else if (rb.ok) { dir = g.b; r = rb; }
+    }
+    if (r.ok && r.map) {                                  // off a staircase onto another floor: the referee moves us; wait for its answer
+      floorWait = performance.now(); me = Object.assign({}, me, { facing: dir });
+      send({ type: 'move', dirs: [dir] });
+      return;
     }
     if (!r.ok && r.who && r.who.monster && Rules.DIRS[dir]) { var d = Rules.DIRS[dir]; attackFx(me.x + d.dx, me.y + d.dy); }   // bumped a monster: the server turns this move into an attack
     me = Object.assign({}, me, { facing: Rules.faceFor(dir, me.facing) }, r.ok ? { x: r.x, y: r.y } : {});
@@ -937,7 +977,8 @@
     var moveMs = content.config.move_ms || 140;
     var dt = Math.min(100, lastFrame ? now - lastFrame : 16); lastFrame = now;
     var moving = Math.abs(shown.x - me.x) > 0.01 || Math.abs(shown.y - me.y) > 0.01;
-    if (!moving && !bagOpen) {
+    if (floorWait && now - floorWait > 1500) floorWait = 0;      // the answer never came: carry on
+    if (!moving && !bagOpen && !floorWait) {
       // A tap waits a moment before stepping, so two keys pressed together count as one diagonal step, not an L.
       if (tap) { if (performance.now() - holdSince >= TAP_JOIN_MS) { step(heldDir() || tap); tap = null; lastStep = now; } }
       else if (held.length && now - holdSince >= HOLD_MS && now - lastStep >= moveMs * lastCost) { step(heldDir()); lastStep = now; }
@@ -1031,14 +1072,14 @@
       if (sight.key !== sKey || sight.states !== view.states || tNow - sight.at > 250) {
         var lkS = World.viewLookup(content, map, view, me);
         World.syncEdgesView(content, map, lkS.stateOf);
-        var sr = Number(content.config.sight_radius); if (!(sr > 0)) sr = 16;
+        var sr = World.sightRadius(content, map);                    // further from an upper floor
         sight = { key: sKey, states: view.states, at: tNow, vis: World.visibleCells(content, map, me.x, me.y, sr, lkS.stateOf) };
         mem = seenCells[me.map] || (seenCells[me.map] = {});
         for (var vk in sight.vis) if (sight.vis[vk] === 1) mem[vk] = 1;   // 2 = a peek through a window: seen now, not remembered
       }
       vis = sight.vis; mem = seenCells[me.map];
     }
-    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null });
+    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null, floorActors: floorActors() });
     if (building) { var gh0 = buildTarget(); renderer.drawClaims(cam, World.claimsOn(content, mapOf()), me, gh0); renderer.drawGhost(cam, gh0); }
     if (armed) renderer.drawAim(cam, aimOverlay());
     else if (throwing) renderer.drawAim(cam, throwOverlay());

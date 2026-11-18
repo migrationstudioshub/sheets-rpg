@@ -201,6 +201,79 @@ var Rules = (function () {
     return out;
   }
 
+  // ---- staircases (docs/FLOORS.md §4.2) ----
+  // A staircase is an object of kind 'stairs' on the LOWER of the two floors it joins. It lies along a straight
+  // run of tiles starting at its own cell (the bottom) and climbing in its direction — data.facing, north when
+  // unset — for properties.length tiles (default 2). You get on at the bottom walking the way it climbs, walk up
+  // the run, and stepping off the top puts you on the floor above, one tile further on (the landing). From the
+  // landing, stepping back toward the run — a cell with no floor up there, the stairwell — puts you on the top
+  // tile below. The run cannot be entered or left by its sides, nor crossed diagonally.
+  var BACK = { N: 'S', S: 'N', E: 'W', W: 'E' };
+  function stairDir(e) { return e && e.data && e.data.facing ? facingOf(e) : 'N'; }
+  function stairsOn(content, map) {
+    if (map._stairs && map._stairsOf === map.entities) return map._stairs;
+    var out = [];
+    (map.entities || []).forEach(function (e) {
+      var o = content.objects[e.ref]; if (!o || o.kind !== 'stairs') return;
+      var dir = stairDir(e), d = DIRS[dir], n = Math.max(1, Math.round(Number((e.data && e.data.length) || (o.properties || {}).length) || 2));
+      out.push({ e: e, o: o, dir: dir, n: n, x: e.x, y: e.y, dx: d.dx, dy: d.dy });
+    });
+    map._stairs = out; map._stairsOf = map.entities;
+    return out;
+  }
+  /** The staircase whose run covers (x,y) and how far up it that tile is: { s, i } (i = 0 at the bottom), or null. */
+  function stairAt(content, map, x, y) {
+    var L = stairsOn(content, map);
+    for (var k = 0; k < L.length; k++) {
+      var s = L[k];
+      for (var i = 0; i < s.n; i++) if (s.x + i * s.dx === x && s.y + i * s.dy === y) return { s: s, i: i };
+    }
+    return null;
+  }
+  /** How high something at (fx,fy) — fractional while walking — stands on a staircase: 0 at its foot to 1 (a whole storey) at its head; 0 off any stairs. */
+  function stairHeight(content, map, fx, fy) {
+    var L = stairsOn(content, map);
+    for (var k = 0; k < L.length; k++) {
+      var s = L[k], along = (fx - s.x) * s.dx + (fy - s.y) * s.dy, across = Math.abs((fx - s.x) * s.dy - (fy - s.y) * s.dx);
+      if (across < 0.5 && along > -0.5 && along < s.n - 0.5) return Math.max(0, Math.min(1, (along + 0.5) / s.n));
+    }
+    return 0;
+  }
+  // The floor dz above (+1) or below (-1) this one, as a map; opts.mapOf(id) lets the caller hand over its live version.
+  function otherFloor(content, map, dz, opts) {
+    var id = map.floors && map.floors[(map.z || 0) + dz];
+    return id ? ((opts && opts.mapOf && opts.mapOf(id)) || content.maps[id] || null) : null;
+  }
+  function onOther(opts, mapId, x, y) { return opts && opts.occupiedOn ? opts.occupiedOn(mapId, x, y) : null; }
+  // A straight step that starts or ends on a run. Returns the answer when the stairs decide it (refused, or it
+  // changes floor), or null when it is an ordinary step along the run and the usual checks apply.
+  function stairStep(content, map, x, y, dir, nx, ny, here, there, opts) {
+    function no(why) { return { ok: false, x: x, y: y, reason: why || 'stairs' }; }
+    if (!here) return there.i === 0 && dir === there.s.dir ? null : no();          // onto a run: only its foot, walking the way it climbs
+    var s = here.s;
+    if (dir === BACK[s.dir]) return null;                                           // down the run, or off its foot
+    if (dir !== s.dir) return no();                                                 // off its side
+    if (here.i < s.n - 1) return null;                                              // up the run
+    var up = otherFloor(content, map, 1, opts), we = wallEdge(x, y, dir);
+    if (!up) return no('no floor above');
+    if (!standable(content, up, nx, ny) || edgeBlocked(content, up, we.orient, we.x, we.y, 'move')) return no('blocked');
+    var who = onOther(opts, up.id, nx, ny);
+    if (who) return { ok: false, x: x, y: y, reason: 'occupied', who: who, tx: nx, ty: ny };
+    return { ok: true, x: nx, y: ny, map: up.id, stairs: 'up' };
+  }
+  // A step into a cell with no floor: the stairwell, if the floor below has the head of a staircase there and you
+  // are walking the way it descends.
+  function stairDown(content, map, x, y, dir, nx, ny, opts) {
+    var low = otherFloor(content, map, -1, opts); if (!low) return null;
+    var hit = stairAt(content, low, nx, ny);
+    if (!hit || hit.i !== hit.s.n - 1 || dir !== BACK[hit.s.dir]) return null;
+    var we = wallEdge(x, y, dir);
+    if (edgeBlocked(content, map, we.orient, we.x, we.y, 'move')) return { ok: false, x: x, y: y, reason: 'wall' };
+    var who = onOther(opts, low.id, nx, ny);
+    if (who) return { ok: false, x: x, y: y, reason: 'occupied', who: who, tx: nx, ty: ny };
+    return { ok: true, x: nx, y: ny, map: low.id, stairs: 'down' };
+  }
+
   // A diagonal step is allowed only if you could also get there by either pair of straight steps (a then b, and
   // b then a): no wall, shut door, solid object or blocked side on either way round. So nobody slips between two
   // walls that meet at a corner or past a door frame. Creatures standing on the two side cells are not walls:
@@ -210,7 +283,9 @@ var Rules = (function () {
     if (opts) { free = {}; for (k in opts) if (k !== 'occupied') free[k] = opts[k]; }
     function way(first, second) {
       var r1 = tryMove(content, map, x, y, first, free);
-      return r1.ok ? tryMove(content, map, r1.x, r1.y, second, free) : r1;
+      if (r1.ok && r1.map) return { ok: false, reason: 'stairs' };                  // stairs are walked straight
+      var r2 = r1.ok ? tryMove(content, map, r1.x, r1.y, second, free) : r1;
+      return r2.ok && r2.map ? { ok: false, reason: 'stairs' } : r2;
     }
     var w = way(g.a, g.b); if (w.ok) w = way(g.b, g.a);
     if (!w.ok) return { ok: false, x: x, y: y, reason: w.reason, entity: w.entity, corner: true };
@@ -225,7 +300,9 @@ var Rules = (function () {
     var nx = x + d.dx, ny = y + d.dy;
     if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) return { ok: false, x: x, y: y, reason: 'edge' };
     var from = terrainAt(content, map, x, y), to = terrainAt(content, map, nx, ny);
-    if (!to) return { ok: false, x: x, y: y, reason: 'no terrain' };
+    var sHere = stairAt(content, map, x, y), sThere = stairAt(content, map, nx, ny);
+    if (sHere || sThere) { var sr = stairStep(content, map, x, y, dir, nx, ny, sHere, sThere, opts); if (sr) return sr; }
+    if (!to) return stairDown(content, map, x, y, dir, nx, ny, opts) || { ok: false, x: x, y: y, reason: 'no terrain' };
     // The edge being crossed: a wall blocks the step unless an opening on it says otherwise (see edgeBlocked).
     var dEdge = wallEdge(x, y, dir);
     if (edgeBlocked(content, map, dEdge.orient, dEdge.x, dEdge.y, 'move')) {
@@ -265,7 +342,7 @@ var Rules = (function () {
       if (!isDir(dir)) return;
       p.facing = faceFor(dir, p.facing);
       var r = tryMove(content, map, p.x, p.y, dir);
-      if (r.ok) { p.x = r.x; p.y = r.y; }
+      if (r.ok) { p.x = r.x; p.y = r.y; if (r.map && content.maps[r.map]) { p.map = r.map; map = content.maps[r.map]; } }   // stairs: onto another floor
     });
     return p;
   }
@@ -295,6 +372,7 @@ var Rules = (function () {
     parseWall: parseWall, wallAt: wallAt, wallEdge: wallEdge, wallBetween: wallBetween, wallBetweenCells: wallBetweenCells,
     wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight,
     edgeKey: edgeKey, edgeBlocked: edgeBlocked, sharedEdge: sharedEdge, blockedBetween: blockedBetween, reachBlocked: reachBlocked,
+    stairDir: stairDir, stairsOn: stairsOn, stairAt: stairAt, stairHeight: stairHeight,
     facingOf: facingOf, turnable: turnable, facingSprite: facingSprite, nextFacing: nextFacing, passOf: passOf };
 })();
 if (typeof module !== 'undefined') module.exports = Rules;

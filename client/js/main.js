@@ -907,7 +907,9 @@
     watchLive();                          // (re)subscribe to live monster/player pushes for this map
     hud();
     setNet('loading art…');
-    return Assets.loadForMap(content, mapOf()).then(function () {
+    // the art of every floor of this building: the floors below are drawn too when you stand upstairs
+    var famMaps = World.floorsOf(content, me.map).map(function (f) { return content.maps[f.id]; }).filter(function (m) { return m && m.id !== me.map; });
+    return Promise.all([Assets.loadForMap(content, mapOf())].concat(famMaps.map(function (m) { return Assets.loadForMap(content, m); }))).then(function () {
       renderer.setMap(mapOf());
       timed = mapOf().entities.filter(function (e) {
         var o = content.objects[e.ref]; return o && o.kind === 'trap' && World.props(content, e).trigger === 'timed';
@@ -1079,7 +1081,7 @@
     var sel = $('map-pick');
     if (api.mode !== 'offline') { sel.hidden = true; return; }
     Object.keys(content.maps).forEach(function (id) {
-      var o = document.createElement('option'); o.value = id; o.textContent = content.maps[id].name; sel.appendChild(o);
+      var o = document.createElement('option'); o.value = id; o.textContent = content.maps[id].name + (content.maps[id].z ? ' (floor ' + content.maps[id].z + ')' : ''); sel.appendChild(o);
     });
     sel.value = me.map;
     sel.onchange = function () { api.warp(sel.value).then(apply); sel.blur(); };
@@ -1110,7 +1112,9 @@
   }).then(function (res) {
     // ?map=<id> (from the editor's Play-test button) starts on that map, offline only
     var want = new URLSearchParams(location.search).get('map');
-    if (want && api.mode === 'offline' && content.maps[want] && want !== res.player.map) return api.warp(want);
+    // …unless the character is already somewhere in that building: a floor is a map of its own, and reopening the
+    // page must leave you on the floor and the spot you were on, not send you back to the ground floor's start.
+    if (want && api.mode === 'offline' && content.maps[want] && World.groundId(content, want) !== World.groundId(content, res.player.map)) return api.warp(want);
     return res;
   }).then(apply).then(function () {
     setupDebug();

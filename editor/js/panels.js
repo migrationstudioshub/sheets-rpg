@@ -134,18 +134,42 @@ var Panels = (function () {
   }
 
   // ------------------------------------------------------------ map panel
+  // A map's name for a list. Two different maps can carry the same name (nothing forbids it): then the id is
+  // shown too, so they can be told apart.
+  function mapTitle(id) {
+    var nm = E.content.maps[id].name, twins = Object.keys(E.content.maps).filter(function (k) { return !E.content.maps[k].floorOf && E.content.maps[k].name === nm; });
+    return twins.length > 1 ? nm + ' (' + id + ')' : nm;
+  }
   function maps() {
     var box = $('maps'), m = E.map(); box.innerHTML = '';
+    // The list shows buildings, not their floors: a multi-storey map is one entry, its floors are the row below.
+    var gid = E.groundId(), fam = E.floors(), famDirty = function (id) { return E.floors(id).some(function (f) { return E.dirty.maps[f.id]; }); };
     var sel = h('select', { onchange: function () { E.openMap(sel.value); } },
-      Object.keys(E.content.maps).map(function (id) {
-        return h('option', { value: id, text: E.content.maps[id].name + (E.dirty.maps[id] ? ' •' : ''), selected: id === E.mapId });
+      Object.keys(E.content.maps).filter(function (id) { return !E.content.maps[id].floorOf; }).map(function (id) {
+        return h('option', { value: id, text: mapTitle(id) + (famDirty(id) ? ' •' : ''), selected: id === gid });
       }));
     var name = h('input', { value: m.name, title: 'Map name', onchange: function () {
-      E.checkpoint(); m.name = name.value.trim() || m.id; E.markDirty('map'); maps(); } });
+      E.checkpoint(); var nm = name.value.trim() || gid;
+      fam.forEach(function (f) { E.content.maps[f.id].name = nm; E.dirty.maps[f.id] = true; });      // one name for the whole building
+      E.markDirty('map'); maps(); } });
     box.appendChild(h('div', { className: 'row' }, sel));
     box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Name' }), name));
     box.appendChild(h('div', { className: 'row small' },
       h('span', { text: m.id + ' · ' + m.width + ' × ' + m.height + ' · ' + m.entities.length + ' objects' })));
+    // floors: ground (G), upper floors (1, 2…) and basements (B1, B2…), highest first
+    var flabel = function (z) { return z === 0 ? 'G' : z > 0 ? String(z) : 'B' + (-z); };
+    box.appendChild(h('div', { className: 'row', style: 'align-items:center;gap:4px;flex-wrap:wrap' },
+      h('label', { text: 'Floor', title: 'The floors of this map. G = ground, 1, 2… = upper floors, B1, B2… = basements' }),
+      fam.slice().reverse().map(function (f) {
+        return h('button', { className: f.id === E.mapId ? 'on' : '', text: flabel(f.z) + (E.dirty.maps[f.id] ? ' •' : ''),
+          title: (f.z === 0 ? 'Ground floor' : f.z > 0 ? 'Floor ' + f.z : 'Basement ' + (-f.z)), onclick: function () { E.openFloor(f.z); } });
+      }),
+      h('button', { text: '+ Above', title: 'Add an empty floor above the highest one', onclick: function () { E.addFloor(1); } }),
+      h('button', { text: '+ Below', title: 'Add an empty basement below the lowest one', onclick: function () { E.addFloor(-1); } }),
+      m.floorOf ? h('button', { text: 'Delete floor', className: 'danger', onclick: function () {
+        if (confirm('Delete this floor (' + flabel(m.z) + ') and everything on it?')) E.deleteFloor(); } }) : null));
+    if (m.floorOf) box.appendChild(h('div', { className: 'row small' },
+      h('span', { text: 'Paint terrain only where this floor exists; empty cells are open air. The floor ' + (m.z > 0 ? 'below' : 'above') + ' shows faintly at its own height, as the game draws it.' })));
     box.appendChild(h('div', { className: 'row buttons' },
       h('button', { text: 'New', onclick: function () {
         Dialogs.prompt('Name of the new map:', 'New map').then(function (name) {
@@ -163,24 +187,12 @@ var Panels = (function () {
         }); } }),
       h('button', { text: 'Duplicate', onclick: E.duplicateMap }),
       h('button', { text: 'Delete', className: 'danger', onclick: function () {
-        if (confirm('Delete "' + m.name + '"? You can still undo by not saving (reload the page).')) E.deleteMap(); } })));
+        if (confirm('Delete "' + m.name + '"' + (fam.length > 1 ? ' and its ' + (fam.length - 1) + ' other floor' + (fam.length > 2 ? 's' : '') : '') + '? You can still undo by not saving (reload the page).')) E.deleteMap(); } })));
   }
 
   // ------------------------------------------------------------ palette
   var filter = '';
   var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', walls: 'Walls', roof: 'Roof', spawn: 'Start', nobuild: 'No-build' };
-  // Current brush height for edge walls: set here, painted into every new segment (per-segment, so you can
-  // change it and paint a taller/shorter run next). Keyboard [ and ] step it too.
-  function wallHeightRow() {
-    function step(d) { E.wallHeight = Math.max(1, Math.min(12, (E.wallHeight || 1) + d)); palette(); E.redraw(); }
-    var val = h('input', { type: 'number', min: 1, max: 12, value: E.wallHeight || 1, style: 'width:3em',
-      onchange: function () { E.wallHeight = Math.max(1, Math.min(12, Math.round(Number(val.value) || 1))); E.redraw(); } });
-    return h('div', { className: 'row', style: 'align-items:center;gap:6px' },
-      h('label', { text: 'Height', title: 'How many tiles tall new wall segments are (visual only)' }),
-      h('button', { text: '−', title: 'Shorter ([)', onclick: function () { step(-1); } }), val,
-      h('button', { text: '+', title: 'Taller (])', onclick: function () { step(1); } }),
-      h('span', { className: 'small', text: 'tiles' }));
-  }
   // N-S walls: 'center' straddles the grid line; 'cursor' snaps the wall fully onto whichever tile the cursor is
   // nearer, so you can keep objects in the other tile clear of the wall art. Visual only; collision stays on the line.
   function wallSideRow() {
@@ -239,7 +251,7 @@ var Panels = (function () {
     var search = h('input', { placeholder: 'Search…', value: filter, oninput: function () { filter = search.value; list(); } });
     var listBox = h('div', { className: 'items' });
     box.appendChild(tabs); box.appendChild(search);
-    if (paletteTab === 'walls') { box.appendChild(wallHeightRow()); box.appendChild(wallSideRow()); }
+    if (paletteTab === 'walls') box.appendChild(wallSideRow());   // (walls are always 2 tiles high: no height to choose)
     box.appendChild(listBox);
     box.appendChild(h('div', { className: 'row buttons' },
       h('button', { text: '✎ Edit selected', onclick: function () { editDef(defType, current); } }),
@@ -347,9 +359,19 @@ var Panels = (function () {
   }
   function mapPosField(label, name, value, changed, ctx) {
     var pos = parsePos(value) || { map: '', x: '', y: '' };
-    var sel = h('select', {}, [h('option', { value: '', text: '(none)' })].concat(Object.keys(E.content.maps).map(function (id) {
-      return h('option', { value: id, text: E.content.maps[id].name, selected: id === pos.map });
-    })));
+    // Every floor of a building is a destination of its own and they share the building's name, so say which:
+    // "0002_test · floor 1". Buildings are listed together, top floor first, the open one's building first.
+    var here = E.groundId(), grounds = Object.keys(E.content.maps).filter(function (id) { return !E.content.maps[id].floorOf; });
+    grounds.sort(function (a, b) { return (b === here) - (a === here); });
+    var opts = [];
+    grounds.forEach(function (gid) {
+      var fam = E.floors(gid).slice().reverse();
+      fam.forEach(function (f) {
+        var nm = mapTitle(gid), where = fam.length < 2 ? '' : f.z === 0 ? ' · ground' : f.z > 0 ? ' · floor ' + f.z : ' · basement ' + (-f.z);
+        opts.push(h('option', { value: f.id, text: nm + where, selected: f.id === pos.map }));
+      });
+    });
+    var sel = h('select', {}, [h('option', { value: '', text: '(none)' })].concat(opts));
     var x = h('input', { type: 'number', value: pos.x, className: 'num', title: 'x' });
     var y = h('input', { type: 'number', value: pos.y, className: 'num', title: 'y' });
     function commit() { changed(sel.value ? sel.value + ':' + (Number(x.value) || 0) + ':' + (Number(y.value) || 0) : undefined); }
@@ -440,7 +462,7 @@ var Panels = (function () {
   function pickHelp() {
     var m = E.mode;
     if (m.type === 'pos') return h('div', { className: 'pick' }, h('h3', { text: 'Pick a destination' }),
-      h('p', { text: 'Click the cell to arrive at. You can switch maps with the map list on the left.' }),
+      h('p', { text: 'Click the cell to arrive at. You can switch maps with the map list on the left, and floors with the Floor buttons under it.' }),
       h('button', { text: 'Cancel (Esc)', onclick: function () { endPick(false); } }));
     return h('div', { className: 'pick' }, h('h3', { text: 'Pick linked objects' }),
       h('p', { text: 'Click objects on this map to link or unlink them. ' + m.keys.length + ' linked.' }),
@@ -637,7 +659,9 @@ var Panels = (function () {
     s.appendChild(h('span', { className: lastBad ? 'bad' : '', text: lastMsg }));
     s.appendChild(h('span', { className: 'right', text: Math.round(E.view.zoom * 100) + '%' }));
     var sel = document.querySelector('#maps select');
-    if (sel) Array.prototype.forEach.call(sel.options, function (o) { o.text = E.content.maps[o.value].name + (E.dirty.maps[o.value] ? ' •' : ''); });
+    if (sel) Array.prototype.forEach.call(sel.options, function (o) {   // same label as maps(): name (+ id for namesakes), • when any floor has changes
+      if (E.content.maps[o.value]) o.text = mapTitle(o.value) + (E.floors(o.value).some(function (f) { return E.dirty.maps[f.id]; }) ? ' •' : '');
+    });
   }
   function cellInfo(cell) {
     var box = $('cellinfo');

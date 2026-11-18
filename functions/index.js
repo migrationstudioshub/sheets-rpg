@@ -51,8 +51,10 @@ async function mergeMaps(content) {
       terrain: MapCode.decode(m.terrain), overlay: MapCode.decode(m.overlay || []),
       vWalls: MapCode.decode(m.vWalls || []), hWalls: MapCode.decode(m.hWalls || []),
       roof: MapCode.decode(m.roof || []), nobuild: MapCode.decode(m.nobuild || []), roof_color: m.roof_color || '', spawn: m.spawn || null,
+      floorOf: m.floor_of || '', z: Number(m.z) || 0,                 // a floor of a multi-storey map (docs/FLOORS.md)
       shapes: m.shapes || {}, overlayShapes: m.overlayShapes || {}, entities: m.entities || [] };
   });
+  Content.linkFloors(content);                                      // the docs replaced maps: tie the floors together again
 }
 async function getContent() {
   if (_content && Date.now() - _contentAt < 30 * 60 * 1000) return _content;   // content rarely changes; refetch rarely
@@ -99,6 +101,7 @@ async function publishMap(map, key) {
     vWalls: map.vWalls || null, hWalls: map.hWalls || null,
     roof: map.roof || null, nobuild: map.nobuild || null, roof_color: map.roof_color || null, spawn: map.spawn || null,
     shapes: map.shapes || null, overlayShapes: map.overlayShapes || null,
+    floor_of: map.floor_of ? String(map.floor_of) : null, z: Number(map.z) || 0,
     entities: Array.isArray(map.entities) ? map.entities : [],
     updatedAt: Date.now()
   };

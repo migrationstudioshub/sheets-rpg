@@ -6,7 +6,7 @@ var E = {
   tables: null, content: null, mapId: null,
   layer: 'terrain', terrainLayer: 'base', tool: 'rect', paletteTab: 'terrain',   // terrain is laid in blocks: rectangle is its default tool
   brush: { terrain: 'til_3', object: null, monster: null, wall: null },
-  wallHeight: 2, hoverEdge: null, mountHover: null,   // edge walls: brush height + hovered edge; mountHover = wall-mount target cell
+  hoverEdge: null, mountHover: null,   // edge walls: the hovered edge; mountHover = wall-mount target cell (walls are always Rules.WALL_H high)
   brushFacing: 'S',     // which way the next turnable object (a chair) faces: T or Shift+wheel turns it
   wallSide: 'cursor',   // N-S walls: 'center' straddles the line; 'cursor' snaps the wall onto whichever tile the cursor is nearer
   view: { zoom: 2, x: 40, y: 40 },
@@ -162,6 +162,7 @@ var E = {
     });
     if (map.roof_color) row.roof_color = map.roof_color; else delete row.roof_color;   // per-map roof tint (optional)
     if (map.spawn) row.spawn = JSON.stringify(map.spawn); else delete row.spawn;        // per-map player spawn point (optional)
+    if (map.floorOf) { row.floor_of = map.floorOf; row.z = map.z; } else { delete row.floor_of; delete row.z; }   // a floor of a multi-storey map
     if (row.notes === undefined) row.notes = '';
     var ents = map.entities.map(function (e) {
       return { map: map.id, key: e.key, x: e.x, y: e.y, ref: e.ref,
@@ -436,7 +437,7 @@ var E = {
   // ---- edge walls ----
   function wallToken(edge) {
     if (!E.brush.wall) return '';
-    var t = E.brush.wall + ':' + Math.max(1, E.wallHeight || 1);
+    var t = E.brush.wall + ':' + Rules.WALL_H;
     // Offset onto one tile only for N-S walls, and only in 'cursor' mode (keeps existing maps centred).
     if (E.wallSide === 'cursor' && edge && edge.orient === 'v' && (edge.side === 'l' || edge.side === 'r')) t += ':' + edge.side;
     return t;
@@ -532,7 +533,7 @@ var E = {
   // ------------------------------------------------------------ maps
   var LAST_MAP_KEY = 'sheetsrpg.editorLastMap';   // the map last opened, so a reload comes back to it
   E.openMap = function (id) {
-    E.mapId = id; E.selected = null; E.groundDirty = true;
+    E.mapId = id; E.selected = null; E.groundDirty = true; if (E.underBake) E.underBake.stale = true;
     try { localStorage.setItem(LAST_MAP_KEY, id); } catch (e) {}
     if (!E.mode || E.mode.type !== 'pos') E.mode = null;   // picking a destination may switch maps
     E.fitView(); Panels.all(); E.redraw();
@@ -546,6 +547,56 @@ var E = {
     E.view.y = Math.round((wrap.clientHeight - m.height * t * z) / 2);
     E.redraw();
   };
+  // ---- floors (docs/FLOORS.md): a multi-storey map is a ground map plus one map per floor, all the same size.
+  E.groundId = function (id) { var m = E.content.maps[id || E.mapId]; return m && m.floorOf ? m.floorOf : (id || E.mapId); };
+  /** The floors of the open map's building, lowest first: [{z, id}]. */
+  E.floors = function (id) {
+    var g = E.content.maps[E.groundId(id)], f = (g && g.floors) || {};
+    var out = Object.keys(f).map(function (k) { return { z: Number(k), id: f[k] }; }).sort(function (a, b) { return a.z - b.z; });
+    return out.length ? out : [{ z: 0, id: E.groundId(id) }];
+  };
+  /** How many tiles up the screen one floor is drawn: the height of a wall. */
+  E.storey = function () { return Rules.WALL_H; };
+  /** Add a floor above the highest (dir 1) or a basement below the lowest (dir -1): empty, same size, and open it. */
+  E.addFloor = function (dir) {
+    var gid = E.groundId(), g = E.content.maps[gid], fl = E.floors();
+    var z = dir > 0 ? fl[fl.length - 1].z + 1 : fl[0].z - 1, id = gid + '_z' + (z < 0 ? 'm' + (-z) : z);
+    while (E.content.maps[id]) id += 'x';
+    var terrain = [];
+    for (var y = 0; y < g.height; y++) { var row = []; for (var x = 0; x < g.width; x++) row.push(''); terrain.push(row); }   // open air: paint the floor where there is one
+    E.content.maps[id] = { id: id, name: g.name, width: g.width, height: g.height, terrain: terrain, overlay: [], vWalls: [], hWalls: [], roof: [],
+      shapes: {}, overlayShapes: {}, entities: [], floorOf: gid, z: z };
+    Content.linkFloors(E.content);
+    E.dirty.maps[id] = true;
+    E.openFloor(z);
+    if (E.scheduleWip) E.scheduleWip();
+    return id;
+  };
+  /** Open another floor of the same building, keeping the view where it is. */
+  E.openFloor = function (z) {
+    var hit = E.floors().filter(function (f) { return f.z === z; })[0]; if (!hit || hit.id === E.mapId) return;
+    // Floors are drawn raised, as in the game: each one wall-height (2 tiles) higher on the screen than the one
+    // below. The view belongs to the open floor, so moving it by the difference keeps the ground where it was.
+    var v = { zoom: E.view.zoom, x: E.view.x, y: E.view.y }, from = E.map().z || 0;
+    E.openMap(hit.id);
+    E.view.zoom = v.zoom; E.view.x = v.x; E.view.y = v.y - (z - from) * E.storey() * cellSize(); E.redraw();
+  };
+  /** Delete the open floor (not the ground: that is Delete map, which takes the floors with it). */
+  E.deleteFloor = function () {
+    var m = E.map(); if (!m.floorOf) return;
+    var gid = m.floorOf; dropMap(m.id);
+    Content.linkFloors(E.content);
+    E.openFloor(0); if (E.mapId !== gid) E.openMap(gid);
+    Panels.all(); Panels.status(); if (E.scheduleWip) E.scheduleWip();
+  };
+  function dropMap(id) {
+    delete E.content.maps[id];
+    delete E.dirty.maps[id];
+    E.tables.Maps = E.tables.Maps.filter(function (r) { return String(r.id) !== id; });
+    E.tables.MapEntities = E.tables.MapEntities.filter(function (r) { return String(r.map) !== id; });
+    if (E.dirty.deleted.indexOf(id) < 0) E.dirty.deleted.push(id);
+    E.undo = E.undo.filter(function (s) { return s.mapId !== id; }); E.redo = [];
+  }
   E.newMap = function (name, w, h) {
     var n = 0;
     Object.keys(E.content.maps).forEach(function (id) { var m = /^map_(\d+)$/.exec(id); if (m) n = Math.max(n, Number(m[1]) + 1); });
@@ -558,7 +609,17 @@ var E = {
     return id;
   };
   E.duplicateMap = function () {
+    var fam = E.floors(), srcGround = E.content.maps[E.groundId()];
+    if (E.map().floorOf) E.openMap(srcGround.id);                       // duplicate the whole building, from its ground floor
     var src = E.map(), id = E.newMap(src.name + ' copy', src.width, src.height), m = E.content.maps[id];
+    fam.forEach(function (f) {                                          // its other floors come along
+      if (!f.z) return;
+      var fs = E.content.maps[f.id], fid = id + '_z' + (f.z < 0 ? 'm' + (-f.z) : f.z), copy = JSON.parse(JSON.stringify(fs));
+      copy.id = fid; copy.name = m.name; copy.floorOf = id; copy.floors = null;
+      copy.entities = fs.entities.map(function (e, i) { return { key: fid + '.e' + (i + 1), x: e.x, y: e.y, ref: e.ref, data: JSON.parse(JSON.stringify(e.data)) }; });
+      E.content.maps[fid] = copy; E.dirty.maps[fid] = true;
+    });
+    Content.linkFloors(E.content);
     m.terrain = JSON.parse(JSON.stringify(src.terrain));
     m.overlay = JSON.parse(JSON.stringify(src.overlay || []));
     m.vWalls = JSON.parse(JSON.stringify(src.vWalls || []));
@@ -571,6 +632,14 @@ var E = {
     E.markDirty('map'); Panels.all();
   };
   E.resizeMap = function (w, h) {
+    var fam = E.floors(), here = E.mapId, brush = E.brush.terrain;
+    if (fam.length > 1 && !resizingFamily) {                            // a building: every floor keeps the same size
+      resizingFamily = true;
+      fam.forEach(function (f) { E.mapId = f.id; E.brush.terrain = f.z ? '' : brush; E.resizeMap(w, h); E.dirty.maps[f.id] = true; });
+      resizingFamily = false; E.mapId = here; E.brush.terrain = brush; E.groundDirty = true;
+      E.fitView(); Panels.all();
+      return;
+    }
     E.checkpoint();
     var m = E.map(), fill = E.brush.terrain, terrain = [];
     for (var y = 0; y < h; y++) {
@@ -605,16 +674,13 @@ var E = {
     });
     E.markDirty('map'); E.fitView(); Panels.all();
   };
+  var resizingFamily = false;
   E.deleteMap = function () {
-    var id = E.mapId, ids = Object.keys(E.content.maps);
-    if (ids.length < 2) { alert('A game needs at least one map.'); return; }
-    delete E.content.maps[id];
-    delete E.dirty.maps[id];
-    E.tables.Maps = E.tables.Maps.filter(function (r) { return String(r.id) !== id; });
-    E.tables.MapEntities = E.tables.MapEntities.filter(function (r) { return String(r.map) !== id; });
-    if (E.dirty.deleted.indexOf(id) < 0) E.dirty.deleted.push(id);
-    E.undo = E.undo.filter(function (s) { return s.mapId !== id; }); E.redo = [];
-    E.openMap(Object.keys(E.content.maps)[0]);
+    var fam = E.floors().map(function (f) { return f.id; }), grounds = Object.keys(E.content.maps).filter(function (k) { return !E.content.maps[k].floorOf; });
+    if (grounds.length < 2) { alert('A game needs at least one map.'); return; }
+    fam.forEach(dropMap);                                               // the map and all its floors
+    Content.linkFloors(E.content);
+    E.openMap(Object.keys(E.content.maps).filter(function (k) { return !E.content.maps[k].floorOf; })[0]);
     Panels.status(); scheduleWip();
   };
 
@@ -649,6 +715,21 @@ var E = {
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#101216'; g.fillRect(0, 0, canvas.width, canvas.height);
     g.fillStyle = '#1b1e25'; g.fillRect(vx - 1, vy - 1, m.width * s + 2, m.height * s + 2);
+    // On a floor of a building, the next floor toward the ground shows faintly as a guide, at its own height:
+    // lower on the screen under an upper floor, higher above a basement — where the game will draw it.
+    var under = null, mz = m.z || 0;
+    if (m.floors && mz) {
+      var toward = E.floors().filter(function (f) { return mz > 0 ? f.z < mz : f.z > mz; });
+      if (toward.length) under = c.maps[(mz > 0 ? toward[toward.length - 1] : toward[0]).id];
+    }
+    if (under) {
+      if (!E.underBake || E.underBake.id !== under.id || E.underBake.stale) E.underBake = { id: under.id, img: Render.bakeGround(c, under) };
+      var uy = vy + Math.round((mz - (under.z || 0)) * E.storey() * s);
+      g.fillStyle = '#1b1e25'; g.fillRect(vx - 1, uy - 1, m.width * s + 2, m.height * s + 2);
+      g.globalAlpha = 0.45; g.drawImage(E.underBake.img, vx, uy, m.width * s, m.height * s);
+      g.globalAlpha = 0.35; if (Render.wall25) Render.wall25(c, under).forEach(function (p) { Render.drawPrim25(g, c, p, vx, uy, s); });
+      g.globalAlpha = 1;
+    }
     if (E.show.terrain) g.drawImage(E.ground, vx, vy, m.width * s, m.height * s);
 
     // Objects and 2.5D edge walls share ONE back-to-front pass (by south edge), exactly as the game draws
@@ -889,7 +970,7 @@ var E = {
       var edge = E.edgeAt(ev);
       if (E.tool === 'pick') {   // eyedrop a wall: adopt its style + height as the brush
         var tok = edge && Rules.wallAt(E.map(), edge.orient, edge.x, edge.y), pw = tok && Rules.parseWall(tok);
-        if (pw) { E.brush.wall = pw.style; E.wallHeight = pw.height; E.setPaletteTab('walls'); E.setTool('brush'); Panels.palette(); }
+        if (pw) { E.brush.wall = pw.style; E.setPaletteTab('walls'); E.setTool('brush'); Panels.palette(); }
         return;
       }
       if (E.tool !== 'erase' && !E.brush.wall) { Panels.status('pick a wall style in the palette first', true); return; }
@@ -1026,7 +1107,6 @@ var E = {
     if (k === '5') { E.setPaletteTab('roof'); Panels.all(); E.redraw(); return; }
     if (k === '6') { E.setPaletteTab('spawn'); Panels.all(); E.redraw(); return; }
     if (k === '7') { E.setPaletteTab('nobuild'); Panels.all(); E.redraw(); return; }
-    if ((k === '[' || k === ']') && E.layer === 'walls') { E.wallHeight = Math.max(1, Math.min(12, (E.wallHeight || 1) + (k === ']' ? 1 : -1))); Panels.palette(); E.redraw(); return; }
     if (k === 'o' && E.layer === 'walls') { E.wallSide = E.wallSide === 'cursor' ? 'center' : 'cursor'; Panels.palette(); E.redraw(); return; }
     if (k === '0') { E.fitView(); return; }
     if (k === 'escape') { if (E.mode) Panels.endPick(); else { E.selected = null; Panels.inspector(); E.redraw(); } return; }

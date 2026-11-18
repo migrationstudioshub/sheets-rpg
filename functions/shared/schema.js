@@ -187,7 +187,6 @@ var Schema = (function () {
       f('category', 'select', 'walls', 'Tab in the build menu', { options: ['walls', 'doors', 'furniture', 'stations', 'defences', 'other'] }),
       f('places', 'select', 'wall', 'wall = a wall segment on a grid line; object = a map object (on a tile, or on a wall if the object is wall-mounted)', { options: ['wall', 'object'] }),
       f('wall_style', 'ref', '', 'For walls: the wall style it builds', { ref: 'wallStyles' }),
-      f('wall_height', 'number', 2, 'For walls: height in tiles'),
       f('object', 'ref', '', 'For objects: the object it builds', { ref: 'objects' }),
       f('cost', 'items', '', 'Materials used up to build it'),
       f('work', 'number', 4, 'How many times you must work on the frame to finish it (0 = built at once)'),
@@ -215,7 +214,9 @@ var Schema = (function () {
       f('id', 'text', ''), f('name', 'text', ''), f('width', 'number', 0), f('height', 'number', 0),
       f('terrain', 'json', '', 'Compact-encoded terrain grid'),
       f('vWalls', 'json', '', 'Compact-encoded vertical edge-wall grid'),
-      f('hWalls', 'json', '', 'Compact-encoded horizontal edge-wall grid'), f('notes', 'text', '')
+      f('hWalls', 'json', '', 'Compact-encoded horizontal edge-wall grid'),
+      f('floor_of', 'text', '', 'For a floor of a multi-storey map: the id of its ground map (docs/FLOORS.md)'),
+      f('z', 'number', 0, 'Its level: 1, 2… above ground, -1, -2… basements'), f('notes', 'text', '')
     ] },
     mapEntities: { collection: 'mapEntities', id: 'key', label: 'Map entities', authored: 'map', fields: [
       f('map', 'ref', '', '', { ref: 'maps' }), f('key', 'text', ''),

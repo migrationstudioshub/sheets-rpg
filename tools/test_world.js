@@ -1884,4 +1884,71 @@ test('a monster beside you diagonally attacks instead of shuffling round, unless
   assert.strictEqual(s.p.hp, hp0, 'no blow through the corner');
 });
 
+// ---- floors (docs/FLOORS.md): a multi-storey map is a ground map plus one map per floor
+function tower() {
+  const t = JSON.parse(JSON.stringify(tables));
+  const full = Array(8).fill(Array(8).fill('til_1'));
+  const upper = Array.from({ length: 8 }, (_, y) => Array.from({ length: 8 }, (_, x) => (x >= 2 && x <= 5 && y >= 2 && y <= 5 ? 'til_1' : '')));   // a 4x4 floor in the air
+  const tp = Object.keys(Content.build(tables).objects).filter(k => Content.build(tables).objects[k].kind === 'teleport')[0];
+  t.Maps.push({ id: 'tower', name: 'Tower', width: 8, height: 8, terrain: JSON.stringify(full), spawn: JSON.stringify({ x: 0, y: 0 }) });
+  t.Maps.push({ id: 'tower_z1', name: 'Tower', width: 8, height: 8, terrain: JSON.stringify(upper), floor_of: 'tower', z: 1 });
+  t.Maps.push({ id: 'tower_zm1', name: 'Tower', width: 8, height: 8, terrain: JSON.stringify(upper), floor_of: 'tower', z: -1 });
+  t.Maps.push({ id: 'orphan', name: 'Orphan', width: 8, height: 8, terrain: JSON.stringify(full), floor_of: 'nowhere', z: 3 });
+  t.Maps.push({ id: 'twin', name: 'Twin', width: 8, height: 8, terrain: JSON.stringify(full), floor_of: 'tower', z: 1 });          // level 1 is taken
+  t.MapEntities.push({ map: 'tower', key: 'tower.e1', x: 3, y: 3, ref: tp, data: JSON.stringify({ target: 'tower_z1:3:4' }) });      // a ladder up
+  t.MapEntities.push({ map: 'tower_z1', key: 'tower_z1.e1', x: 3, y: 3, ref: tp, data: JSON.stringify({ target: 'tower:3:4' }) });   // and down
+  const c = Content.build(t), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Climber', 'warrior');
+  return { c, ws, p };
+}
+
+test('the floors of a building are tied together; a floor with no ground map, or a taken level, is a plain map', () => {
+  const s = tower(), m = s.c.maps;
+  assert.deepStrictEqual([m.tower.z, m.tower.floorOf, m.tower_z1.z, m.tower_z1.floorOf, m.tower_zm1.z], [0, '', 1, 'tower', -1]);
+  assert.deepStrictEqual(m.tower.floors, { 0: 'tower', 1: 'tower_z1', '-1': 'tower_zm1' });
+  assert.strictEqual(m.tower_z1.floors, m.tower.floors, 'one family object for all of them');
+  assert.deepStrictEqual([m.orphan.z, m.orphan.floorOf, m.twin.z, m.twin.floorOf], [0, '', 0, '']);
+  assert.deepStrictEqual(World.floorsOf(s.c, 'tower_z1'), [{ z: -1, id: 'tower_zm1' }, { z: 0, id: 'tower' }, { z: 1, id: 'tower_z1' }]);
+  assert.deepStrictEqual([World.groundId(s.c, 'tower_zm1'), World.floorId(s.c, 'tower', 1), World.floorId(s.c, 'tower_z1', 0), World.floorId(s.c, 'tower', 2)],
+    ['tower', 'tower_z1', 'tower', '']);
+  assert.deepStrictEqual(World.floorsOf(s.c, 'map_3'), [{ z: 0, id: 'map_3' }], 'a map without floors is its own ground');
+  assert.deepStrictEqual([World.groundId(s.c, 'map_3'), World.floorId(s.c, 'map_3', 0), World.floorId(s.c, 'map_3', 1)], ['map_3', 'map_3', '']);
+  // linking again changes nothing
+  Content.linkFloors(s.c);
+  assert.deepStrictEqual(m.tower.floors, { 0: 'tower', 1: 'tower_z1', '-1': 'tower_zm1' });
+});
+
+test('a floor is a map: you cannot walk onto open air, and a teleport takes you between floors', () => {
+  const s = tower();
+  put(s, 'tower_z1', 2, 2, 'W');
+  act(s, { type: 'move', dirs: ['W', 'N'] });
+  assert.deepStrictEqual([s.p.map, s.p.x, s.p.y], ['tower_z1', 2, 2], 'no floor to the west or north: you stay');
+  // wherever the step-on teleport left us, the ladder links the two floors both ways
+  put(s, 'tower', 2, 3, 'E');
+  act(s, { type: 'interact' });
+  if (s.p.map === 'tower') act(s, { type: 'move', dirs: ['E'] });
+  assert.deepStrictEqual([s.p.map, s.p.x, s.p.y], ['tower_z1', 3, 4], 'up the ladder');
+  const v = World.view(s.c, s.ws, s.p.map, s.p, [s.p]);
+  assert.ok(v && s.c.maps[s.p.map].z === 1, 'the view is that floor\'s');
+  put(s, 'tower_z1', 2, 3, 'E');
+  act(s, { type: 'interact' });
+  if (s.p.map === 'tower_z1') act(s, { type: 'move', dirs: ['E'] });
+  assert.deepStrictEqual([s.p.map, s.p.x, s.p.y], ['tower', 3, 4], 'and back down');
+});
+
+test('a floor that lost its floor fields (saved through an older referee) is taken back into its building', () => {
+  const t = JSON.parse(JSON.stringify(tables));
+  const g8 = JSON.stringify(Array(8).fill(Array(8).fill('til_1'))), g6 = JSON.stringify(Array(6).fill(Array(6).fill('til_1')));
+  t.Maps.push({ id: 'keep', name: 'Keep', width: 8, height: 8, terrain: g8 });
+  t.Maps.push({ id: 'keep_z1', name: 'Keep', width: 8, height: 8, terrain: g8 });               // no floor_of, no z: as the old referee stores it
+  t.Maps.push({ id: 'keep_zm2', name: 'Keep', width: 8, height: 8, terrain: g8 });
+  t.Maps.push({ id: 'keep_z3', name: 'Keep', width: 6, height: 6, terrain: g6 });               // another size: not a floor of it
+  t.Maps.push({ id: 'ghost_z1', name: 'Ghost', width: 8, height: 8, terrain: g8 });             // no such ground map
+  t.Maps.push({ id: 'keep_z1_z1', name: 'Odd', width: 8, height: 8, terrain: g8 });             // its "ground" is itself a floor
+  const m = Content.build(t).maps;
+  assert.deepStrictEqual(m.keep.floors, { 0: 'keep', 1: 'keep_z1', '-2': 'keep_zm2' });
+  assert.deepStrictEqual([m.keep_z1.floorOf, m.keep_z1.z, m.keep_zm2.z], ['keep', 1, -2]);
+  assert.deepStrictEqual([m.keep_z3.floorOf, m.ghost_z1.floorOf, m.keep_z1_z1.floorOf], ['', '', '']);
+  assert.deepStrictEqual(m.map_3.floors, { 0: 'map_3' }, 'ordinary maps are untouched');
+});
+
 console.log(`\n${passed} world tests passed`);

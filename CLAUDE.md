@@ -88,10 +88,14 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   (`Rules.faceFor`). The referee enforces walking speed: a per-player budget (`p.mvB`/`p.mvT`) refills one step per `move_ms`
   up to Config `move_burst` (6); unpaid steps are dropped. Tests that replay moves at one instant set `move_burst` huge.
   Reach is eight-way too: `near` = the eight tiles around you, and `Rules.reachBlocked` (any of the four edges at the shared corner) stops using or hitting round a wall end, for players and monsters. F/Space still acts on the tile you face.
+- **Floors (multi-storey maps): read `docs/FLOORS.md` first.** A floor is a map of its own (`floor_of` + `z` on its row) tied to its
+  ground map by `Content.linkFloors`; never parse a floor out of a map id — use `map.z / floorOf / floors`, `World.groundId /
+  floorId / floorsOf`. Stage 1 (data, editor floor switch, teleports between floors, simple raised drawing) is built; walkable
+  stairs, sight between floors and building floors are later stages.
 - Item id `gold` means money. Tall objects: one image taller than a tile (the part above the footprint draws over characters). Animation: `frames` + `frame_ms` (horizontal strip).
 - Skills: target `enemy|ally|self|tile|around`, `range`, `area`, `los`, `effect damage|heal|none`, amount = `power + scale × stat(atk|level)`, `status`, `dash`, `projectile`.
 
-- **Walls, fixtures, sight** (one model, Nov 2026): walls are edge tokens `style:height` in `hWalls`/`vWalls`. Anything on a
+- **Walls, fixtures, sight** (one model, Nov 2026): walls are edge tokens `style:height` in `hWalls`/`vWalls`. **Every wall is 2 tiles high** (`Rules.WALL_H`, also the height of a storey): the token number is ignored, and anything lower (fence, gate) is an object. Anything on a
   wall is a **fixture** = an object with `properties.layer: 'wall'`, anchored by cell + `data.side`; it may be an
   **opening** (kind `door`, or `properties.opening: window|arch`). `World.syncEdges` folds openings into `map._edgeOv`
   and **`Rules.edgeBlocked(…, 'move'|'sight')` is the only edge question** (movement, LoS, shots, visibility).

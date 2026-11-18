@@ -309,6 +309,17 @@ var World = (function () {
   }
 
   // ------------------------------------------------------------ building
+  // ---- floors (docs/FLOORS.md): a floor is a map of its own; these are the only readers of the family links.
+  /** The id of the ground map of the building this map belongs to (itself when it has no floors). */
+  function groundId(c, mapId) { var m = c.maps[mapId]; return m && m.floorOf ? m.floorOf : mapId; }
+  /** The id of level z of that building, or '' when it has no such floor. */
+  function floorId(c, mapId, z) { var m = c.maps[mapId], f = m && m.floors; return (f && f[z]) || (!z && m ? groundId(c, mapId) : ''); }
+  /** The levels of that building, lowest first: [{z, id}]. A plain map answers [{z: 0, id}]. */
+  function floorsOf(c, mapId) {
+    var m = c.maps[mapId], f = (m && m.floors) || {};
+    var out = Object.keys(f).map(function (k) { return { z: Number(k), id: f[k] }; }).sort(function (a, b) { return a.z - b.z; });
+    return out.length ? out : (m ? [{ z: 0, id: mapId }] : []);
+  }
   function cfgNum(c, key, def) { var v = c.config[key]; v = v === undefined || v === '' ? def : Number(v); return isNaN(v) ? def : v; }
   function noBuild(map, x, y) { var g = map && map.nobuild, row = g && g[y]; return !!(row && row[x] && row[x] !== '0'); }
   function inMap(map, x, y) { return x >= 0 && y >= 0 && x < map.width && y < map.height; }
@@ -455,7 +466,7 @@ var World = (function () {
     if (chk.spot.kind === 'wall') {
       var ed = chk.spot.edges[0];
       max = Number(c.wallStyles[bp.wallStyle].hp) || 0;
-      rec = { tok: withOff(bp.wallStyle + ':' + bp.wallHeight, ed.orient === 'v' ? a.off : ''), hp: live(max), max: max, bp: bp.id, by: p.id, built: now, prog: 0, need: need };
+      rec = { tok: withOff(bp.wallStyle + ':' + Rl().WALL_H, ed.orient === 'v' ? a.off : ''), hp: live(max), max: max, bp: bp.id, by: p.id, built: now, prog: 0, need: need };
       st.walls[Rl().edgeKey(ed.orient, ed.x, ed.y)] = rec;
     } else {
       var o = chk.spot.obj, pr = o.properties || {};
@@ -573,7 +584,7 @@ var World = (function () {
     var ratio = tg.max > 0 ? tg.hp / tg.max : 1, max;
     if (tg.t === 'wall') {
       if (nb.places !== 'wall' || !c.wallStyles[nb.wallStyle]) return say('That can\'t be upgraded that way.');
-      max = Number(c.wallStyles[nb.wallStyle].hp) || 0; tg.rec.tok = withOff(nb.wallStyle + ':' + nb.wallHeight, wallOff(tg.rec.tok));
+      max = Number(c.wallStyles[nb.wallStyle].hp) || 0; tg.rec.tok = withOff(nb.wallStyle + ':' + Rl().WALL_H, wallOff(tg.rec.tok));
     } else {
       if (nb.places !== 'object' || !c.objects[nb.object]) return say('That can\'t be upgraded that way.');
       max = Number((c.objects[nb.object].properties || {}).hp) || 0; tg.rec.ref = nb.object;
@@ -2380,6 +2391,7 @@ var World = (function () {
     structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure,
     recipesFor: recipesFor, hasTool: hasTool,
     canBuild: canBuild, blueprintsFor: blueprintsFor, noBuild: noBuild, buildSpot: buildSpot,
-    claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, itemCan: itemCan, beltItems: beltItems };
+    claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, itemCan: itemCan, beltItems: beltItems,
+    groundId: groundId, floorId: floorId, floorsOf: floorsOf };
 })();
 if (typeof module !== 'undefined') module.exports = World;

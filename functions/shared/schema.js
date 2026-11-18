@@ -78,7 +78,7 @@ var Schema = (function () {
     ] },
     objects: { collection: 'objects', id: 'id', label: 'Objects', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''),
-      f('kind', 'select', 'deco', 'What it does', { options: ['deco', 'container', 'door', 'switch', 'trap', 'rest', 'sign', 'npc', 'spawn', 'teleport', 'trigger', 'craft', 'claim'] }),
+      f('kind', 'select', 'deco', 'What it does', { options: ['deco', 'container', 'door', 'switch', 'trap', 'rest', 'sign', 'npc', 'spawn', 'teleport', 'trigger', 'craft', 'claim', 'stairs'] }),
       f('sprite', 'image', ''),
       f('sprite_states', 'text', '', 'state=sprite pairs, e.g. open=url; empty=url'),
       f('frames', 'number', 1), f('frame_ms', 'number', 200),

@@ -84,6 +84,9 @@ function step(token, action, since, structRev) {
   let players = presentOn(PLAYERS, p.map, now);
   if (!players.includes(p)) players.push(p);
   const startMap = p.map, ev = [];
+  // Monsters following this player by the stairs are on the floor they left: keep it moving while they come.
+  if (p.wake && p.wake.map !== p.map && now < p.wake.until && CONTENT.maps[p.wake.map]) World.advance(CONTENT, ws, p.wake.map, presentOn(PLAYERS, p.wake.map, now), now, Math.random, ev);
+  World.deliver(CONTENT, ws);
   World.advance(CONTENT, ws, p.map, players, now, Math.random, ev);
   if (action) ev.push(...World.act(CONTENT, ws, p, action, now, Math.random, players));
   p._seen = now;

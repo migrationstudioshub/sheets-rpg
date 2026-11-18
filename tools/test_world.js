@@ -1951,4 +1951,205 @@ test('a floor that lost its floor fields (saved through an older referee) is tak
   assert.deepStrictEqual(m.map_3.floors, { 0: 'map_3' }, 'ordinary maps are untouched');
 });
 
+// ---- staircases (docs/FLOORS.md §4.2): walk up a run on one floor, arrive on the floor above
+// Ground 'hall' 10x10. A staircase with its foot at (4,6) climbing north for 2 tiles: run (4,6),(4,5), landing (4,4)
+// upstairs. Upstairs is a floor over x 2..7, y 1..6 with the stairwell — (4,6) and (4,5) — left open.
+function hall(facing, mutate) {
+  const t = JSON.parse(JSON.stringify(tables));
+  const full = Array(10).fill(Array(10).fill('til_1'));
+  const upper = Array.from({ length: 10 }, (_, y) => Array.from({ length: 10 }, (_, x) => (x >= 2 && x <= 7 && y >= 1 && y <= 6 && !(x === 4 && (y === 6 || y === 5)) ? 'til_1' : '')));
+  t.Objects.push({ id: 'obj_stairs', name: 'Stairs', kind: 'stairs', sprite: '', walkable: false, properties: JSON.stringify({ length: 2 }) });
+  t.Maps.push({ id: 'hall', name: 'Hall', width: 10, height: 10, terrain: JSON.stringify(full), spawn: JSON.stringify({ x: 0, y: 9 }) });
+  t.Maps.push({ id: 'hall_z1', name: 'Hall', width: 10, height: 10, terrain: JSON.stringify(upper), floor_of: 'hall', z: 1 });
+  t.MapEntities.push({ map: 'hall', key: 'hall.e1', x: 4, y: 6, ref: 'obj_stairs', data: facing ? JSON.stringify({ facing }) : '' });
+  if (mutate) mutate(t);
+  const c = Content.build(t), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Climber', 'warrior');
+  const s = { c, ws, p };
+  put(s, 'hall', 4, 8, 'N');
+  return s;
+}
+const at = s => [s.p.map, s.p.x, s.p.y];
+const go = (s, dirs) => { clock += 5000; World.act(s.c, s.ws, s.p, { type: 'move', dirs }, clock, mid, [s.p]); return at(s); };
+
+test('a staircase: on at the foot, up the run, off the head onto the floor above, and back down the same way', () => {
+  const s = hall();
+  assert.ok(s.c.objects.obj_stairs.walkable, 'stairs are walked on whatever the object says');
+  const m = s.c.maps.hall;
+  assert.deepStrictEqual([Rules.stairAt(s.c, m, 4, 6).i, Rules.stairAt(s.c, m, 4, 5).i, Rules.stairAt(s.c, m, 4, 4), Rules.stairAt(s.c, m, 5, 6)], [0, 1, null, null]);
+  assert.deepStrictEqual([0.01, 0.5, 0.99].map(f => Math.round(100 * Rules.stairHeight(s.c, m, 4, 6.5 - 2 * f)) / 100), [0.01, 0.5, 0.99], 'you rise evenly from the foot to the head');
+  assert.strictEqual(Rules.stairHeight(s.c, m, 5, 6), 0);
+  assert.deepStrictEqual(go(s, ['N', 'N']), ['hall', 4, 6], 'onto the foot');
+  assert.deepStrictEqual(go(s, ['N']), ['hall', 4, 5], 'up the run');
+  assert.deepStrictEqual(go(s, ['N', 'N', 'N']), ['hall_z1', 4, 4], 'off the head: the floor above, one tile on — and the batch stops there');
+  assert.deepStrictEqual(go(s, ['N']), ['hall_z1', 4, 3], 'walking on upstairs');
+  assert.deepStrictEqual(go(s, ['S']), ['hall_z1', 4, 4]);
+  assert.deepStrictEqual(go(s, ['S']), ['hall', 4, 5], 'back into the stairwell: the head of the stairs below');
+  assert.deepStrictEqual(go(s, ['S', 'S']), ['hall', 4, 7], 'down the run and off the foot');
+});
+
+test('a staircase cannot be entered or left by its sides, crossed diagonally, or climbed into a wall', () => {
+  const s = hall();
+  put(s, 'hall', 3, 6, 'E'); assert.deepStrictEqual(go(s, ['E']), ['hall', 3, 6], 'not onto the foot from the side');
+  put(s, 'hall', 3, 5, 'E'); assert.deepStrictEqual(go(s, ['E']), ['hall', 3, 5], 'nor onto the run');
+  put(s, 'hall', 4, 4, 'S'); assert.deepStrictEqual(go(s, ['S']), ['hall', 4, 4], 'nor onto its head from beyond, on the same floor');
+  put(s, 'hall', 4, 5, 'N'); assert.deepStrictEqual(go(s, ['E']), ['hall', 4, 5], 'no stepping off the side');
+  assert.deepStrictEqual(go(s, ['W']), ['hall', 4, 5]);
+  put(s, 'hall', 3, 7, 'N'); assert.deepStrictEqual(go(s, ['NE']), ['hall', 3, 7], 'no cutting onto it diagonally');
+  put(s, 'hall', 4, 5, 'N'); assert.deepStrictEqual(go(s, ['NE']), ['hall', 4, 5], 'nor off its head diagonally');
+  // upstairs: the open stairwell is only a way down where the stairs come up, walking the way they descend
+  put(s, 'hall_z1', 3, 5, 'E'); assert.deepStrictEqual(go(s, ['E']), ['hall_z1', 3, 5], 'not into the well from its side');
+  put(s, 'hall_z1', 4, 7, 'N'); assert.strictEqual(Rules.tryMove(s.c, s.c.maps.hall_z1, 4, 7, 'N').ok, false);
+  put(s, 'hall_z1', 2, 1, 'W'); assert.deepStrictEqual(go(s, ['W']), ['hall_z1', 2, 1], 'ordinary open air is still not a way down');
+  // nowhere to land: no floor above the landing, or a wall across the head
+  const noFloor = hall('', t => { const up = t.Maps.find(r => r.id === 'hall_z1'), g = JSON.parse(up.terrain); g[4][4] = ''; up.terrain = JSON.stringify(g); });
+  put(noFloor, 'hall', 4, 5, 'N'); assert.deepStrictEqual(go(noFloor, ['N']), ['hall', 4, 5]);
+  const walled = hall('', t => { const up = t.Maps.find(r => r.id === 'hall_z1'), hW = Array.from({ length: 11 }, () => Array(10).fill('')); hW[5][4] = 'wall_wood:2'; up.hWalls = JSON.stringify(hW); });
+  put(walled, 'hall', 4, 5, 'N'); assert.deepStrictEqual(go(walled, ['N']), ['hall', 4, 5], 'a wall upstairs across the head of the stairs');
+  put(walled, 'hall_z1', 4, 4, 'S'); assert.deepStrictEqual(go(walled, ['S']), ['hall_z1', 4, 4], 'and it stops the way down too');
+  const lone = hall('', t => { t.Maps = t.Maps.filter(r => r.id !== 'hall_z1'); });
+  put(lone, 'hall', 4, 5, 'N'); assert.deepStrictEqual(go(lone, ['N']), ['hall', 4, 5], 'stairs with no floor above lead nowhere');
+});
+
+test('a staircase climbs the way it was turned, and a monster with nobody to follow does not take it', () => {
+  // climbing east: foot (4,6), run (5,6), landing (6,6) upstairs — give the floor above a matching stairwell
+  const s = hall('E', t => { const up = t.Maps.find(r => r.id === 'hall_z1'), g = JSON.parse(up.terrain); g[6][4] = ''; g[6][5] = ''; g[5][4] = 'til_1'; up.terrain = JSON.stringify(g); });
+  assert.strictEqual(Rules.stairDir(s.c.maps.hall.entities[0]), 'E');
+  put(s, 'hall', 3, 6, 'E');
+  assert.deepStrictEqual(go(s, ['E']), ['hall', 4, 6]);
+  assert.deepStrictEqual(go(s, ['E']), ['hall', 5, 6]);
+  assert.deepStrictEqual(go(s, ['E']), ['hall_z1', 6, 6]);
+  assert.deepStrictEqual(go(s, ['W']), ['hall', 5, 6], 'and down again, walking west');
+  put(s, 'hall', 4, 7, 'N'); assert.deepStrictEqual(go(s, ['N']), ['hall', 4, 7], 'its foot is no longer entered from the south');
+  // a monster on the run chasing someone does not leave the floor
+  const h = hall();
+  World.advance(h.c, h.ws, 'hall', [h.p], 1000, mid, []);
+  const ms = World.mapState(h.ws, 'hall'), ref = Object.keys(h.c.monsters)[0], def = h.c.monsters[ref];
+  def.aggro = 20;
+  const mo = { id: 'hall.m1', ref, x: 4, y: 5, hp: def.hp, last: 1000, facing: 'N', spawn: '' };
+  ms.monsters.push(mo);
+  put(h, 'hall', 4, 0, 'S');
+  World.advance(h.c, h.ws, 'hall', [h.p], 1000 + def.moveMs * 3, mid, []);
+  assert.ok(ms.monsters.indexOf(mo) >= 0 && mo.y >= 5, 'still on the ground floor, on or below the stairs');
+});
+
+test('a monster after you follows by the stairs: it leaves its floor as a guest of the next, and its spawner replaces it', () => {
+  const s = hall();
+  World.advance(s.c, s.ws, 'hall', [s.p], 1000, mid, []);
+  const ms = World.mapState(s.ws, 'hall'), ref = Object.keys(s.c.monsters)[0], def = s.c.monsters[ref];
+  def.aggro = 3;
+  let now = 500000;
+  const mo = { id: 'hall.m1', ref, x: 4, y: 8, hp: def.hp, last: now, facing: 'N', spawn: '', engaged: 'p1' };
+  const far = { id: 'hall.m2', ref, x: 9, y: 0, hp: def.hp, last: now, facing: 'N', spawn: '' };        // minding its own business
+  ms.monsters.push(mo, far);
+  put(s, 'hall', 4, 5, 'N');
+  World.act(s.c, s.ws, s.p, { type: 'move', dirs: ['N'] }, now, mid, [s.p]);
+  assert.deepStrictEqual(at(s), ['hall_z1', 4, 4]);
+  assert.deepStrictEqual([mo.follow.way, mo.follow.x, mo.follow.y, mo.follow.dir, mo.follow.who], ['up', 4, 6, 'N', 'p1'], 'the one after you is told which stairs');
+  assert.strictEqual(far.follow, undefined, 'one that was not after you is not');
+  assert.strictEqual(s.p.wake.map, 'hall', 'and the floor you left is kept moving for a while');
+  s.p.y = 2;                                                           // you walk on upstairs
+  // nobody is on the ground floor now; it still moves on, and the monster walks to the stairs and up them
+  for (let i = 0; i < 10 && !(s.ws.transfers || []).length; i++) { now += def.moveMs + 1; World.advance(s.c, s.ws, 'hall', [], now, mid, []); }
+  assert.strictEqual(s.ws.transfers.length, 1);
+  const t = s.ws.transfers[0];
+  assert.deepStrictEqual([t.map, t.monster.x, t.monster.y, t.monster.guest, t.monster.engaged, t.monster.hp], ['hall_z1', 4, 4, true, 'p1', def.hp]);
+  assert.ok(mo.dead && mo.respawnAt > now && !mo.follow, 'downstairs it counts as lost: its spawner will bring another');
+  assert.strictEqual(World.deliver(s.c, s.ws), 1);
+  now += 10;
+  World.advance(s.c, s.ws, 'hall_z1', [s.p], now, mid, []);
+  const upstairs = World.mapState(s.ws, 'hall_z1').monsters;
+  assert.deepStrictEqual(upstairs.map(m => [m.ref, m.guest, m.engaged]), [[ref, true, 'p1']], 'the floor above takes it in');
+  // it comes back down after you the same way
+  const g = upstairs[0];
+  Object.assign(g, { x: 4, y: 2, last: now });
+  put(s, 'hall_z1', 4, 4, 'S');
+  World.act(s.c, s.ws, s.p, { type: 'move', dirs: ['S'] }, now, mid, [s.p]);
+  assert.deepStrictEqual(at(s), ['hall', 4, 5]);
+  assert.deepStrictEqual([g.follow.way, g.follow.x, g.follow.y, g.follow.dir], ['down', 4, 4, 'S']);
+  s.p.y = 9;
+  for (let i = 0; i < 10 && !(s.ws.transfers || []).length; i++) { now += def.moveMs + 1; World.advance(s.c, s.ws, 'hall_z1', [], now, mid, []); }
+  assert.deepStrictEqual([s.ws.transfers[0].map, s.ws.transfers[0].monster.x, s.ws.transfers[0].monster.y], ['hall', 4, 5]);
+  assert.strictEqual(World.mapState(s.ws, 'hall_z1').monsters.length, 0, 'a guest that moves on leaves nothing behind');
+});
+
+test('a guest monster that loses interest, or dies, is removed; a follower gives up after a while', () => {
+  const s = hall();
+  World.advance(s.c, s.ws, 'hall_z1', [], 1000, mid, []);
+  const ms = World.mapState(s.ws, 'hall_z1'), ref = Object.keys(s.c.monsters)[0], def = s.c.monsters[ref];
+  let now = 700000;
+  ms.arrivals = [{ id: 'hall.m1~1', ref, x: 3, y: 3, hp: def.hp, last: now, facing: 'S', spawn: '', guest: true, engaged: 'p1', idleUntil: now + 90000 },
+                 { id: 'hall.m2~1', ref, x: 6, y: 3, hp: def.hp, last: now, facing: 'S', spawn: '', guest: true, engaged: 'p1', idleUntil: now + 90000 }];
+  World.advance(s.c, s.ws, 'hall_z1', [], now + 1, mid, []);
+  assert.strictEqual(ms.monsters.length, 2);
+  ms.monsters[0].dead = true;
+  World.advance(s.c, s.ws, 'hall_z1', [], now + 2, mid, []);
+  assert.deepStrictEqual(ms.monsters.map(m => m.id), ['hall.m2~1'], 'a dead guest is gone, not waiting to respawn');
+  World.advance(s.c, s.ws, 'hall_z1', [], now + 95000, mid, []);
+  assert.strictEqual(ms.monsters.length, 0, 'and one with nobody to chase for long enough leaves');
+  // a follower that cannot reach the stairs in time stops trying
+  World.advance(s.c, s.ws, 'hall', [], 1000, mid, []);
+  const g = World.mapState(s.ws, 'hall');
+  const mo = { id: 'hall.m9', ref, x: 0, y: 0, hp: def.hp, last: now, facing: 'N', spawn: '', follow: { way: 'up', x: 4, y: 6, dir: 'N', who: 'p1', until: now + 5 } };
+  g.monsters.push(mo);
+  World.advance(s.c, s.ws, 'hall', [], now + def.moveMs * 30, mid, []);
+  assert.ok(g.monsters.indexOf(mo) >= 0 && !(s.ws.transfers || []).length, 'still downstairs');
+});
+
+// ---- seeing between floors (docs/FLOORS.md §6)
+// Ground 'keep' 14x12, all open. Upstairs: a floor over x 3..8, y 3..8, plus a separate block at (11,5) (another
+// building at the same height). The ground is roofed at (12,8). Optional walls upstairs via mutate.
+function keep(mutate, cfg) {
+  const t = JSON.parse(JSON.stringify(tables));
+  const full = Array(12).fill(Array(14).fill('til_1'));
+  const upper = Array.from({ length: 12 }, (_, y) => Array.from({ length: 14 }, (_, x) => ((x >= 3 && x <= 8 && y >= 3 && y <= 8) || (x === 11 && y === 5) ? 'til_1' : '')));
+  const roof = Array.from({ length: 12 }, (_, y) => Array.from({ length: 14 }, (_, x) => (x === 12 && y === 8 ? '1' : '')));
+  t.Maps.push({ id: 'keep', name: 'Keep', width: 14, height: 12, terrain: JSON.stringify(full), roof: JSON.stringify(roof) });
+  t.Maps.push({ id: 'keep_z1', name: 'Keep', width: 14, height: 12, terrain: JSON.stringify(upper), floor_of: 'keep', z: 1 });
+  t.Maps.push({ id: 'keep_zm1', name: 'Keep', width: 14, height: 12, terrain: JSON.stringify(full), floor_of: 'keep', z: -1 });
+  Object.keys(cfg || {}).forEach(k => { t.Config = t.Config.filter(r => r.key !== k).concat([{ key: k, value: cfg[k] }]); });
+  if (mutate) mutate(t);
+  return Content.build(t);
+}
+
+test('from upstairs you see the ground outside past an open edge, never under your own floor or through a wall', () => {
+  const c = keep(), up = c.maps.keep_z1, g = c.maps.keep;
+  const sees = (ux, uy, lx, ly, r) => World.seesAcross(c, up, ux, uy, g, lx, ly, r);
+  assert.strictEqual(sees(8, 5, 10, 5), true, 'standing at the edge: the ground just beyond');
+  assert.strictEqual(sees(5, 5, 10, 6), true, 'from the middle of the floor too, with no wall in the way');
+  assert.strictEqual(sees(5, 5, 5, 6), false, 'not what is beneath your own floor');
+  assert.strictEqual(sees(5, 5, 8, 8), false);
+  assert.strictEqual(sees(8, 5, 12, 5), false, 'a building at your height stands in the way');
+  assert.strictEqual(sees(8, 4, 12, 4), true, 'but not one row over');
+  assert.strictEqual(sees(8, 8, 12, 8), false, 'never into a roofed interior');
+  assert.strictEqual(sees(8, 5, 13, 6, 3), false, 'nor beyond the radius');
+  assert.strictEqual(sees(8, 5, 10, 5, 3), true);
+  // direction and depth
+  assert.strictEqual(World.seesAcross(c, g, 8, 5, up, 10, 5), false, 'it is asked upper-to-lower; the answer serves both ways');
+  assert.strictEqual(World.seesAcross(c, up, 8, 5, c.maps.keep_zm1, 10, 5), false, 'nothing below ground is seen from above');
+  assert.strictEqual(World.seesAcross(c, g, 2, 2, c.maps.keep_zm1, 2, 3), false);
+  // a wall along the east edge of the upper floor at row 5 shuts that view; a window in it would open it again
+  const walled = keep(t => { const u = t.Maps.find(r => r.id === 'keep_z1'), vW = Array.from({ length: 12 }, () => Array(15).fill('')); vW[5][9] = 'wall_wood:2'; u.vWalls = JSON.stringify(vW); });
+  assert.strictEqual(World.seesAcross(walled, walled.maps.keep_z1, 8, 5, walled.maps.keep, 10, 5), false);
+  assert.strictEqual(World.seesAcross(walled, walled.maps.keep_z1, 8, 4, walled.maps.keep, 10, 4), true, 'the next row has no wall');
+});
+
+test('being higher widens your view, and the view carries the other floors when the world holds them', () => {
+  const c = keep();
+  assert.deepStrictEqual([World.sightRadius(c, c.maps.keep), World.sightRadius(c, c.maps.keep_z1), World.sightRadius(c, c.maps.keep_zm1)], [16, 19, 16]);
+  const c2 = keep(null, { sight_radius: 10, sight_per_floor: 5 });
+  assert.deepStrictEqual([World.sightRadius(c2, c2.maps.keep), World.sightRadius(c2, c2.maps.keep_z1)], [10, 15]);
+  assert.strictEqual(World.sightRadius(c, c.maps.map_3), 16, 'a map without floors is unchanged');
+  const ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Watcher', 'warrior');
+  Object.assign(p, { map: 'keep_z1', x: 8, y: 5 });
+  World.advance(c, ws, 'keep_z1', [p], 1000, mid, []);
+  assert.strictEqual(World.view(c, ws, 'keep_z1', p, [p]).floors, undefined, 'a floor nobody has loaded is not sent');
+  World.advance(c, ws, 'keep', [], 1000, mid, []);
+  const ref = Object.keys(c.monsters)[0];
+  World.mapState(ws, 'keep').monsters.push({ id: 'keep.m1', ref, x: 10, y: 5, hp: 5, last: 1000, facing: 'S', spawn: '' }, { id: 'keep.m2', ref, x: 1, y: 1, hp: 5, last: 1000, facing: 'S', spawn: '', dead: true });
+  const v = World.view(c, ws, 'keep_z1', p, [p]);
+  assert.deepStrictEqual(Object.keys(v.floors), ['keep']);
+  assert.deepStrictEqual(v.floors.keep.monsters.map(m => [m.id, m.x, m.y]), [['keep.m1', 10, 5]], 'the living ones, where they stand');
+  assert.strictEqual(World.view(c, ws, 'map_3', p, [p]).floors, undefined);
+});
+
 console.log(`\n${passed} world tests passed`);

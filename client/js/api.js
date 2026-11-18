@@ -33,9 +33,13 @@ var Api = (function () {
   Offline.prototype.save = function () { if (this.p) store(OFFLINE_KEY, { player: this.p, world: this.ws }); };
   Offline.prototype.step = function (action, since) {
     var c = this.content, p = this.p, ws = this.ws, now = Date.now(), ev = [], from = p.map;
+    // Monsters following you by the stairs are on the floor you left: keep it moving while they come, then hand them over.
+    if (p.wake && p.wake.map !== p.map && now < p.wake.until && c.maps[p.wake.map]) World.advance(c, ws, p.wake.map, [], now, Math.random, []);
+    World.deliver(c, ws);
     World.advance(c, ws, p.map, [p], now, Math.random, ev);
     if (action) ev = ev.concat(World.act(c, ws, p, action, now, Math.random, [p]));
     if (p.map !== from) World.advance(c, ws, p.map, [p], now, Math.random, ev);
+    World.deliver(c, ws);
     World.record(ws, ev);
     this.save();
     return Promise.resolve({ player: World.publicPlayer(c, p), world: World.view(c, ws, p.map, p, [p], p.map !== from || since === -1 ? -1 : this.structRev),

@@ -312,9 +312,10 @@ var E = {
   function placeObject(x, y, ref) {
     if (!E.inside(x, y) || !ref) return false;
     var m = E.map(), old = E.entityAt(x, y), def = E.content.objects[ref];
-    var face = def && Rules.turnable(def) && E.brushFacing !== 'S' ? E.brushFacing : '';
+    var stairs = !!def && def.kind === 'stairs';             // a staircase always says which way it climbs
+    var face = stairs ? E.brushFacing : (def && Rules.turnable(def) && E.brushFacing !== 'S' ? E.brushFacing : '');
     if (old && old.ref === ref) {                           // painting the same thing again only turns it
-      if (!def || !Rules.turnable(def) || Rules.facingOf(old) === (face || 'S')) return false;
+      if (!def || !(stairs || Rules.turnable(def)) || (stairs ? Rules.stairDir(old) === face : Rules.facingOf(old) === (face || 'S'))) return false;
       if (face) old.data.facing = face; else delete old.data.facing;
       return old;
     }
@@ -701,6 +702,32 @@ var E = {
 
   // ------------------------------------------------------------ drawing
   E.redraw = function () { E.needsDraw = true; };
+  // Authoring aid: an arrow along a staircase's run, pointing the way it climbs, and a box where it lands upstairs.
+  function stairArrow(e, o, vx, vy, s) {
+    var dir = Rules.stairDir(e), d = Rules.DIRS[dir], n = Math.max(1, Math.round(Number((e.data && e.data.length) || (o.properties || {}).length) || 2));
+    var x0 = vx + (e.x + 0.5) * s, y0 = vy + (e.y + 0.5) * s, x1 = x0 + d.dx * (n - 0.6) * s, y1 = y0 + d.dy * (n - 0.6) * s, a = s * 0.22;
+    g.save(); g.strokeStyle = '#ffe08a'; g.fillStyle = '#ffe08a'; g.lineWidth = Math.max(2, s * 0.08);
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+    g.beginPath(); g.moveTo(x1 + d.dx * a, y1 + d.dy * a); g.lineTo(x1 - d.dy * a, y1 + d.dx * a); g.lineTo(x1 + d.dy * a, y1 - d.dx * a); g.closePath(); g.fill();
+    g.setLineDash([4, 3]); g.lineWidth = 1;
+    g.strokeRect(vx + (e.x + n * d.dx) * s + 2.5, vy + (e.y + n * d.dy) * s + 2.5, s - 5, s - 5);            // the landing, on the floor above
+    g.restore();
+  }
+  /** Clear the floor above a staircase's run, so there is a stairwell to come up through. Says what it found. */
+  E.openStairwell = function (e) {
+    var o = E.content.objects[e.ref], m = E.map(), up = E.floors().filter(function (f) { return f.z === (m.z || 0) + 1; })[0];
+    if (!up) return 'There is no floor above this one yet: add it with “+ Above”.';
+    var um = E.content.maps[up.id], dir = Rules.stairDir(e), d = Rules.DIRS[dir], n = Math.max(1, Math.round(Number((e.data && e.data.length) || (o.properties || {}).length) || 2)), cleared = 0;
+    for (var i = 0; i < n; i++) {
+      var x = e.x + i * d.dx, y = e.y + i * d.dy;
+      if (um.terrain[y] && um.terrain[y][x]) { um.terrain[y][x] = ''; cleared++; }
+      if (um.overlay && um.overlay[y] && um.overlay[y][x]) um.overlay[y][x] = '';
+    }
+    if (cleared) { E.dirty.maps[up.id] = true; if (E.underBake) E.underBake.stale = true; if (E.scheduleWip) E.scheduleWip(); }
+    var lx = e.x + n * d.dx, ly = e.y + n * d.dy, landed = um.terrain[ly] && um.terrain[ly][lx];
+    return (cleared ? 'Opened the stairwell on the floor above (' + cleared + ' tile' + (cleared === 1 ? '' : 's') + ' cleared). ' : 'The stairwell above is already open. ') +
+      (landed ? 'It lands on the floor above at (' + lx + ', ' + ly + ').' : 'But there is no floor to land on above at (' + lx + ', ' + ly + '): paint one there.');
+  };
 
   function frame() {
     requestAnimationFrame(frame);
@@ -756,6 +783,7 @@ var E = {
       g.globalAlpha = objDim;
       var e = it.ent, o = it.o;
       if (!o) g.drawImage(Assets.placeholder('?', '#a33', t), it.dx, it.dy, s, s);
+      else if (o.kind === 'stairs') { Render.drawStairs(g, c, o, e, vx, vy, s, 0); stairArrow(e, o, vx, vy, s); }
       else if (o.kind === 'spawn' && !o.sprite) drawSpawn(e, o, it.dx, it.dy, s);   // spriteless: editor-only marker
       else {
         var sde = Render.sideDoorEdges ? Render.sideDoorEdges(o, e) : [];
@@ -884,6 +912,7 @@ var E = {
           if (bmi) g.drawImage(bmi, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
         } else if (E.layer === 'objects' && E.brush.object) {
           var bo = c.objects[E.brush.object], bfs = bo && Rules.turnable(bo) ? Rules.facingSprite(bo, E.brushFacing) : null;
+          if (bo && bo.kind === 'stairs') { var ge = { x: E.hover.x, y: E.hover.y, data: { facing: E.brushFacing } }; Render.drawStairs(g, c, bo, ge, vx, vy, s, 0); g.globalAlpha = 1; stairArrow(ge, bo, vx, vy, s); bo = null; }
           var bi = bo && Assets.get(bfs ? bfs.path : bo.sprite), bgx = vx + E.hover.x * s, bgy = vy + E.hover.y * s;
           if (bi && bfs && bfs.flip) { g.save(); g.translate(bgx + s, bgy); g.scale(-1, 1); g.drawImage(bi, 0, 0, s, s); g.restore(); }
           else if (bi) g.drawImage(bi, bgx, bgy, s, s);
@@ -1064,17 +1093,17 @@ var E = {
   // Turn a turnable object: the selected one if there is one, else the one about to be placed. dir 1 = clockwise.
   E.turn = function (dir) {
     var sel = E.selected && E.entityByKey(E.selected), so = sel && E.content.objects[sel.ref];
-    if (sel && so && Rules.turnable(so) && !(so.properties && so.properties.layer === 'wall')) {
+    if (sel && so && (so.kind === 'stairs' || Rules.turnable(so)) && !(so.properties && so.properties.layer === 'wall')) {
       E.checkpoint();
-      var nf = Rules.nextFacing(sel, dir);
-      if (nf === 'S') delete sel.data.facing; else sel.data.facing = nf;
+      var nf = Rules.nextFacing(so.kind === 'stairs' ? Rules.stairDir(sel) : sel, dir);
+      if (nf === 'S' && so.kind !== 'stairs') delete sel.data.facing; else sel.data.facing = nf;
       E.markDirty('map'); Panels.inspector(); E.redraw();
       return true;
     }
     var bo = E.layer === 'objects' && E.paletteTab !== 'monsters' && E.brush.object && E.content.objects[E.brush.object];
-    if (!bo || !Rules.turnable(bo)) return false;
+    if (!bo || !(bo.kind === 'stairs' || Rules.turnable(bo))) return false;
     E.brushFacing = Rules.nextFacing(E.brushFacing, dir);
-    Panels.status('facing ' + ({ N: 'north', E: 'east', S: 'south', W: 'west' })[E.brushFacing] + ' (T or Shift+wheel turns)');
+    Panels.status((bo.kind === 'stairs' ? 'climbs ' : 'facing ') + ({ N: 'north', E: 'east', S: 'south', W: 'west' })[E.brushFacing] + ' (T or Shift+wheel turns)');
     E.redraw();
     return true;
   };

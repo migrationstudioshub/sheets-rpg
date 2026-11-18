@@ -1,6 +1,6 @@
 # Floors: multi-storey buildings and basements
 
-Status: **stage 1 built** (branch `floors`, 18 Nov 2026; not yet run on the real server). Stages 2–4 not started (see §9). Decisions in §1 were made by the owner on 18 Nov 2026.
+Status: **stages 1, 2 and 3 built** (18 Nov 2026; not yet run on the real server). Stage 4 not started (see §9). Decisions in §1 were made by the owner on 18 Nov 2026.
 
 This is the plan for real multi-storey construction inside one map: upper floors, basements, staircases you
 walk and teleports between floors, drawn raised, with sight between floors. Read it before touching anything
@@ -111,8 +111,8 @@ Stage 3 (full):
 
 - Melee and interaction: same floor only, always.
 - Shots and thrown items between floors: stage 4, along the same rays as §6.
-- Monsters stay on their floor until stage 2 gives them stairs. **Until then an upper floor is a safe spot** —
-  a known gap, closed in stage 2.
+- Monsters follow a player by the stairs (stage 2): see "What stage 2 actually does". A teleport between floors
+  (a ladder) is still a way to shake them off.
 - A claim covers the **whole column**: the same radius on every floor of the family (stage 4, with building).
 - No-build masks and roofs are per floor. The roof of the top floor is the building's roof.
 
@@ -128,9 +128,9 @@ Stage 3 (full):
 | # | What | State |
 | --- | --- | --- |
 | 1 | Floors in data and rules (`floor_of`, `z`, `linkFloors`), saving/serving them, the editor's floor switch and family operations, teleports between floors, simple raised drawing | **built** |
-| 2 | Walkable staircases with the gradual rise, for players and monsters | not started |
-| 3 | Full raised drawing (facades, cutaway, clicks), sight between floors, height bonus | not started |
-| 4 | Shots between floors; players build floors and stairs; claims by column | not started |
+| 2 | Walkable staircases with the gradual rise, for players and monsters | **built** |
+| 3 | Full raised drawing (facades, cutaway), sight between floors, height bonus | **built** (clicks onto other floors moved to stage 4) |
+| 4 | Shots between floors and clicking what you see on them; players build floors and stairs; claims by column | not started |
 
 ### What stage 1 actually does
 - `Content.linkFloors`, `World.groundId / floorId / floorsOf`; map rows carry `floor_of` + `z`; the function's
@@ -143,6 +143,46 @@ Stage 3 (full):
   with no terrain are see-through. On the ground and in basements nothing of other floors is drawn.
 - Known gaps until later stages: monsters do not change floor; nothing on another floor can be seen live,
   targeted or shot; a claim only covers its own floor; from the ground an upper floor is invisible.
+
+### What stage 2 actually does
+- Kind `stairs` (always walkable). `Rules.stairDir / stairsOn / stairAt / stairHeight`; `Rules.tryMove` answers a
+  step that changes floor with `map` (the floor arrived on) and `stairs: 'up' | 'down'`. `opts.mapOf(id)` hands it
+  the other floor (the referee: its live map; the client: the map as authored).
+- The referee's move handler treats that as a change of map and stops the batch there. The game page does not
+  predict it: it sends the step and waits for the answer (a short pause at the head of the stairs).
+- Drawing: stairs lie flat under everyone; whoever is on the run is drawn part-way up (`stairHeight`). Art is
+  authored climbing north (`side=` east/west mirrored, `south=`); with none it is drawn as plain steps.
+- Editor: T / Shift+wheel turns the stairs, an arrow shows the climb and a dashed box the landing; the inspector has
+  "climbs toward" and **Open the stairwell above**, which clears the floor above the run.
+- Monsters: `tagFollowers` marks those after a player who takes the stairs (`m.follow`); `followStairs` walks them
+  there; `leaveFloor` turns the step that changes floor into a **guest** in `ws.transfers`. `World.deliver` (offline)
+  or the referee's `deliver` puts it in the other floor's `arrivals`, taken in on that floor's next advance. The
+  floor left treats it as lost (its spawner replaces it). `player.wake` makes the leaving player's steps keep that
+  floor moving for 20 s, since nobody else may be there. A guest that dies or idles 90 s is removed.
+- Known limits: a follower walks straight at the stairs and can be stopped by a wall in between; only monsters
+  that were after you when you took the stairs follow; arriving does not check for something a player built on the
+  landing, nor for someone standing on it; there is no glide between the two floors.
+
+### What stage 3 actually does
+- `World.seesAcross(c, upper, ux, uy, lower, lx, ly, radius, stateFn)` is the one rule for sight between floors,
+  asked upper-to-lower; the same answer serves both ways. `World.sightRadius(c, map)` = Config `sight_radius` +
+  `sight_per_floor` (3) per floor above ground.
+- What stands on the other floors reaches the client two ways: `view.floors` (`World.peek`) when the world holds
+  those floors — offline play, the LAN host — and, online, by listening to each sibling floor's pushed
+  `world/<floorId>` (one more listener per floor of the building you are in).
+- The client (`floorActors` in main.js) keeps the creatures it has a clear view of and hands them to the renderer.
+- Drawing: creatures seen on floors below are drawn bright over the dimmed lower floors. From the ground or a
+  lower floor, the floors above are drawn as the upper part of the building (`Renderer.above`): roof colour over
+  cells marked roofed up there, the floor itself where they are not (a terrace), and the walls — each a
+  wall-height higher. Standing indoors or under an upper floor they are not drawn; outside, the part near the
+  player goes faint. Whoever stands up there in plain view is drawn at that height.
+- Known limits: the lower floors are shown whole (dimmed), not limited to what you can see; other floors are
+  drawn as authored (not what players built or broke there, nor doors' states); upper floors need their own
+  roof painted to hide their inside; offline and on a LAN only monsters (not other players) on other floors
+  are shown; a floor nobody is on does not move, so what you see there is where things last stood; the
+  facade is not sorted against ground-floor walls (it is simply drawn over them).
+- Not done here: clicking or shooting at something on another floor — it needs the rules for shots between
+  floors, so it moved to stage 4. Terrain elevation (docs/UNDERGROUND_AND_ELEVATION.md) will reuse this sight rule.
 
 ## 10. Rules for the code
 

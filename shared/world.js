@@ -1028,6 +1028,7 @@ var World = (function () {
   function moveOpts(c, ws, mapId, players, self) {
     var ms = mapState(ws, mapId);
     return {
+      mapOf: function (id) { return liveMap(c, ws, id); },      // another floor of this building, for stairs
       walkable: function (e) { return walkableEntity(c, ws, mapId, e); },
       occupied: function (x, y) {
         var m = monsterAt(ms, x, y, self); if (m) return { monster: m };
@@ -1104,12 +1105,83 @@ var World = (function () {
     return ms;
   }
 
+  // ---- monsters and stairs (docs/FLOORS.md §4.2) ----
+  // A monster lives in ONE floor's record, and each floor's record is written on its own. So a monster does not
+  // "walk" between floors: when a player it is after takes the stairs, it is told to follow (m.follow); it walks to
+  // the stairs and, on the step that would change floor, it is taken off this floor and put in ws.transfers as a
+  // GUEST for the other one. Whoever runs the world delivers that (World.deliver here, or the referee into the
+  // other floor's record) and the other floor takes it in on its next advance (ms.arrivals). The floor it left
+  // treats it as lost: its spawner brings a new one after the usual wait. A guest that dies, or loses interest
+  // for GUEST_IDLE_MS, is simply removed.
+  var FOLLOW_MS = 20000, GUEST_IDLE_MS = 90000;
+  function tagFollowers(c, ws, mapId, p, way, x, y, dir, now) {
+    var ms = mapState(ws, mapId), map = liveMap(c, ws, mapId), goal, any = false;
+    if (way === 'up') { var hit = Rl().stairAt(c, map, x, y); if (!hit) return; goal = { way: 'up', x: hit.s.x, y: hit.s.y, dir: hit.s.dir }; }
+    else goal = { way: 'down', x: x, y: y, dir: dir };            // from the landing they left, the way they stepped
+    (ms.monsters || []).forEach(function (m) {
+      var def = c.monsters[m.ref]; if (!def || m.dead) return;
+      if (m.engaged !== p.id && Math.abs(m.x - x) + Math.abs(m.y - y) > def.aggro) return;
+      m.follow = { way: goal.way, x: goal.x, y: goal.y, dir: goal.dir, who: p.id, until: now + FOLLOW_MS };
+      any = true;
+    });
+    if (any) { p.wake = { map: mapId, until: now + FOLLOW_MS }; ws.dirty = true; }   // keep that floor moving while they come
+  }
+  function stepsToward(m, tx, ty) {
+    var dx = tx - m.x, dy = ty - m.y, dirs = [];
+    if (!dx && !dy) return dirs;
+    if (Math.abs(dx) >= Math.abs(dy)) { if (dx) dirs.push(dx > 0 ? 'E' : 'W'); if (dy) dirs.push(dy > 0 ? 'S' : 'N'); }
+    else { dirs.push(dy > 0 ? 'S' : 'N'); if (dx) dirs.push(dx > 0 ? 'E' : 'W'); }
+    if (dx && dy) dirs.unshift((dy > 0 ? 'S' : 'N') + (dx > 0 ? 'E' : 'W'));
+    return dirs;
+  }
+  // One step of a monster heading for the stairs its target took. True when that step took it off this floor.
+  function followStairs(c, ws, mapId, map, ms, m, here, now) {
+    var f = m.follow, R = Rl(), d = R.DIRS[f.dir], dirs;
+    if (f.way === 'up') {
+      var on = R.stairAt(c, map, m.x, m.y), ax = f.x - d.dx, ay = f.y - d.dy;       // (ax,ay) = the tile before the foot
+      dirs = (on && on.s.x === f.x && on.s.y === f.y) || (m.x === ax && m.y === ay) ? [f.dir] : stepsToward(m, ax, ay);
+    } else dirs = m.x === f.x && m.y === f.y ? [f.dir] : stepsToward(m, f.x, f.y);
+    for (var i = 0; i < dirs.length; i++) {
+      var r = R.tryMove(c, map, m.x, m.y, dirs[i], moveOpts(c, ws, mapId, here, m));
+      if (!r.ok) continue;
+      if (r.map) { leaveFloor(c, ws, mapId, m, r, now); return true; }
+      m.x = r.x; m.y = r.y; m.facing = R.faceFor(dirs[i], m.facing);
+      return false;
+    }
+    return false;
+  }
+  function leaveFloor(c, ws, mapId, m, r, now) {
+    var def = c.monsters[m.ref];
+    var guest = { id: String(m.id).replace(/~.*$/, '') + '~' + Math.floor(now % 1e9), ref: m.ref, x: r.x, y: r.y, hp: m.hp, last: now,
+      facing: m.facing, spawn: '', guest: true, engaged: m.follow ? m.follow.who : (m.engaged || null), idleUntil: now + GUEST_IDLE_MS };
+    if (m.look) guest.look = m.look;
+    (ws.transfers = ws.transfers || []).push({ map: r.map, monster: guest });
+    if (m.guest) m.gone = true;                                    // a guest moving on: nothing of it stays behind
+    else {                                                         // a resident: its spawner brings a new one, as after a kill
+      var se = m.spawn && entity(c, mapId, m.spawn), rs = se ? (Number(props(c, se).respawn_after_s) || 0) : 0;
+      m.dead = true; m.statuses = []; m.engaged = null; m.respawnAt = now + (rs > 0 ? rs : def.respawnS) * 1000;
+    }
+    delete m.follow;
+    ws.dirty = true;
+  }
+  /** Hand over monsters that changed floor to the floors they went to — for a world held whole in memory (offline play, tests). */
+  function deliver(c, ws) {
+    var list = ws.transfers || [];
+    ws.transfers = [];
+    list.forEach(function (t) { if (!c.maps[t.map]) return; var ms = mapState(ws, t.map); (ms.arrivals = ms.arrivals || []).push(t.monster); ws.dirty = true; });
+    return list.length;
+  }
+
   /** Moves the world on to `now`: timers, respawns, monsters wandering, chasing and attacking. */
   function advance(c, ws, mapId, players, now, rng, ev) {
     if (!c.maps[mapId]) return;
     syncEdges(c, ws, mapId);                              // refresh the opening overlay monster AI reads
     var map = liveMap(c, ws, mapId);
     var ms = ensureMonsters(c, ws, mapId, now, rng);
+    if (ms.arrivals && ms.arrivals.length) {                      // monsters that came up or down the stairs since last time
+      ms.arrivals.forEach(function (a) { if (!ms.monsters.some(function (q) { return q.id === a.id; })) ms.monsters.push(a); });
+      ms.arrivals = []; ws.dirty = true;
+    }
     Object.keys(ms.timers).forEach(function (k) {
       var t = ms.timers[k]; if (now < t.at) return;
       if (t.regrow) { var stg = structOf(ws, mapId); delete stg.gone[k]; touchStruct(stg); }   // a harvested object is back
@@ -1165,6 +1237,7 @@ var World = (function () {
           var d = Math.abs(q.x - m.x) + Math.abs(q.y - m.y);
           if (d <= def.aggro && d < best) { best = d; target = q; }
         });
+        if (target && m.guest) m.idleUntil = now + GUEST_IDLE_MS;
         if (target) {
           if (def.attackRange > 1 && best > 1 && best <= def.attackRange && now >= (m.nextShot || 0) &&
               canSee(c, map, m.x, m.y, target.x, target.y, function (e) { return stateOf(c, ws, mapId, e); })) {
@@ -1197,20 +1270,26 @@ var World = (function () {
           if (dx && dy) dirs.unshift((dy > 0 ? 'S' : 'N') + (dx > 0 ? 'E' : 'W'));             // cut the corner when the rules allow it
           for (var i = 0; i < dirs.length; i++) {
             var r = Rl().tryMove(c, map, m.x, m.y, dirs[i], moveOpts(c, ws, mapId, here, m));
-            if (r.ok) {
+            if (r.ok && !r.map) {                                 // (monsters do not change floor yet: FLOORS.md stage 2b)
               m.x = r.x; m.y = r.y; m.facing = Rl().faceFor(dirs[i], m.facing);
               m.last += (Rl().stepCost(dirs[i]) - 1) * stepMs;                                   // a diagonal takes longer, as it does for players
               break;
             }
           }
+        } else if (m.follow && now < m.follow.until) {
+          if (followStairs(c, ws, mapId, map, ms, m, here, now)) return;      // gone to the other floor
         } else if (rng() < 0.5) {
           var dir = 'NESW'.charAt(rint(rng, 0, 3));
           var r2 = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
           var sp = entity(c, mapId, m.spawn), rad = sp ? (Number(props(c, sp).radius) || 0) + 2 : 3;
-          if (r2.ok && (!sp || (Math.abs(r2.x - sp.x) <= rad && Math.abs(r2.y - sp.y) <= rad))) { m.x = r2.x; m.y = r2.y; m.facing = dir; }
+          if (r2.ok && !r2.map && (!sp || (Math.abs(r2.x - sp.x) <= rad && Math.abs(r2.y - sp.y) <= rad))) { m.x = r2.x; m.y = r2.y; m.facing = dir; }
         }
       }
     });
+    // guests that moved on, died, or lost interest are simply gone (they have no spawner to return to)
+    var before = ms.monsters.length;
+    ms.monsters = ms.monsters.filter(function (m) { return !m.gone && !(m.guest && (m.dead || now > (m.idleUntil || 0))); });
+    if (ms.monsters.length !== before) ws.dirty = true;
   }
 
   function respawnPoint(c, p) {
@@ -1442,6 +1521,52 @@ var World = (function () {
     if (atWindow) for (y = ya; y <= yb; y++) for (x = xa; x <= xb; x++)
       if (!out[x + ',' + y] && canSee(c, map, px, py, x, y, stateFn)) out[x + ',' + y] = 2;
     return out;
+  }
+  // ---- seeing between floors (docs/FLOORS.md §6) ----
+  function hasFloorAt(m, x, y) { return !!(m && m.terrain && m.terrain[y] && m.terrain[y][x]); }
+  function roofedAt(m, x, y) { var r = m && m.roof && m.roof[y] && m.roof[y][x]; return !!r && r !== '0'; }
+  /** How far a player on this map sees: Config sight_radius, plus sight_per_floor for every floor above the ground. */
+  function sightRadius(c, map) {
+    var base = cfgNum(c, 'sight_radius', 16), per = cfgNum(c, 'sight_per_floor', 3);
+    return (base > 0 ? base : 16) + Math.max(0, (map && map.z) || 0) * Math.max(0, per);
+  }
+  /**
+   * Is there a line of sight between someone at (ux,uy) on an UPPER floor and the cell (lx,ly) on a LOWER floor
+   * of the same building? The same answer serves both ways: if the one above can see the one below, the one
+   * below can see them. The eye travels on the upper floor first — its walls and solid things stop it as usual,
+   * a window lets it through — until it passes over a cell with no floor (open air: past the edge of a balcony,
+   * or out of a window). From there it carries on above the lower floors, stopped only by something as tall as
+   * the viewer: a cell that has a floor at the viewer's height, or on a floor in between. So single-storey walls
+   * below do not hide anything. Never seen: what is under the viewer's own floor, a roofed interior, or anything
+   * below ground. radius (optional) limits the distance.
+   */
+  function seesAcross(c, upper, ux, uy, lower, lx, ly, radius, stateFn) {
+    if (!upper || !lower) return false;
+    var uz = upper.z || 0, lz = lower.z || 0;
+    if (uz <= lz || lz < 0) return false;
+    if (radius > 0 && cheb(ux, uy, lx, ly) > radius) return false;
+    if (hasFloorAt(upper, lx, ly) || roofedAt(lower, lx, ly)) return false;
+    var mids = [], fam = upper.floors || {}, k;
+    for (k = lz + 1; k < uz; k++) if (fam[k] && c.maps[fam[k]]) mids.push(c.maps[fam[k]]);
+    var sf = stateFn || function () { return ''; }, line = lineCells(ux, uy, lx, ly), out = false;
+    for (var i = 1; i < line.length; i++) {
+      var a = line[i - 1], b = line[i];
+      if (!out) {
+        if (edgeBlocksSight(c, upper, a, b)) return false;
+        if (!hasFloorAt(upper, b.x, b.y)) out = true;
+        else if (blocksSight(c, upper, b.x, b.y, sf)) return false;
+      } else if (hasFloorAt(upper, b.x, b.y)) return false;         // another part of a building at the viewer's height
+      if (out && mids.some(function (m) { return hasFloorAt(m, b.x, b.y); })) return false;
+    }
+    return out;
+  }
+  /** What stands on a floor, as other floors may be shown it: { monsters: [...] } in the same shape the view uses. */
+  function peek(c, ws, mapId) {
+    var ms = ws.maps && ws.maps[mapId];
+    return { monsters: ((ms && ms.monsters) || []).filter(function (m) { return !m.dead; }).map(function (m) {
+      var d = c.monsters[m.ref];
+      return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing, look: m.look || undefined };
+    }) };
   }
   // How a viewer perceives something standing on a cell: 'seen' (in sight), 'sensed' (not in sight, but
   // known by another sense — drawn as an outline) or 'hidden'. `sensed` is an optional {"x,y":1} set; no
@@ -2202,6 +2327,12 @@ var World = (function () {
         if (p.mvB < cost) break;
         p.facing = Rl().faceFor(dir, p.facing);
         var r = Rl().tryMove(c, liveMap(c, ws, p.map), p.x, p.y, dir, moveOpts(c, ws, p.map, players, p));
+        if (r.ok && r.map && r.map !== p.map) {            // walked off the head (or into the well) of a staircase: now on another floor
+          var leftMap = p.map, leftX = p.x, leftY = p.y;
+          p.map = r.map; p.x = r.x; p.y = r.y; p.mvB -= cost; markExplored(c, p);
+          tagFollowers(c, ws, leftMap, p, r.stairs, leftX, leftY, dir, now);
+          break;                                           // the rest of this batch was aimed at the floor just left
+        }
         if (r.ok) { p.x = r.x; p.y = r.y; p.mvB -= cost; if (onStep(c, ws, p, now, ev)) break; }
         else if (r.reason === 'occupied' && r.who.monster && !Rl().DIAG[dir]) attack(c, ws, p.map, p, r.who.monster, now, rng, ev);   // bumping attacks straight on only
       }
@@ -2314,8 +2445,12 @@ var World = (function () {
     });
     // The structure layer travels with the view only when this client is behind (it sends the revision it has).
     var sv = ms.struct, srev = sv ? sv.rev || 0 : 0;
+    // The other floors of this building, when this world holds their state (offline play, a LAN host). The live
+    // referee holds one floor at a time: there the client listens to each floor's own pushed view instead.
+    var others;
+    floorsOf(c, mapId).forEach(function (f) { if (f.id !== mapId && ws.maps && ws.maps[f.id]) (others = others || {})[f.id] = peek(c, ws, f.id); });
     return {
-      map: mapId, states: states, now: now,
+      map: mapId, states: states, now: now, floors: others,
       structRev: srev, struct: srev && structRev !== srev ? publicStruct(sv) : undefined,
       monsters: (ms.monsters || []).filter(function (m) { return !m.dead; }).map(function (m) {
         var d = c.monsters[m.ref];
@@ -2334,6 +2469,7 @@ var World = (function () {
   /** Move-check options for the client's prediction, from a view (no world state on the client). */
   function viewOpts(c, map, v, selfId) {
     return {
+      mapOf: function (id) { return c.maps[id]; },             // another floor, as authored (the client has no live copy of it)
       walkable: function (e) {
         var o = c.objects[e.ref]; if (!o) return true;
         if (o.kind === 'spawn' || o.kind === 'trigger') return true;
@@ -2392,6 +2528,7 @@ var World = (function () {
     recipesFor: recipesFor, hasTool: hasTool,
     canBuild: canBuild, blueprintsFor: blueprintsFor, noBuild: noBuild, buildSpot: buildSpot,
     claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, itemCan: itemCan, beltItems: beltItems,
-    groundId: groundId, floorId: floorId, floorsOf: floorsOf };
+    groundId: groundId, floorId: floorId, floorsOf: floorsOf, deliver: deliver,
+    sightRadius: sightRadius, seesAcross: seesAcross, peek: peek };
 })();
 if (typeof module !== 'undefined') module.exports = World;

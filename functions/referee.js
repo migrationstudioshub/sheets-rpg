@@ -95,27 +95,45 @@ function create(deps) {
    * player's action (if any). `allJson` is a JSON snapshot of every player; each attempt parses its own
    * copy. Returns the committed attempt: { all, p, players, ev, ms }.
    */
-  async function runOnMap(content, mapId, allJson, token, action, now) {
+  async function runOnMap(content, mapId, allJson, token, action, now, absent) {
     let out = null;
     const result = await db.ref('state/maps/' + mapId).transaction(cur => {
       const ms = parseVal(cur, null) || {};
       const all = JSON.parse(allJson), p = all[token];
       const ws = { seq: ms.seq || 0, log: ms.log || [], maps: {} };
       ws.maps[mapId] = ms;
-      const players = presentOn(all, mapId, now);
-      if (!players.includes(p)) players.push(p);
+      // absent = the acting player is NOT on this map: it is a floor they just left, kept moving so the monsters
+      // following them reach the stairs. Nobody there is touched (no players are handed to the rules).
+      const players = absent ? [] : presentOn(all, mapId, now);
+      if (!absent && !players.includes(p)) players.push(p);
       const ev = [];
       World.advance(content, ws, mapId, players, now, rng, ev);
-      if (action) ev.push(...World.act(content, ws, p, action, now, rng, players));
-      p._seen = now;
+      if (action && !absent) ev.push(...World.act(content, ws, p, action, now, rng, players));
+      if (!absent) p._seen = now;
       World.record(ws, ev);
       ms.seq = ws.seq;
       ms.log = (ws.log || []).slice(-50);                    // keep recent events only, to keep the record small
-      out = { all, p, players, ev, ms };
+      out = { all, p, players, ev, ms, transfers: ws.transfers || [] };   // transfers = monsters that took the stairs to another floor
       return JSON.stringify(ms);
     }, undefined, false);
     if (!result || !result.committed || !out) throw new Error('the world is busy — try again');
     return out;
+  }
+
+  /**
+   * Monsters that changed floor (docs/FLOORS.md): each floor is its own record, so they are handed over by
+   * adding them to the other floor's `arrivals`, which that floor takes in on its next step.
+   */
+  async function deliver(transfers) {
+    const byMap = {};
+    (transfers || []).forEach(t => { if (t && t.map && t.monster) (byMap[t.map] = byMap[t.map] || []).push(t.monster); });
+    for (const mapId of Object.keys(byMap)) {
+      await db.ref('state/maps/' + mapId).transaction(cur => {
+        const ms = parseVal(cur, null) || {};
+        ms.arrivals = (ms.arrivals || []).concat(byMap[mapId]);
+        return JSON.stringify(ms);
+      }, undefined, false);
+    }
   }
 
   /** One game step: catch the world up, run the player's action (if any), persist, report back. */
@@ -128,7 +146,16 @@ function create(deps) {
     await migrateLegacy();
 
     const startMap = all[token].map;
+    // Monsters following this player by the stairs are on the floor they left; nobody may be there to move it on,
+    // so for a short while (player.wake) this player's steps move that floor too.
+    const wake = all[token].wake;
+    if (wake && wake.map && wake.map !== startMap && now < wake.until && content.maps[wake.map]) {
+      const w = await runOnMap(content, wake.map, JSON.stringify(all), token, null, now, true);
+      await deliver(w.transfers);
+      await pushView(content, w.ms, wake.map, presentOn(all, wake.map, now), now);
+    }
     const first = await runOnMap(content, startMap, JSON.stringify(all), token, action, now);
+    await deliver(first.transfers);
     let last = first, events;
     const touched = new Set(first.ev.filter(e => e.to).map(e => e.to));
     if (first.p.map !== startMap) {                             // walked through a door/teleport: arrive on the new map

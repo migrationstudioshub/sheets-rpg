@@ -11,18 +11,17 @@
  *   and accepts key-gated writes (publish / publishMap / deleteMap). It also handles live play:
  *   join | load | poll | act | save. Apps Script is no longer in the loop.
  *
- * Realtime Database layout:
- *   players/<token>   full player state (private; only this function reads/writes it)
- *   state/world       the live world: monsters, object states, event log, seq (private)
- *   world/<mapId>     the public view clients subscribe to (monsters + players on that map)
+ * Realtime Database layout (the game step itself lives in ./referee.js — see the notes there):
+ *   players/<token>      full player state (private; only this function reads/writes it)
+ *   state/maps/<mapId>   one map's live state: monsters, object states, its event log and seq (private)
+ *   world/<mapId>        the public view clients subscribe to (monsters + players on that map)
  *
- * Phase 1 caveat: concurrent actions use last-write-wins on state/world (fine for a few players
- * taking turns; proper concurrency comes in Phase 2).
+ * Each step runs in a transaction on its map's record, so simultaneous actions no longer overwrite
+ * each other. (The old single state/world record is split up automatically the first time this runs.)
  */
 const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
-const crypto = require('crypto');
 
 admin.initializeApp();
 const db = admin.database();
@@ -35,7 +34,6 @@ const MapCode = require('./shared/mapcode.js');                     // compact t
 // Content lives in Firestore (doc published/current = the full tables). The editor key gates writes.
 const EDITOR_KEY = defineSecret('EDITOR_KEY');
 let _content = null, _contentAt = 0;
-const _lastView = {};   // per warm instance: last public view written per map, so we skip identical pushes
 
 async function getPublished() {           // the raw tables as last published to Firestore, or null
   const snap = await admin.firestore().doc('published/current').get();
@@ -126,96 +124,9 @@ async function deleteMap(id, key) {
   return { ok: true, id: id };
 }
 
-// The world and player records are stored as JSON strings, because their keys (entity ids like
-// "map_3.e9", flag names) contain characters the Realtime Database forbids in keys (".", "#", ...).
-function parseVal(v, fallback) {
-  if (v == null) return fallback;
-  return typeof v === 'string' ? JSON.parse(v) : v;        // tolerate records written before this change
-}
-async function readWorld() {
-  const snap = await db.ref('state/world').get();
-  return parseVal(snap.val(), { seq: 0, log: [], maps: {} });
-}
-async function readPlayers() {
-  const snap = await db.ref('players').get();
-  const raw = snap.val() || {}, out = {};
-  Object.keys(raw).forEach(tok => { try { out[tok] = parseVal(raw[tok]); } catch (e) { /* skip unreadable */ } });
-  return out;
-}
-
-/** The fast-moving, fully-global part of a map's state: all monsters and all players present. */
-function firebaseView(content, ws, mapId, players) {
-  const ms = World.mapState(ws, mapId);
-  return {
-    map: mapId, now: Date.now(), seq: ws.seq || 0,
-    monsters: (ms.monsters || []).filter(m => !m.dead).map(m => {
-      const d = content.monsters[m.ref];
-      return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing,
-        statuses: (m.statuses || []).map(st => st.id), look: m.look || undefined };
-    }),
-    players: (players || []).filter(q => q.map === mapId).map(q => ({
-      id: q.id, name: q.name, x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level
-    }))
-  };
-}
-
-function presentOn(all, mapId, now) {
-  return Object.keys(all).map(tok => all[tok])
-    .filter(q => q.map === mapId && now - (q._seen || 0) < 60000);
-}
-
-/** One game step: catch the world up, run the player's action (if any), persist, report back. */
-async function step(token, action, since) {
-  const content = await getContent();
-  const now = Date.now();
-  const all = await readPlayers();
-  const p = all[token];
-  if (!p) throw new Error('unknown character');
-  Object.keys(all).forEach(tok => World.normalize(content, all[tok]));   // stats/fields, like Apps Script does per load
-  const ws = await readWorld();
-
-  let players = presentOn(all, p.map, now);
-  if (!players.includes(p)) players.push(p);
-  const startMap = p.map, ev = [];
-  World.advance(content, ws, p.map, players, now, Math.random, ev);
-  if (action) ev.push(...World.act(content, ws, p, action, now, Math.random, players));
-  p._seen = now;
-  if (p.map !== startMap) {                                   // walked through a door/teleport
-    players = presentOn(all, p.map, now);
-    if (!players.includes(p)) players.push(p);
-    World.advance(content, ws, p.map, players, now, Math.random, ev);
-  }
-  World.record(ws, ev);
-  if (ws.log && ws.log.length > 50) ws.log = ws.log.slice(-50);   // keep recent events only, to shrink the stored world
-
-  // Persist the actor and anyone combat touched this step — but NOT idle bystanders, so a simultaneous
-  // action by another player can't overwrite their position. Also writes fewer records.
-  const touched = new Set(ev.filter(e => e.to).map(e => e.to));
-  const updates = { 'state/world': JSON.stringify(ws), ['players/' + token]: JSON.stringify(p) };
-  players.forEach(q => { if (q.token && q.id !== p.id && touched.has(q.id)) updates['players/' + q.token] = JSON.stringify(q); });
-  await db.ref().update(updates);
-
-  // Only push the public view when the moving things actually changed — an idle heartbeat (no one
-  // moved, no monster stirred) writes nothing, so listeners download nothing.
-  const view = firebaseView(content, ws, p.map, players);
-  const signature = JSON.stringify(view.monsters) + '|' + JSON.stringify(view.players);
-  if (_lastView[p.map] !== signature) { _lastView[p.map] = signature; await db.ref('world/' + p.map).set(view); }
-
-  return { player: World.publicPlayer(content, p), world: World.view(content, ws, p.map, p, players),
-    events: World.eventsFor(ws, since, p), seq: ws.seq };
-}
-
-async function join(name, cls) {
-  const content = await getContent();
-  name = String(name || '').replace(/[^\p{L}\p{N} _\-']/gu, '').trim().slice(0, 16);
-  if (!name) throw new Error('pick a name (letters and numbers)');
-  const p = World.newPlayer(content, crypto.randomUUID().slice(0, 8), name, cls);
-  p.token = crypto.randomUUID() + crypto.randomUUID().slice(0, 8);
-  p.created = new Date().toISOString();
-  p._seen = Date.now();
-  await db.ref('players/' + p.token).set(JSON.stringify(p));
-  return { token: p.token, player: World.publicPlayer(content, p) };
-}
+// Live play (join | load | poll | act): the step logic, bound to the real database.
+const referee = require('./referee.js').create({ db, getContent, World });
+const step = referee.step, join = referee.join;
 
 function cors(res) {
   res.set('Access-Control-Allow-Origin', '*');

@@ -26,6 +26,11 @@
    "notes": "How much darker (0-1) indoor tiles (painted Roof in the map editor) are drawn than outdoors, with everything standing in them; 0 = same as outdoors"
   },
   {
+   "key": "aim_lean",
+   "value": 0.25,
+   "notes": "While aiming (right mouse button held) the camera drifts toward the cursor by this share (0-1) of its distance from the screen centre; 0 = off"
+  },
+  {
    "key": "wall_cut_radius",
    "value": 3,
    "notes": "A wall that hides something you can see within this many tiles of you drops to a stub (the walls of the room you are in always do)"

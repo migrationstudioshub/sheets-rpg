@@ -29,10 +29,11 @@ var Render = (function () {
   // ---- edge walls: walls painted on cell boundaries, extruded upward by a per-segment height ----
   // Token: "style:height[:side]". side ('l'|'r', N-S walls only) shifts a vertical wall fully onto the
   // left/right tile instead of straddling its grid line; absent/anything else = centred ('c').
+  var WALL_H = typeof Rules !== 'undefined' && Rules.WALL_H ? Rules.WALL_H : 2;   // wall height = storey height, in tiles
   function parseWallTok(tok) {
     if (!tok) return null;
     var p = String(tok).split(':');
-    return { style: p[0], height: Math.max(1, parseInt(p[1], 10) || 1), side: p[2] || 'c' };
+    return { style: p[0], height: WALL_H, side: p[2] || 'c' };   // every wall is one storey high, whatever number the token carries
   }
   // Nudge a #rrggbb colour lighter (f>0) or darker (f<0), for cap vs face contrast.
   function shade(hex, f) {
@@ -579,6 +580,18 @@ var Render = (function () {
     this.ground = bakeGround(this.content, map);
     var content = this.content;
     this.wall25 = wall25(content, map);                                              // every wall as cap + face pieces
+    // Floors (docs/FLOORS.md, stage 1): standing on an upper floor, the floors beneath are drawn first, each lower
+    // on the screen by its height, dimmed and without creatures. They are the maps as authored (what players built
+    // down there is not shown yet), baked once per floor.
+    var below = [], cache = this._floorBakes || (this._floorBakes = {});
+    if (map.z > 0 && map.floors) Object.keys(map.floors).forEach(function (k) {
+      var fz = Number(k), fm = content.maps[map.floors[k]];
+      if (!fm || fz < 0 || fz >= map.z) return;                                      // basements are never seen from above
+      var b = cache[fm.id] || (cache[fm.id] = { map: fm, ground: bakeGround(content, fm), prims: wall25(content, fm) });
+      below.push({ dz: map.z - fz, map: fm, ground: b.ground, prims: b.prims });
+    });
+    below.sort(function (a, b) { return b.dz - a.dz; });                             // lowest floor first
+    this.below = below;
     var c = this.content, animated = [];
     map.terrain.forEach(function (row, y) { row.forEach(function (tid, x) {
       var t = c.terrain[tid]; if (t && t.frames > 1 && t.sprite && !t.autotile) animated.push({ x: x, y: y, t: t });
@@ -598,6 +611,29 @@ var Render = (function () {
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#000'; g.fillRect(0, 0, this.canvas.width, this.canvas.height);
     var ox = Math.round(-cam.x), oy = Math.round(-cam.y);
+    if (this.below && this.below.length) {
+      var storey = WALL_H;                                                           // a floor is one wall-height above the one below
+      var nowB = performance.now();
+      this.below.forEach(function (f) {
+        var yy = oy + Math.round(f.dz * storey * T), items = [];
+        g.drawImage(f.ground, ox, yy);
+        (f.map.entities || []).forEach(function (e) {
+          var o = c.objects[e.ref]; if (!o || layerOf(o) === 'wall' || layerOf(o) === 'ground_decal' || !o.sprite) return;
+          var fs = e.data && e.data.facing && typeof Rules !== 'undefined' ? Rules.facingSprite(o, e) : { path: o.sprite, flip: false };
+          items.push({ sortY: e.y * T + T, o: o, path: fs.path, flip: fs.flip, dx: ox + e.x * T, dy: yy + e.y * T });
+        });
+        f.prims.forEach(function (p) { items.push({ sortY: prim25SortY(p, 0, T) + 0.25, prim: p }); });
+        items.sort(function (a, b) { return a.sortY - b.sortY; });
+        items.forEach(function (it) {
+          if (it.prim) drawPrim25(g, c, it.prim, ox, yy, T, false, 0);
+          else { drawObject(g, it.o, it.path, it.dx, it.dy, T, 'base', nowB, it.flip); drawObject(g, it.o, it.path, it.dx, it.dy, T, 'top', nowB, it.flip); }
+        });
+      });
+      g.fillStyle = 'rgba(6,8,14,0.5)'; g.fillRect(0, 0, this.canvas.width, this.canvas.height);   // what is below is dimmer than where you stand
+    }
+    // On an upper floor a cell with no terrain is open air: nothing of this floor (fog, roof, indoor shade) is drawn there.
+    var sparse = map.z > 0;
+    function hasFloor(x, y) { return !sparse || !!(map.terrain[y] && map.terrain[y][x]); }
     g.drawImage(this.ground, ox, oy);
 
     var x0 = Math.floor(cam.x / T) - 1, y0 = Math.floor(cam.y / T) - 1;
@@ -632,16 +668,16 @@ var Render = (function () {
     var cx, cy, xa = Math.max(0, x0), xb = Math.min(map.width - 1, x1), ya = Math.max(0, y0), yb = Math.min(map.height - 1, y1);
     if (sight.vis) {
       if (fogA > 0) { g.fillStyle = 'rgba(0,0,0,' + fogA + ')';
-        for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.seen(cx, cy) && sight.known(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T); }
+        for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.seen(cx, cy) && sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T); }
       g.fillStyle = roofCol;
-      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.known(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T);
+      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T);
     }
     // layer 2e: indoors is darker (config indoor_dark, 0-1; 0 = off). The floor gets a veil here; whatever
     // stands indoors — objects, characters, the wall surfaces facing into the room — is drawn darker to match
     // in the sorted pass below (see dim), so a room reads as one dim space while outside stays bright.
     var dark = cfg.indoor_dark === undefined || cfg.indoor_dark === '' ? 0.25 : Number(cfg.indoor_dark); if (!(dark >= 0 && dark < 1)) dark = 0.25;
     if (dark > 0) { g.fillStyle = 'rgba(0,0,0,' + dark + ')';
-      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (sight.indoor(cx, cy) && sight.known(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T); }
+      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (sight.indoor(cx, cy) && sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T); }
     var canFilter = dark > 0 && typeof g.filter === 'string';
     function dim(on) { if (canFilter) g.filter = on ? 'brightness(' + (1 - dark) + ')' : 'none'; }
     function inDark(x, y) { return dark > 0 && sight.indoor(Math.round(x), Math.round(y)); }
@@ -923,7 +959,7 @@ var Render = (function () {
     g.save(); g.globalAlpha = 0.55;
     var x0, y0, x1, y1;                                                 // the outline: a line for an edge, a box for a tile
     if (bp.places === 'wall') {
-      var v = gh.side === 'W', h = bp.wallHeight || 2;
+      var v = gh.side === 'W', h = WALL_H;
       (v ? ['vface', 'vcap'] : ['hface', 'hcap']).forEach(function (kind) { drawPrim25(g, c, { kind: kind, x: gh.x, y: gh.y, h: h, style: bp.wallStyle, side: gh.off || 'c' }, ox, oy, T, false, 0); });
       var gHd = Math.round(Math.max(4, Math.round(T * 0.32)) / 2), gOff = gh.off === 'r' ? gHd : gh.off === 'l' ? -gHd : 0;   // same nudge the wall is drawn with
       x0 = ox + gh.x * T + gOff; y0 = oy + gh.y * T; x1 = v ? x0 : x0 + T; y1 = v ? y0 + T : y0;

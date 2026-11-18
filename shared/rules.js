@@ -63,11 +63,14 @@ var Rules = (function () {
   // tokens ('' = no wall): hWalls (horizontal lines, hWalls[y][x] = north edge of cell x,y; height+1 rows)
   // and vWalls (vertical lines, vWalls[y][x] = west edge of cell x,y; width+1 cols). Collision and sight
   // consult these so client prediction and the server agree. Height is purely visual (see render.js).
+  // Every wall is WALL_H tiles high — one storey. A floor of a building is drawn that much higher than the one
+  // below (docs/FLOORS.md). Wall tokens still read "style:height[:side]", but the number is ignored: a low wall
+  // is not a wall with a small number, it is an object (a fence, a gate).
+  var WALL_H = 2;
   function parseWall(tok) {
     if (!tok) return null;
     var s = String(tok), i = s.indexOf(':');
-    if (i < 0) return { style: s, height: 1 };
-    return { style: s.slice(0, i), height: Math.max(1, parseInt(s.slice(i + 1), 10) || 1) };
+    return { style: i < 0 ? s : s.slice(0, i), height: WALL_H };
   }
   function wallAt(map, orient, x, y) {
     var grid = orient === 'h' ? map.hWalls : map.vWalls;
@@ -287,7 +290,7 @@ var Rules = (function () {
     return { x: x, y: y };
   }
 
-  return { DIRS: DIRS, DIAG: DIAG, isDir: isDir, stepCost: stepCost, faceFor: faceFor, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt, blockersAt: blockersAt,
+  return { WALL_H: WALL_H, DIRS: DIRS, DIAG: DIAG, isDir: isDir, stepCost: stepCost, faceFor: faceFor, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt, blockersAt: blockersAt,
     terrainAt: terrainAt, standable: standable, nearestStandable: nearestStandable,
     parseWall: parseWall, wallAt: wallAt, wallEdge: wallEdge, wallBetween: wallBetween, wallBetweenCells: wallBetweenCells,
     wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight,

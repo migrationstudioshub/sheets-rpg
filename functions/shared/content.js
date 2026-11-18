@@ -175,6 +175,8 @@ var Content = (function () {
       c.maps[id] = { id: id, name: str(r.name) || id, width: num(r.width, grid[0] ? grid[0].length : 0),
         height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls, roof: roof, nobuild: nobuild,
         roof_color: str(r.roof_color),
+        // A floor of a multi-storey map (docs/FLOORS.md): the ground map's id and this floor's level. Linked below.
+        floorOf: str(r.floor_of), z: num(r.z, 0),
         // Optional player spawn point {x, y, facing}: where new/respawning players start on this map (set in
         // the map editor). Absent on maps without one, which then fall back to Config start_x/start_y.
         spawn: json(r.spawn, null),
@@ -305,7 +307,8 @@ var Content = (function () {
     (tables.Blueprints || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
       c.blueprints[id] = { id: id, name: str(r.name) || id, category: str(r.category) || 'other',
-        places: str(r.places) === 'wall' ? 'wall' : 'object', wallStyle: str(r.wall_style), wallHeight: Math.max(1, num(r.wall_height, 2)),
+        places: str(r.places) === 'wall' ? 'wall' : 'object', wallStyle: str(r.wall_style), wallHeight: 2,   // every wall is one storey high (Rules.WALL_H); wall_height in old data is ignored
+       
         object: str(r.object), cost: str(r.cost), work: Math.max(0, num(r.work, 4)), tool: str(r.tool), station: str(r.station),
         needsWall: boolDef(r.needs_wall, true), upgradeOf: str(r.upgrade_of), unlock: str(r.unlock), icon: str(r.icon) };
     });
@@ -314,6 +317,42 @@ var Content = (function () {
       var id = str(r.id); if (!id) return;
       c.recipes[id] = { id: id, name: str(r.name) || id, category: str(r.category), inputs: str(r.inputs), outputs: str(r.outputs),
         station: str(r.station), tool: str(r.tool), timeS: num(r.time_s, 0), unlock: str(r.unlock) };
+    });
+    linkFloors(c);
+    return c;
+  }
+  /**
+   * Ties the floors of each multi-storey map together (docs/FLOORS.md). A floor is a map of its own whose row
+   * names its ground map (floorOf) and its level (z: 1, 2… up; -1, -2… basements). Afterwards every map has
+   * z, floorOf ('' on a ground map) and floors = { "0": groundId, "1": id, … } shared by the whole family.
+   * A floor whose ground map is missing, or whose level is taken, becomes an ordinary map. Safe to run again.
+   */
+  function linkFloors(c) {
+    var maps = c.maps || {}, ids = Object.keys(maps);
+    // Recovery: a floor saved through a referee from before floors existed comes back WITHOUT floor_of / z (that
+    // referee stores a fixed list of fields and drops the rest), which would turn it into a second, separate map
+    // with the building's name. The id the editor gave it still says what it is — "<ground>_z1", "<ground>_zm1" —
+    // so, here and only here, a map with no floor fields, such an id, an existing ground map and the same size is
+    // taken back into its building. (Everywhere else the id is never read: see docs/FLOORS.md.)
+    ids.forEach(function (id) {
+      var m = maps[id]; if (m.floorOf) return;
+      var hit = /^(.+)_z(m?)(\d+)x*$/.exec(id), g = hit && maps[hit[1]];
+      if (g && g !== m && !g.floorOf && Number(hit[3]) > 0 && g.width === m.width && g.height === m.height) {
+        m.floorOf = hit[1]; m.z = (hit[2] ? -1 : 1) * Number(hit[3]);
+      }
+    });
+    ids.forEach(function (id) {
+      var m = maps[id], g = m.floorOf && m.floorOf !== id ? maps[m.floorOf] : null;
+      m.z = g && !g.floorOf ? Math.round(Number(m.z) || 0) : 0;
+      if (!m.z) m.floorOf = '';
+      m.floors = null;
+    });
+    ids.forEach(function (id) { if (!maps[id].floorOf) { maps[id].floors = {}; maps[id].floors[0] = id; } });
+    ids.forEach(function (id) {
+      var m = maps[id]; if (!m.floorOf) return;
+      var fam = maps[m.floorOf].floors;
+      if (fam[m.z]) { m.floorOf = ''; m.z = 0; m.floors = {}; m.floors[0] = id; return; }      // level already taken
+      fam[m.z] = id; m.floors = fam;
     });
     return c;
   }
@@ -348,6 +387,6 @@ var Content = (function () {
     return hash({ row: row, ents: ents });
   }
 
-  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES };
+  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, linkFloors: linkFloors };
 })();
 if (typeof module !== 'undefined') module.exports = Content;

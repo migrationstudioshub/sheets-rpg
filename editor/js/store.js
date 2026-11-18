@@ -153,7 +153,8 @@ var Store = (function () {
             nobuild: m.nobuild == null ? '' : JSON.stringify(m.nobuild),
             spawn: m.spawn == null ? '' : JSON.stringify(m.spawn),
             shapes: m.shapes == null ? '' : JSON.stringify(m.shapes),
-            overlayShapes: m.overlayShapes == null ? '' : JSON.stringify(m.overlayShapes), notes: '' });
+            overlayShapes: m.overlayShapes == null ? '' : JSON.stringify(m.overlayShapes),
+            floor_of: m.floor_of || '', z: Number(m.z) || 0, notes: '' });
           (m.entities || []).forEach(function (e) {
             tables.MapEntities.push({ map: m.id, key: e.key, x: e.x, y: e.y, ref: e.ref,
               data: e.data == null ? '' : (typeof e.data === 'string' ? e.data : JSON.stringify(e.data)) });
@@ -190,6 +191,7 @@ var Store = (function () {
           vWalls: encodeGrid(mc.row.vWalls), hWalls: encodeGrid(mc.row.hWalls),
           roof: encodeGrid(mc.row.roof), nobuild: encodeGrid(mc.row.nobuild), roof_color: mc.row.roof_color || '', spawn: parseObj(mc.row.spawn),
           shapes: parseObj(mc.row.shapes), overlayShapes: parseObj(mc.row.overlayShapes),
+          floor_of: mc.row.floor_of || '', z: Number(mc.row.z) || 0,
           entities: (mc.entities || []).map(function (e) { return { key: e.key, x: e.x, y: e.y, ref: e.ref, data: e.data }; }) } });
       });
       changes.deletedMaps.forEach(function (id) { jobs.push({ action: 'deleteMap', key: k, id: id }); });

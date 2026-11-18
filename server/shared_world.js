@@ -1299,6 +1299,15 @@ var World = (function () {
     // A click on a wall object's sprite / a door's hole resolves to that entity, and uses it from the
     // nearest footprint cell — so range + facing are right, and any tile of a wide door works.
     var wm = target ? wallMountAt(c, map, target.x, target.y) : null;
+    // Facing (no click): a usable fixture on the wall edge right in front of you — a door, a switch — is what
+    // you use, from either side of the wall.
+    if (!target) {
+      var fc0 = facingCell(p), se = Rl().sharedEdge(p.x, p.y, fc0.x, fc0.y);
+      if (se) wm = (map.entities || []).filter(function (en) {
+        var o = objOf(c, en);
+        return isWallFixture(o) && INTERACTIVE[o.kind] && fixtureEdges(o, en).some(function (q) { return q.orient === se.orient && q.x === se.x && q.y === se.y; });
+      })[0] || null;
+    }
     var f = wm ? wallMountUseCell(c, map, wm, p) : (target || facingCell(p));
     if ((target || wm) && !near(p, f.x, f.y)) { ev.push({ type: 'info', to: p.id, text: 'Too far away.' }); return; }
     if (target || wm) faceTo(p, f.x, f.y);

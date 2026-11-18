@@ -513,7 +513,7 @@ var Panels = (function () {
       ? { id: id, name: name, sprite: '', hp: 10, atk: 3, def: 0, xp: 3, gold_min: 0, gold_max: 2, loot_table: '', aggro_range: 4, move_ms: 800, respawn_s: 60, notes: '' }
       : type === 'wallStyle'
       ? { id: id, name: name, tiles: '', cap: '', face: '', color: '#8a8f98', blocks_move: true, blocks_sight: true, notes: '' }
-      : { id: id, name: name, kind: 'deco', sprite: '', sprite_top: '', sprite_states: '', frames: '', frame_ms: '', walkable: false, properties: '', on_interact: '', notes: '' };
+      : { id: id, name: name, kind: 'deco', sprite: '', sprite_states: '', frames: '', frame_ms: '', walkable: false, properties: '', on_interact: '', notes: '' };
     E.tables[tab].push(row);
     E.dirty.tabs[tab] = true;
     if (type === 'terrain') E.brush.terrain = id; else if (type === 'monster') E.brush.monster = id;
@@ -584,7 +584,6 @@ var Panels = (function () {
         Object.keys(E.content.kinds).map(function (k) { return h('option', { value: k, text: k, selected: draft.kind === k }); }));
       wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'kind' }), ks));
       var sp2 = text('sprite', 'sprite', 'image URL or art/… path'); sp2.appendChild(preview('sprite')); wrap.appendChild(sp2);
-      var top = text('sprite_top', 'top part (tall objects)', 'drawn one tile up, over characters'); top.appendChild(preview('sprite_top')); wrap.appendChild(top);
       wrap.appendChild(text('sprite_states', 'sprite per state', 'open=https://…; empty=https://…'));
       wrap.appendChild(h('div', { className: 'inline' }, text('frames', 'animation frames', '1'), text('frame_ms', 'ms per frame', '200')));
       wrap.appendChild(check('walkable', 'players can walk over it'));

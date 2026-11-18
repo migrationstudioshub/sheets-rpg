@@ -51,7 +51,6 @@ var Assets = (function () {
     map.entities.forEach(function (e) {
       var o = content.objects[e.ref]; if (!o) return;
       if (o.sprite) paths[o.sprite] = 1;
-      if (o.spriteTop) paths[o.spriteTop] = 1;
       Object.keys(o.spriteStates).forEach(function (s) { paths[o.spriteStates[s]] = 1; });
     });
     Object.keys(content.monsters || {}).forEach(function (k) { if (content.monsters[k].sprite) paths[content.monsters[k].sprite] = 1; });

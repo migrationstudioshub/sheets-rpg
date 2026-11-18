@@ -188,6 +188,8 @@ var Content = (function () {
         throwStatus: str(r.throw_status), throwStatusMs: num(r.throw_status_ms, 0),
         // damage to walls/objects per hit (0 = derived from attack); burns = a thrown blast also sets wood alight
         structureDmg: num(r.structure_dmg, 0), burns: bool(r.burns),
+        // tool tags this item counts as (hammer, axe, ...): recipes and harvestable objects can ask for one
+        tools: str(r.tool).split(/[;,]/).map(function (x) { return x.trim(); }).filter(Boolean),
         onUse: str(r.on_use) };
     });
     (tables.Monsters || []).forEach(function (r) {
@@ -258,6 +260,14 @@ var Content = (function () {
     (tables.Levels || []).forEach(function (r) { if (r.level !== '' && r.level != null) c.levels.push({ level: num(r.level, 1), xp: num(r.xp_needed, 0) }); });
     c.levels.sort(function (a, b) { return a.level - b.level; });
 
+    // Recipes: inputs -> outputs, optionally at a station (an object of kind craft with that station id nearby)
+    // and/or with a tool. inputs/outputs stay "item:qty, item:qty" text; World parses them.
+    c.recipes = {};
+    (tables.Recipes || []).forEach(function (r) {
+      var id = str(r.id); if (!id) return;
+      c.recipes[id] = { id: id, name: str(r.name) || id, category: str(r.category), inputs: str(r.inputs), outputs: str(r.outputs),
+        station: str(r.station), tool: str(r.tool), timeS: num(r.time_s, 0), unlock: str(r.unlock) };
+    });
     return c;
   }
 

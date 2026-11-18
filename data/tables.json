@@ -174,6 +174,16 @@
    "key": "pvp_structures",
    "value": "off",
    "notes": "on = players can damage structures other players built; off = only their own and the map's"
+  },
+  {
+   "key": "station_range",
+   "value": 2,
+   "notes": "How close (tiles) you must be to a crafting station to use its recipes"
+  },
+  {
+   "key": "harvest_respawn_s",
+   "value": 600,
+   "notes": "Seconds before a harvested object (a tree, a wreck) grows back; an object's own respawn_s wins"
   }
  ],
  "Tilesets": [
@@ -1522,7 +1532,7 @@
    "frame_ms": "",
    "walkable": false,
    "blocks_sight": false,
-   "properties": "",
+   "properties": "{\"station\":\"campfire\"}",
    "on_interact": "",
    "notes": "imported (old kind: craft)"
   },
@@ -1536,7 +1546,7 @@
    "frame_ms": "",
    "walkable": false,
    "blocks_sight": false,
-   "properties": "",
+   "properties": "{\"station\":\"campfire\"}",
    "on_interact": "",
    "notes": "imported (old kind: craft)"
   },
@@ -1816,7 +1826,7 @@
    "frame_ms": "",
    "walkable": false,
    "blocks_sight": true,
-   "properties": "",
+   "properties": "{\"hp\":24,\"material\":\"wood\",\"harvest\":\"wood:3\",\"harvest_tool\":\"axe\"}",
    "on_interact": "",
    "notes": "Two tiles tall: trunk (blocks) + crown (drawn above characters)"
   },
@@ -2085,6 +2095,20 @@
    "properties": "{\"width\": 1, \"layer\": \"ground_decal\"}",
    "on_interact": "",
    "notes": "from the objects maker"
+  },
+  {
+   "id": "obj_workbench",
+   "name": "Workbench",
+   "kind": "craft",
+   "sprite": "art/sprites/objects/workbench.png",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"station\":\"workbench\",\"hp\":40,\"material\":\"wood\"}",
+   "on_interact": "",
+   "notes": "Crafting station: recipes with station = workbench can be made within reach of it"
   }
  ],
  "Maps": [
@@ -3824,7 +3848,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "mana_potion",
@@ -3862,7 +3887,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "big_potion",
@@ -3900,7 +3926,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "wooden_sword",
@@ -3938,7 +3965,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "iron_sword",
@@ -3976,7 +4004,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "leather_armor",
@@ -4014,7 +4043,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "iron_armor",
@@ -4052,7 +4082,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "army_helmet",
@@ -4090,7 +4121,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "iron_key",
@@ -4128,7 +4160,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "lockpick",
@@ -4166,7 +4199,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "bone",
@@ -4204,7 +4238,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "slime_gel",
@@ -4242,7 +4277,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "ration",
@@ -4280,7 +4316,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "water",
@@ -4318,7 +4355,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "antidote",
@@ -4356,7 +4394,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "bandage",
@@ -4394,7 +4433,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "medkit",
@@ -4432,7 +4472,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "ammo_pistol",
@@ -4470,7 +4511,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "ammo_rifle",
@@ -4508,7 +4550,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "pistol",
@@ -4546,7 +4589,8 @@
    "fire_mode": "semi",
    "aim": "{\"px\": 0.5, \"py\": 0.58, \"mx\": 0.92, \"my\": 0.5}",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "rifle",
@@ -4584,7 +4628,8 @@
    "fire_mode": "auto",
    "aim": "{\"px\": 0.46, \"py\": 0.56, \"mx\": 0.98, \"my\": 0.5}",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "grenade",
@@ -4622,7 +4667,8 @@
    "fire_mode": "",
    "aim": "",
    "structure_dmg": 0,
-   "burns": false
+   "burns": false,
+   "tool": ""
   },
   {
    "id": "molotov",
@@ -4660,7 +4706,242 @@
    "fire_mode": "",
    "aim": "",
    "burns": true,
-   "structure_dmg": 0
+   "structure_dmg": 0,
+   "tool": ""
+  },
+  {
+   "id": "wood",
+   "name": "Wood",
+   "type": "material",
+   "slot": "",
+   "stack_max": 99,
+   "value": 1,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
+   "on_use": "",
+   "sprite": "",
+   "worn_sprite": "",
+   "default_tint": "",
+   "notes": "",
+   "range": "",
+   "ammo": "",
+   "ammo_cost": "",
+   "fire_ms": "",
+   "clip": "",
+   "penetration": "",
+   "falloff": "",
+   "tint": "",
+   "throw_range": "",
+   "throw_area": "",
+   "throw_power": "",
+   "throw_status": "",
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false,
+   "tool": ""
+  },
+  {
+   "id": "scrap",
+   "name": "Scrap metal",
+   "type": "material",
+   "slot": "",
+   "stack_max": 99,
+   "value": 1,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
+   "on_use": "",
+   "sprite": "",
+   "worn_sprite": "",
+   "default_tint": "",
+   "notes": "",
+   "range": "",
+   "ammo": "",
+   "ammo_cost": "",
+   "fire_ms": "",
+   "clip": "",
+   "penetration": "",
+   "falloff": "",
+   "tint": "",
+   "throw_range": "",
+   "throw_area": "",
+   "throw_power": "",
+   "throw_status": "",
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false,
+   "tool": ""
+  },
+  {
+   "id": "nails",
+   "name": "Nails",
+   "type": "material",
+   "slot": "",
+   "stack_max": 99,
+   "value": 1,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
+   "on_use": "",
+   "sprite": "",
+   "worn_sprite": "",
+   "default_tint": "",
+   "notes": "",
+   "range": "",
+   "ammo": "",
+   "ammo_cost": "",
+   "fire_ms": "",
+   "clip": "",
+   "penetration": "",
+   "falloff": "",
+   "tint": "",
+   "throw_range": "",
+   "throw_area": "",
+   "throw_power": "",
+   "throw_status": "",
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false,
+   "tool": ""
+  },
+  {
+   "id": "cloth",
+   "name": "Cloth",
+   "type": "material",
+   "slot": "",
+   "stack_max": 99,
+   "value": 1,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
+   "on_use": "",
+   "sprite": "",
+   "worn_sprite": "",
+   "default_tint": "",
+   "notes": "",
+   "range": "",
+   "ammo": "",
+   "ammo_cost": "",
+   "fire_ms": "",
+   "clip": "",
+   "penetration": "",
+   "falloff": "",
+   "tint": "",
+   "throw_range": "",
+   "throw_area": "",
+   "throw_power": "",
+   "throw_status": "",
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false,
+   "tool": ""
+  },
+  {
+   "id": "hammer",
+   "name": "Hammer",
+   "type": "material",
+   "slot": "",
+   "stack_max": 1,
+   "value": 8,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
+   "on_use": "",
+   "sprite": "",
+   "worn_sprite": "",
+   "default_tint": "",
+   "notes": "",
+   "range": "",
+   "ammo": "",
+   "ammo_cost": "",
+   "fire_ms": "",
+   "clip": "",
+   "penetration": "",
+   "falloff": "",
+   "tint": "",
+   "throw_range": "",
+   "throw_area": "",
+   "throw_power": "",
+   "throw_status": "",
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false,
+   "tool": "hammer"
+  },
+  {
+   "id": "axe",
+   "name": "Axe",
+   "type": "material",
+   "slot": "",
+   "stack_max": 1,
+   "value": 10,
+   "atk": 0,
+   "def": 0,
+   "heal": 0,
+   "mp": 0,
+   "hunger": 0,
+   "thirst": 0,
+   "grants_skill": "",
+   "equip_if": "",
+   "on_use": "",
+   "sprite": "",
+   "worn_sprite": "",
+   "default_tint": "",
+   "notes": "",
+   "range": "",
+   "ammo": "",
+   "ammo_cost": "",
+   "fire_ms": "",
+   "clip": "",
+   "penetration": "",
+   "falloff": "",
+   "tint": "",
+   "throw_range": "",
+   "throw_area": "",
+   "throw_power": "",
+   "throw_status": "",
+   "throw_status_ms": "",
+   "fire_mode": "",
+   "aim": "",
+   "structure_dmg": 8,
+   "burns": false,
+   "tool": "axe"
   }
  ],
  "Monsters": [
@@ -5690,5 +5971,55 @@
    "layers": "[{\"name\":\"body\",\"empty\":0,\"options\":[{\"sprite\":\"art/sprites/paperdoll/base/body_zombie.png\",\"weight\":60},{\"sprite\":\"art/sprites/paperdoll/base/body_zombie_female.png\",\"weight\":40}],\"tints\":[]},{\"name\":\"hair\",\"empty\":15,\"options\":[{\"sprite\":\"art/sprites/paperdoll/hair/hair_bob.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_buzz.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_long.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_messy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_pony.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_shaggy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_slick.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_under.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v1.png\",\"weight\":3},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v2.png\",\"weight\":3}],\"tints\":[{\"tint\":\"hair_grey\",\"weight\":23},{\"tint\":\"hair_dark\",\"weight\":16},{\"tint\":\"hair_black\",\"weight\":16},{\"tint\":\"hair_brown\",\"weight\":16},{\"tint\":\"hair_white\",\"weight\":12},{\"tint\":\"hair_blonde\",\"weight\":8},{\"tint\":\"hair_auburn\",\"weight\":5},{\"tint\":\"hair_ginger\",\"weight\":5}]},{\"name\":\"clothes\",\"empty\":67,\"options\":[{\"sprite\":\"art/sprites/paperdoll/chest/chest_leather_jacket.png\",\"weight\":33}],\"tints\":[{\"tint\":\"brown\",\"weight\":22},{\"tint\":\"olive\",\"weight\":22},{\"tint\":\"charcoal\",\"weight\":22},{\"tint\":\"maroon\",\"weight\":11},{\"tint\":\"navy\",\"weight\":11},{\"tint\":\"khaki\",\"weight\":11}]}]"
   }
  ],
- "_version": "2737c778e9f2"
+ "_version": "2737c778e9f2",
+ "Recipes": [
+  {
+   "category": "Tools",
+   "station": "",
+   "tool": "",
+   "time_s": 0,
+   "unlock": "",
+   "notes": "",
+   "id": "r_hammer",
+   "name": "Hammer",
+   "inputs": "wood:1, scrap:2",
+   "outputs": "hammer:1"
+  },
+  {
+   "category": "Tools",
+   "station": "",
+   "tool": "",
+   "time_s": 0,
+   "unlock": "",
+   "notes": "",
+   "id": "r_axe",
+   "name": "Axe",
+   "inputs": "wood:2, scrap:3",
+   "outputs": "axe:1"
+  },
+  {
+   "category": "Materials",
+   "station": "workbench",
+   "tool": "hammer",
+   "time_s": 0,
+   "unlock": "",
+   "notes": "",
+   "id": "r_nails",
+   "name": "Nails",
+   "inputs": "scrap:1",
+   "outputs": "nails:4"
+  },
+  {
+   "category": "Supplies",
+   "station": "",
+   "tool": "",
+   "time_s": 0,
+   "unlock": "",
+   "notes": "",
+   "id": "r_bandage",
+   "name": "Bandage",
+   "inputs": "cloth:2",
+   "outputs": "potion:1"
+  }
+ ]
 }

@@ -449,7 +449,22 @@ var CStudio = (function () {
         h('span', { text: '  never breaks' }), h('span', { className: 'help', text: '— even with health set (quest doors and the like)' })),
       h('label', { text: 'salvage' }),
       h('input', { type: 'text', value: p.salvage || '', placeholder: 'wood:2; nails:1', oninput: function (e) { setProp(o, 'salvage', e.target.value.trim() || undefined); } }),
+      h('label', { text: 'harvest' }),
+      h('div', { className: 'lootrow' },
+        h('input', { type: 'text', value: p.harvest || '', placeholder: 'wood:3', title: 'Items given to whoever breaks it; it then grows back', style: 'flex:1', oninput: function (e) { setProp(o, 'harvest', e.target.value.trim() || undefined); } }),
+        h('span', { className: 'lootlbl', text: 'needs tool' }),
+        h('input', { type: 'text', value: p.harvest_tool || '', placeholder: 'axe', style: 'width:80px', title: 'Tool tag needed to harvest it by hand', oninput: function (e) { setProp(o, 'harvest_tool', e.target.value.trim() || undefined); } }),
+        h('span', { className: 'lootlbl', text: 'back after (s)' }),
+        h('input', { type: 'number', min: 0, value: p.respawn_s == null ? '' : p.respawn_s, style: 'width:70px', title: 'Seconds until it grows back (empty = the Config default)', oninput: function (e) { setProp(o, 'respawn_s', e.target.value === '' ? undefined : Number(e.target.value)); } })),
+      h('div', { className: 'help', text: 'Harvest: set it (with health) on a tree, a wreck, a bush — breaking it gives these items, and it comes back after a while instead of being gone for good.' }),
       h('div', { className: 'help', text: 'Health 0 or empty = this object cannot be damaged. With health, players can break it by attacking, shooting or blasting it; whoever breaks it gets the salvage. Spawns, triggers, teleports, signs and NPCs never break.' })));
+    if (o.kind === 'craft') {
+      form.appendChild(h('div', { className: 'sub', text: 'Crafting station' }));
+      form.appendChild(h('div', { className: 'field' },
+        h('label', { text: 'station id' }),
+        h('input', { type: 'text', value: p.station || '', placeholder: 'workbench', oninput: function (e) { setProp(o, 'station', e.target.value.trim() || undefined); } }),
+        h('div', { className: 'help', text: 'Recipes whose station is this id can be made while standing near this object (e.g. workbench, campfire). Several objects can share one id.' })));
+    }
     form.appendChild(h('div', { className: 'sub', text: 'Placement layer' }));
     var layer = ['wall', 'ground_decal'].indexOf(p.layer) >= 0 ? p.layer : 'object';
     form.appendChild(h('div', { className: 'field', title: 'How this object is placed and drawn' },

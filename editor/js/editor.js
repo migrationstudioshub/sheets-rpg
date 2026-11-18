@@ -677,6 +677,8 @@ var E = {
       if (!o) g.drawImage(Assets.placeholder('?', '#a33', t), it.dx, it.dy, s, s);
       else if (o.kind === 'spawn' && !o.sprite) drawSpawn(e, o, it.dx, it.dy, s);   // spriteless: editor-only marker
       else {
+        var sde = Render.sideDoorEdges ? Render.sideDoorEdges(o, e) : [];
+        if (sde.length && sde.every(function (q) { return Render.drawDoorstep(g, m, o, e.data && e.data.state === 'open', vx, vy, q.x, q.y, s); })) { g.globalAlpha = 1; return; }
         var path = (e.data && e.data.state && o.spriteStates[e.data.state]) || (it.face ? it.face.path : o.sprite);
         var flp = it.flip || !!(it.face && it.face.flip);                    // turned objects show the way they face
         Render.drawObject(g, o, path, it.dx, it.dy, s, 'base', 0, flp);

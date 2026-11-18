@@ -335,6 +335,29 @@ var Render = (function () {
   /** How far (px) the N-S wall on the west edge of cell (x,y) is drawn off its grid line: a wall painted
    *  "cursor side" sits half its thickness to the left ('l') or right ('r'); a centred wall, or none, is 0.
    *  Anything standing on that wall shifts by the same amount so it stays on the wall. */
+  // A door in a N-S wall is seen edge-on, so it is shown as a doorstep lying on the floor across the wall line.
+  // A door can carry its own doorstep pictures (sprite_states "step=" closed, "step_open=" open; the Content
+  // Studio's doorstep pickers); without them its ordinary closed / open pictures are laid down instead.
+  function doorstepPath(o, open) {
+    var st = o.spriteStates || {};
+    if (st.step || st.step_open) return open ? (st.step_open || st.step) : (st.step || st.step_open);
+    return objPath(o, open ? 'open' : null, null);
+  }
+  /** Draw that doorstep for the N-S edge at (qx,qy): natural size, centred on the wall line. False when there is no picture yet. */
+  function drawDoorstep(g, map, o, open, ox, oy, qx, qy, T) {
+    var sImg = Assets.get(doorstepPath(o, open));
+    if (!sImg || !sImg.width) return false;
+    var ssc = T / NT, sw = Math.round(sImg.width * ssc), sh = Math.round(sImg.height * ssc), pp = o.properties || {};
+    g.drawImage(sImg, 0, 0, sImg.width, sImg.height,
+      Math.round(ox + qx * T - sw / 2 + vWallOff(map, qx, qy, T) + Number(pp.offset_x || 0) * ssc),
+      Math.round(oy + qy * T + (T - sh) / 2 + Number(pp.offset_y || 0) * ssc), sw, sh);
+    return true;
+  }
+  /** The N-S edges a wall-mounted door stands in, or [] when it is on an E-W wall (or is not a door). */
+  function sideDoorEdges(o, e) {
+    if (!o || layerOf(o) !== 'wall' || openingOf(o) !== 'door') return [];
+    return fixtureEdges(o, e).filter(function (q) { return q.orient === 'v'; });
+  }
   function vWallOff(map, x, y, S) {
     var t = parseWallTok(map && map.vWalls && map.vWalls[y] && map.vWalls[y][x]);
     if (!t || t.side === 'c') return 0;
@@ -673,15 +696,7 @@ var Render = (function () {
             if (kW) g.rect(ox + (q.x - 1) * T, oy + (q.y - 1) * T, T, T * 3);
             if (kE) g.rect(ox + q.x * T, oy + (q.y - 1) * T, T, T * 3);
             g.clip();
-            var sImg = Assets.get(objPath(o, dOpen ? 'open' : null, null));
-            if (sImg && sImg.width) {
-              var ssc = T / NT, sw = Math.round(sImg.width * ssc), sh = Math.round(sImg.height * ssc);
-              var pp = o.properties || {};
-              g.drawImage(sImg, 0, 0, sImg.width, sImg.height,
-                Math.round(ox + q.x * T - sw / 2 + wOff + Number(pp.offset_x || 0) * ssc),
-                Math.round(oy + q.y * T + (T - sh) / 2 + Number(pp.offset_y || 0) * ssc), sw, sh);
-              g.restore(); return;
-            }
+            if (drawDoorstep(g, map, o, dOpen, ox, oy, q.x, q.y, T)) { g.restore(); return; }
             var tw = Math.round(T * 1.1), tx = Math.round(ox + q.x * T - tw / 2) + wOff, ty = Math.round(oy + q.y * T) + 2, th = T - 4;
             g.fillStyle = 'rgba(214,200,170,.30)'; g.fillRect(tx, ty, tw, th);
             g.strokeStyle = 'rgba(235,225,200,.55)'; g.lineWidth = 1; g.strokeRect(tx + 0.5, ty + 0.5, tw - 1, th - 1);
@@ -913,8 +928,11 @@ var Render = (function () {
       var gHd = Math.round(Math.max(4, Math.round(T * 0.32)) / 2), gOff = gh.off === 'r' ? gHd : gh.off === 'l' ? -gHd : 0;   // same nudge the wall is drawn with
       x0 = ox + gh.x * T + gOff; y0 = oy + gh.y * T; x1 = v ? x0 : x0 + T; y1 = v ? y0 + T : y0;
     } else if (o && layerOf(o) === 'wall') {
-      var mp = wallMountPlace(map, o, { x: gh.x, y: gh.y, data: { side: gh.side || 'N' } }, ox, oy, T);
-      drawObject(g, o, o.sprite, mp.dx, mp.dy, T, 'base', 0, mp.flip); drawObject(g, o, o.sprite, mp.dx, mp.dy, T, 'top', 0, mp.flip);
+      var gEnt = { x: gh.x, y: gh.y, data: { side: gh.side || 'N' } }, gSide = sideDoorEdges(o, gEnt);
+      var mp = wallMountPlace(map, o, gEnt, ox, oy, T);
+      if (!gSide.length || !gSide.every(function (q) { return drawDoorstep(g, map, o, false, ox, oy, q.x, q.y, T); })) {
+        drawObject(g, o, o.sprite, mp.dx, mp.dy, T, 'base', 0, mp.flip); drawObject(g, o, o.sprite, mp.dx, mp.dy, T, 'top', 0, mp.flip);
+      }
       var w2 = Math.max(1, o.footprintW || 1), hh2 = Math.max(1, o.footprintH || 1), vv = gh.side === 'W';
       x0 = ox + gh.x * T; y0 = oy + gh.y * T; x1 = vv ? x0 : x0 + w2 * T; y1 = vv ? y0 + T : y0;
       if (vv) { y0 = oy + (gh.y - hh2 + 1) * T; }
@@ -993,5 +1011,5 @@ var Render = (function () {
 
   return { Renderer: Renderer, bakeGround: bakeGround, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
-    layerOf: layerOf, wallMountPlace: wallMountPlace };
+    layerOf: layerOf, wallMountPlace: wallMountPlace, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

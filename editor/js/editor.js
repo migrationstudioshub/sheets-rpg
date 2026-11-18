@@ -77,6 +77,22 @@ var E = {
     var g = E.ensureRoof(m); if (g[y][x] === v) return false;
     g[y][x] = v; m._roofZones = null; return true;                 // invalidate the cached room grouping
   }
+  // No-build mask: a W×H grid ('1' = players may not build on this tile). Same shape and handling as the roof.
+  E.ensureNoBuild = function (map) {
+    map = map || E.map();
+    var r = map.nobuild;
+    if (!r || r.length !== map.height || (r[0] && r[0].length !== map.width)) {
+      var g = [];
+      for (var y = 0; y < map.height; y++) { var row = []; for (var x = 0; x < map.width; x++) row.push((r && r[y] && r[y][x]) || ''); g.push(row); }
+      map.nobuild = g;
+    }
+    return map.nobuild;
+  };
+  function setNoBuild(x, y, v) {
+    var m = E.map(); if (x < 0 || y < 0 || x >= m.width || y >= m.height) return false;
+    var g = E.ensureNoBuild(m); if (g[y][x] === v) return false;
+    g[y][x] = v; return true;
+  }
   // Edge walls live on cell boundaries. Two full grids of "styleId:height" tokens ('' = no wall), built
   // lazily the first time walls are painted: hWalls = horizontal lines ((H+1) rows × W cols), vWalls =
   // vertical lines (H rows × (W+1) cols). Kept full while editing; mapRows drops them when all-empty.
@@ -136,7 +152,7 @@ var E = {
     var ov = map.overlay;
     var hasOv = ov && ov.some(function (r) { return r && r.some(function (c) { return c; }); });
     if (hasOv) row.overlay = JSON.stringify(ov); else delete row.overlay;   // keep overlay-free maps clean
-    ['vWalls', 'hWalls', 'roof'].forEach(function (k) {                      // edge walls + roof cover, dropped when all-empty
+    ['vWalls', 'hWalls', 'roof', 'nobuild'].forEach(function (k) {           // edge walls + roof cover + no-build mask, dropped when all-empty
       var grid = map[k], has = grid && grid.some(function (r) { return r && r.some(function (c) { return c; }); });
       if (has) row[k] = JSON.stringify(grid); else delete row[k];
     });
@@ -198,6 +214,7 @@ var E = {
       terrain: JSON.parse(JSON.stringify(m.terrain)), overlay: JSON.parse(JSON.stringify(m.overlay || [])),
       vWalls: JSON.parse(JSON.stringify(m.vWalls || [])), hWalls: JSON.parse(JSON.stringify(m.hWalls || [])),
       roof: JSON.parse(JSON.stringify(m.roof || [])), roof_color: m.roof_color || '',
+      nobuild: JSON.parse(JSON.stringify(m.nobuild || [])),
       spawn: m.spawn ? JSON.parse(JSON.stringify(m.spawn)) : null,
       shapes: JSON.parse(JSON.stringify(m.shapes || {})), overlayShapes: JSON.parse(JSON.stringify(m.overlayShapes || {})),
       entities: JSON.parse(JSON.stringify(m.entities)) };
@@ -207,6 +224,7 @@ var E = {
     if (E.mapId !== s.mapId) E.openMap(s.mapId);
     m.width = s.width; m.height = s.height; m.name = s.name; m.terrain = s.terrain; m.overlay = s.overlay || [];
     m.vWalls = s.vWalls || []; m.hWalls = s.hWalls || []; m.roof = s.roof || []; m.roof_color = s.roof_color || '';
+    m.nobuild = s.nobuild || [];
     m.spawn = s.spawn || null;
     m.shapes = s.shapes || {}; m.overlayShapes = s.overlayShapes || {}; m.entities = s.entities;
     if (E.selected && !E.entityByKey(E.selected)) E.selected = null;
@@ -232,6 +250,7 @@ var E = {
   function eraseAt(x, y) {
     if (E.layer === 'spawn') return clearSpawn();
     if (E.layer === 'roof') return setRoof(x, y, '');
+    if (E.layer === 'nobuild') return setNoBuild(x, y, '');
     if (E.layer === 'terrain') return setTerrain(x, y, '');
     return removeObject(x, y);
   }
@@ -372,7 +391,7 @@ var E = {
   }
   E.setPaletteTab = function (t) {
     E.paletteTab = t;
-    E.layer = t === 'terrain' ? 'terrain' : t === 'walls' ? 'walls' : t === 'roof' ? 'roof' : t === 'spawn' ? 'spawn' : 'objects';
+    E.layer = t === 'terrain' ? 'terrain' : t === 'walls' ? 'walls' : t === 'roof' ? 'roof' : t === 'nobuild' ? 'nobuild' : t === 'spawn' ? 'spawn' : 'objects';
   };
   // Player spawn point: a single cell per map {x, y, facing} where new/respawning players start. Click to set,
   // erase/click again on it to clear. Facing is chosen in the Start panel; it defaults to S.
@@ -405,6 +424,7 @@ var E = {
   function paint(x, y) {
     if (E.layer === 'spawn') return setSpawn(x, y);
     if (E.layer === 'roof') return setRoof(x, y, '1');
+    if (E.layer === 'nobuild') return setNoBuild(x, y, '1');
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
     if (E.paletteTab === 'monsters') return placeMonster(x, y, E.brush.monster);
     return placeObject(x, y, E.brush.object);
@@ -456,6 +476,7 @@ var E = {
     if (!E.inside(x, y)) return false;
     if (E.layer === 'spawn') return setSpawn(x, y);
     if (E.layer === 'roof') return floodRoof(x, y);
+    if (E.layer === 'nobuild') return setNoBuild(x, y, '1');
     if (E.layer === 'objects') return rect({ x: x, y: y }, { x: x, y: y }, paint);
     var cells = E.cells();
     var from = cells[y][x], to = (E.tool === 'erase' && E.terrainLayer === 'overlay') ? '' : E.brush.terrain;
@@ -545,6 +566,7 @@ var E = {
     if (m.hWalls && m.hWalls.length) m.hWalls = resizeWalls(m.hWalls, h + 1, w);
     if (m.vWalls && m.vWalls.length) m.vWalls = resizeWalls(m.vWalls, h, w + 1);
     if (m.roof && m.roof.length) m.roof = resizeWalls(m.roof, h, w);
+    if (m.nobuild && m.nobuild.length) m.nobuild = resizeWalls(m.nobuild, h, w);
     m.width = w; m.height = h;
     m.entities = m.entities.filter(function (e) { return e.x < w && e.y < h; });
     ['shapes', 'overlayShapes'].forEach(function (k) {         // drop frozen shapes outside the new bounds
@@ -640,6 +662,16 @@ var E = {
       g.fillStyle = 'rgba(66,105,200,0.5)';
       for (var ry = 0; ry < m.height; ry++) { var rrow = m.roof[ry] || [];
         for (var rx = 0; rx < m.width; rx++) if (rrow[rx]) g.fillRect(vx + rx * s, vy + ry * s, s, s); }
+    }
+
+    // no-build tiles (authoring aid): a red hatch, shown while the No-build tab is active
+    if (m.nobuild && m.nobuild.length && E.layer === 'nobuild') {
+      g.fillStyle = 'rgba(220,70,60,0.35)'; g.strokeStyle = 'rgba(255,120,110,0.9)'; g.lineWidth = 1;
+      for (var ny = 0; ny < m.height; ny++) { var nrow = m.nobuild[ny] || [];
+        for (var nx = 0; nx < m.width; nx++) if (nrow[nx]) {
+          g.fillRect(vx + nx * s, vy + ny * s, s, s);
+          g.beginPath(); g.moveTo(vx + nx * s, vy + (ny + 1) * s); g.lineTo(vx + (nx + 1) * s, vy + ny * s); g.stroke();
+        } }
     }
 
     // player spawn marker (authoring aid): a green pin + facing arrow at the map's spawn cell. Always visible
@@ -937,6 +969,7 @@ var E = {
     if (k === '4') { E.setPaletteTab('walls'); Panels.all(); E.redraw(); return; }
     if (k === '5') { E.setPaletteTab('roof'); Panels.all(); E.redraw(); return; }
     if (k === '6') { E.setPaletteTab('spawn'); Panels.all(); E.redraw(); return; }
+    if (k === '7') { E.setPaletteTab('nobuild'); Panels.all(); E.redraw(); return; }
     if ((k === '[' || k === ']') && E.layer === 'walls') { E.wallHeight = Math.max(1, Math.min(12, (E.wallHeight || 1) + (k === ']' ? 1 : -1))); Panels.palette(); E.redraw(); return; }
     if (k === 'o' && E.layer === 'walls') { E.wallSide = E.wallSide === 'cursor' ? 'center' : 'cursor'; Panels.palette(); E.redraw(); return; }
     if (k === '0') { E.fitView(); return; }

@@ -17,6 +17,9 @@
   var queue = [], inFlight = false, lastReply = 0;
   var held = [], tap = null, holdSince = 0, lastStep = 0, lastFrame = 0, HOLD_MS = 220;
   var fx = [], bagOpen = false, craftOpen = false;
+  // building: buildOpen = the blueprint list is showing; building = the blueprint id you are placing (a ghost
+  // follows the cursor until Esc); storage = the built container whose contents panel is open
+  var buildOpen = false, building = null, storage = null;
   var armed = null;                      // {slot, id, skill} while an ability (Q/E) waits for a target
   var throwing = null;                   // belt item id armed for a throw (click to throw, Esc to cancel)
   // mouse: right-button held = aiming; left = interact (tap) / action list (hold) / fire (while aiming)
@@ -116,6 +119,8 @@
     hud();
     if (bagOpen) bag();
     if (craftOpen) craftPanel();
+    if (buildOpen) buildPanel();
+    if (storage) storePanel();
     return Promise.resolve();
   }
 
@@ -141,6 +146,7 @@
     (events || []).forEach(function (e, i) {
       if (e.text) log(e.text, e.type);
       if (e.type === 'craft') { if (!craftOpen) toggleCraft(); return; }   // you used a workbench / campfire: show what can be made
+      if (e.type === 'storage') { storage = e; $('store').hidden = false; storePanel(); return; }   // you opened (or changed) a storage container
       if (e.map && e.map !== me.map) return;
       var t0 = now + i * 120;
       if (e.type === 'cast') {
@@ -227,9 +233,10 @@
     if (d) { e.preventDefault(); if (!e.repeat) press(d); return; }
     if (e.repeat) return;
     if (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyF') { e.preventDefault(); interact(); }
-    else if (e.code === 'KeyI' || e.code === 'KeyB') toggleBag();
+    else if (e.code === 'KeyI') toggleBag();
+    else if (e.code === 'KeyB') { if (building) stopBuilding(); else toggleBuild(); }
     else if (e.code === 'KeyC') toggleCraft();
-    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) cancelThrow(); else if (craftOpen) toggleCraft(); else if (bagOpen) toggleBag(); }
+    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) cancelThrow(); else if (storage) closeStore(); else if (buildOpen) toggleBuild(); else if (building) stopBuilding(); else if (craftOpen) toggleCraft(); else if (bagOpen) toggleBag(); }
     else if (e.code === 'KeyQ') ability(0);
     else if (e.code === 'KeyE') ability(1);
     else if (e.code === 'KeyR') { if (World.rangedWeapon(content, me)) send({ type: 'reload' }); }
@@ -265,6 +272,11 @@
     if (e.button !== 0) return;
     closeMenu();
     hover = cell;
+    if (building) {                                       // build mode: a click places the blueprint where the ghost is
+      var bt = buildTarget();
+      if (bt) { if (bt.ok) send({ type: 'build', bp: building, x: bt.x, y: bt.y, side: bt.side }); else log(bt.reason, 'info'); }
+      return;
+    }
     if (armed) { castAt(cell); return; }                  // an armed ability still aims + casts on left-click
     if (throwing) { throwAt(cell); return; }
     if (aiming) { leftHeld = true; fireToward(cell); return; }   // fire/attack while aiming
@@ -298,6 +310,7 @@
       send({ type: 'attack', x: cell.x, y: cell.y }); attackFx(cell.x, cell.y);
       return;
     }
+    if (a.type === 'work' || a.type === 'dismantle') { send({ type: a.type, target: a.target }); return; }
     if (a.type === 'interact') {
       var tc = a.at || cell;                                   // wall objects act from a footprint cell, not the clicked face/hole
       if (!near(tc.x, tc.y)) { log(TOO_FAR, 'info'); return; }
@@ -353,7 +366,7 @@
   }
   function cancelThrow() { if (throwing) { throwing = null; updateCursor(); hotbar(); } }
   function updateCursor() {
-    canvas.style.cursor = (aiming || armed || throwing) ? 'crosshair' : '';
+    canvas.style.cursor = (aiming || armed || throwing || building) ? 'crosshair' : '';
   }
 
   function openMenu(e, cell, acts) {
@@ -613,6 +626,90 @@
     updateCursor();                 // keep the canvas cursor (crosshair when a gun is ready) in step with gear changes
   }
   function toggleBag() { bagOpen = !bagOpen; $('bag').hidden = !bagOpen; if (bagOpen) bag(); }
+  // ---- build mode (B): pick a blueprint, then click where it goes. Whether a spot is allowed is decided by
+  // World.canBuild — the same check the referee runs — so a green ghost means the server will say yes.
+  function toggleBuild() { buildOpen = !buildOpen; $('buildp').hidden = !buildOpen; if (buildOpen) buildPanel(); }
+  function stopBuilding() { building = null; updateCursor(); }
+  function buildPanel() {
+    var box = $('build-items'); box.innerHTML = '';
+    var bps = World.blueprintsFor(content, me), groups = {}, order = [];
+    if (!bps.length) box.insertAdjacentHTML('beforeend', '<div class="empty">You don\'t know how to build anything yet.</div>');
+    bps.forEach(function (b) { if (!groups[b.category]) { groups[b.category] = []; order.push(b.category); } groups[b.category].push(b); });
+    order.forEach(function (g) {
+      var h4 = document.createElement('h4'); h4.textContent = g.charAt(0).toUpperCase() + g.slice(1); box.appendChild(h4);
+      groups[g].forEach(function (b) {
+        var o = b.places === 'object' ? content.objects[b.object] : null, can = b.afford && b.toolOk;
+        var row = document.createElement('div'); row.className = 'slot' + (can ? '' : ' cant');
+        var img = o && Assets.get(o.sprite), pic = img ? img.cloneNode() : Assets.placeholder(b.name, '#555', 32);
+        pic.className = 'pic';
+        var name = document.createElement('div'); name.className = 'name';
+        var bb = document.createElement('b'); bb.textContent = b.name; name.appendChild(bb);
+        b.cost.forEach(function (g2, i) {
+          var sp = document.createElement('span');
+          sp.textContent = (i ? ', ' : '') + g2.qty + ' ' + ((content.items[g2.item] || {}).name || g2.item).toLowerCase() + ' (' + g2.have + ')';
+          if (g2.have < g2.qty) sp.className = 'lack';
+          name.appendChild(sp);
+        });
+        if (!b.toolOk) { var why = document.createElement('span'); why.className = 'lack'; why.textContent = ' — needs a ' + b.tool; name.appendChild(why); }
+        var bt = document.createElement('button'); bt.textContent = 'Place';
+        bt.onclick = function () { building = b.id; toggleBuild(); updateCursor(); };
+        row.appendChild(pic); row.appendChild(name); row.appendChild(bt); box.appendChild(row);
+      });
+    });
+  }
+  /** Where the cursor is in tiles, with fractions (so the nearest grid line can be found). */
+  function pointAt(e) {
+    var r = canvas.getBoundingClientRect(), T = content.config.tile_size || 32;
+    return { fx: ((e.clientX - r.left) * canvas.width / r.width + lastCam.x) / T, fy: ((e.clientY - r.top) * canvas.height / r.height + lastCam.y) / T };
+  }
+  /** Where the blueprint being placed would go right now, and whether that is allowed: {bp, x, y, side, ok, reason}. */
+  function buildTarget() {
+    var bp = building && content.blueprints && content.blueprints[building];
+    if (!bp || !lastPtr || !me) return null;
+    var pt = pointAt(lastPtr), map = mapOf(), o = bp.places === 'object' ? content.objects[bp.object] : null;
+    var x, y, side;
+    if (bp.places === 'wall' || (o && World.isWallFixture(o))) {        // snaps to the nearest grid line, like the map editor
+      var hC = { x: Math.floor(pt.fx), y: Math.round(pt.fy), side: 'N' }, vC = { x: Math.round(pt.fx), y: Math.floor(pt.fy), side: 'W' }, pick = null;
+      if (o) {                                                         // a door or window prefers the line that has a wall
+        var hW = !!Rules.wallAt(map, 'h', hC.x, hC.y), vW = !!Rules.wallAt(map, 'v', vC.x, vC.y);
+        if (hW !== vW) pick = hW ? hC : vC;
+      }
+      if (!pick) pick = Math.abs(pt.fx - vC.x) < Math.abs(pt.fy - hC.y) ? vC : hC;
+      x = pick.x; y = pick.y; side = pick.side;
+    } else { x = Math.floor(pt.fx); y = Math.floor(pt.fy); }
+    var chk = World.canBuild(content, map, lookup(), me, bp, x, y, side);
+    return { bp: bp, x: x, y: y, side: side, ok: chk.ok, reason: chk.reason || '' };
+  }
+  // ---- storage panel: a container you built. Left = what is in it (Take), below = your bag (Put).
+  function closeStore() { storage = null; $('store').hidden = true; }
+  function storePanel() {
+    var box = $('store-items'); box.innerHTML = '';
+    var keys = Object.keys(storage.inv || {});
+    $('store-title').textContent = storage.name + (storage.slots ? ' (' + keys.length + '/' + storage.slots + ')' : '');
+    function row(id, qty, label, op) {
+      var it = content.items[id] || { name: id, sprite: '' };
+      var r = document.createElement('div'); r.className = 'slot';
+      var img = Assets.get(it.sprite), pic;
+      if (img) pic = img.cloneNode();
+      else { pic = document.createElement('canvas'); pic.width = pic.height = 32; pic.getContext('2d').drawImage(Assets.placeholder(it.name, '#555', 32), 0, 0); }   // its own copy: the same item can be listed twice
+      pic.className = 'pic';
+      var name = document.createElement('div'); name.className = 'name';
+      var b = document.createElement('b'); b.textContent = it.name + (qty > 1 ? ' ×' + qty : ''); name.appendChild(b);
+      var btns = document.createElement('div'); btns.className = 'btns';
+      [[label, 1], ['All', qty]].forEach(function (q) {
+        if (q[1] === 1 && qty === 1 && q[0] === 'All') return;
+        var bt = document.createElement('button'); bt.textContent = q[0];
+        bt.onclick = function () { send({ type: 'store', key: storage.key, op: op, item: id, qty: q[1] }); };
+        btns.appendChild(bt);
+      });
+      r.appendChild(pic); r.appendChild(name); r.appendChild(btns); box.appendChild(r);
+    }
+    var h1 = document.createElement('h4'); h1.textContent = 'Inside'; box.appendChild(h1);
+    if (!keys.length) box.insertAdjacentHTML('beforeend', '<div class="empty">Empty.</div>');
+    keys.forEach(function (id) { row(id, storage.inv[id], 'Take', 'take'); });
+    var h2 = document.createElement('h4'); h2.textContent = 'Your bag'; box.appendChild(h2);
+    me.inventory.forEach(function (st) { row(st.item, st.qty, 'Put', 'put'); });
+  }
   // ---- crafting panel (C, or use a crafting station): every recipe you know, what it needs, and Make buttons.
   // What can be made here is decided by World.recipesFor — the same check the referee runs on the craft action.
   function toggleCraft() { craftOpen = !craftOpen; $('craft').hidden = !craftOpen; if (craftOpen) craftPanel(); }
@@ -719,6 +816,8 @@
   }
   $('bag-close').onclick = toggleBag;
   $('craft-close').onclick = toggleCraft;
+  $('build-close').onclick = toggleBuild;
+  $('store-close').onclick = closeStore;
 
   // ---------------------------------------------------------------- map and loop
   function enterMap() {
@@ -850,6 +949,7 @@
       vis = sight.vis; mem = seenCells[me.map];
     }
     renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null });
+    if (building) renderer.drawGhost(cam, buildTarget());
     if (armed) renderer.drawAim(cam, aimOverlay());
     else if (throwing) renderer.drawAim(cam, throwOverlay());
     // a ready gun shows no on-canvas aim — the crosshair cursor is the aim (see updateCursor)
@@ -926,7 +1026,7 @@
     return res;
   }).then(apply).then(function () {
     setupDebug();
-    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use or attack what you face · Q/E abilities · 1-5 belt · I bag.', 'info');
+    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use or attack what you face · Q/E abilities · 1-5 belt · I bag · C craft · B build.', 'info');
     if (api.staleDraft) log('Your map editor draft was made from older game data, so the game is using the latest data instead. Open the editor to update or discard the draft.', 'death');
     requestAnimationFrame(frame);
   }).catch(function (e) {

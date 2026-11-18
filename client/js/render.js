@@ -238,10 +238,10 @@ var Render = (function () {
     g.restore();
   }
   /** A small health bar centred on (cx, cy). */
-  function drawHpBar(g, cx, cy, pct) {
+  function drawHpBar(g, cx, cy, pct, color) {
     var w = 22, x = Math.round(cx - w / 2), y = Math.round(cy);
     g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(x - 1, y - 1, w + 2, 5);
-    g.fillStyle = pct < 0.33 ? '#e0563f' : pct < 0.66 ? '#e0a83f' : '#7bcf62';
+    g.fillStyle = color || (pct < 0.33 ? '#e0563f' : pct < 0.66 ? '#e0a83f' : '#7bcf62');
     g.fillRect(x, y, Math.max(1, Math.round(w * Math.max(0, Math.min(1, pct)))), 3);
   }
   function drawDoor(g, content, map, job, ox, oy, S, cutA) {
@@ -633,10 +633,13 @@ var Render = (function () {
     // Anything on an unknown (roofed, never seen) cell is not drawn at all.
     function wallH(q) { var t = parseWallTok(((q.orient === 'h' ? map.hWalls : map.vWalls) || [])[q.y] && ((q.orient === 'h' ? map.hWalls : map.vWalls)[q.y][q.x])); return t ? t.height : 2; }
     var overs = [], renderables = [], doorFaces = {}, doorGap = {}, vDoor = {}, winHoles = {};
+    // is the wall on this edge still an unfinished frame? (drawn faint until it is built)
+    function wallFrame(orient, x, y) { var w = map._struct.walls[orient + x + ',' + y]; return !!w && (w.prog || 0) < (w.need || 0); }
     // how much of an E-W wall segment's health is left (0 = unharmed / not tracked), for the crack overlay
     function wallHurt(x, y) {
       var st = map._struct; if (!st || (st.dmg['h' + x + ',' + y] === undefined && !st.walls['h' + x + ',' + y])) return 0;
       var info = World.structInfo(c, map, { t: 'wall', orient: 'h', x: x, y: y });
+      if (info && info.rec && (info.rec.prog || 0) < (info.rec.need || 0)) return 0;   // a frame is not damaged, just unfinished
       return info && info.max > 0 && info.hp < info.max ? Math.max(0.01, info.hp / info.max) : 0;
     }
     map.entities.forEach(function (e) {
@@ -737,6 +740,7 @@ var Render = (function () {
       if (!sight.known(e.x, e.y)) return;                                 // inside a room never seen
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
       var path = objPath(o, st, facing), flip = facing === 'left' || facing === 'W';
+      if (!path && e.bp !== undefined) path = '#built';              // something a player built with no art yet: show a lettered box, never nothing
       var dx = ox + e.x * T, dy = oy + e.y * T, dz = o.draw || 'auto';
       if (dz === 'over') {
         overs.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
@@ -747,7 +751,7 @@ var Render = (function () {
         drawStateMark(g, o, st, dx, dy, T);
         dim(false);
       } else {
-        renderables.push({ sortY: Math.round(oy + e.y * T) + T, dark: inDark(e.x, e.y), obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
+        renderables.push({ sortY: Math.round(oy + e.y * T) + T, dark: inDark(e.x, e.y), alpha: e.need && (e.prog || 0) < e.need ? 0.5 : 1, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
       }
     });
 
@@ -768,6 +772,7 @@ var Render = (function () {
         cut: !isV && sight.cutH(p.x, p.y, p.h), shut: vd === 'shut' && !isCap, glass: vd === 'glass' && !isCap,
         holes: p.kind === 'hface' ? winHoles[p.x + ',' + p.y] : null,
         hurt: p.kind === 'hface' && map._struct ? wallHurt(p.x, p.y) : 0,
+        frame: !!map._struct && wallFrame(isV ? 'v' : 'h', p.x, p.y),
         // An E-W wall's face is the side seen from the cell SOUTH of it. If that cell is an unknown interior,
         // the face is an inside wall the player has never seen: the roof covers it (the cap still outlines the building).
         // A thin N-S face is likewise seen from the two cells just south of its segment (either side of the
@@ -788,11 +793,13 @@ var Render = (function () {
     renderables.forEach(function (r) {
       if (r.door) { dim(r.dark); drawDoor(g, c, map, r.door, ox, oy, T, cutA); dim(false); return; }
       if (r.prim) {
+        if (r.frame) g.globalAlpha = 0.5;
         if (r.roofed && !r.cut) primRectFill(g, r.prim, ox, oy, T, roofCol);
         else if (!(r.holes && !r.cut && drawFaceWithHoles(g, c, r.prim, ox, oy, T, r.dark, r.holes))) drawPrim25(g, c, r.prim, ox, oy, T, r.cut, r.dark);
         if (r.hurt && !r.cut && !r.roofed) drawCracks(g, r.prim, ox, oy, T, r.hurt);
         if (r.shut) primRectFill(g, r.prim, ox, oy, T, 'rgba(46,30,16,.55)');
         if (r.glass) primRectFill(g, r.prim, ox, oy, T, 'rgba(190,228,255,.55)');     // a window in a thin wall: glassy
+        if (r.frame) g.globalAlpha = 1;
         return;
       }
       if (r.obj) {
@@ -841,21 +848,26 @@ var Render = (function () {
     // Anything damaged and in sight shows how much it has left.
     var stD = map._struct;
     if (stD && typeof World !== 'undefined' && World.structInfo) {
-      Object.keys(stD.dmg || {}).forEach(function (k) {
+      var barKeys = Object.keys(stD.dmg || {});
+      Object.keys(stD.walls || {}).forEach(function (k) { var w = stD.walls[k]; if ((w.prog || 0) < (w.need || 0) || w.hp < w.max) barKeys.push(k); });
+      (stD.ents || []).forEach(function (b) { if ((b.prog || 0) < (b.need || 0) || b.hp < b.max) barKeys.push(b.key); });
+      barKeys.forEach(function (k) {
         var em = /^([hv])(\d+),(\d+)$/.exec(k), info, bx, by;
         if (em) {
           var ex = Number(em[2]), ey = Number(em[3]);
           if (em[1] === 'h') { if (!sight.seen(ex, ey) && !sight.seen(ex, ey - 1)) return; }
           else if (!sight.seen(ex, ey) && !sight.seen(ex - 1, ey)) return;
-          info = World.structInfo(c, map, { t: 'wall', orient: em[1], x: ex, y: ey }); if (!info || !info.max) return;
+          info = World.structInfo(c, map, { t: 'wall', orient: em[1], x: ex, y: ey }); if (!info) return;
           bx = ox + (em[1] === 'h' ? ex + 0.5 : ex) * T; by = oy + (em[1] === 'h' ? ey * T - 10 : (ey + 0.5) * T);
         } else {
-          info = World.structInfo(c, map, { t: 'ent', key: k }); if (!info || !info.max) return;
+          info = World.structInfo(c, map, { t: 'ent', key: k }); if (!info) return;
           var en = info.e, eo = c.objects[en.ref], onWall = layerOf(eo) === 'wall';
           if (!sight.seen(en.x, en.y) && !(onWall && sight.seen(en.x, en.y - 1))) return;
           bx = ox + (en.x + Math.max(1, eo.footprintW || 1) / 2) * T; by = oy + en.y * T - (onWall ? 10 : 6);
         }
-        drawHpBar(g, bx, by, info.hp / info.max);
+        var fr = info.rec && (info.rec.prog || 0) < (info.rec.need || 0);
+        if (fr) drawHpBar(g, bx, by, info.rec.prog / info.rec.need, '#6fb7ff');          // a frame: how far along it is
+        else if (info.max > 0) drawHpBar(g, bx, by, info.hp / info.max);
       });
     }
     overs.sort(function (a, b) { return a.y - b.y; }).forEach(function (t) {
@@ -865,6 +877,43 @@ var Render = (function () {
   };
 
   /** Aiming: cells in range, the line to the cursor, the cell under it (green = can cast) and the area it would hit. */
+  /**
+   * Build mode: the ghost of the blueprint at the spot under the cursor — the wall or object drawn faint,
+   * outlined green where it may go and red where it may not, with the reason. gh = {bp, x, y, side, ok, reason}.
+   */
+  Renderer.prototype.drawGhost = function (cam, gh) {
+    if (!gh) return;
+    var g = this.g, c = this.content, T = c.config.tile_size || 32, ox = -cam.x, oy = -cam.y, map = this.map;
+    var bp = gh.bp, col = gh.ok ? '#6fe08a' : '#ff6b5b', o = bp.places === 'object' ? c.objects[bp.object] : null;
+    g.save(); g.globalAlpha = 0.55;
+    var x0, y0, x1, y1;                                                 // the outline: a line for an edge, a box for a tile
+    if (bp.places === 'wall') {
+      var v = gh.side === 'W', h = bp.wallHeight || 2;
+      (v ? ['vface', 'vcap'] : ['hface', 'hcap']).forEach(function (kind) { drawPrim25(g, c, { kind: kind, x: gh.x, y: gh.y, h: h, style: bp.wallStyle, side: 'c' }, ox, oy, T, false, 0); });
+      x0 = ox + gh.x * T; y0 = oy + gh.y * T; x1 = v ? x0 : x0 + T; y1 = v ? y0 + T : y0;
+    } else if (o && layerOf(o) === 'wall') {
+      var mp = wallMountPlace(map, o, { x: gh.x, y: gh.y, data: { side: gh.side || 'N' } }, ox, oy, T);
+      drawObject(g, o, o.sprite, mp.dx, mp.dy, T, 'base', 0, mp.flip); drawObject(g, o, o.sprite, mp.dx, mp.dy, T, 'top', 0, mp.flip);
+      var w2 = Math.max(1, o.footprintW || 1), hh2 = Math.max(1, o.footprintH || 1), vv = gh.side === 'W';
+      x0 = ox + gh.x * T; y0 = oy + gh.y * T; x1 = vv ? x0 : x0 + w2 * T; y1 = vv ? y0 + T : y0;
+      if (vv) { y0 = oy + (gh.y - hh2 + 1) * T; }
+    } else if (o) {
+      drawObject(g, o, o.sprite || '#built', ox + gh.x * T, oy + gh.y * T, T, 'base', 0, false); drawObject(g, o, o.sprite || '#built', ox + gh.x * T, oy + gh.y * T, T, 'top', 0, false);
+      var fw = Math.max(1, o.footprintW || 1), fh = Math.max(1, o.footprintH || 1);
+      g.globalAlpha = 1; g.strokeStyle = col; g.lineWidth = 2;
+      g.strokeRect(ox + gh.x * T + 1, oy + (gh.y - fh + 1) * T + 1, fw * T - 2, fh * T - 2);
+      x0 = null;
+    }
+    g.globalAlpha = 1;
+    if (x0 != null) { g.strokeStyle = col; g.lineWidth = Math.max(3, Math.round(T * 0.14)); g.lineCap = 'round'; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); }
+    if (!gh.ok && gh.reason) {
+      g.font = '11px sans-serif'; g.textAlign = 'center';
+      var tx = ox + (gh.x + 0.5) * T, ty = oy + (gh.y + 1) * T + 12;
+      g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(tx - g.measureText(gh.reason).width / 2 - 4, ty - 10, g.measureText(gh.reason).width + 8, 14);
+      g.fillStyle = '#ffb4a8'; g.fillText(gh.reason, tx, ty);
+    }
+    g.restore();
+  };
   Renderer.prototype.drawAim = function (cam, aim) {
     var g = this.g, T = this.content.config.tile_size || 32;
     g.fillStyle = 'rgba(255,255,255,.10)';

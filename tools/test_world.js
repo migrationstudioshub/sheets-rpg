@@ -1214,6 +1214,8 @@ test('swinging at a wall: the attack action hits what is in the way; a shut door
   assert.match(texts(ev), /The shed door breaks/);
   assert.strictEqual(World.structInfo(s.c, liveOf(s), { t: 'ent', key: 'arena.e1' }), null);
   assert.ok(!liveOf(s).entities.some(e => e.key === 'arena.e1'), 'the door is no longer on the map');
+  assert.deepStrictEqual(Rules.entitiesAt(liveOf(s), 1, 3).map(e => e.key), [], 'nor can it be found on its tile any more');
+  assert.match(texts(act(s, { type: 'interact' }, now + 3000)), /Nothing to use here|wall is in the way/, 'so there is nothing left to open');
   assert.strictEqual(Rules.tryMove(s.c, liveOf(s), 1, 3, 'N', {}).ok, false, 'the wall it hung on still stands');
   put(s, 'arena', 5, 3, 'N');
   assert.match(texts(act(s, { type: 'attack', x: 5, y: 2 }, now + 5000)), /Nothing to attack there/, 'unbreakable brick is not a target');
@@ -1347,6 +1349,137 @@ test('harvesting: the right tool, the yield, and the tree grows back', () => {
   World.advance(s.c, s.ws, 'camp', [s.p], now + 61000, mid, []);
   assert.ok(World.liveMap(s.c, s.ws, 'camp').entities.some(e => e.key === 'camp.e2'), 'a minute later it has grown back');
   assert.strictEqual(World.structInfo(s.c, World.liveMap(s.c, s.ws, 'camp'), tree).hp, 10, 'at full health');
+});
+
+// ---------------------------------------------------------------- building
+// An open 9x9 yard; the builder stands at (4,4) with a hammer and plenty of materials. Tile (8,8) is no-build.
+function yard() {
+  const t = JSON.parse(JSON.stringify(tables));
+  const row = Array(9).fill('til_1');
+  const nb = Array(9).fill(0).map(() => Array(9).fill(''));
+  nb[8][8] = '1';
+  t.Maps.push({ id: 'yard', name: 'Yard', width: 9, height: 9, terrain: JSON.stringify(Array(9).fill(row)), nobuild: JSON.stringify(nb) });
+  const c = Content.build(t), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Builder', 'warrior');
+  const s = { c, ws, p };
+  put(s, 'yard', 4, 4, 'N');
+  [['hammer', 1], ['wood', 60], ['nails', 40], ['scrap', 40]].forEach(g => World.give(c, p, g[0], g[1], []));
+  return s;
+}
+const yardMap = (s) => { World.syncEdges(s.c, s.ws, 'yard'); return World.liveMap(s.c, s.ws, 'yard'); };
+let clock = 100000;
+const doAct = (s, a) => { clock += 5000; return texts(World.act(s.c, s.ws, s.p, a, clock, mid, [s.p])); };
+const N44 = { t: 'wall', orient: 'h', x: 4, y: 4 };                       // the north edge of the builder's tile
+
+test('building a wall: the frame blocks at once, work finishes it, and it costs the materials', () => {
+  const s = yard();
+  assert.match(doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'N' }), /You set up the frame of a wooden wall/);
+  assert.deepStrictEqual([World.count(s.p, 'wood'), World.count(s.p, 'nails')], [56, 38]);
+  let info = World.structInfo(s.c, yardMap(s), N44);
+  assert.deepStrictEqual([info.built, info.hp, info.max, info.rec.prog, info.rec.need], [true, 8, 40, 0, 4]);
+  assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'N', {}).ok, false, 'a frame is already in the way');
+  assert.match(doAct(s, { type: 'interact' }), /You work on the wooden wall \(1\/4\)/, 'the use key works on the frame you face');
+  doAct(s, { type: 'work', target: N44 }); doAct(s, { type: 'work', target: N44 });
+  assert.match(doAct(s, { type: 'work', target: N44 }), /The wooden wall is finished/);
+  info = World.structInfo(s.c, yardMap(s), N44);
+  assert.deepStrictEqual([info.hp, info.rec.prog], [40, 4]);
+  assert.match(doAct(s, { type: 'work', target: N44 }), /Nothing to work on/);
+  assert.ok(!World.canSee(s.c, yardMap(s), 4, 4, 4, 3, (e) => World.stateOf(s.c, s.ws, 'yard', e)), 'and it blocks sight like any wall');
+});
+
+test('building is refused, with the reason, when a rule says no — and the ghost gets the same answer', () => {
+  const s = yard();
+  const lk = () => World.viewLookup(s.c, yardMap(s), { states: {}, monsters: [], players: [] }, s.p);
+  const ghost = (bp, x, y, side) => World.canBuild(s.c, yardMap(s), lk(), s.p, s.c.blueprints[bp], x, y, side);
+  assert.strictEqual(ghost('bp_wood_wall', 4, 4, 'N').ok, true);
+  assert.match(doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 0, side: 'N' }), /Too far away/);
+  assert.strictEqual(ghost('bp_wood_wall', 4, 0, 'N').reason, 'Too far away.');
+  assert.match(doAct(s, { type: 'build', bp: 'nope', x: 4, y: 4, side: 'N' }), /don't know how to build/);
+  assert.match(doAct(s, { type: 'build', bp: 'bp_door', x: 4, y: 4, side: 'N' }), /needs a wall to hang on/);
+  doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'N' });
+  assert.match(doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'N' }), /already a wall there/);
+  assert.strictEqual(ghost('bp_wood_wall', 4, 4, 'N').ok, false);
+  assert.match(doAct(s, { type: 'build', bp: 'bp_crate', x: 4, y: 4 }), /not clear/, 'not on top of yourself');
+  put(s, 'yard', 7, 8, 'E');
+  assert.match(doAct(s, { type: 'build', bp: 'bp_crate', x: 8, y: 8 }), /can't build here/, 'a no-build tile');
+  assert.match(doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 8, y: 8, side: 'W' }), /can't build here/, 'nor a wall along its edge');
+  put(s, 'yard', 4, 4, 'N');
+  World.act(s.c, s.ws, s.p, { type: 'use', item: 'hammer' }, clock += 5000, mid, [s.p]);
+  s.p.inventory = s.p.inventory.filter(x => x.item !== 'hammer');
+  assert.match(doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'W' }), /Needs a hammer/);
+  World.give(s.c, s.p, 'hammer', 1, []);
+  s.p.inventory = s.p.inventory.filter(x => x.item !== 'wood');
+  assert.match(doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'W' }), /Not enough wood/);
+  World.give(s.c, s.p, 'wood', 20, []);
+  s.c.config.structure_cap_per_player = 1;
+  assert.match(doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'W' }), /built as much as you can/);
+});
+
+test('repair costs materials, taking apart refunds by condition, an upgrade keeps the condition', () => {
+  const s = yard();
+  doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'N' });
+  for (let i = 0; i < 4; i++) doAct(s, { type: 'work', target: N44 });
+  World.damageStructure(s.c, s.ws, 'yard', N44, 20, { kind: 'melee' }, []);          // 20 of 40 left
+  const wood0 = World.count(s.p, 'wood'), nails0 = World.count(s.p, 'nails');
+  assert.match(doAct(s, { type: 'work', target: N44 }), /You repair the wooden wall \(30\/40\)/);
+  assert.deepStrictEqual([wood0 - World.count(s.p, 'wood'), nails0 - World.count(s.p, 'nails')], [1, 1], 'a quarter of half the cost, at least one of each');
+  assert.match(doAct(s, { type: 'upgrade', target: N44, bp: 'bp_crate' }), /can't be upgraded that way/);
+  assert.match(doAct(s, { type: 'upgrade', target: N44, bp: 'bp_metal_wall' }), /You upgrade it to a metal wall/);
+  let info = World.structInfo(s.c, yardMap(s), N44);
+  assert.deepStrictEqual([info.max, info.hp, info.material], [120, 90, 'metal'], 'three quarters before, three quarters after');
+  const scrap0 = World.count(s.p, 'scrap');
+  assert.match(doAct(s, { type: 'dismantle', target: N44 }), /You take the metal wall apart/);
+  assert.strictEqual(World.count(s.p, 'scrap') - scrap0, 2, 'half of 6 scrap, times three quarters, rounded down');
+  assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'N', {}).ok, true);
+  assert.match(doAct(s, { type: 'dismantle', target: N44 }), /only take apart what was built/);
+  const other = World.newPlayer(s.c, 'p2', 'Rival', 'warrior'); put({ p: other }, 'yard', 4, 4, 'N'); other.x = 4; other.y = 4; other.map = 'yard';
+  World.give(s.c, other, 'hammer', 1, []);
+  doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'W' });
+  assert.match(texts(World.act(s.c, s.ws, other, { type: 'dismantle', target: { t: 'wall', orient: 'v', x: 4, y: 4 } }, clock += 5000, mid, [s.p, other])), /not yours to take apart/);
+});
+
+test('a door needs a wall; once built it opens, closes and gates the wall like any door', () => {
+  const s = yard();
+  doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'N' });
+  assert.match(doAct(s, { type: 'build', bp: 'bp_door', x: 4, y: 4, side: 'N' }), /frame of a wooden door/);
+  const door = yardMap(s).entities.filter(e => e.ref === 'obj_edge_door')[0];
+  assert.ok(/^yard\.b\d+$/.test(door.key), 'built things get their own kind of key');
+  assert.match(doAct(s, { type: 'build', bp: 'bp_door', x: 4, y: 4, side: 'N' }), /already on that wall/);
+  assert.match(doAct(s, { type: 'dismantle', target: N44 }), /Take down what hangs on it first/);
+  const stf = (e) => World.stateOf(s.c, s.ws, 'yard', e);
+  assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'N', {}).ok, false);
+  doAct(s, { type: 'interact', x: 4, y: 4 });                              // open it
+  assert.strictEqual(stf(door), 'open');
+  assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'N', {}).ok, true, 'open: you walk through the wall');
+  assert.ok(World.canSee(s.c, yardMap(s), 4, 4, 4, 3, stf));
+  doAct(s, { type: 'interact', x: 4, y: 4 });
+  assert.ok(!World.canSee(s.c, yardMap(s), 4, 4, 4, 3, stf), 'shut: it blocks sight again');
+});
+
+test('a storage crate keeps what you put in; smashed, it leaves the contents in rubble', () => {
+  const s = yard();
+  doAct(s, { type: 'build', bp: 'bp_crate', x: 5, y: 4 });
+  const crate = yardMap(s).entities.filter(e => e.ref === 'obj_crate')[0];
+  for (let i = 0; i < 3; i++) doAct(s, { type: 'work', target: { t: 'ent', key: crate.key } });
+  let ev = World.act(s.c, s.ws, s.p, { type: 'interact', x: 5, y: 4 }, clock += 5000, mid, [s.p]);
+  assert.ok(ev.some(e => e.type === 'storage' && e.key === crate.key && e.slots === 12), 'using it shows what is inside');
+  const wood0 = World.count(s.p, 'wood');
+  doAct(s, { type: 'store', key: crate.key, op: 'put', item: 'wood', qty: 10 });
+  doAct(s, { type: 'store', key: crate.key, op: 'put', item: 'nails', qty: 5 });
+  assert.deepStrictEqual(crate.inv, { wood: 10, nails: 5 });
+  assert.strictEqual(World.count(s.p, 'wood'), wood0 - 10);
+  put(s, 'yard', 4, 4, 'E');
+  ev = World.act(s.c, s.ws, s.p, { type: 'interact' }, clock += 5000, mid, [s.p]);
+  assert.ok(ev.some(e => e.type === 'storage' && e.inv.wood === 10), 'the use key opens the crate you face');
+  doAct(s, { type: 'store', key: crate.key, op: 'take', item: 'wood', qty: 4 });
+  assert.deepStrictEqual([crate.inv.wood, World.count(s.p, 'wood')], [6, wood0 - 6]);
+  assert.match(doAct(s, { type: 'store', key: crate.key, op: 'take', item: 'scrap', qty: 1 }), /none in there/);
+  assert.match(doAct(s, { type: 'dismantle', target: { t: 'ent', key: crate.key } }), /Empty it first/);
+  assert.strictEqual(World.view(s.c, s.ws, 'yard', s.p, [s.p], -1).struct.ents[0].inv, undefined, 'contents are not broadcast with the map');
+  World.damageStructure(s.c, s.ws, 'yard', { t: 'ent', key: crate.key }, 999, { kind: 'blast', now: clock }, []);
+  const left = yardMap(s).entities.filter(e => e.x === 5 && e.y === 4);
+  assert.deepStrictEqual(left.map(e => e.ref), ['obj_rubble']);
+  assert.deepStrictEqual(left[0].inv, { wood: 6, nails: 5 }, 'nothing was lost');
+  assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'E', {}).ok, true, 'rubble can be walked over');
 });
 
 console.log(`\n${passed} world tests passed`);

@@ -168,7 +168,7 @@ var Panels = (function () {
 
   // ------------------------------------------------------------ palette
   var filter = '';
-  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', walls: 'Walls', roof: 'Roof', spawn: 'Start' };
+  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', walls: 'Walls', roof: 'Roof', spawn: 'Start', nobuild: 'No-build' };
   // Current brush height for edge walls: set here, painted into every new segment (per-segment, so you can
   // change it and paint a taller/shorter run next). Keyboard [ and ] step it too.
   function wallHeightRow() {
@@ -195,10 +195,16 @@ var Panels = (function () {
     var box = $('palette'); box.innerHTML = '';
     var paletteTab = E.paletteTab;
     var tabs = h('div', { className: 'tabs' },
-      ['terrain', 'objects', 'monsters', 'walls', 'roof', 'spawn'].map(function (t) {
+      ['terrain', 'objects', 'monsters', 'walls', 'roof', 'spawn', 'nobuild'].map(function (t) {
         return h('button', { className: paletteTab === t ? 'on' : '', text: TAB_NAMES[t],
           onclick: function () { E.setPaletteTab(t); all(); E.redraw(); } });
       }));
+    if (paletteTab === 'nobuild') {                                   // no palette either: paint / erase the no-build mask
+      box.appendChild(tabs);
+      box.appendChild(h('p', { className: 'note',
+        text: 'No-build marks tiles where players may NOT build: nothing can be placed on them, and no wall along their edges. Brush (B) marks tiles, Erase (E) clears them, Rectangle (R) does a block. Use it for quest areas, spawn points, doorways and narrow passages you do not want walled off. Everything not marked can be built on.' }));
+      return;
+    }
     if (paletteTab === 'roof') {                                      // the Roof layer has no palette: paint/erase the cover mask + pick the roof colour
       box.appendChild(tabs);
       box.appendChild(h('p', { className: 'note',

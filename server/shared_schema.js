@@ -167,6 +167,23 @@ var Schema = (function () {
       f('level', 'number', 1), f('xp_needed', 'number', 0, 'Total XP to reach this level')
     ] },
 
+    blueprints: { collection: 'blueprints', id: 'id', label: 'Blueprints', singular: 'blueprint', authored: 'studio', fields: [
+      f('id', 'text', ''), f('name', 'text', ''),
+      f('category', 'select', 'walls', 'Tab in the build menu', { options: ['walls', 'doors', 'furniture', 'stations', 'defences', 'other'] }),
+      f('places', 'select', 'wall', 'wall = a wall segment on a grid line; object = a map object (on a tile, or on a wall if the object is wall-mounted)', { options: ['wall', 'object'] }),
+      f('wall_style', 'ref', '', 'For walls: the wall style it builds', { ref: 'wallStyles' }),
+      f('wall_height', 'number', 2, 'For walls: height in tiles'),
+      f('object', 'ref', '', 'For objects: the object it builds', { ref: 'objects' }),
+      f('cost', 'text', '', 'Materials used up, e.g. wood:4, nails:2'),
+      f('work', 'number', 4, 'How many times you must work on the frame to finish it (0 = built at once)'),
+      f('tool', 'text', '', 'Tool tag needed to build, repair and take it apart, e.g. hammer'),
+      f('station', 'text', '', 'Station id that must be nearby to place it (empty = anywhere)'),
+      f('needs_wall', 'bool', true, 'Wall-mounted objects (doors, windows): the spot must already have a wall'),
+      f('upgrade_of', 'ref', '', 'This is an upgrade of that blueprint: it can be applied to one already built', { ref: 'blueprints' }),
+      f('unlock', 'text', '', 'Condition to know it, e.g. level:3 or flag:found_plans'),
+      f('icon', 'image', '', 'Menu icon (empty = the object or wall art)'),
+      f('notes', 'text', '')
+    ] },
     recipes: { collection: 'recipes', id: 'id', label: 'Recipes', singular: 'recipe', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('category', 'text', '', 'Group shown in the crafting panel'),
       f('inputs', 'text', '', 'What it uses up, e.g. wood:2, nails:4'),
@@ -197,7 +214,7 @@ var Schema = (function () {
   var TAB = {
     config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', wallStyles: 'WallStyles', kinds: 'Kinds',
     objects: 'Objects', items: 'Items', monsters: 'Monsters', loot: 'LootTables', classes: 'Classes',
-    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes',
+    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes', blueprints: 'Blueprints',
     maps: 'Maps', mapEntities: 'MapEntities'
   };
 

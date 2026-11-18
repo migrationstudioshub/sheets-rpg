@@ -1,13 +1,25 @@
 # Base building, damage and crafting — implementation spec
 
-Status: **Phases 0, 1 and 2 built.** Phase 0: per-map state + transactions (`functions/referee.js`, tests in
+Status: **Phases 0, 1, 2 and 3 built.** Phase 0: per-map state + transactions (`functions/referee.js`, tests in
 `tools/test_functions.js`). Phase 1: the structure layer, `World.liveMap`, health/damage/breach/destruction
 for authored walls and objects, wired into melee (the `attack` action falls through to a structure),
 bullets and blasts; crack overlay + health bars; durability fields in the Content Studio; `resetStructures`
 (key-gated function action). Phase 2: the Recipes table, item tool tags, crafting stations (`properties.station`
 on a kind-craft object), the `craft` action, `World.recipesFor`, the crafting panel (key C, or use a station), and
-harvestable objects (`properties.harvest` / `harvest_tool` / `respawn_s`) that grow back. Phases 3-5 planned.
+harvestable objects (`properties.harvest` / `harvest_tool` / `respawn_s`) that grow back. Phase 3: the Blueprints table,
+`World.canBuild` / `blueprintsFor`, the `build` / `work` / `dismantle` / `upgrade` / `store` actions, frames, repair,
+storage containers and rubble, build mode in the client (key B, ghost preview, F works on a frame), the storage panel,
+and the No-build tab in the map editor (`map.nobuild`). Phases 4-5 planned.
 Written 18 Nov 2026.
+
+**Deviations in Phase 3:** `work`, `dismantle` and `upgrade` take `target` (`{t:'wall', orient, x, y}` or `{t:'ent', key}`);
+pressing use (F) with nothing usable in front works on the frame / damaged thing you face. No hold-to-work and no
+rotation key yet. Building is not predicted (the client waits for the reply). **Who may damage what:** until claims
+exist (Phase 4) `World.protectedFrom` returns false, so any player can damage any built structure; taking apart is
+limited to the builder unless `pvp_structures` is on. Phase 4 must make `protectedFrom` true inside a claim the player
+is not a member of — this is the owner-confirmed reading of decision 3 only if they agree (still to confirm).
+**Gotcha fixed here:** the live map is `Object.create(authoredMap)`, so every cache hung on a map (`_at`, `_block`,
+`_edgeOv`) must be reset as an OWN property in `liveMapFromStruct`, or it silently reads the authored map's.
 
 **Deviations in Phase 2:** item lists (`inputs`, `outputs`, `cost`, `salvage`, `harvest`) are written
 `item:qty, item:qty` — `World.list` accepts a comma or a semicolon. There is no `stack_max` check (the bag has no

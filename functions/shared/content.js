@@ -148,9 +148,11 @@ var Content = (function () {
       // "room" that is hidden (drawn as a black void) until the player steps inside. Absent/empty on maps
       // with no interiors to hide. See World.roofZoneAt (zones) and render.js (drawing the cover).
       var roof = decodeGrid(json(r.roof, []));
+      // No-build mask: a W×H grid ('1' = players may not build on this tile), painted in the map editor.
+      var nobuild = decodeGrid(json(r.nobuild, []));
       // Frozen autotile shapes from shift-click mapping: sparse { "x,y": mask } per layer, render-only.
       c.maps[id] = { id: id, name: str(r.name) || id, width: num(r.width, grid[0] ? grid[0].length : 0),
-        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls, roof: roof,
+        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls, roof: roof, nobuild: nobuild,
         roof_color: str(r.roof_color),
         // Optional player spawn point {x, y, facing}: where new/respawning players start on this map (set in
         // the map editor). Absent on maps without one, which then fall back to Config start_x/start_y.
@@ -263,6 +265,16 @@ var Content = (function () {
 
     // Recipes: inputs -> outputs, optionally at a station (an object of kind craft with that station id nearby)
     // and/or with a tool. inputs/outputs stay "item:qty, item:qty" text; World parses them.
+    // Blueprints: what players can build. places 'wall' = an edge wall of wall_style; 'object' = a map object
+    // (on a tile, or on a wall when the object is wall-mounted). cost stays "item:qty, item:qty" text.
+    c.blueprints = {};
+    (tables.Blueprints || []).forEach(function (r) {
+      var id = str(r.id); if (!id) return;
+      c.blueprints[id] = { id: id, name: str(r.name) || id, category: str(r.category) || 'other',
+        places: str(r.places) === 'wall' ? 'wall' : 'object', wallStyle: str(r.wall_style), wallHeight: Math.max(1, num(r.wall_height, 2)),
+        object: str(r.object), cost: str(r.cost), work: Math.max(0, num(r.work, 4)), tool: str(r.tool), station: str(r.station),
+        needsWall: boolDef(r.needs_wall, true), upgradeOf: str(r.upgrade_of), unlock: str(r.unlock), icon: str(r.icon) };
+    });
     c.recipes = {};
     (tables.Recipes || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;

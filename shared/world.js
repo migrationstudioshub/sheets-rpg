@@ -86,7 +86,7 @@ var World = (function () {
     m.hWalls = overlayGrid(base.hWalls, st, 'h');
     m.vWalls = overlayGrid(base.vWalls, st, 'v');
     m.entities = base.entities.filter(function (e) { return !st.gone[e.key]; }).concat(st.ents || []);
-    m._block = null; m._edgeOv = null; m._struct = st;
+    m._block = null; m._at = null; m._edgeOv = null; m._struct = st;   // its OWN derived caches (never the authored map's, via the prototype)
     // not enumerable: the content object is sent to clients as JSON and must not drag live state along
     Object.defineProperty(base, '_live', { value: { rev: st.rev, of: st, map: m }, enumerable: false, writable: true, configurable: true });
     return m;
@@ -152,7 +152,12 @@ var World = (function () {
     var st = structOf(ws, mapId), ms = mapState(ws, mapId), map = liveMap(c, ws, mapId);
     function dropEnt(key) {
       var i = -1; st.ents.forEach(function (b, n) { if (b.key === key) i = n; });
-      if (i >= 0) st.ents.splice(i, 1); else st.gone[key] = 1;
+      if (i >= 0) {
+        var lost = st.ents.splice(i, 1)[0], rub = c.config.rubble_object || 'obj_rubble';
+        // a storage container's contents are never just deleted: they stay behind in a pile of rubble
+        if (lost.inv && Object.keys(lost.inv).length && c.objects[rub])
+          st.ents.push({ key: mapId + '.b' + (++st.n), x: lost.x, y: lost.y, ref: rub, data: {}, hp: 0, max: 0, bp: '', by: null, built: (src && src.now) || Date.now(), prog: 0, need: 0, inv: lost.inv });
+      } else st.gone[key] = 1;
       delete st.dmg[key]; delete ms.states[key]; delete ms.timers[key];
     }
     if (tg.t === 'wall') {
@@ -189,8 +194,8 @@ var World = (function () {
     var tg = resolveTarget(c, ws, mapId, t);
     if (!tg || !tg.can || tg.hp <= 0) return null;
     src = src || {};
-    // other players' structures are safe from players unless the game allows it (config pvp_structures)
-    if (src.player && tg.by && tg.by !== src.player.id && !yes(c.config.pvp_structures)) return null;
+    // Another player's structure is protected only where a claim covers it (see protectedFrom).
+    if (src.player && protectedFrom(c, ws, mapId, tg, src.player)) return null;
     var mult = (MULT[src.kind] || {})[tg.material]; if (mult === undefined) mult = 1;
     var dealt = Math.max(0, Math.round(amount * mult) - tg.armor);
     if (dealt <= 0) return { dealt: 0, destroyed: false, tg: tg };
@@ -201,6 +206,252 @@ var World = (function () {
     if (left <= 0) destroyStructure(c, ws, mapId, tg, src, ev);
     return { dealt: dealt, destroyed: left <= 0, tg: tg };
   }
+  /**
+   * Is this structure out of bounds for player p? Hook for claims (docs/BASE_BUILDING.md 8.8, Phase 4): until
+   * claims exist nothing is protected, so a wall dumped across a doorway can always be knocked down.
+   */
+  function protectedFrom(c, ws, mapId, tg, p) { return false; }
+
+  // ------------------------------------------------------------ building
+  function cfgNum(c, key, def) { var v = c.config[key]; v = v === undefined || v === '' ? def : Number(v); return isNaN(v) ? def : v; }
+  function noBuild(map, x, y) { var g = map && map.nobuild, row = g && g[y]; return !!(row && row[x] && row[x] !== '0'); }
+  function inMap(map, x, y) { return x >= 0 && y >= 0 && x < map.width && y < map.height; }
+  /** The grid edge a blueprint placed at cell (x,y) with side N|W sits on. */
+  function sideEdge(x, y, side) { return String(side || 'N').toUpperCase() === 'W' ? { orient: 'v', x: x, y: y } : { orient: 'h', x: x, y: y }; }
+  function edgeCells(ed) { return ed.orient === 'h' ? [{ x: ed.x, y: ed.y }, { x: ed.x, y: ed.y - 1 }] : [{ x: ed.x, y: ed.y }, { x: ed.x - 1, y: ed.y }]; }
+  /** Where a blueprint would go: {kind:'wall'|'fixture'|'floor', edges, cells (every tile it touches), obj}. null = nonsense. */
+  function buildSpot(c, map, bp, x, y, side) {
+    if (bp.places === 'wall') { var ed = sideEdge(x, y, side); return { kind: 'wall', edges: [ed], cells: edgeCells(ed) }; }
+    var o = c.objects[bp.object]; if (!o) return null;
+    if (isWallFixture(o)) {
+      var eds = fixtureEdges(o, { x: x, y: y, data: { side: String(side || 'N').toUpperCase() === 'W' ? 'W' : 'N' } }), cells = [];
+      eds.forEach(function (q) { edgeCells(q).forEach(function (cl) { cells.push(cl); }); });
+      return { kind: 'fixture', edges: eds, cells: cells, obj: o };
+    }
+    var fc = [];
+    for (var ax = x; ax < x + Math.max(1, o.footprintW || 1); ax++) for (var ay = y; ay > y - Math.max(1, o.footprintH || 1); ay--) fc.push({ x: ax, y: ay });
+    return { kind: 'floor', edges: [], cells: fc, obj: o };
+  }
+  /**
+   * May p build blueprint bp at cell (x,y) (side N|W for walls and wall-mounted things)? {ok, reason}.
+   * map = the live map; lk = serverLookup / viewLookup. The ghost preview and the referee both ask this.
+   */
+  function canBuild(c, map, lk, p, bp, x, y, side) {
+    function no(t) { return { ok: false, reason: t }; }
+    if (String(c.config.build || 'on') === 'off') return no('Building is turned off.');
+    if (!bp || (bp.unlock && !check(c, p, bp.unlock))) return no('You don\'t know how to build that.');
+    if (!map || isNaN(x) || isNaN(y)) return no('Pick a spot.');
+    var spot = buildSpot(c, map, bp, x, y, side);
+    if (!spot) return no('That blueprint builds nothing.');
+    var cells = spot.cells.filter(function (cl) { return inMap(map, cl.x, cl.y); });
+    if (!cells.length || (spot.kind === 'floor' && cells.length !== spot.cells.length)) return no('Out of the map.');
+    if (bp.tool && !hasTool(c, p, bp.tool)) return no('Needs ' + aAn(bp.tool) + '.');
+    if (bp.station && !stationsNear(c, map, p, lk)[bp.station]) return no('Needs ' + aAn(stationName(c, bp.station)) + ' nearby.');
+    var lack = list(bp.cost).filter(function (g) { return count(p, g.item) < g.qty; });
+    if (lack.length) return no('Not enough ' + lack.map(function (g) { return lower(itemName(c, g.item)); }).join(', ') + '.');
+    var reach = cfgNum(c, 'build_reach', 2), best = null, bd = 1e9;
+    cells.forEach(function (cl) { var d = cheb(p.x, p.y, cl.x, cl.y); if (d < bd) { bd = d; best = cl; } });
+    if (bd > reach) return no('Too far away.');
+    if (bd > 0 && !canSee(c, map, p.x, p.y, best.x, best.y, lk.stateOf)) return no('You can\'t reach there.');
+    if (cells.some(function (cl) { return noBuild(map, cl.x, cl.y); })) return no('You can\'t build here.');
+    var st = map._struct || NO_STRUCT, mine = 0, total = Object.keys(st.walls).length + st.ents.length;
+    Object.keys(st.walls).forEach(function (k) { if (st.walls[k].by === p.id) mine++; });
+    st.ents.forEach(function (b) { if (b.by === p.id) mine++; });
+    if (total >= cfgNum(c, 'structure_cap_per_map', 600)) return no('This area is full of structures.');
+    if (mine >= cfgNum(c, 'structure_cap_per_player', 150)) return no('You have built as much as you can here.');
+    var R = Rl();
+    if (spot.kind === 'wall') {
+      var ed = spot.edges[0];
+      if (ed.orient === 'h' ? (ed.x >= map.width || ed.y > map.height) : (ed.x > map.width || ed.y >= map.height)) return no('Out of the map.');
+      if (R.wallAt(map, ed.orient, ed.x, ed.y)) return no('There is already a wall there.');
+      if (!c.wallStyles || !c.wallStyles[bp.wallStyle]) return no('That blueprint builds nothing.');
+    } else if (spot.kind === 'fixture') {
+      if (bp.needsWall && spot.edges.some(function (q) { return !R.wallAt(map, q.orient, q.x, q.y); })) return no('It needs a wall to hang on.');
+      var taken = (map.entities || []).some(function (e) {
+        var o2 = objOf(c, e);
+        return isWallFixture(o2) && fixtureEdges(o2, e).some(function (q) { return spot.edges.some(function (w) { return w.orient === q.orient && w.x === q.x && w.y === q.y; }); });
+      });
+      if (taken) return no('Something is already on that wall.');
+    } else {
+      if ((map.entities || []).some(function (e) { return e.x === x && e.y === y && !isWallFixture(objOf(c, e)) && (st.ents.indexOf(e) >= 0 || !objOf(c, e) || !objOf(c, e).walkable); })) return no('Something is already there.');
+      var bad = cells.some(function (cl) {
+        var t = R.terrainAt(c, map, cl.x, cl.y);
+        if (!t || !(t.pass.n || t.pass.e || t.pass.s || t.pass.w)) return true;
+        return spot.obj.walkable ? false : !lk.free(cl.x, cl.y);
+      });
+      if (bad) return no('That spot is not clear.');
+    }
+    return { ok: true, spot: spot };
+  }
+  /** The blueprints this player knows, with what each costs and whether they can pay. For the build menu. */
+  function blueprintsFor(c, p) {
+    var bps = c.blueprints || {};
+    return Object.keys(bps).map(function (id) { return bps[id]; })
+      .filter(function (b) { return !b.unlock || check(c, p, b.unlock); })
+      .map(function (b) {
+        var cost = list(b.cost).map(function (g) { return { item: g.item, qty: g.qty, have: count(p, g.item) }; });
+        return { id: b.id, name: b.name, category: b.category, places: b.places, object: b.object, wallStyle: b.wallStyle, wallHeight: b.wallHeight,
+          tool: b.tool, toolOk: !b.tool || hasTool(c, p, b.tool), cost: cost, afford: cost.every(function (g) { return g.have >= g.qty; }), upgradeOf: b.upgradeOf };
+      });
+  }
+  function build(c, ws, p, a, now, ev, players) {
+    function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
+    var bp = (c.blueprints || {})[String(a.bp || '')], x = Math.round(Number(a.x)), y = Math.round(Number(a.y));
+    var map = liveMap(c, ws, p.map), chk = canBuild(c, map, serverLookup(c, ws, p.map, players || [p]), p, bp, x, y, a.side);
+    if (!chk.ok) return say(chk.reason);
+    list(bp.cost).forEach(function (g) { take(p, g.item, g.qty); });
+    var st = structOf(ws, p.map), need = bp.work, pct = cfgNum(c, 'frame_hp_pct', 0.2), max, rec;
+    function live(mx) { return need > 0 && mx > 0 ? Math.max(1, Math.round(mx * pct)) : mx; }
+    if (chk.spot.kind === 'wall') {
+      var ed = chk.spot.edges[0];
+      max = Number(c.wallStyles[bp.wallStyle].hp) || 0;
+      rec = { tok: bp.wallStyle + ':' + bp.wallHeight, hp: live(max), max: max, bp: bp.id, by: p.id, built: now, prog: 0, need: need };
+      st.walls[Rl().edgeKey(ed.orient, ed.x, ed.y)] = rec;
+    } else {
+      var o = chk.spot.obj, pr = o.properties || {};
+      max = Number(pr.hp) || 0;
+      rec = { key: p.map + '.b' + (++st.n), x: x, y: y, ref: bp.object, data: chk.spot.kind === 'fixture' ? { side: String(a.side || 'N').toUpperCase() === 'W' ? 'W' : 'N' } : {},
+        hp: live(max), max: max, bp: bp.id, by: p.id, built: now, prog: 0, need: need };
+      if (o.kind === 'container' && Number(pr.storage) > 0) rec.inv = {};
+      st.ents.push(rec);
+    }
+    touchStruct(st); ws.dirty = true;
+    ev.push({ type: 'struct', map: p.map, op: 'place', x: x, y: y, by: p.id });
+    say(need > 0 ? 'You set up the frame of ' + aAn(lower(bp.name)) + '. Work on it to finish.' : 'You build ' + aAn(lower(bp.name)) + '.');
+  }
+  /** Is p standing where they can work on / take apart this structure? */
+  function besideTarget(c, map, p, tg) {
+    var cells;
+    if (tg.t === 'wall') cells = edgeCells({ orient: tg.orient, x: tg.x, y: tg.y });
+    else if (isWallFixture(tg.obj)) { cells = []; fixtureEdges(tg.obj, tg.e).forEach(function (q) { edgeCells(q).forEach(function (cl) { cells.push(cl); }); }); }
+    else return cheb(p.x, p.y, tg.x, tg.y) <= 1 && !(p.x === tg.x && p.y === tg.y && !tg.obj.walkable);
+    return cells.some(function (cl) { return cl.x === p.x && cl.y === p.y; });
+  }
+  function needsWork(tg) { return !!tg && ((tg.rec && (tg.rec.prog || 0) < (tg.rec.need || 0)) || (tg.max > 0 && tg.hp < tg.max)); }
+  /**
+   * The structure at/toward cell (x,y) from p, as a target: the fixture or wall on the edge between, else an
+   * object in that cell. `want` filters (needsWork, built...). Used for F, the action menu, and `work` with a cell.
+   */
+  function structAt(c, map, p, x, y, want) {
+    var st = map && map._struct, out = [], ed = Rl().sharedEdge(p.x, p.y, x, y);
+    if (!map) return null;
+    if (ed) {
+      (map.entities || []).forEach(function (e) {
+        var o = objOf(c, e);
+        if (isWallFixture(o) && fixtureEdges(o, e).some(function (q) { return q.orient === ed.orient && q.x === ed.x && q.y === ed.y; })) out.push({ t: 'ent', key: e.key });
+      });
+      out.push({ t: 'wall', orient: ed.orient, x: ed.x, y: ed.y });
+    }
+    Rl().blockersAt(c, map, x, y).concat(Rl().entitiesAt(map, x, y)).forEach(function (e) { if (!isWallFixture(objOf(c, e))) out.push({ t: 'ent', key: e.key }); });
+    for (var i = 0; i < out.length; i++) { var tg = resolveOn(c, map, st, out[i]); if (tg && (!want || want(tg))) return out[i]; }
+    return null;
+  }
+  function cleanTarget(t) {
+    if (!t || typeof t !== 'object') return null;
+    if (t.t === 'wall' && (t.orient === 'h' || t.orient === 'v')) return { t: 'wall', orient: t.orient, x: Math.round(Number(t.x)), y: Math.round(Number(t.y)) };
+    return t.t === 'ent' && t.key ? { t: 'ent', key: String(t.key) } : null;
+  }
+  /** One go at a frame (it gets nearer to finished) or at something damaged (it is repaired a bit, for materials). */
+  function work(c, ws, p, t, now, ev) {
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    var map = liveMap(c, ws, p.map), tg = resolveTarget(c, ws, p.map, t);
+    if (!tg || !needsWork(tg)) return say('Nothing to work on there.');
+    if (!besideTarget(c, map, p, tg)) return say('Too far away.');
+    var bp = tg.rec && (c.blueprints || {})[tg.rec.bp];
+    if (bp && bp.tool && !hasTool(c, p, bp.tool)) return say('You need ' + aAn(bp.tool) + '.');
+    if (now < ((p.cooldowns || {})._work || 0)) return;
+    p.cooldowns = p.cooldowns || {}; p.cooldowns._work = now + cfgNum(c, 'work_ms', 600);
+    var st = structOf(ws, p.map), rec = tg.rec;
+    if (rec && (rec.prog || 0) < (rec.need || 0)) {                     // a frame: one step nearer
+      rec.prog = (rec.prog || 0) + 1;
+      rec.hp = rec.prog >= rec.need ? rec.max : Math.min(rec.max, rec.hp + Math.ceil(rec.max * (1 - cfgNum(c, 'frame_hp_pct', 0.2)) / rec.need));
+      touchStruct(st); ws.dirty = true;
+      ev.push({ type: 'struct', map: p.map, op: rec.prog >= rec.need ? 'done' : 'work', key: tg.key, x: tg.x, y: tg.y, by: p.id });
+      return say(rec.prog >= rec.need ? 'The ' + tg.name + ' is finished.' : 'You work on the ' + tg.name + ' (' + rec.prog + '/' + rec.need + ').');
+    }
+    var steps = (rec && rec.need) || 4, share = cfgNum(c, 'repair_cost_pct', 0.5);
+    var cost = list(bp ? bp.cost : tg.salvage).map(function (g) { return { item: g.item, qty: Math.max(1, Math.ceil(g.qty * share / steps)) }; });
+    var lack = cost.filter(function (g) { return count(p, g.item) < g.qty; });
+    if (lack.length) return say('Repairing needs ' + lack.map(function (g) { return g.qty + ' ' + lower(itemName(c, g.item)); }).join(', ') + '.');
+    cost.forEach(function (g) { take(p, g.item, g.qty); });
+    var amt = Math.ceil(tg.max / steps), hp = Math.min(tg.max, tg.hp + amt);
+    if (rec) rec.hp = hp; else { var left = tg.max - hp; if (left > 0) st.dmg[tg.key] = left; else delete st.dmg[tg.key]; }
+    touchStruct(st); ws.dirty = true;
+    say('You repair the ' + tg.name + ' (' + hp + '/' + tg.max + ').');
+  }
+  /** Take apart something that was built: it leaves the map and part of its materials come back. */
+  function dismantle(c, ws, p, t, now, ev) {
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    var map = liveMap(c, ws, p.map), tg = resolveTarget(c, ws, p.map, t);
+    if (!tg || !tg.built) return say('You can only take apart what was built.');
+    if (!besideTarget(c, map, p, tg)) return say('Too far away.');
+    if (tg.by !== p.id && (protectedFrom(c, ws, p.map, tg, p) || !yes(c.config.pvp_structures))) return say('That is not yours to take apart.');
+    var bp = (c.blueprints || {})[tg.rec.bp];
+    if (bp && bp.tool && !hasTool(c, p, bp.tool)) return say('You need ' + aAn(bp.tool) + '.');
+    if (tg.rec.inv && Object.keys(tg.rec.inv).length) return say('Empty it first.');
+    var st = structOf(ws, p.map), ms = mapState(ws, p.map);
+    if (tg.t === 'wall') {
+      var hung = (map.entities || []).some(function (e) { var o = objOf(c, e); return isWallFixture(o) && fixtureEdges(o, e).some(function (q) { return q.orient === tg.orient && q.x === tg.x && q.y === tg.y; }); });
+      if (hung) return say('Take down what hangs on it first.');
+      delete st.walls[tg.key];
+    } else { st.ents.splice(st.ents.indexOf(tg.rec), 1); delete ms.states[tg.key]; delete ms.timers[tg.key]; }
+    var ratio = tg.max > 0 ? Math.max(0, Math.min(1, tg.hp / tg.max)) : 1, share = cfgNum(c, 'dismantle_refund_pct', 0.5);
+    list(bp ? bp.cost : '').forEach(function (g) { var q = Math.floor(g.qty * share * ratio); if (q > 0) give(c, p, g.item, q, ev); });
+    touchStruct(st); ws.dirty = true;
+    ev.push({ type: 'struct', map: p.map, op: 'remove', key: tg.key, x: tg.x, y: tg.y, by: p.id });
+    say('You take the ' + tg.name + ' apart.');
+  }
+  /** Apply an upgrade blueprint to something already built (same spot, health kept in proportion). */
+  function upgrade(c, ws, p, t, bpId, now, ev) {
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    var map = liveMap(c, ws, p.map), tg = resolveTarget(c, ws, p.map, t), nb = (c.blueprints || {})[String(bpId || '')];
+    if (!tg || !tg.built || !nb || !nb.upgradeOf || nb.upgradeOf !== tg.rec.bp) return say('That can\'t be upgraded that way.');
+    if ((tg.rec.prog || 0) < (tg.rec.need || 0)) return say('Finish building it first.');
+    if (!besideTarget(c, map, p, tg)) return say('Too far away.');
+    if (tg.by !== p.id && protectedFrom(c, ws, p.map, tg, p)) return say('That is not yours.');
+    if (nb.tool && !hasTool(c, p, nb.tool)) return say('You need ' + aAn(nb.tool) + '.');
+    var lack = list(nb.cost).filter(function (g) { return count(p, g.item) < g.qty; });
+    if (lack.length) return say('Not enough ' + lack.map(function (g) { return lower(itemName(c, g.item)); }).join(', ') + '.');
+    var ratio = tg.max > 0 ? tg.hp / tg.max : 1, max;
+    if (tg.t === 'wall') {
+      if (nb.places !== 'wall' || !c.wallStyles[nb.wallStyle]) return say('That can\'t be upgraded that way.');
+      max = Number(c.wallStyles[nb.wallStyle].hp) || 0; tg.rec.tok = nb.wallStyle + ':' + nb.wallHeight;
+    } else {
+      if (nb.places !== 'object' || !c.objects[nb.object]) return say('That can\'t be upgraded that way.');
+      max = Number((c.objects[nb.object].properties || {}).hp) || 0; tg.rec.ref = nb.object;
+    }
+    list(nb.cost).forEach(function (g) { take(p, g.item, g.qty); });
+    tg.rec.max = max; tg.rec.hp = Math.max(max > 0 ? 1 : 0, Math.round(max * ratio)); tg.rec.bp = nb.id;
+    var st = structOf(ws, p.map); touchStruct(st); ws.dirty = true;
+    say('You upgrade it to ' + aAn(lower(nb.name)) + '.');
+  }
+  /** Storage containers players built: look inside, put things in, take things out. */
+  function storageEvent(c, p, e, ev) {
+    var o = objOf(c, e);
+    ev.push({ type: 'storage', to: p.id, key: e.key, name: o.name, slots: Number((o.properties || {}).storage) || 0, inv: e.inv || {} });
+  }
+  function storeAct(c, ws, p, a, now, ev) {
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    var st = structOf(ws, p.map), e = st.ents.filter(function (b) { return b.key === String(a.key || ''); })[0];
+    if (!e || !e.inv) return say('That holds nothing.');
+    if (cheb(p.x, p.y, e.x, e.y) > 1) return say('Too far away.');
+    var tgS = resolveTarget(c, ws, p.map, { t: 'ent', key: e.key });
+    if (tgS && tgS.by !== p.id && protectedFrom(c, ws, p.map, tgS, p)) return say('That is not yours.');
+    var id = String(a.item || ''), qty = Math.max(1, Math.round(Number(a.qty)) || 1), o = objOf(c, e), slots = Number((o.properties || {}).storage) || 0;
+    if (a.op === 'put') {
+      if (id === 'gold' || !c.items[id]) return say('You can\'t store that.');
+      qty = Math.min(qty, count(p, id)); if (qty < 1) return say('You have none.');
+      if (e.inv[id] === undefined && slots > 0 && Object.keys(e.inv).length >= slots) return say('It is full.');
+      take(p, id, qty); e.inv[id] = (e.inv[id] || 0) + qty;
+    } else if (a.op === 'take') {
+      qty = Math.min(qty, e.inv[id] || 0); if (qty < 1) return say('There is none in there.');
+      e.inv[id] -= qty; if (e.inv[id] <= 0) delete e.inv[id];
+      give(c, p, id, qty, ev, true);
+    } else if (a.op !== 'look') return;
+    ws.dirty = true;                                                   // contents are private: no revision bump, no push
+    storageEvent(c, p, e, ev);
+  }
+
   /** What stands on a wall edge, as a target: the door/window fixture there if it can be hurt, else the wall. */
   function edgeTarget(c, map, st, orient, x, y) {
     var fx = (map.entities || []).filter(function (e) {
@@ -1646,7 +1897,11 @@ var World = (function () {
       var ents = cells.filter(function (en) { var o = objOf(c, en); return o && INTERACTIVE[o.kind]; });
       e = ents[0];
     }
-    if (!e) { ev.push({ type: 'info', to: p.id, text: blocked ? 'A wall is in the way.' : 'Nothing to use here.' }); return; }
+    if (!e) {
+      var wt = !verb ? structAt(c, map, p, f.x, f.y, needsWork) : null;     // a frame to finish or something to repair
+      if (wt) { work(c, ws, p, wt, now, ev); return; }
+      ev.push({ type: 'info', to: p.id, text: blocked ? 'A wall is in the way.' : 'Nothing to use here.' }); return;
+    }
     var o = objOf(c, e), pr = props(c, e);
     if (verb === 'picklock') {
       if (o.kind !== 'door' && o.kind !== 'container') { ev.push({ type: 'info', to: p.id, text: 'There is no lock.' }); return; }
@@ -1654,7 +1909,10 @@ var World = (function () {
     }
     if (o.onInteract && (!pr['if'] || check(c, p, pr['if']))) run(c, ws, p, o.onInteract, now, ev);
     switch (o.kind) {
-      case 'container': openContainer(c, ws, p, e, o, pr, now, rng, ev); break;
+      case 'container':
+        if (e.inv) storageEvent(c, p, e, ev);                              // a storage container someone built
+        else openContainer(c, ws, p, e, o, pr, now, rng, ev);
+        break;
       case 'door': useDoor(c, ws, p, e, o, pr, ev, players); break;
       case 'teleport':
         if (stateOf(c, ws, p.map, e) === 'inactive') ev.push({ type: 'info', to: p.id, text: 'It won\'t open.' });
@@ -1758,6 +2016,15 @@ var World = (function () {
     else if (action.type === 'throw') throwItem(c, ws, p, action, now, rng, ev, players);
     else if (action.type === 'reload') reload(c, ws, p, action, now, ev);
     else if (action.type === 'craft') craft(c, ws, p, action, now, ev);
+    else if (action.type === 'build') build(c, ws, p, action, now, ev, players);
+    else if (action.type === 'work' || action.type === 'dismantle' || action.type === 'upgrade') {
+      var stT = cleanTarget(action.target);
+      if (!stT) ev.push({ type: 'info', to: p.id, text: 'Pick something.' });
+      else if (action.type === 'work') work(c, ws, p, stT, now, ev);
+      else if (action.type === 'dismantle') dismantle(c, ws, p, stT, now, ev);
+      else upgrade(c, ws, p, stT, action.bp, now, ev);
+    }
+    else if (action.type === 'store') storeAct(c, ws, p, action, now, ev);
     else if (action.type === 'loadout') setLoadout(c, p, action.bar, action.slot, action.entry, ev);
     return ev;
   }
@@ -1796,6 +2063,14 @@ var World = (function () {
     if (near(p, x, y) && !(x === p.x && y === p.y)) {
       var stg = strikeTarget(c, map, p, x, y), sinfo = stg && structInfo(c, map, stg);
       if (sinfo) out.push({ type: 'attack', verb: '', label: 'Attack the ' + sinfo.name });
+    }
+    // Something built or damaged right there: finish / repair it, or take your own work apart.
+    if (near(p, x, y)) {
+      var bt2 = structAt(c, map, p, x, y, function (g) { return g.built || needsWork(g); }), bi = bt2 && structInfo(c, map, bt2);
+      if (bi) {
+        if (needsWork(bi)) out.push({ type: 'work', verb: '', target: bt2, label: (bi.rec && (bi.rec.prog || 0) < (bi.rec.need || 0) ? 'Work on the ' : 'Repair the ') + bi.name });
+        if (bi.built && bi.by === p.id) out.push({ type: 'dismantle', verb: '', target: bt2, label: 'Take the ' + bi.name + ' apart' });
+      }
     }
     return out;                                                 // movement is keyboard-only: no "walk here"
   }
@@ -1891,6 +2166,7 @@ var World = (function () {
     roofZoneAt: roofZoneAt, roofZones: roofZones,
     liveMap: liveMap, liveMapFromStruct: liveMapFromStruct, structOf: structOf, publicStruct: publicStruct,
     structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure,
-    recipesFor: recipesFor, hasTool: hasTool };
+    recipesFor: recipesFor, hasTool: hasTool,
+    canBuild: canBuild, blueprintsFor: blueprintsFor, noBuild: noBuild, buildSpot: buildSpot };
 })();
 if (typeof module !== 'undefined') module.exports = World;

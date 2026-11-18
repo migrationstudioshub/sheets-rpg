@@ -53,6 +53,13 @@ var Assets = (function () {
       if (o.sprite) paths[o.sprite] = 1;
       Object.keys(o.spriteStates).forEach(function (s) { paths[o.spriteStates[s]] = 1; });
     });
+    // whatever a blueprint can build may appear on any map, so its art is loaded everywhere
+    Object.keys(content.blueprints || {}).forEach(function (k) {
+      var o = content.objects[content.blueprints[k].object]; if (!o) return;
+      if (o.sprite) paths[o.sprite] = 1;
+      Object.keys(o.spriteStates || {}).forEach(function (st) { paths[o.spriteStates[st]] = 1; });
+    });
+    if (content.objects[content.config.rubble_object || 'obj_rubble'] && content.objects[content.config.rubble_object || 'obj_rubble'].sprite) paths[content.objects[content.config.rubble_object || 'obj_rubble'].sprite] = 1;
     Object.keys(content.monsters || {}).forEach(function (k) { if (content.monsters[k].sprite) paths[content.monsters[k].sprite] = 1; });
     Object.keys(content.items || {}).forEach(function (k) {
       var it = content.items[k]; if (it.sprite) paths[it.sprite] = 1;

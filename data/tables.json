@@ -184,6 +184,46 @@
    "key": "harvest_respawn_s",
    "value": 600,
    "notes": "Seconds before a harvested object (a tree, a wreck) grows back; an object's own respawn_s wins"
+  },
+  {
+   "key": "build",
+   "value": "on",
+   "notes": "on | off: can players build (blueprints)?"
+  },
+  {
+   "key": "build_reach",
+   "value": 2,
+   "notes": "How far (tiles) from yourself you can place a structure"
+  },
+  {
+   "key": "frame_hp_pct",
+   "value": 0.2,
+   "notes": "A freshly placed frame has this share (0-1) of the finished health"
+  },
+  {
+   "key": "work_ms",
+   "value": 600,
+   "notes": "Minimum time between two goes at building or repairing"
+  },
+  {
+   "key": "repair_cost_pct",
+   "value": 0.5,
+   "notes": "A full repair costs this share (0-1) of the build cost"
+  },
+  {
+   "key": "dismantle_refund_pct",
+   "value": 0.5,
+   "notes": "Taking something apart gives back this share (0-1) of its cost (less if it is damaged)"
+  },
+  {
+   "key": "structure_cap_per_map",
+   "value": 600,
+   "notes": "Most structures players can have built on one map"
+  },
+  {
+   "key": "structure_cap_per_player",
+   "value": 150,
+   "notes": "Most structures one player can have built on one map"
   }
  ],
  "Tilesets": [
@@ -835,6 +875,38 @@
    "notes": "See-through: blocks movement but not sight or shots",
    "hp": 60,
    "armor": 1,
+   "material": "metal",
+   "breakable": true,
+   "salvage": ""
+  },
+  {
+   "id": "wall_wood",
+   "name": "Wooden wall",
+   "tiles": "",
+   "cap": "",
+   "face": "",
+   "color": "#7a5a3a",
+   "blocks_move": true,
+   "blocks_sight": true,
+   "notes": "",
+   "hp": 40,
+   "armor": 0,
+   "material": "wood",
+   "breakable": true,
+   "salvage": ""
+  },
+  {
+   "id": "wall_metal",
+   "name": "Metal wall",
+   "tiles": "",
+   "cap": "",
+   "face": "",
+   "color": "#7d858e",
+   "blocks_move": true,
+   "blocks_sight": true,
+   "notes": "",
+   "hp": 120,
+   "armor": 3,
    "material": "metal",
    "breakable": true,
    "salvage": ""
@@ -2109,6 +2181,48 @@
    "properties": "{\"station\":\"workbench\",\"hp\":40,\"material\":\"wood\"}",
    "on_interact": "",
    "notes": "Crafting station: recipes with station = workbench can be made within reach of it"
+  },
+  {
+   "id": "obj_barricade",
+   "name": "Barricade",
+   "kind": "deco",
+   "sprite": "art/sprites/objects/barrel.png",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"hp\":25,\"material\":\"wood\"}",
+   "on_interact": "",
+   "notes": ""
+  },
+  {
+   "id": "obj_crate",
+   "name": "Storage crate",
+   "kind": "container",
+   "sprite": "art/sprites/objects/chest.png",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"hp\":30,\"material\":\"wood\",\"storage\":12}",
+   "on_interact": "",
+   "notes": ""
+  },
+  {
+   "id": "obj_rubble",
+   "name": "Rubble",
+   "kind": "container",
+   "sprite": "",
+   "sprite_states": "",
+   "frames": "",
+   "frame_ms": "",
+   "walkable": true,
+   "blocks_sight": false,
+   "properties": "{\"storage\":99}",
+   "on_interact": "",
+   "notes": "Left behind when a storage container is destroyed; holds what was in it"
   }
  ],
  "Maps": [
@@ -6020,6 +6134,116 @@
    "name": "Bandage",
    "inputs": "cloth:2",
    "outputs": "potion:1"
+  }
+ ],
+ "Blueprints": [
+  {
+   "category": "walls",
+   "places": "wall",
+   "wall_style": "wall_wood",
+   "wall_height": 2,
+   "object": "",
+   "cost": "wood:4, nails:2",
+   "work": 4,
+   "tool": "hammer",
+   "station": "",
+   "needs_wall": true,
+   "upgrade_of": "",
+   "unlock": "",
+   "icon": "",
+   "notes": "",
+   "id": "bp_wood_wall",
+   "name": "Wooden wall"
+  },
+  {
+   "category": "walls",
+   "places": "wall",
+   "wall_style": "wall_metal",
+   "wall_height": 2,
+   "object": "",
+   "cost": "scrap:6, nails:2",
+   "work": 6,
+   "tool": "hammer",
+   "station": "",
+   "needs_wall": true,
+   "upgrade_of": "bp_wood_wall",
+   "unlock": "",
+   "icon": "",
+   "notes": "",
+   "id": "bp_metal_wall",
+   "name": "Metal wall"
+  },
+  {
+   "category": "doors",
+   "places": "object",
+   "wall_style": "",
+   "wall_height": 2,
+   "object": "obj_edge_door",
+   "cost": "wood:3, nails:2, scrap:1",
+   "work": 4,
+   "tool": "hammer",
+   "station": "",
+   "needs_wall": true,
+   "upgrade_of": "",
+   "unlock": "",
+   "icon": "",
+   "notes": "",
+   "id": "bp_door",
+   "name": "Wooden door"
+  },
+  {
+   "category": "defences",
+   "places": "object",
+   "wall_style": "",
+   "wall_height": 2,
+   "object": "obj_barricade",
+   "cost": "wood:3",
+   "work": 2,
+   "tool": "hammer",
+   "station": "",
+   "needs_wall": true,
+   "upgrade_of": "",
+   "unlock": "",
+   "icon": "",
+   "notes": "",
+   "id": "bp_barricade",
+   "name": "Barricade"
+  },
+  {
+   "category": "furniture",
+   "places": "object",
+   "wall_style": "",
+   "wall_height": 2,
+   "object": "obj_crate",
+   "cost": "wood:4, nails:1",
+   "work": 3,
+   "tool": "hammer",
+   "station": "",
+   "needs_wall": true,
+   "upgrade_of": "",
+   "unlock": "",
+   "icon": "",
+   "notes": "",
+   "id": "bp_crate",
+   "name": "Storage crate"
+  },
+  {
+   "category": "stations",
+   "places": "object",
+   "wall_style": "",
+   "wall_height": 2,
+   "object": "obj_workbench",
+   "cost": "wood:6, nails:4",
+   "work": 6,
+   "tool": "hammer",
+   "station": "",
+   "needs_wall": true,
+   "upgrade_of": "",
+   "unlock": "",
+   "icon": "",
+   "notes": "",
+   "id": "bp_workbench",
+   "name": "Workbench"
   }
  ]
 }

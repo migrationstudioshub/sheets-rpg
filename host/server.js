@@ -74,7 +74,7 @@ function presentOn(all, mapId, now) {
 }
 
 /** One game step: catch the world up, run the player's action (if any), report back. */
-function step(token, action, since) {
+function step(token, action, since, structRev) {
   const now = Date.now();
   const p = PLAYERS[token];
   if (!p) throw new Error('unknown character');
@@ -98,7 +98,7 @@ function step(token, action, since) {
 
   // The poll/act answer already carries everyone on the map (World.view), so on a LAN we just poll —
   // no Firebase, no separate pushed world view needed.
-  return { player: World.publicPlayer(CONTENT, p), world: World.view(CONTENT, ws, p.map, p, players),
+  return { player: World.publicPlayer(CONTENT, p), world: World.view(CONTENT, ws, p.map, p, players, p.map !== startMap ? -1 : structRev),
     events: World.eventsFor(ws, since, p), seq: ws.seq };
 }
 
@@ -118,8 +118,8 @@ function handleGame(body) {
   switch (body.action) {
     case 'join': return join(body.name, body['class']);
     case 'load': return step(body.token, null, -1);
-    case 'poll': return step(body.token, null, body.since);
-    case 'act':  return step(body.token, body['do'], body.since);
+    case 'poll': return step(body.token, null, body.since, body.structRev);
+    case 'act':  return step(body.token, body['do'], body.since, body.structRev);
     case 'save': return { ok: true };                  // nothing to persist; state is already in memory
     default: return { error: 'unknown action' };
   }

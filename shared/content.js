@@ -95,7 +95,11 @@ var Content = (function () {
         // tiles: a 16-tile connection sheet (4x4; tile index = N1·E2·S4·W8 mask). When set, the wall is drawn
         // top-down and autotiled so corners/T/cross/caps join; when absent it falls back to the extruded slab.
         tiles: str(r.tiles),
-        blocksMove: boolDef(r.blocks_move, true), blocksSight: boolDef(r.blocks_sight, true) };
+        blocksMove: boolDef(r.blocks_move, true), blocksSight: boolDef(r.blocks_sight, true),
+        // Durability of ONE wall segment. hp 0 = cannot be damaged. An authored (map-editor) wall takes damage
+        // only when its style is `breakable`; `material` picks how hard each kind of hit lands (World MULT).
+        hp: num(r.hp, 0), armor: num(r.armor, 0), material: str(r.material) || 'stone',
+        breakable: bool(r.breakable), salvage: str(r.salvage) };
     });
 
     (tables.Kinds || []).forEach(function (r) {
@@ -182,6 +186,8 @@ var Content = (function () {
         // type 'throwable' (grenade/molotov): area damage + status at a thrown spot, up to throw_range away
         throwRange: num(r.throw_range, 0), throwArea: num(r.throw_area, 0), throwPower: num(r.throw_power, 0),
         throwStatus: str(r.throw_status), throwStatusMs: num(r.throw_status_ms, 0),
+        // damage to walls/objects per hit (0 = derived from attack); burns = a thrown blast also sets wood alight
+        structureDmg: num(r.structure_dmg, 0), burns: bool(r.burns),
         onUse: str(r.on_use) };
     });
     (tables.Monsters || []).forEach(function (r) {

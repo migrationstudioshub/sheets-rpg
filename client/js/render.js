@@ -220,6 +220,30 @@ var Render = (function () {
     g.drawImage(off, fx, fy);
     return true;
   }
+  /** Cracks over a damaged E-W wall face: more and longer as health (pct, 0-1) drops. Same cracks every frame. */
+  function drawCracks(g, p, ox, oy, S, pct) {
+    var n = pct < 0.33 ? 5 : pct < 0.66 ? 3 : 1, H = p.h * S, fx = ox + p.x * S, fy = oy + p.y * S - H;
+    var seed = (p.x * 73856093) ^ (p.y * 19349663);
+    function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+    g.save(); g.beginPath(); g.rect(fx, fy, S, H); g.clip();
+    g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = 1; g.beginPath();
+    for (var i = 0; i < n; i++) {
+      var x = fx + rnd() * S, y = fy + rnd() * H * 0.6, steps = 3 + Math.floor(rnd() * 3);
+      g.moveTo(Math.round(x) + 0.5, Math.round(y) + 0.5);
+      for (var k = 0; k < steps; k++) { x += (rnd() - 0.5) * S * 0.45; y += rnd() * H * 0.22; g.lineTo(Math.round(x) + 0.5, Math.round(y) + 0.5); }
+    }
+    g.stroke();
+    if (pct < 0.33) { g.fillStyle = 'rgba(0,0,0,.55)';                               // breached: dark holes
+      for (var j = 0; j < 3; j++) g.fillRect(Math.round(fx + rnd() * (S - 6)), Math.round(fy + rnd() * (H - 8)), 3 + Math.round(rnd() * 4), 4 + Math.round(rnd() * 5)); }
+    g.restore();
+  }
+  /** A small health bar centred on (cx, cy). */
+  function drawHpBar(g, cx, cy, pct) {
+    var w = 22, x = Math.round(cx - w / 2), y = Math.round(cy);
+    g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(x - 1, y - 1, w + 2, 5);
+    g.fillStyle = pct < 0.33 ? '#e0563f' : pct < 0.66 ? '#e0a83f' : '#7bcf62';
+    g.fillRect(x, y, Math.max(1, Math.round(w * Math.max(0, Math.min(1, pct)))), 3);
+  }
   function drawDoor(g, content, map, job, ox, oy, S, cutA) {
     var o = job.o, ed = job.ed, W = job.W, open = job.open;
     var tok = parseWallTok((map.hWalls && map.hWalls[ed.y] && map.hWalls[ed.y][ed.x]) || '');
@@ -609,6 +633,12 @@ var Render = (function () {
     // Anything on an unknown (roofed, never seen) cell is not drawn at all.
     function wallH(q) { var t = parseWallTok(((q.orient === 'h' ? map.hWalls : map.vWalls) || [])[q.y] && ((q.orient === 'h' ? map.hWalls : map.vWalls)[q.y][q.x])); return t ? t.height : 2; }
     var overs = [], renderables = [], doorFaces = {}, doorGap = {}, vDoor = {}, winHoles = {};
+    // how much of an E-W wall segment's health is left (0 = unharmed / not tracked), for the crack overlay
+    function wallHurt(x, y) {
+      var st = map._struct; if (!st || (st.dmg['h' + x + ',' + y] === undefined && !st.walls['h' + x + ',' + y])) return 0;
+      var info = World.structInfo(c, map, { t: 'wall', orient: 'h', x: x, y: y });
+      return info && info.max > 0 && info.hp < info.max ? Math.max(0.01, info.hp / info.max) : 0;
+    }
     map.entities.forEach(function (e) {
       if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
       var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
@@ -737,6 +767,7 @@ var Render = (function () {
       renderables.push({ sortY: prim25SortY(p, oy, T) + (isCap ? 0.5 : 0.25), prim: p,
         cut: !isV && sight.cutH(p.x, p.y, p.h), shut: vd === 'shut' && !isCap, glass: vd === 'glass' && !isCap,
         holes: p.kind === 'hface' ? winHoles[p.x + ',' + p.y] : null,
+        hurt: p.kind === 'hface' && map._struct ? wallHurt(p.x, p.y) : 0,
         // An E-W wall's face is the side seen from the cell SOUTH of it. If that cell is an unknown interior,
         // the face is an inside wall the player has never seen: the roof covers it (the cap still outlines the building).
         // A thin N-S face is likewise seen from the two cells just south of its segment (either side of the
@@ -759,6 +790,7 @@ var Render = (function () {
       if (r.prim) {
         if (r.roofed && !r.cut) primRectFill(g, r.prim, ox, oy, T, roofCol);
         else if (!(r.holes && !r.cut && drawFaceWithHoles(g, c, r.prim, ox, oy, T, r.dark, r.holes))) drawPrim25(g, c, r.prim, ox, oy, T, r.cut, r.dark);
+        if (r.hurt && !r.cut && !r.roofed) drawCracks(g, r.prim, ox, oy, T, r.hurt);
         if (r.shut) primRectFill(g, r.prim, ox, oy, T, 'rgba(46,30,16,.55)');
         if (r.glass) primRectFill(g, r.prim, ox, oy, T, 'rgba(190,228,255,.55)');     // a window in a thin wall: glassy
         return;
@@ -806,6 +838,26 @@ var Render = (function () {
     });
 
     // layer 5c: 'over' objects — the whole sprite sits in front of everything (foreground foliage, railings)
+    // Anything damaged and in sight shows how much it has left.
+    var stD = map._struct;
+    if (stD && typeof World !== 'undefined' && World.structInfo) {
+      Object.keys(stD.dmg || {}).forEach(function (k) {
+        var em = /^([hv])(\d+),(\d+)$/.exec(k), info, bx, by;
+        if (em) {
+          var ex = Number(em[2]), ey = Number(em[3]);
+          if (em[1] === 'h') { if (!sight.seen(ex, ey) && !sight.seen(ex, ey - 1)) return; }
+          else if (!sight.seen(ex, ey) && !sight.seen(ex - 1, ey)) return;
+          info = World.structInfo(c, map, { t: 'wall', orient: em[1], x: ex, y: ey }); if (!info || !info.max) return;
+          bx = ox + (em[1] === 'h' ? ex + 0.5 : ex) * T; by = oy + (em[1] === 'h' ? ey * T - 10 : (ey + 0.5) * T);
+        } else {
+          info = World.structInfo(c, map, { t: 'ent', key: k }); if (!info || !info.max) return;
+          var en = info.e, eo = c.objects[en.ref], onWall = layerOf(eo) === 'wall';
+          if (!sight.seen(en.x, en.y) && !(onWall && sight.seen(en.x, en.y - 1))) return;
+          bx = ox + (en.x + Math.max(1, eo.footprintW || 1) / 2) * T; by = oy + en.y * T - (onWall ? 10 : 6);
+        }
+        drawHpBar(g, bx, by, info.hp / info.max);
+      });
+    }
     overs.sort(function (a, b) { return a.y - b.y; }).forEach(function (t) {
       drawObject(g, t.o, t.path, t.dx, t.dy, T, 'base', now, t.flip);
       if (hasTop(t.o, t.path)) drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now, t.flip);

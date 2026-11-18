@@ -1,7 +1,20 @@
 # Base building, damage and crafting — implementation spec
 
-Status: **Phase 0 built** (per-map state + transactions, `functions/referee.js`, tests in
-`tools/test_functions.js`); Phases 1-5 planned. Written 18 Nov 2026. This document is the hand-over for whoever
+Status: **Phases 0 and 1 built.** Phase 0: per-map state + transactions (`functions/referee.js`, tests in
+`tools/test_functions.js`). Phase 1: the structure layer, `World.liveMap`, health/damage/breach/destruction
+for authored walls and objects, wired into melee (the `attack` action falls through to a structure),
+bullets and blasts; crack overlay + health bars; durability fields in the Content Studio; `resetStructures`
+(key-gated function action). Phases 2-5 planned. Written 18 Nov 2026.
+
+**Deviations from this spec in what was built (Phase 1):**
+- There is no separate `strike` action: `{type:'attack', x, y}` at a neighbouring cell hits the creature
+  there, or — when there is none, or a wall is between — the breakable fixture/wall on the shared edge, else a
+  breakable solid object in that cell (`World.strikeTarget`). The action menu lists "Attack the …".
+- The public push node `struct/<mapId>` (7.3, 9.4) is **not built yet**: clients get the layer through
+  `view.struct` on their own poll/act replies (they send `structRev`), so another player's damage shows up
+  within one heartbeat (~3 s). `database.rules.json` is unchanged. Add the push when it matters.
+- `World.entity()` (spawn / lever-target lookup) still reads the authored map; fine until things are built.
+- Objects show damage as a health bar only (no crack overlay on sprites); walls get cracks and a bar.
 implements it — a person or an agent. It is self-contained: read `CLAUDE.md` first (project rules), then
 this. Line numbers are from the day of writing and will drift; function names are the stable reference.
 

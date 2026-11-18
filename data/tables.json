@@ -159,6 +159,21 @@
    "key": "start_hair_color",
    "value": "hair_brown",
    "notes": "Starting hair colour: a hair_* ramp from Tint.TINTS (hair_black/dark/brown/auburn/ginger/blonde/grey/white)"
+  },
+  {
+   "key": "structure_dmg_scale",
+   "value": 0.5,
+   "notes": "Damage a hit does to walls and objects, as a share of the attacker's attack (a weapon's own structure_dmg wins)"
+  },
+  {
+   "key": "breach_at_pct",
+   "value": 0.33,
+   "notes": "A wall beaten below this share (0-1) of its health has holes: you can see and shoot through it, not walk through"
+  },
+  {
+   "key": "pvp_structures",
+   "value": "off",
+   "notes": "on = players can damage structures other players built; off = only their own and the map's"
   }
  ],
  "Tilesets": [
@@ -791,7 +806,12 @@
    "color": "#9a7b5a",
    "blocks_move": true,
    "blocks_sight": true,
-   "notes": ""
+   "notes": "",
+   "hp": 200,
+   "armor": 4,
+   "material": "stone",
+   "breakable": false,
+   "salvage": ""
   },
   {
    "id": "wall_fence",
@@ -802,7 +822,12 @@
    "color": "#b9c0c8",
    "blocks_move": true,
    "blocks_sight": false,
-   "notes": "See-through: blocks movement but not sight or shots"
+   "notes": "See-through: blocks movement but not sight or shots",
+   "hp": 60,
+   "armor": 1,
+   "material": "metal",
+   "breakable": true,
+   "salvage": ""
   }
  ],
  "Kinds": [
@@ -1189,7 +1214,7 @@
    "frame_ms": "",
    "walkable": false,
    "blocks_sight": true,
-   "properties": "",
+   "properties": "{\"hp\":30,\"material\":\"wood\"}",
    "on_interact": "",
    "notes": "imported (old kind: blocker)"
   },
@@ -1735,7 +1760,7 @@
    "frame_ms": "",
    "walkable": false,
    "blocks_sight": false,
-   "properties": "",
+   "properties": "{\"hp\":80,\"armor\":2,\"material\":\"metal\"}",
    "on_interact": "",
    "notes": "imported (old kind: blocker)"
   },
@@ -1847,7 +1872,7 @@
    "frame_ms": "",
    "walkable": true,
    "blocks_sight": false,
-   "properties": "{\"layer\": \"wall\"}",
+   "properties": "{\"layer\":\"wall\",\"hp\":30,\"material\":\"wood\"}",
    "on_interact": "",
    "notes": "Edge door: paint it onto a horizontal wall in the Objects layer. Closed = opaque + blocks the edge; open = a see-through, walk-through hole the shape of the sprite. Interact to toggle. Walkable (it sits on the wall line, not the tile)."
   },
@@ -1861,7 +1886,7 @@
    "frame_ms": "",
    "walkable": true,
    "blocks_sight": false,
-   "properties": "{\"layer\": \"wall\", \"width\": 2}",
+   "properties": "{\"layer\":\"wall\",\"width\":2,\"hp\":80,\"armor\":2,\"material\":\"metal\"}",
    "on_interact": "",
    "notes": "A 2-tile-wide edge door (width = 2). Spans and gates two wall edges; opens as one wide hole."
   },
@@ -3797,7 +3822,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "mana_potion",
@@ -3833,7 +3860,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "big_potion",
@@ -3869,7 +3898,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "wooden_sword",
@@ -3905,7 +3936,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "iron_sword",
@@ -3941,7 +3974,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "leather_armor",
@@ -3977,7 +4012,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "iron_armor",
@@ -4013,7 +4050,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "army_helmet",
@@ -4049,7 +4088,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "iron_key",
@@ -4085,7 +4126,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "lockpick",
@@ -4121,7 +4164,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "bone",
@@ -4157,7 +4202,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "slime_gel",
@@ -4193,7 +4240,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "ration",
@@ -4229,7 +4278,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "water",
@@ -4265,7 +4316,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "antidote",
@@ -4301,7 +4354,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "bandage",
@@ -4337,7 +4392,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "medkit",
@@ -4373,7 +4430,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "ammo_pistol",
@@ -4409,7 +4468,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "ammo_rifle",
@@ -4445,7 +4506,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "pistol",
@@ -4481,7 +4544,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "semi",
-   "aim": "{\"px\": 0.5, \"py\": 0.58, \"mx\": 0.92, \"my\": 0.5}"
+   "aim": "{\"px\": 0.5, \"py\": 0.58, \"mx\": 0.92, \"my\": 0.5}",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "rifle",
@@ -4517,7 +4582,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "auto",
-   "aim": "{\"px\": 0.46, \"py\": 0.56, \"mx\": 0.98, \"my\": 0.5}"
+   "aim": "{\"px\": 0.46, \"py\": 0.56, \"mx\": 0.98, \"my\": 0.5}",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "grenade",
@@ -4553,7 +4620,9 @@
    "throw_status": "",
    "throw_status_ms": "",
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "structure_dmg": 0,
+   "burns": false
   },
   {
    "id": "molotov",
@@ -4589,7 +4658,9 @@
    "throw_status": "burn",
    "throw_status_ms": 4000,
    "fire_mode": "",
-   "aim": ""
+   "aim": "",
+   "burns": true,
+   "structure_dmg": 0
   }
  ],
  "Monsters": [

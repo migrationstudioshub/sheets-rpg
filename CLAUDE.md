@@ -78,6 +78,11 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   wall is a **fixture** = an object with `properties.layer: 'wall'`, anchored by cell + `data.side`; it may be an
   **opening** (kind `door`, or `properties.opening: window|arch`). `World.syncEdges` folds openings into `map._edgeOv`
   and **`Rules.edgeBlocked(…, 'move'|'sight')` is the only edge question** (movement, LoS, shots, visibility).
+  **Structures (Nov 2026, see `docs/BASE_BUILDING.md`):** each map's live state has a `struct` layer (damage to
+  walls/objects, things destroyed; later, things built). **Rules must read `World.liveMap(c, ws, mapId)`** — the
+  authored map with that layer applied — never `c.maps[id]` directly; the client builds the same map with
+  `World.liveMapFromStruct` from `view.struct`. Health comes from data: wall styles `hp/armor/material/breakable`,
+  object properties `hp/armor/material/indestructible/salvage`. `World.damageStructure` is the one way to hurt them.
   `World.visibleCells` = what a player sees (same LoS as combat); `World.perceive` → `seen|sensed|hidden` (`sensed` is the
   unused hook for a hearing sense). The client decides all occlusion in `Render.makeSight`: roof grid = "indoors",
   unknown indoor cells get the roof, out-of-sight cells a fog veil, and `cutH` drops E-W walls to stubs. Config:

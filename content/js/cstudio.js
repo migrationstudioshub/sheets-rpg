@@ -433,6 +433,23 @@ var CStudio = (function () {
       h('div', { className: 'help', text: 'Unticked = you cannot move that way across the object (e.g. a ledge you drop off but can’t climb). Ignored if the object isn’t walkable.' })));
     // Placement layer — works for ANY kind (deco, switch, sign…): a normal object, one hung on a wall
     // face, or a flat ground decal. This writes properties.layer, read by the renderer (layerOf).
+    // Durability — can this object be damaged and broken? Stored in properties (hp, armor, material, ...).
+    form.appendChild(h('div', { className: 'sub', text: 'Durability' }));
+    var numProp = function (key, title) { return h('input', { type: 'number', min: 0, value: p[key] == null ? '' : p[key], style: 'width:70px', title: title,
+      oninput: function (e) { setProp(o, key, e.target.value === '' ? undefined : Number(e.target.value)); } }); };
+    form.appendChild(h('div', { className: 'lootrow' },
+      h('span', { className: 'lootlbl', text: 'health' }), numProp('hp', 'Health. Empty or 0 = cannot be damaged'),
+      h('span', { className: 'lootlbl', text: 'armor' }), numProp('armor', 'Taken off every hit'),
+      h('span', { className: 'lootlbl', text: 'made of' }),
+      h('select', { title: 'Decides how hard blows, bullets, blasts and fire land', onchange: function (e) { setProp(o, 'material', e.target.value === 'wood' ? undefined : e.target.value); } },
+        ['wood', 'metal', 'stone', 'glass'].map(function (m) { return h('option', { value: m, text: m, selected: (p.material || 'wood') === m }); }))));
+    form.appendChild(h('div', { className: 'field' },
+      h('label', { className: 'row' },
+        h('input', { type: 'checkbox', checked: !!p.indestructible, onchange: function (e) { setProp(o, 'indestructible', e.target.checked ? true : undefined); } }),
+        h('span', { text: '  never breaks' }), h('span', { className: 'help', text: '— even with health set (quest doors and the like)' })),
+      h('label', { text: 'salvage' }),
+      h('input', { type: 'text', value: p.salvage || '', placeholder: 'wood:2; nails:1', oninput: function (e) { setProp(o, 'salvage', e.target.value.trim() || undefined); } }),
+      h('div', { className: 'help', text: 'Health 0 or empty = this object cannot be damaged. With health, players can break it by attacking, shooting or blasting it; whoever breaks it gets the salvage. Spawns, triggers, teleports, signs and NPCs never break.' })));
     form.appendChild(h('div', { className: 'sub', text: 'Placement layer' }));
     var layer = ['wall', 'ground_decal'].indexOf(p.layer) >= 0 ? p.layer : 'object';
     form.appendChild(h('div', { className: 'field', title: 'How this object is placed and drawn' },

@@ -80,7 +80,22 @@
   }
 
   function setNet(text, bad) { $('hud-net').textContent = text; $('hud-net').className = bad ? 'bad' : ''; }
-  function mapOf() { return content.maps[me.map]; }
+  // The structure layer of the current map (walls/objects built, damaged or destroyed), as last sent by the
+  // server; null = nothing changed from the authored map. mapOf() is the map with that layer applied — the
+  // same function the referee uses, so prediction, sight and drawing all match it.
+  var struct = null;
+  function mapOf() {
+    var base = content.maps[me.map];
+    return struct && struct.rev ? World.liveMapFromStruct(content, base, struct) : base;
+  }
+  /** Take the layer from a server answer. True when what we hold changed. */
+  function takeStruct(w) {
+    if (!w) return false;
+    var before = struct ? struct.rev : 0;
+    if (w.struct) struct = w.struct; else if (!w.structRev) struct = null;
+    api.structRev = w.structRev || 0;
+    return (struct ? struct.rev : 0) !== before;
+  }
 
   // ---------------------------------------------------------------- server replies
   function apply(res) {
@@ -90,12 +105,13 @@
     var p = res.player;
     var moving = queue.some(function (a) { return a.type === 'move'; });
     if (!me || p.map !== me.map) {
-      me = p; view = res.world; handleEvents(res.events);
+      me = p; view = res.world; struct = null; takeStruct(res.world); handleEvents(res.events);
       return enterMap();
     }
     // keep our predicted position while moves are still on their way; otherwise trust the server
     me = moving ? Object.assign({}, p, { x: me.x, y: me.y, facing: me.facing }) : p;
     view = res.world;
+    if (takeStruct(res.world)) { renderer.setMap(mapOf()); sight.key = ''; }   // something was built or broken: redraw walls, re-check sight
     handleEvents(res.events);
     hud();
     if (bagOpen) bag();

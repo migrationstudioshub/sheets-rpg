@@ -1,10 +1,18 @@
 # Base building, damage and crafting — implementation spec
 
-Status: **Phases 0 and 1 built.** Phase 0: per-map state + transactions (`functions/referee.js`, tests in
+Status: **Phases 0, 1 and 2 built.** Phase 0: per-map state + transactions (`functions/referee.js`, tests in
 `tools/test_functions.js`). Phase 1: the structure layer, `World.liveMap`, health/damage/breach/destruction
 for authored walls and objects, wired into melee (the `attack` action falls through to a structure),
 bullets and blasts; crack overlay + health bars; durability fields in the Content Studio; `resetStructures`
-(key-gated function action). Phases 2-5 planned. Written 18 Nov 2026.
+(key-gated function action). Phase 2: the Recipes table, item tool tags, crafting stations (`properties.station`
+on a kind-craft object), the `craft` action, `World.recipesFor`, the crafting panel (key C, or use a station), and
+harvestable objects (`properties.harvest` / `harvest_tool` / `respawn_s`) that grow back. Phases 3-5 planned.
+Written 18 Nov 2026.
+
+**Deviations in Phase 2:** item lists (`inputs`, `outputs`, `cost`, `salvage`, `harvest`) are written
+`item:qty, item:qty` — `World.list` accepts a comma or a semicolon. There is no `stack_max` check (the bag has no
+stack limits today). A harvested object is marked `gone[key] = 2` with a `{at, regrow: true}` timer. Key **B** already
+opens the bag (with I), so build mode in Phase 3 needs another key.
 
 **Deviations from this spec in what was built (Phase 1):**
 - There is no separate `strike` action: `{type:'attack', x, y}` at a neighbouring cell hits the creature

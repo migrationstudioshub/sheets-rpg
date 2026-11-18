@@ -66,7 +66,7 @@ var Schema = (function () {
       f('armor', 'number', 0, 'Taken off every hit'),
       f('material', 'select', 'stone', 'What it is made of: decides how hard blows, bullets, blasts and fire land', { options: ['wood', 'metal', 'stone', 'glass'] }),
       f('breakable', 'bool', false, 'Walls of this style painted in the map editor can be damaged (needs hp above 0)'),
-      f('salvage', 'text', '', 'Items handed to whoever breaks it, e.g. wood:2; nails:1'),
+      f('salvage', 'text', '', 'Items handed to whoever breaks it, e.g. wood:2, nails:1'),
       f('notes', 'text', '')
     ] },
     kinds: { collection: 'kinds', id: null, label: 'Kinds', authored: 'studio', fields: [
@@ -109,6 +109,7 @@ var Schema = (function () {
       f('falloff', 'number', 0, 'Damage lost per extra hit (0–1)'),
       f('throw_range', 'number', 0), f('throw_area', 'number', 0), f('throw_power', 'number', 0),
       f('throw_status', 'ref', '', '', { ref: 'statuses' }), f('throw_status_ms', 'number', 0),
+      f('tool', 'text', '', 'Tool tags this item counts as, e.g. hammer or axe (recipes and harvesting can require one)'),
       f('structure_dmg', 'number', 0, 'Damage per hit to walls and objects (0 = half its attack)'),
       f('burns', 'bool', false, 'Throwables: the blast also burns wooden walls and objects'),
       f('on_use', 'textarea', '', 'Data-driven action list')
@@ -165,6 +166,17 @@ var Schema = (function () {
       f('level', 'number', 1), f('xp_needed', 'number', 0, 'Total XP to reach this level')
     ] },
 
+    recipes: { collection: 'recipes', id: 'id', label: 'Recipes', singular: 'recipe', authored: 'studio', fields: [
+      f('id', 'text', ''), f('name', 'text', ''), f('category', 'text', '', 'Group shown in the crafting panel'),
+      f('inputs', 'text', '', 'What it uses up, e.g. wood:2, nails:4'),
+      f('outputs', 'text', '', 'What you get, e.g. plank:1'),
+      f('station', 'text', '', 'Station id needed nearby (an object of kind craft with that station id). Empty = made by hand anywhere'),
+      f('tool', 'text', '', 'Tool tag needed in the bag (not used up), e.g. hammer'),
+      f('time_s', 'number', 0, 'Seconds before you can craft again (0 = instant)'),
+      f('unlock', 'text', '', 'Condition to know it, e.g. level:3 or flag:found_blueprint'),
+      f('notes', 'text', '')
+    ] },
+
     // ---- edited by the map editor, not the Content Studio forms ----
     maps: { collection: 'maps', id: 'id', label: 'Maps', authored: 'map', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('width', 'number', 0), f('height', 'number', 0),
@@ -184,7 +196,7 @@ var Schema = (function () {
   var TAB = {
     config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', wallStyles: 'WallStyles', kinds: 'Kinds',
     objects: 'Objects', items: 'Items', monsters: 'Monsters', loot: 'LootTables', classes: 'Classes',
-    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances',
+    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes',
     maps: 'Maps', mapEntities: 'MapEntities'
   };
 

@@ -16,7 +16,7 @@
   var shownOthers = {};                  // drawn positions of monsters and other players
   var queue = [], inFlight = false, lastReply = 0;
   var held = [], tap = null, holdSince = 0, lastStep = 0, lastFrame = 0, HOLD_MS = 220;
-  var fx = [], bagOpen = false;
+  var fx = [], bagOpen = false, craftOpen = false;
   var armed = null;                      // {slot, id, skill} while an ability (Q/E) waits for a target
   var throwing = null;                   // belt item id armed for a throw (click to throw, Esc to cancel)
   // mouse: right-button held = aiming; left = interact (tap) / action list (hold) / fire (while aiming)
@@ -115,6 +115,7 @@
     handleEvents(res.events);
     hud();
     if (bagOpen) bag();
+    if (craftOpen) craftPanel();
     return Promise.resolve();
   }
 
@@ -139,6 +140,7 @@
     var now = performance.now();
     (events || []).forEach(function (e, i) {
       if (e.text) log(e.text, e.type);
+      if (e.type === 'craft') { if (!craftOpen) toggleCraft(); return; }   // you used a workbench / campfire: show what can be made
       if (e.map && e.map !== me.map) return;
       var t0 = now + i * 120;
       if (e.type === 'cast') {
@@ -226,7 +228,8 @@
     if (e.repeat) return;
     if (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyF') { e.preventDefault(); interact(); }
     else if (e.code === 'KeyI' || e.code === 'KeyB') toggleBag();
-    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) cancelThrow(); else if (bagOpen) toggleBag(); }
+    else if (e.code === 'KeyC') toggleCraft();
+    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) cancelThrow(); else if (craftOpen) toggleCraft(); else if (bagOpen) toggleBag(); }
     else if (e.code === 'KeyQ') ability(0);
     else if (e.code === 'KeyE') ability(1);
     else if (e.code === 'KeyR') { if (World.rangedWeapon(content, me)) send({ type: 'reload' }); }
@@ -610,6 +613,45 @@
     updateCursor();                 // keep the canvas cursor (crosshair when a gun is ready) in step with gear changes
   }
   function toggleBag() { bagOpen = !bagOpen; $('bag').hidden = !bagOpen; if (bagOpen) bag(); }
+  // ---- crafting panel (C, or use a crafting station): every recipe you know, what it needs, and Make buttons.
+  // What can be made here is decided by World.recipesFor — the same check the referee runs on the craft action.
+  function toggleCraft() { craftOpen = !craftOpen; $('craft').hidden = !craftOpen; if (craftOpen) craftPanel(); }
+  function craftPanel() {
+    var box = $('craft-items'); box.innerHTML = '';
+    var recs = World.recipesFor(content, mapOf(), me, lookup());
+    var near = recs.filter(function (r) { return r.station && r.here; }).map(function (r) { return r.station; });
+    $('craft-note').textContent = !recs.length ? 'You don\'t know any recipes yet.'
+      : near.length ? '' : 'Stand next to a workbench or campfire to make the things that need one.';
+    var groups = {}, order = [];
+    recs.forEach(function (r) { var g = r.category || 'Other'; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(r); });
+    order.forEach(function (g) {
+      var h4 = document.createElement('h4'); h4.textContent = g; box.appendChild(h4);
+      groups[g].sort(function (a, b) { return (b.can ? 1 : 0) - (a.can ? 1 : 0); }).forEach(function (r) {
+        var out = r.outputs[0] || { item: '', qty: 1 }, it = content.items[out.item] || { name: r.name, sprite: '' };
+        var row = document.createElement('div'); row.className = 'slot' + (r.can ? '' : ' cant');
+        var img = Assets.get(it.sprite), pic = img ? img.cloneNode() : Assets.placeholder(it.name, '#555', 32);
+        pic.className = 'pic';
+        var name = document.createElement('div'); name.className = 'name';
+        var b = document.createElement('b'); b.textContent = r.name + (out.qty > 1 ? ' ×' + out.qty : ''); name.appendChild(b);
+        r.inputs.forEach(function (g2, i) {
+          var sp = document.createElement('span');
+          sp.textContent = (i ? ', ' : '') + g2.qty + ' ' + ((content.items[g2.item] || {}).name || g2.item).toLowerCase() + ' (' + g2.have + ')';
+          if (g2.have < g2.qty) sp.className = 'lack';
+          name.appendChild(sp);
+        });
+        if (!r.can && r.reason && !/^Not enough/.test(r.reason)) { var why = document.createElement('span'); why.className = 'lack'; why.textContent = ' — ' + r.reason; name.appendChild(why); }
+        var btns = document.createElement('div'); btns.className = 'btns';
+        [1, 5].forEach(function (n) {
+          var bt = document.createElement('button'); bt.textContent = n === 1 ? 'Make' : '×5';
+          bt.disabled = !r.can || (n > 1 && r.inputs.some(function (g3) { return g3.have < g3.qty * n; }));
+          bt.onclick = function () { send({ type: 'craft', recipe: r.id, qty: n }); };
+          btns.appendChild(bt);
+        });
+        row.title = r.reason || '';
+        row.appendChild(pic); row.appendChild(name); row.appendChild(btns); box.appendChild(row);
+      });
+    });
+  }
   function bag() {
     var box = $('bag-items'); box.innerHTML = '';
     $('bag-stats').textContent = (content.classes[me['class']] ? content.classes[me['class']].name + ' · ' : '') +
@@ -676,6 +718,7 @@
     return bits.join(', ');
   }
   $('bag-close').onclick = toggleBag;
+  $('craft-close').onclick = toggleCraft;
 
   // ---------------------------------------------------------------- map and loop
   function enterMap() {

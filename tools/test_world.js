@@ -1284,4 +1284,69 @@ test('the structure layer is sent to a client only when it is behind', () => {
   assert.strictEqual(World.structInfo(s.c, client, WALL(2)).hp, 15, 'the client works out the same health from what it was sent');
 });
 
+// ---------------------------------------------------------------- crafting and harvesting
+function camp() {
+  const t = JSON.parse(JSON.stringify(tables));
+  const row = Array(7).fill('til_1');
+  t.Objects.push({ id: 't_bench', name: 'Workbench', kind: 'craft', walkable: false, properties: '{"station":"workbench"}' });
+  t.Objects.push({ id: 't_tree', name: 'Pine', kind: 'deco', walkable: false, properties: '{"hp":10,"material":"wood","harvest":"wood:3","harvest_tool":"axe","respawn_s":60}' });
+  t.Maps.push({ id: 'camp', name: 'Camp', width: 7, height: 7, terrain: JSON.stringify(Array(7).fill(row)) });
+  t.MapEntities.push({ map: 'camp', key: 'camp.e1', x: 5, y: 5, ref: 't_bench', data: '' });
+  t.MapEntities.push({ map: 'camp', key: 'camp.e2', x: 1, y: 0, ref: 't_tree', data: '' });
+  const c = Content.build(t), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Tester', 'warrior');
+  const s = { c, ws, p };
+  put(s, 'camp', 1, 1, 'N');
+  return s;
+}
+const recipe = (s, id) => World.recipesFor(s.c, World.liveMap(s.c, s.ws, 'camp'), s.p, World.viewLookup(s.c, s.c.maps.camp, { states: {}, monsters: [], players: [] }, s.p)).filter(r => r.id === id)[0];
+
+test('crafting by hand: needs the materials, uses them up, gives the result', () => {
+  const s = camp();
+  assert.strictEqual(recipe(s, 'r_hammer').can, false);
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_hammer' })), /Not enough wood, scrap metal/);
+  World.give(s.c, s.p, 'wood', 3, []); World.give(s.c, s.p, 'scrap', 5, []);
+  assert.strictEqual(recipe(s, 'r_hammer').can, true);
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_hammer' })), /You make 1 hammer/);
+  assert.deepStrictEqual([World.count(s.p, 'hammer'), World.count(s.p, 'wood'), World.count(s.p, 'scrap')], [1, 2, 3]);
+  assert.match(texts(act(s, { type: 'craft', recipe: 'no_such_recipe' })), /don't know how/);
+});
+
+test('a station recipe needs the station nearby and the tool in the bag', () => {
+  const s = camp();
+  World.give(s.c, s.p, 'scrap', 10, []);
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails' })), /Needs a workbench nearby/);
+  put(s, 'camp', 4, 5, 'E');
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails' })), /Needs a hammer/);
+  assert.strictEqual(recipe(s, 'r_nails').here, true);
+  World.give(s.c, s.p, 'hammer', 1, []);
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails', qty: 3 })), /You make 12 nails/);
+  assert.deepStrictEqual([World.count(s.p, 'nails'), World.count(s.p, 'scrap'), World.count(s.p, 'hammer')], [12, 7, 1], 'the tool is not used up');
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails', qty: 20 })), /Not enough scrap metal/, 'all or nothing');
+  assert.strictEqual(World.count(s.p, 'scrap'), 7);
+});
+
+test('using a crafting station tells the client to open the crafting panel', () => {
+  const s = camp();
+  put(s, 'camp', 4, 5, 'E');
+  const ev = act(s, { type: 'interact' });
+  assert.ok(ev.some(e => e.type === 'craft' && e.station === 'workbench' && e.to === 'p1'));
+});
+
+test('harvesting: the right tool, the yield, and the tree grows back', () => {
+  const s = camp();
+  const tree = { t: 'ent', key: 'camp.e2' };
+  assert.match(texts(act(s, { type: 'attack', x: 1, y: 0 }, 1000)), /You need an axe for the pine/);
+  World.give(s.c, s.p, 'axe', 1, []);
+  let now = 1000, ev = [];
+  for (let i = 0; i < 6 && World.structInfo(s.c, World.liveMap(s.c, s.ws, 'camp'), tree); i++) { now += 2000; ev = ev.concat(act(s, { type: 'attack', x: 1, y: 0 }, now)); }
+  assert.strictEqual(World.count(s.p, 'wood'), 3, 'felling it gives the wood');
+  assert.ok(!World.liveMap(s.c, s.ws, 'camp').entities.some(e => e.key === 'camp.e2'), 'the tree is gone');
+  assert.strictEqual(Rules.tryMove(s.c, World.liveMap(s.c, s.ws, 'camp'), 1, 1, 'N', {}).ok, true, 'and you can walk where it stood');
+  World.advance(s.c, s.ws, 'camp', [s.p], now + 30000, mid, []);
+  assert.ok(!World.liveMap(s.c, s.ws, 'camp').entities.some(e => e.key === 'camp.e2'), 'not back yet');
+  World.advance(s.c, s.ws, 'camp', [s.p], now + 61000, mid, []);
+  assert.ok(World.liveMap(s.c, s.ws, 'camp').entities.some(e => e.key === 'camp.e2'), 'a minute later it has grown back');
+  assert.strictEqual(World.structInfo(s.c, World.liveMap(s.c, s.ws, 'camp'), tree).hp, 10, 'at full health');
+});
+
 console.log(`\n${passed} world tests passed`);

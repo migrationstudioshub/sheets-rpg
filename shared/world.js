@@ -16,7 +16,7 @@ var World = (function () {
   // ------------------------------------------------------------ helpers
   /** "potion:2, gold:30" -> [{item:'potion', qty:2}, {item:'gold', qty:30}] */
   function list(s) {
-    return String(s || '').split(',').map(function (p) {
+    return String(s || '').split(/[;,]/).map(function (p) {
       p = p.trim(); if (!p) return null;
       var i = p.lastIndexOf(':'), id = i > 0 ? p.slice(0, i).trim() : p, q = i > 0 ? Number(p.slice(i + 1)) : 1;
       return { item: id, qty: isNaN(q) ? 1 : q };
@@ -36,6 +36,7 @@ var World = (function () {
   function rint(rng, a, b) { return a + Math.floor(rng() * (b - a + 1)); }
   function damage(atk, def, rng) { return Math.max(1, atk - def + rint(rng, -1, 2)); }
   function lower(s) { return String(s || '').toLowerCase(); }
+  function aAn(w) { return (/^[aeiou]/i.test(String(w)) ? 'an ' : 'a ') + w; }
 
   function mapState(ws, id) {
     ws.maps = ws.maps || {};
@@ -162,7 +163,16 @@ var World = (function () {
       });
       if (st.walls[tg.key]) delete st.walls[tg.key]; else st.gone[tg.key] = 1;
       delete st.dmg[tg.key];
-    } else dropEnt(tg.key);
+    } else {
+      dropEnt(tg.key);
+      var hv = !tg.built && tg.obj && tg.obj.properties && tg.obj.properties.harvest;
+      if (hv) {                                              // a tree, a wreck...: it yields, then comes back later
+        if (src && src.player) list(hv).forEach(function (g) { give(c, src.player, g.item, g.qty, ev); });
+        var back = Number(tg.obj.properties.respawn_s) || Number(c.config.harvest_respawn_s) || 600;
+        st.gone[tg.key] = 2;
+        ms.timers[tg.key] = { at: ((src && src.now) || Date.now()) + back * 1000, regrow: true };
+      }
+    }
     touchStruct(st); ws.dirty = true;
     ev.push({ type: 'struct', map: mapId, op: 'break', key: tg.key, x: tg.x, y: tg.y });
     if (src && src.player) {
@@ -224,7 +234,9 @@ var World = (function () {
   function strike(c, ws, p, t, now, rng, ev) {
     if (now < (p.nextAttack || 0)) return false;
     p.nextAttack = now + (Number(c.config.attack_ms) || 0);
-    var res = damageStructure(c, ws, p.map, t, structureDamageOf(c, p, c.items[(p.equipment || {}).weapon]), { kind: 'melee', by: p.id, player: p }, ev);
+    var tg0 = resolveTarget(c, ws, p.map, t), needTool = tg0 && tg0.obj && tg0.obj.properties && tg0.obj.properties.harvest_tool;
+    if (needTool && !hasTool(c, p, needTool)) { ev.push({ type: 'info', to: p.id, text: 'You need ' + aAn(needTool) + ' for the ' + tg0.name + '.' }); return true; }
+    var res = damageStructure(c, ws, p.map, t, structureDamageOf(c, p, c.items[(p.equipment || {}).weapon]), { kind: 'melee', by: p.id, player: p, now: now }, ev);
     if (!res) ev.push({ type: 'info', to: p.id, text: 'You can\'t damage that.' });
     else if (!res.dealt) ev.push({ type: 'info', to: p.id, text: 'You can\'t even scratch the ' + res.tg.name + '.' });
     else if (!res.destroyed) ev.push({ type: 'info', to: p.id, text: 'You hit the ' + res.tg.name + ' for ' + res.dealt + '.' });
@@ -666,7 +678,10 @@ var World = (function () {
     var map = liveMap(c, ws, mapId);
     var ms = ensureMonsters(c, ws, mapId, now, rng);
     Object.keys(ms.timers).forEach(function (k) {
-      var t = ms.timers[k]; if (now >= t.at) { setState(ws, mapId, k, t.state); delete ms.timers[k]; }
+      var t = ms.timers[k]; if (now < t.at) return;
+      if (t.regrow) { var stg = structOf(ws, mapId); delete stg.gone[k]; touchStruct(stg); }   // a harvested object is back
+      else setState(ws, mapId, k, t.state);
+      delete ms.timers[k];
     });
     var here = players.filter(function (p) { return p.map === mapId && p.hp > 0; });
     var engageRange = Number(c.config.engage_range) || 24;       // how far a hit monster will chase before giving up
@@ -1250,7 +1265,7 @@ var World = (function () {
           .map(function (e) { return resolveOn(c, map, st1, { t: 'ent', key: e.key }); }).filter(function (g) { return g && g.can; })[0];
         if (bc) bt = { t: 'ent', key: bc.key };
       }
-      if (bt) damageStructure(c, ws, p.map, bt, structureDamageOf(c, p, w), { kind: 'bullet', by: p.id, player: p }, ev);
+      if (bt) damageStructure(c, ws, p.map, bt, structureDamageOf(c, p, w), { kind: 'bullet', by: p.id, player: p, now: now }, ev);
     }
   }
 
@@ -1303,9 +1318,9 @@ var World = (function () {
         if (isWallFixture(o) && fixtureEdges(o, e).some(function (q) { return seenT[R2.edgeKey(q.orient, q.x, q.y)]; })) targets.unshift({ t: 'ent', key: e.key });
       });
       targets.forEach(function (t) {
-        var r1 = damageStructure(c, ws, p.map, t, Number(it.throwPower), { kind: 'blast', by: p.id, player: p }, ev);
+        var r1 = damageStructure(c, ws, p.map, t, Number(it.throwPower), { kind: 'blast', by: p.id, player: p, now: now }, ev);
         if (r1 && r1.dealt) broke++;
-        if (it.burns && !(r1 && r1.destroyed)) { var r2 = damageStructure(c, ws, p.map, t, Number(it.throwPower) / 2, { kind: 'fire', by: p.id, player: p }, ev); if (r2 && r2.dealt) broke++; }
+        if (it.burns && !(r1 && r1.destroyed)) { var r2 = damageStructure(c, ws, p.map, t, Number(it.throwPower) / 2, { kind: 'fire', by: p.id, player: p, now: now }, ev); if (r2 && r2.dealt) broke++; }
       });
     }
     if (!mons.length && !broke) say('The ' + lower(it.name) + ' goes off, hitting nothing.');
@@ -1330,13 +1345,75 @@ var World = (function () {
       part = part.trim(); if (!part) return true;
       var not = part.charAt(0) === '!'; if (not) part = part.slice(1);
       var a = part.split(':'), ok;
-      if (a[0] === 'flag') ok = !!p.flags[a[1]];
+      if (a[0] === 'flag') ok = !!(p.flags || {})[a[1]];
       else if (a[0] === 'has') ok = count(p, a[1]) >= (Number(a[2]) || 1);
       else if (a[0] === 'level') ok = p.level >= Number(a[1]);
       else ok = true;
       return not ? !ok : ok;
     });
   }
+  // ------------------------------------------------------------ crafting
+  /** Does the player carry something that counts as this tool (an item whose tool tags include it)? */
+  function hasTool(c, p, tag) {
+    if (!tag) return true;
+    return (p.inventory || []).some(function (s) { var it = c.items[s.item]; return it && it.tools && it.tools.indexOf(tag) >= 0; });
+  }
+  /** The crafting stations in reach: {stationId: object name}. A station is an object of kind craft with a station id. */
+  function stationsNear(c, map, p, lk) {
+    var out = {}, range = Number(c.config.station_range) || 2;
+    (map.entities || []).forEach(function (e) {
+      var o = objOf(c, e), id = o && o.kind === 'craft' && props(c, e).station;
+      if (!id || cheb(p.x, p.y, e.x, e.y) > range) return;
+      if (e.need && (e.prog || 0) < e.need) return;                      // still being built
+      if (!(p.x === e.x && p.y === e.y) && !canSee(c, map, p.x, p.y, e.x, e.y, lk.stateOf)) return;
+      out[id] = o.name;
+    });
+    return out;
+  }
+  function stationName(c, id) {
+    var k = Object.keys(c.objects).filter(function (x) { var o = c.objects[x]; return o.kind === 'craft' && o.properties && o.properties.station === id; })[0];
+    return lower(k ? c.objects[k].name : id);
+  }
+  /** Can p make `qty` of recipe r right here? {ok, reason, missing: [{item, need, have}]} — shared by the panel and the referee. */
+  function recipeCheck(c, r, p, stations, qty) {
+    qty = qty || 1;
+    var missing = [];
+    list(r.inputs).forEach(function (g) { var have = count(p, g.item); if (have < g.qty * qty) missing.push({ item: g.item, need: g.qty * qty, have: have }); });
+    var reason = '';
+    if (r.station && !stations[r.station]) reason = 'Needs ' + aAn(stationName(c, r.station)) + ' nearby.';
+    else if (r.tool && !hasTool(c, p, r.tool)) reason = 'Needs ' + aAn(r.tool) + '.';
+    else if (missing.length) reason = 'Not enough ' + missing.map(function (m) { return lower(itemName(c, m.item)); }).join(', ') + '.';
+    return { ok: !reason, reason: reason, missing: missing };
+  }
+  /** Every recipe this player knows, with whether it can be made here and now. For the crafting panel. */
+  function recipesFor(c, map, p, lk) {
+    var stations = stationsNear(c, map, p, lk), recs = c.recipes || {};
+    return Object.keys(recs).map(function (id) { return recs[id]; })
+      .filter(function (r) { return !r.unlock || check(c, p, r.unlock); })
+      .map(function (r) {
+        var chk = recipeCheck(c, r, p, stations, 1);
+        return { id: r.id, name: r.name, category: r.category, station: r.station, tool: r.tool, timeS: r.timeS,
+          inputs: list(r.inputs).map(function (g) { return { item: g.item, qty: g.qty, have: count(p, g.item) }; }),
+          outputs: list(r.outputs), can: chk.ok, reason: chk.reason, here: !r.station || !!stations[r.station] };
+      });
+  }
+  function craft(c, ws, p, a, now, ev) {
+    function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
+    var r = (c.recipes || {})[String(a.recipe || '')];
+    if (!r || (r.unlock && !check(c, p, r.unlock))) return say('You don\'t know how to make that.');
+    if (hasStatus(p, 'stun')) return say('You are stunned.');
+    if (now < ((p.cooldowns || {})._craft || 0)) return say('You are still busy.');
+    var qty = Math.max(1, Math.min(20, Math.round(Number(a.qty)) || 1));
+    var map = liveMap(c, ws, p.map), chk = recipeCheck(c, r, p, stationsNear(c, map, p, serverLookup(c, ws, p.map, [p])), qty);
+    if (!chk.ok) return say(chk.reason);
+    list(r.inputs).forEach(function (g) { take(p, g.item, g.qty * qty); });
+    var made = list(r.outputs);
+    made.forEach(function (g) { give(c, p, g.item, g.qty * qty, ev, true); });
+    if (r.timeS > 0) { p.cooldowns = p.cooldowns || {}; p.cooldowns._craft = now + r.timeS * 1000 * qty; }
+    ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y,
+      text: 'You make ' + made.map(function (g) { return g.qty * qty + ' ' + lower(itemName(c, g.item)); }).join(', ') + '.' });
+  }
+
   /** "give:potion:2; gold:10; heal:20; flag:x; teleport:map_1:3:4; set_state:map_3.e7:open; message:Hello" */
   function run(c, ws, p, script, now, ev) {
     String(script || '').split(';').forEach(function (cmd) {
@@ -1594,7 +1671,7 @@ var World = (function () {
         ev.push({ type: 'heal', to: p.id, map: p.map, x: p.x, y: p.y, text: 'You rest.' + (yes(pr.heals) ? ' Health restored.' : '') + (yes(pr.sets_respawn) ? ' You will return here if you fall.' : '') });
         break;
       case 'sign': ev.push({ type: 'info', to: p.id, text: pr.text || o.name }); break;
-      case 'craft': ev.push({ type: 'info', to: p.id, text: 'The ' + lower(o.name) + ' crackles. (Crafting comes later.)' }); break;
+      case 'craft': ev.push({ type: 'craft', to: p.id, key: e.key, station: pr.station || '' }); break;   // the client opens its crafting panel
       case 'npc': ev.push({ type: 'info', to: p.id, text: o.name + ' has nothing to say yet.' }); break;
       case 'trap': ev.push({ type: 'info', to: p.id, text: 'A trap. Better not step on it.' }); break;
     }
@@ -1680,6 +1757,7 @@ var World = (function () {
     else if (action.type === 'shoot') shoot(c, ws, p, action, now, rng, ev, players);
     else if (action.type === 'throw') throwItem(c, ws, p, action, now, rng, ev, players);
     else if (action.type === 'reload') reload(c, ws, p, action, now, ev);
+    else if (action.type === 'craft') craft(c, ws, p, action, now, ev);
     else if (action.type === 'loadout') setLoadout(c, p, action.bar, action.slot, action.entry, ev);
     return ev;
   }
@@ -1812,6 +1890,7 @@ var World = (function () {
     visibleCells: visibleCells, perceive: perceive,
     roofZoneAt: roofZoneAt, roofZones: roofZones,
     liveMap: liveMap, liveMapFromStruct: liveMapFromStruct, structOf: structOf, publicStruct: publicStruct,
-    structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure };
+    structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure,
+    recipesFor: recipesFor, hasTool: hasTool };
 })();
 if (typeof module !== 'undefined') module.exports = World;

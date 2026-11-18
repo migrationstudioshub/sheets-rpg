@@ -173,6 +173,53 @@ var Render = (function () {
     _doorCv.width = Math.max(1, w); _doorCv.height = Math.max(1, h);     // setting size also clears it
     return _doorCv;
   }
+  // ---- windows in E-W walls: the wall is cut open to the window's shape ----
+  // The mask is the sprite's SILHOUETTE: everything inside its outer contour, i.e. every pixel that is not
+  // see-through background reachable from the image's border. Punching the wall face with it and then
+  // drawing the sprite on top leaves real holes wherever the art is transparent inside its own outline
+  // (the panes), whatever the window looks like. Built once per image; null if the pixels cannot be read
+  // (an image from another site) — then the wall is simply left whole.
+  var _sil = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+  function silhouette(img, fw) {
+    if (!_sil || typeof document === 'undefined') return null;
+    if (_sil.has(img)) return _sil.get(img);
+    var out = null;
+    try {
+      var w = Math.max(1, Math.round(fw)), h = img.height, cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      var cg = cv.getContext('2d'); cg.drawImage(img, 0, 0, w, h, 0, 0, w, h);
+      var id = cg.getImageData(0, 0, w, h), d = id.data, outside = new Uint8Array(w * h), stack = [], i, x, y;
+      function seed(px, py) { var k = py * w + px; if (!outside[k] && d[k * 4 + 3] < 128) { outside[k] = 1; stack.push(k); } }
+      for (x = 0; x < w; x++) { seed(x, 0); seed(x, h - 1); }
+      for (y = 0; y < h; y++) { seed(0, y); seed(w - 1, y); }
+      while (stack.length) {
+        i = stack.pop(); x = i % w; y = (i - x) / w;
+        if (x > 0) seed(x - 1, y); if (x < w - 1) seed(x + 1, y); if (y > 0) seed(x, y - 1); if (y < h - 1) seed(x, y + 1);
+      }
+      for (i = 0; i < w * h; i++) { d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 0; d[i * 4 + 3] = outside[i] ? 0 : 255; }
+      cg.putImageData(id, 0, 0); out = cv;
+    } catch (e) { out = null; }
+    _sil.set(img, out); return out;
+  }
+  /** Where drawObject puts an object's whole image (base + overflow) on screen: {x, y, w, h}, plus its frame width. */
+  function objRect(o, img, dx, dy, size) {
+    var fw = img.width / Math.max(1, o.frames || 1), sc = size / NT, w = Math.max(1, Math.round(fw / NT));
+    var x = dx + (Math.max(1, o.footprintW || 1) - w) * size / 2 + Number((o.properties && o.properties.offset_x) || 0) * sc;
+    var hgt = img.height * sc;
+    return { x: x, y: dy + size + (o.offsetY || 0) * sc - hgt, w: w * size, h: hgt, fw: fw };
+  }
+  /** Draw an E-W wall face with window-shaped holes punched in it. holes = [{mask, x, y, w, h}] in screen px. */
+  function drawFaceWithHoles(g, content, p, ox, oy, S, dark, holes) {
+    var H = p.h * S, fx = ox + p.x * S, fy = oy + p.y * S - H;
+    var off = doorCanvas(S, H); if (!off) return false;
+    var og = off.getContext('2d'); og.imageSmoothingEnabled = false;
+    drawPrim25(og, content, p, -p.x * S, H - p.y * S, S, false, dark);
+    og.globalCompositeOperation = 'destination-out';
+    holes.forEach(function (hl) { og.drawImage(hl.mask, hl.x - fx, hl.y - fy, hl.w, hl.h); });
+    og.globalCompositeOperation = 'source-over';
+    g.drawImage(off, fx, fy);
+    return true;
+  }
   function drawDoor(g, content, map, job, ox, oy, S, cutA) {
     var o = job.o, ed = job.ed, W = job.W, open = job.open;
     var tok = parseWallTok((map.hWalls && map.hWalls[ed.y] && map.hWalls[ed.y][ed.x]) || '');
@@ -561,7 +608,7 @@ var Render = (function () {
     // drawn now (always behind everyone); 'over' = saved for the foreground. Ground decals are baked in.
     // Anything on an unknown (roofed, never seen) cell is not drawn at all.
     function wallH(q) { var t = parseWallTok(((q.orient === 'h' ? map.hWalls : map.vWalls) || [])[q.y] && ((q.orient === 'h' ? map.hWalls : map.vWalls)[q.y][q.x])); return t ? t.height : 2; }
-    var overs = [], renderables = [], doorFaces = {}, doorGap = {}, vDoor = {};
+    var overs = [], renderables = [], doorFaces = {}, doorGap = {}, vDoor = {}, winHoles = {};
     map.entities.forEach(function (e) {
       if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
       var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
@@ -612,9 +659,47 @@ var Render = (function () {
           });
           return;
         }
+        // A window in a thin N-S wall is seen edge-on, so it is not drawn as a picture: its stretch of wall
+        // gets a glassy tint and daylight spills from it across the floor of the room(s) it lights — the
+        // indoor side, or both sides when neither (or both) is indoors. The light lies on the ground, only on
+        // tiles in sight right now.
+        if (opening === 'window' && !isH) {
+          edges.forEach(function (q) {
+            vDoor[q.x + ',' + q.y] = 'glass';
+            var inW = sight.indoor(q.x - 1, q.y), inE = sight.indoor(q.x, q.y), both = inW === inE;
+            var lx = ox + q.x * T + vWallOff(map, q.x, q.y, T), ly = oy + q.y * T + 3, lh = T - 6, reach = Math.round(T * 1.7);
+            [[-1, inW || both], [1, inE || both]].forEach(function (sd) {
+              if (!sd[1]) return;
+              var dir = sd[0], c1 = dir < 0 ? q.x - 1 : q.x, c2 = c1 + dir;
+              var k1 = sight.seen(c1, q.y), k2 = sight.seen(c2, q.y); if (!k1 && !k2) return;
+              g.save(); g.beginPath();
+              if (k1) g.rect(ox + c1 * T, oy + q.y * T, T, T);
+              if (k2) g.rect(ox + c2 * T, oy + q.y * T, T, T);
+              g.clip();
+              var gr = g.createLinearGradient(lx, 0, lx + dir * reach, 0);
+              gr.addColorStop(0, 'rgba(255,238,175,.42)'); gr.addColorStop(1, 'rgba(255,238,175,0)');
+              g.fillStyle = gr; g.fillRect(dir < 0 ? lx - reach : lx, ly, reach, lh);
+              g.restore();
+            });
+          });
+          return;
+        }
         // On a cut wall, windows stay standing (solid) and things you can use stay too (faint); pure decoration drops with the wall.
         if (cut && !opening && o.kind === 'deco') return;
         var wst = states[e.key], wp = objPath(o, wst, null), mp = wallMountPlace(map, o, e, ox, oy, T);
+        // A window in an E-W wall that still stands: cut the wall face open to the window's outline, so
+        // whatever is see-through inside the art really shows what is behind the wall.
+        if (opening === 'window' && isH && !cut) {
+          var wImg = wp && Assets.get(wp);
+          if (wImg && wImg.width) {
+            var wr = objRect(o, wImg, mp.dx, mp.dy, T), wMask = silhouette(wImg, wr.fw);
+            if (wMask) {
+              var hole = { mask: wMask, x: wr.x, y: wr.y, w: wr.w, h: wr.h };
+              for (var hx = Math.floor((wr.x - ox) / T); hx <= Math.floor((wr.x + wr.w - 1 - ox) / T); hx++)
+                (winHoles[hx + ',' + ed0.y] || (winHoles[hx + ',' + ed0.y] = [])).push(hole);
+            }
+          }
+        }
         renderables.push({ sortY: mp.sortY, alpha: cut && !opening ? cutA : 1, dark: inDark(e.x, e.y),   // a window stands solid like a door; other fixtures go faint
           obj: { o: o, path: wp, dx: mp.dx, dy: mp.dy, flip: mp.flip, st: wst, tall: hasTop(o, wp) } });
         return;
@@ -650,7 +735,8 @@ var Render = (function () {
       if (p.kind === 'hface' && doorFaces[p.x + ',' + p.y]) return;             // a door draws this face region itself
       if (p.kind === 'hcap' && doorGap[p.x + ',' + p.y]) return;                // a doorway in a cut wall: no stub across it
       renderables.push({ sortY: prim25SortY(p, oy, T) + (isCap ? 0.5 : 0.25), prim: p,
-        cut: !isV && sight.cutH(p.x, p.y, p.h), shut: vd === 'shut' && !isCap,
+        cut: !isV && sight.cutH(p.x, p.y, p.h), shut: vd === 'shut' && !isCap, glass: vd === 'glass' && !isCap,
+        holes: p.kind === 'hface' ? winHoles[p.x + ',' + p.y] : null,
         // An E-W wall's face is the side seen from the cell SOUTH of it. If that cell is an unknown interior,
         // the face is an inside wall the player has never seen: the roof covers it (the cap still outlines the building).
         // A thin N-S face is likewise seen from the two cells just south of its segment (either side of the
@@ -672,8 +758,9 @@ var Render = (function () {
       if (r.door) { dim(r.dark); drawDoor(g, c, map, r.door, ox, oy, T, cutA); dim(false); return; }
       if (r.prim) {
         if (r.roofed && !r.cut) primRectFill(g, r.prim, ox, oy, T, roofCol);
-        else drawPrim25(g, c, r.prim, ox, oy, T, r.cut, r.dark);
+        else if (!(r.holes && !r.cut && drawFaceWithHoles(g, c, r.prim, ox, oy, T, r.dark, r.holes))) drawPrim25(g, c, r.prim, ox, oy, T, r.cut, r.dark);
         if (r.shut) primRectFill(g, r.prim, ox, oy, T, 'rgba(46,30,16,.55)');
+        if (r.glass) primRectFill(g, r.prim, ox, oy, T, 'rgba(190,228,255,.55)');     // a window in a thin wall: glassy
         return;
       }
       if (r.obj) {

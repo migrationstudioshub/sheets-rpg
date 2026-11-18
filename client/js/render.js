@@ -261,6 +261,15 @@ var Render = (function () {
     if (side === 'E') return { orient: 'v', ex: x + 1, ey: y };
     return { orient: 'h', ex: x, ey: y };                        // 'N' (default)
   }
+  /** How far (px) the N-S wall on the west edge of cell (x,y) is drawn off its grid line: a wall painted
+   *  "cursor side" sits half its thickness to the left ('l') or right ('r'); a centred wall, or none, is 0.
+   *  Anything standing on that wall shifts by the same amount so it stays on the wall. */
+  function vWallOff(map, x, y, S) {
+    var t = parseWallTok(map && map.vWalls && map.vWalls[y] && map.vWalls[y][x]);
+    if (!t || t.side === 'c') return 0;
+    var hd = Math.round(Math.max(4, Math.round(S * 0.32)) / 2);
+    return t.side === 'r' ? hd : t.side === 'l' ? -hd : 0;
+  }
   /** Screen placement {dx, dy, sortY, flip} for a wall-mounted object entity. (ox,oy)=map origin, S=cell px.
    *  dy is the footprint-cell origin: drawObject bottom-anchors the sprite at dy+S, i.e. on the wall's base. */
   function wallMountPlace(map, o, e, ox, oy, S) {
@@ -270,7 +279,7 @@ var Render = (function () {
       var baseLine = oy + ed.ey * S;                             // the wall's grid line = the base the sprite stands on
       return { dx: ox + ed.ex * S, dy: baseLine - S - mount * S, sortY: baseLine + 0.26, flip: false };
     }
-    var vline = ox + ed.ex * S, vbase = oy + (ed.ey + 1) * S;    // foot of the vertical (N-S) wall
+    var vline = ox + ed.ex * S + vWallOff(map, ed.ex, ed.ey, S), vbase = oy + (ed.ey + 1) * S;    // foot of the vertical (N-S) wall, following an off-centre wall
     return { dx: vline - S / 2, dy: vbase - S - mount * S, sortY: vbase + 0.26, flip: side === 'E' };
   }
 
@@ -570,7 +579,37 @@ var Render = (function () {
           if (isH) {
             edges.forEach(function (q) { doorFaces[q.x + ',' + q.y] = 1; if (cut) doorGap[q.x + ',' + q.y] = 1; });   // the door draws these faces itself; on a cut wall its whole width is a gap in the stub
             renderables.push({ sortY: oy + ed0.y * T + 0.6, dark: inDark(ed0.x, ed0.y), door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
-          } else edges.forEach(function (q) { vDoor[q.x + ',' + q.y] = dOpen ? 'open' : 'shut'; });   // in a thin N-S wall: a gap, or a tinted slab
+          } else edges.forEach(function (q) {
+            vDoor[q.x + ',' + q.y] = dOpen ? 'open' : 'shut';   // in a thin N-S wall: a gap, or a tinted slab
+            // A side door is seen edge-on, so it is marked on the floor: a doorstep laid across the wall line,
+            // reaching into the tile on either side. Drawn now, on the ground, under walls and characters.
+            // The door's own picture is that doorstep when it has one: sprite (closed) / sprite_states open,
+            // drawn flat on the floor at its natural size, centred on the wall line (a 64x32 image covers the
+            // tile on each side), with the usual offset_x / offset_y nudges. Without art: a plain pale plate.
+            var wOff = vWallOff(map, q.x, q.y, T);               // follow a wall painted to one side of its line
+            // The doorstep reads as an icon, not as part of the building, so it only shows while you can see
+            // it: each half (it lies across two tiles) is drawn only when its tile is in sight right now —
+            // not from memory, and never on a tile still under the roof.
+            var kW = sight.seen(q.x - 1, q.y), kE = sight.seen(q.x, q.y);
+            if (!kW && !kE) return;
+            g.save(); g.beginPath();
+            if (kW) g.rect(ox + (q.x - 1) * T, oy + (q.y - 1) * T, T, T * 3);
+            if (kE) g.rect(ox + q.x * T, oy + (q.y - 1) * T, T, T * 3);
+            g.clip();
+            var sImg = Assets.get(objPath(o, dOpen ? 'open' : null, null));
+            if (sImg && sImg.width) {
+              var ssc = T / NT, sw = Math.round(sImg.width * ssc), sh = Math.round(sImg.height * ssc);
+              var pp = o.properties || {};
+              g.drawImage(sImg, 0, 0, sImg.width, sImg.height,
+                Math.round(ox + q.x * T - sw / 2 + wOff + Number(pp.offset_x || 0) * ssc),
+                Math.round(oy + q.y * T + (T - sh) / 2 + Number(pp.offset_y || 0) * ssc), sw, sh);
+              g.restore(); return;
+            }
+            var tw = Math.round(T * 1.1), tx = Math.round(ox + q.x * T - tw / 2) + wOff, ty = Math.round(oy + q.y * T) + 2, th = T - 4;
+            g.fillStyle = 'rgba(214,200,170,.30)'; g.fillRect(tx, ty, tw, th);
+            g.strokeStyle = 'rgba(235,225,200,.55)'; g.lineWidth = 1; g.strokeRect(tx + 0.5, ty + 0.5, tw - 1, th - 1);
+            g.restore();
+          });
           return;
         }
         // On a cut wall, windows stay standing (solid) and things you can use stay too (faint); pure decoration drops with the wall.

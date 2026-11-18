@@ -23,6 +23,9 @@
   var aiming = false, leftHeld = false, holdFired = false, pendingCell = null, holdMenuEvt = null, holdTimer = 0;
   var lastHoldShot = 0, aimAngle = 0, HOLD_CLICK_MS = 250;   // left-press longer than this opens the action list
   var hover = null, lastCam = { x: 0, y: 0 };
+  // Aim lean: while the right button is held the camera drifts toward the cursor so you see further that way.
+  // lastPtr = where the cursor last was (client px), so the hovered cell and aim follow the moving camera.
+  var lean = { x: 0, y: 0 }, lastPtr = null;
   var clockOffset = 0;                   // server clock minus ours, for timed traps
   var timed = [];                        // timed traps on this map, drawn from the clock
   var liveUnwatch = null;                // stops the Firebase live-world listener (online, when enabled)
@@ -225,10 +228,11 @@
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   canvas.addEventListener('pointermove', function (e) {
     if (!content) return;
+    lastPtr = { clientX: e.clientX, clientY: e.clientY };
     hover = cellAt(e); hoverLabel(e);
     if (aiming && me) aimAt(e);                           // keep facing + gun angle tracking the cursor
   });
-  canvas.addEventListener('pointerleave', function () { hover = null; $('tip').hidden = true; });
+  canvas.addEventListener('pointerleave', function () { hover = null; lastPtr = null; $('tip').hidden = true; });
   // mousedown/up (not pointerdown) so a left-click still fires while the right button is held to aim —
   // a pointer only fires one 'down' per gesture, reporting extra buttons as moves, which swallowed the shot.
   canvas.addEventListener('mousedown', function (e) {
@@ -739,6 +743,22 @@
     };
     if (map.width * T < canvas.width) cam.x = (map.width * T - canvas.width) / 2;
     if (map.height * T < canvas.height) cam.y = (map.height * T - canvas.height) / 2;
+    // Aim lean (config aim_lean, 0-1, default 0.25; 0 = off): the camera eases toward the cursor by that share
+    // of the cursor's distance from the screen centre, and eases back when the button is released.
+    var leanK = content.config.aim_lean === undefined || content.config.aim_lean === '' ? 0.25 : Number(content.config.aim_lean);
+    if (!(leanK >= 0 && leanK <= 1)) leanK = 0.25;
+    var lt = { x: 0, y: 0 };
+    if (aiming && lastPtr && leanK > 0) {
+      var cr = canvas.getBoundingClientRect();
+      lt.x = ((lastPtr.clientX - cr.left) * canvas.width / cr.width - canvas.width / 2) * leanK;
+      lt.y = ((lastPtr.clientY - cr.top) * canvas.height / cr.height - canvas.height / 2) * leanK;
+    }
+    var lk0 = Math.min(1, (dt || 16) / 140);
+    lean.x += (lt.x - lean.x) * lk0; lean.y += (lt.y - lean.y) * lk0;
+    if (Math.abs(lean.x) < 0.5 && !lt.x) lean.x = 0; if (Math.abs(lean.y) < 0.5 && !lt.y) lean.y = 0;
+    cam.x = Math.round(cam.x + lean.x); cam.y = Math.round(cam.y + lean.y);
+    if (map.width * T >= canvas.width) cam.x = clamp(cam.x, 0, map.width * T - canvas.width);      // never past the map's edge
+    if (map.height * T >= canvas.height) cam.y = clamp(cam.y, 0, map.height * T - canvas.height);
     var states = view.states;
     if (timed.length) {
       states = Object.assign({}, view.states);
@@ -746,6 +766,7 @@
       timed.forEach(function (e) { states[e.key] = World.liveState(content, e, clock, view.states); });
     }
     lastCam = cam;
+    if ((lean.x || lean.y) && lastPtr) { hover = cellAt(lastPtr); if (aiming && me) aimAt(lastPtr); }   // the world moved under a still cursor
     // Remember the room the local player is standing in — immediately and without waiting on the server,
     // merged with the server's persisted `explored`.
     if (me && World.roofZoneAt) {

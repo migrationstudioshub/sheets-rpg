@@ -311,37 +311,45 @@ var E = {
     var o = E.content.objects[E.brush.object];
     return o && o.properties && o.properties.layer === 'wall' ? o : null;
   };
-  // Wall-mount objects only hang on walls whose face is visible: the SOUTH-facing side of a horizontal
-  // wall. The mount cell is the cell south of the grid line nearest the cursor; the object sits on that
-  // cell's north wall (always side 'N'). Returns {x, y} or null (outside the map). ev = pointer event.
+  // Wall-mount objects snap to the grid line nearest the cursor. An E-W line: the mount cell is the cell
+  // south of it and the object sits on that cell's north wall (side 'N', its south face). A N-S line: the
+  // mount cell is the cell east of it and the object sits on that cell's west wall (side 'W'). When only one
+  // of the two nearest lines actually has a wall, that one wins. Returns {x, y, side} or null (outside the
+  // map). ev = pointer event.
   E.mountCellAt = function (ev) {
     var r = canvas.getBoundingClientRect(), s = cellSize(), m = E.map();
     var fx = (ev.clientX - r.left - E.view.x) / s, fy = (ev.clientY - r.top - E.view.y) / s;
-    var x = Math.floor(fx), y = Math.round(fy);              // nearest horizontal grid line; the cell south of it is row y
-    if (x < 0 || x >= m.width || y < 0 || y >= m.height) return null;
-    return { x: x, y: y };
+    var hC = { x: Math.floor(fx), y: Math.round(fy), side: 'N' };       // nearest E-W line; the cell south of it
+    var vC = { x: Math.round(fx), y: Math.floor(fy), side: 'W' };       // nearest N-S line; the cell east of it
+    function ok(c) { return c.x >= 0 && c.x < m.width && c.y >= 0 && c.y < m.height; }
+    function has(g, c) { return !!(g && g[c.y] && g[c.y][c.x]); }
+    var hOk = ok(hC), vOk = ok(vC);
+    if (!hOk || !vOk) return hOk ? hC : vOk ? vC : null;
+    var hW = has(m.hWalls, hC), vW = has(m.vWalls, vC);
+    if (hW !== vW) return hW ? hC : vC;
+    return Math.abs(fx - vC.x) < Math.abs(fy - hC.y) ? vC : hC;
   };
   // The wall-mount entity already on this cell (its south-facing wall), so it can be repainted without
   // disturbing a floor object sharing the cell. One wall object per cell.
-  function wallEntAt(x, y) {
-    var m = E.map();
+  function wallEntAt(x, y, side) {
+    var m = E.map(); side = side || 'N';
     for (var i = m.entities.length - 1; i >= 0; i--) {
       var e = m.entities[i], o = e.ref && E.content.objects[e.ref];
-      if (e.x === x && e.y === y && o && o.properties && o.properties.layer === 'wall') return e;
+      if (e.x === x && e.y === y && o && o.properties && o.properties.layer === 'wall' && ((e.data && e.data.side) || 'N') === side) return e;
     }
     return null;
   }
   function placeWallObject(cell, ref) {
     if (!cell || !E.inside(cell.x, cell.y) || !ref) return false;
-    var ex = wallEntAt(cell.x, cell.y);
+    var ex = wallEntAt(cell.x, cell.y, cell.side);
     if (ex) { if (ex.ref === ref) return false; ex.ref = ref; return true; }
     var m = E.map();
-    m.entities.push({ key: E.newKey(m), x: cell.x, y: cell.y, ref: ref, data: { side: 'N' } });
+    m.entities.push({ key: E.newKey(m), x: cell.x, y: cell.y, ref: ref, data: { side: cell.side || 'N' } });
     return true;
   }
   function eraseWallObject(cell) {
     if (!cell) return false;
-    var ex = wallEntAt(cell.x, cell.y); if (!ex) return false;
+    var ex = wallEntAt(cell.x, cell.y, cell.side); if (!ex) return false;
     var m = E.map(); m.entities.splice(m.entities.indexOf(ex), 1);
     if (E.selected === ex.key) E.selected = null; return true;
   }
@@ -676,7 +684,7 @@ var E = {
     if (wmb && E.mountHover && !E.mode && (E.tool === 'brush' || E.tool === 'erase')) {
       var mc = E.mountHover;
       if (E.tool !== 'erase') {
-        var gp = Render.wallMountPlace(m, wmb, { x: mc.x, y: mc.y, data: { side: 'N' } }, vx, vy, s);
+        var gp = Render.wallMountPlace(m, wmb, { x: mc.x, y: mc.y, data: { side: mc.side || 'N' } }, vx, vy, s);
         g.globalAlpha = 0.5;
         Render.drawObject(g, wmb, wmb.sprite, gp.dx, gp.dy, s, 'base', 0, gp.flip);
         Render.drawObject(g, wmb, wmb.sprite, gp.dx, gp.dy, s, 'top', 0, gp.flip);
@@ -684,7 +692,8 @@ var E = {
       }
       g.strokeStyle = E.tool === 'erase' ? '#ff7a6a' : '#ffd27a';
       g.lineWidth = Math.max(3, Math.round(s * 0.18)); g.lineCap = 'round'; g.beginPath();
-      g.moveTo(vx + mc.x * s, vy + mc.y * s); g.lineTo(vx + (mc.x + 1) * s, vy + mc.y * s);   // the cell's north wall line (south face)
+      g.moveTo(vx + mc.x * s, vy + mc.y * s);                                                  // the cell's north wall line, or its west one
+      if (mc.side === 'W') g.lineTo(vx + mc.x * s, vy + (mc.y + 1) * s); else g.lineTo(vx + (mc.x + 1) * s, vy + mc.y * s);
       g.stroke(); g.lineWidth = 1; g.lineCap = 'butt';
     }
 
@@ -861,7 +870,7 @@ var E = {
       if (!he || !ed || he.orient !== ed.orient || he.x !== ed.x || he.y !== ed.y || he.side !== ed.side) { E.hoverEdge = ed; E.redraw(); }
     } else if (E.wallMountBrush()) {   // track the mount cell (south-facing wall) for the wall-mount ghost
       var mc = E.mountCellAt(ev), mh = E.mountHover;
-      if (!mh || !mc || mh.x !== mc.x || mh.y !== mc.y) { E.mountHover = mc; E.redraw(); }
+      if (!mh || !mc || mh.x !== mc.x || mh.y !== mc.y || mh.side !== mc.side) { E.mountHover = mc; E.redraw(); }
     }
     if (!drag) return;
     if (drag.kind === 'wall') {

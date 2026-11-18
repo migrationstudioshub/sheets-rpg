@@ -1119,4 +1119,26 @@ test('a door in a wall opens with the use key from either side of the wall', () 
   assert.strictEqual(World.mapState(ws, 'm').states['m.e1'], 'closed', 'closed again from the south side');
 });
 
+test('a window in a N-S wall: you peek through it only when standing at it', () => {
+  const row = ['grass', 'grass', 'grass', 'grass', 'grass'];
+  const col = () => ['', '', 'brick:2', '', ''];
+  const c = Content.build({
+    Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+    WallStyles: [{ id: 'brick', name: 'Brick', blocks_move: true, blocks_sight: true }],
+    Objects: [{ id: 'win', name: 'Window', kind: 'deco', walkable: true, properties: '{"layer":"wall","opening":"window"}' }],
+    Maps: [{ id: 'm', name: 'M', width: 5, height: 5, terrain: JSON.stringify([row, row, row, row, row]),
+      vWalls: JSON.stringify([col(), col(), col(), col(), col()]) }]
+  });
+  const map = c.maps.m;
+  map.entities = [{ key: 'm.e1', x: 2, y: 2, ref: 'win', data: { side: 'W' } }];
+  const ws = { maps: {} }, st = (e) => World.stateOf(c, ws, 'm', e);
+  World.syncEdges(c, ws, 'm');
+  assert.strictEqual(Rules.tryMove(c, map, 1, 2, 'E', {}).ok, false, 'no walking through');
+  assert.ok(World.canSee(c, map, 1, 2, 4, 2, st), 'at the window you see straight through, west to east');
+  assert.ok(World.canSee(c, map, 2, 2, 0, 2, st), 'and east to west');
+  assert.ok(!World.canSee(c, map, 1, 2, 3, 0, st), 'only a narrow cone');
+  assert.ok(!World.canSee(c, map, 0, 2, 3, 2, st), 'a step back it is just wall');
+  assert.ok(!World.canSee(c, map, 1, 1, 3, 1, st), 'and so is the next row');
+});
+
 console.log(`\n${passed} world tests passed`);

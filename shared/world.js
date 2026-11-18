@@ -321,7 +321,8 @@ var World = (function () {
     if (map) (map.entities || []).forEach(function (e) {
       var o = objOf(c, e), kind = openingOf(o); if (!kind) return;
       var shut = kind === 'door' && stateFn(e) !== 'open';
-      var rec = { move: kind === 'window' || shut, sight: shut, key: e.key };
+      // A window never lets you through, and shows what is behind it only to someone standing right at it (peek).
+      var rec = { move: kind === 'window' || shut, sight: shut || kind === 'window', peek: kind === 'window', key: e.key };
       fixtureEdges(o, e).forEach(function (ed) { out[R.edgeKey(ed.orient, ed.x, ed.y)] = rec; });
     });
     return out;
@@ -578,6 +579,11 @@ var World = (function () {
   }
   /** Hunger and thirst drain over time; at zero they gnaw at your health. Set to 0 in Config to disable. */
   function survivalTick(c, ws, p, now, hDecay, tDecay, starveDmg, starveMs, ev) {
+    // Time only passes for a player who is in the game. A playing client checks in every few seconds, so a
+    // gap longer than AWAY_MS means they were logged out: that stretch costs no food or water, and the
+    // starvation clock starts afresh instead of landing all its missed bites at once.
+    var AWAY_MS = 120000;
+    if (p.lastSurvival != null && now - p.lastSurvival > AWAY_MS) { p.lastSurvival = now; p.nextStarve = 0; }
     if (p.lastSurvival != null) {
       var secs = Math.max(0, now - p.lastSurvival) / 1000;
       if (hDecay) p.hunger = Math.max(0, (Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)) - hDecay * secs / 60);
@@ -733,29 +739,32 @@ var World = (function () {
   // one of its two edges. A lone wall (or a wall's end) still lets a diagonal slip past, but two collinear
   // segments forming a straight barrier correctly seal the diagonal that crosses them. `blk(c, token)`
   // chooses which walls count: sight for shots and sight-skills, movement for melee/physical reach.
-  function edgeBlocks(c, map, a, b, what) {
+  function edgeBlocks(c, map, a, b, what, from) {
     var R = Rl();
-    function w(ax, ay, bx, by) { return R.blockedBetween(c, map, ax, ay, bx, by, what); }
+    function w(ax, ay, bx, by) { return R.blockedBetween(c, map, ax, ay, bx, by, what, from); }
     if (a.x === b.x || a.y === b.y) return w(a.x, a.y, b.x, b.y);
     return (w(a.x, a.y, b.x, a.y) || w(b.x, a.y, b.x, b.y)) &&
            (w(a.x, a.y, a.x, b.y) || w(a.x, b.y, b.x, b.y));
   }
-  function edgeBlocksSight(c, map, a, b) { return edgeBlocks(c, map, a, b, 'sight'); }
+  function edgeBlocksSight(c, map, a, b, from) { return edgeBlocks(c, map, a, b, 'sight', from); }
   function edgeBlocksMove(c, map, a, b) { return edgeBlocks(c, map, a, b, 'move'); }
   // Is the straight line between two cells clear? `edgeFn` picks the wall rule: sight for seeing/shooting,
   // movement for a thrown item's flight and a blast's reach (an explosion is stopped by any solid wall).
-  function clearLine(c, map, x0, y0, x1, y1, stateFn, edgeFn) {
+  function clearLine(c, map, x0, y0, x1, y1, stateFn, edgeFn, noPeek) {
     var cells = lineCells(x0, y0, x1, y1);
     for (var i = 1; i < cells.length - 1; i++) if (blocksSight(c, map, cells[i].x, cells[i].y, stateFn)) return false;
-    for (var j = 0; j < cells.length - 1; j++) if (edgeFn(c, map, cells[j], cells[j + 1])) return false;
+    var from = noPeek ? null : { x: x0, y: y0, tx: x1, ty: y1 };   // the viewer + target: a window only shows a narrow cone to someone at it
+    for (var j = 0; j < cells.length - 1; j++) if (edgeFn(c, map, cells[j], cells[j + 1], from)) return false;
     return true;
   }
-  function canSee(c, map, x0, y0, x1, y1, stateFn) { return clearLine(c, map, x0, y0, x1, y1, stateFn, edgeBlocksSight); }
+  function canSee(c, map, x0, y0, x1, y1, stateFn, noPeek) { return clearLine(c, map, x0, y0, x1, y1, stateFn, edgeBlocksSight, noPeek); }
 
   // ------------------------------------------------------------ visibility (what a player can see)
   // The set of cells visible from (px,py): every cell within `radius` with a clear sight line — the SAME
   // line-of-sight rule combat uses, so "I can see it" and "I can shoot it" never disagree. Returns
   // {"x,y": 1}. The caller must have the opening overlay current (syncEdges / syncEdgesView).
+  // Cells seen ONLY by peeking through a window you stand at get the value 2 instead of 1: they are in view
+  // now, but a client does not remember them (a peek does not explore the room).
   // A second pass adds cells that sit right beside a visible cell with nothing sight-blocking between them
   // and that lie no further from the viewer — it fills the one-cell notches straight sight lines leave
   // along walls, without ever leaking through one.
@@ -763,7 +772,7 @@ var World = (function () {
     var out = {}, r = radius > 0 ? radius : 16, x, y;
     var xa = Math.max(0, px - r), xb = Math.min(map.width - 1, px + r), ya = Math.max(0, py - r), yb = Math.min(map.height - 1, py + r);
     for (y = ya; y <= yb; y++) for (x = xa; x <= xb; x++)
-      if (canSee(c, map, px, py, x, y, stateFn)) out[x + ',' + y] = 1;
+      if (canSee(c, map, px, py, x, y, stateFn, true)) out[x + ',' + y] = 1;
     var add = [];
     for (y = ya; y <= yb; y++) for (x = xa; x <= xb; x++) {
       if (out[x + ',' + y]) continue;
@@ -776,6 +785,10 @@ var World = (function () {
       }
     }
     add.forEach(function (k) { out[k] = 1; });
+    var ov = map._edgeOv || {}, R = Rl();                     // standing at a window? add the peek cone
+    var atWindow = [['h', px, py], ['h', px, py + 1], ['v', px, py], ['v', px + 1, py]].some(function (q) { var o = ov[R.edgeKey(q[0], q[1], q[2])]; return o && o.peek; });
+    if (atWindow) for (y = ya; y <= yb; y++) for (x = xa; x <= xb; x++)
+      if (!out[x + ',' + y] && canSee(c, map, px, py, x, y, stateFn)) out[x + ',' + y] = 2;
     return out;
   }
   // How a viewer perceives something standing on a cell: 'seen' (in sight), 'sensed' (not in sight, but

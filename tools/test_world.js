@@ -631,6 +631,19 @@ test('hunger and thirst drain over time; eating and drinking restore them', () =
   assert.match(texts(act(s, { type: 'use', item: 'ration' })), /not hungry/);
 });
 
+test('time away from the game costs no food, water or health', () => {
+  const s = fresh();
+  World.advance(s.c, s.ws, 'map_3', [s.p], 0, mid, []);
+  World.advance(s.c, s.ws, 'map_3', [s.p], 8 * 3600 * 1000, mid, []);  // back after eight hours logged out
+  assert.strictEqual(s.p.hunger, 100); assert.strictEqual(s.p.thirst, 100);
+  World.advance(s.c, s.ws, 'map_3', [s.p], 8 * 3600 * 1000 + 60000, mid, []);   // a minute of play drains as usual
+  assert.ok(Math.abs(s.p.hunger - 99.4) < 1e-6);
+  s.p.hunger = 0; const hp0 = s.p.hp;
+  World.advance(s.c, s.ws, 'map_3', [s.p], 8 * 3600 * 1000 + 63000, mid, []);   // starving: first bite scheduled
+  World.advance(s.c, s.ws, 'map_3', [s.p], 30 * 3600 * 1000, mid, []);          // ...then away for a day
+  assert.strictEqual(s.p.hp, hp0, 'no starvation damage piles up while away');
+});
+
 test('an empty stomach gnaws at your health', () => {
   const s = fresh();
   World.advance(s.c, s.ws, 'map_3', [s.p], 60000, mid, []);            // clock now at 60 s
@@ -1019,7 +1032,7 @@ test('a monster cannot melee you through a wall, but can when adjacent in the op
   assert.ok(p.hp < 100, 'with no wall between, the adjacent monster hits');
 });
 
-test('wall openings: a window passes sight but not feet, an archway passes both, the plain wall neither', () => {
+test('wall openings: a window shows through only to someone standing at it, an archway passes both, the plain wall neither', () => {
   const row = ['grass', 'grass', 'grass', 'grass', 'grass'];
   const c = Content.build({
     Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
@@ -1039,7 +1052,17 @@ test('wall openings: a window passes sight but not feet, an archway passes both,
   const ws = { maps: {} }, st = (e) => World.stateOf(c, ws, 'm', e);
   World.syncEdges(c, ws, 'm');
   assert.strictEqual(Rules.tryMove(c, map, 1, 2, 'N', {}).ok, false, 'you cannot climb through a window');
-  assert.ok(World.canSee(c, map, 1, 2, 1, 1, st), 'you can see through a window');
+  assert.ok(World.canSee(c, map, 1, 2, 1, 1, st), 'standing at a window you can see through it');
+  assert.ok(World.canSee(c, map, 1, 2, 1, 0, st), 'straight ahead');
+  assert.ok(!World.canSee(c, map, 1, 2, 0, 1, st) && !World.canSee(c, map, 1, 2, 2, 0, st), 'but only a narrow cone: not off to the side');
+  const pk = World.visibleCells(c, map, 1, 2, 8, st);
+  assert.strictEqual(pk['1,1'], 2, 'cells seen through the window are marked as a peek');
+  assert.strictEqual(pk['1,3'], 1, 'cells on your own side are plainly seen');
+  assert.ok(World.canSee(c, map, 1, 1, 1, 3, st), 'from the other side too');
+  assert.ok(!World.canSee(c, map, 1, 3, 1, 1, st), 'one step back from the window it is just wall');
+  assert.ok(!World.canSee(c, map, 0, 2, 1, 1, st), 'and so it is from the next column');
+  const vw = World.visibleCells(c, map, 1, 4, 8, st);
+  assert.ok(!vw['1,1'] && !vw['1,0'], 'nothing behind the window is visible from a distance');
   assert.strictEqual(Rules.tryMove(c, map, 3, 2, 'N', {}).ok, true, 'an archway lets you walk through');
   assert.ok(World.canSee(c, map, 3, 2, 3, 1, st), 'and see through');
   assert.strictEqual(Rules.tryMove(c, map, 2, 2, 'N', {}).ok, false, 'the plain wall still blocks');

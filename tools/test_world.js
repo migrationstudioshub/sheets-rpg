@@ -1074,4 +1074,26 @@ test('visibility: you see your side of a wall and through its openings, not thro
   assert.strictEqual(World.perceive(vis, { '0,1': 1 }, 0, 1), 'sensed', 'another sense (hearing, later) turns hidden into an outline');
 });
 
+test('a door in a wall opens with the use key from either side of the wall', () => {
+  const row = ['grass', 'grass', 'grass'];
+  const c = Content.build({
+    Terrain: [{ id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 }],
+    WallStyles: [{ id: 'brick', name: 'Brick', blocks_move: true, blocks_sight: true }],
+    Kinds: [{ kind: 'door', property: 'states', default: 'closed|open' }],
+    Objects: [{ id: 'door1', name: 'Door', kind: 'door', walkable: true, properties: '{"layer":"wall"}' }],
+    Maps: [{ id: 'm', name: 'M', width: 3, height: 3, terrain: JSON.stringify([row, row, row]),
+      hWalls: JSON.stringify([[], [], ['brick:2', 'brick:2', 'brick:2'], []]) }]
+  });
+  const map = c.maps.m;
+  map.entities = [{ key: 'm.e1', x: 1, y: 2, ref: 'door1', data: { side: 'N' } }];
+  const ws = { maps: {} };
+  World.syncEdges(c, ws, 'm');
+  const p = { id: 'p1', map: 'm', x: 1, y: 1, facing: 'S', hp: 10, maxHp: 10, inventory: {}, flags: {}, cooldowns: {} };
+  World.act(c, ws, p, { type: "interact" }, 1000, mid, [p]);
+  assert.strictEqual(World.mapState(ws, 'm').states['m.e1'], 'open', 'opened from the north side');
+  p.x = 1; p.y = 2; p.facing = 'N';
+  World.act(c, ws, p, { type: "interact" }, 5000, mid, [p]);
+  assert.strictEqual(World.mapState(ws, 'm').states['m.e1'], 'closed', 'closed again from the south side');
+});
+
 console.log(`\n${passed} world tests passed`);

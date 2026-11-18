@@ -250,7 +250,7 @@ def build():
         kind = KIND_FIX.get(r['name'], KIND_MAP[r['kind']])
         objects.append({
             'id': r['id'], 'name': r['name'] or r['id'], 'kind': kind, 'sprite': imgur(r['imgur']),
-            'sprite_top': '', 'sprite_states': '', 'frames': '', 'frame_ms': '', 'walkable': r['pass'] == '1',
+            'sprite_states': '', 'frames': '', 'frame_ms': '', 'walkable': r['pass'] == '1',
             'blocks_sight': r['name'] in ('Tree', 'Wooden Door', 'Cave Door'),
             'properties': json.dumps(OBJ_PROPS[r['id']]) if r['id'] in OBJ_PROPS else '',
             'on_interact': '', 'notes': f"imported (old kind: {r['kind']})",
@@ -259,7 +259,7 @@ def build():
         o.update(OBJ_FIX.get(o['id'], {}))
     # one Tree made of the two imported halves: only the trunk blocks, the crown is drawn over characters
     objects.append({'id': 'obj_tree', 'name': 'Tree', 'kind': 'deco', 'sprite': imgur('rhqzQpI'),
-                    'sprite_top': imgur('vIDIahx'), 'sprite_states': '', 'frames': '', 'frame_ms': '',
+                    'sprite_states': '', 'frames': '', 'frame_ms': '',
                     'walkable': False, 'blocks_sight': True, 'properties': '', 'on_interact': '',
                     'notes': 'Two tiles tall: trunk (blocks) + crown (drawn above characters)'})
     # ---- new map objects from the objects maker (multi-tile footprints, facings, layers) ----
@@ -283,7 +283,7 @@ def build():
         ('blood', 'Blood', _op('blood'), '', True, False, {'width': 1, 'layer': 'ground_decal'}),
     ]
     for (oid, nm, spr, states, walk, bsight, props) in DEMO_OBJECTS:
-        objects.append({'id': oid, 'name': nm, 'kind': 'deco', 'sprite': spr, 'sprite_top': '',
+        objects.append({'id': oid, 'name': nm, 'kind': 'deco', 'sprite': spr, 
                         'sprite_states': states, 'frames': '', 'frame_ms': '', 'walkable': walk,
                         'blocks_sight': bsight, 'properties': json.dumps(props), 'on_interact': '',
                         'notes': 'from the objects maker'})
@@ -524,7 +524,7 @@ README = [
     ('', 'pass_n/e/s/w: 1 = can cross that side of the tile, 0 = blocked.'),
     ('Kinds', 'What each kind of interactable can be configured with. The map editor builds its forms from this.'),
     ('Objects', 'Placeable things. kind is one of the kinds in Kinds. walkable TRUE = players can stand on it. blocks_sight TRUE = skills cannot pass it.'),
-    ('', 'Tall objects: sprite_top is drawn one tile up, over characters (only the bottom tile blocks). An image taller than wide works too.'),
+    ('', 'Tall objects: use one image taller than it is wide; the part above the bottom tile is drawn over characters (only the bottom tile blocks).'),
     ('', 'Animation (Objects and Terrain): the sprite is a horizontal strip; frames = how many, frame_ms = time per frame.'),
     ('Maps', 'terrain = JSON grid of Terrain ids, row by row. Edited with the map editor, not by hand.'),
     ('MapEntities', 'Objects placed on maps. key is unique; data = JSON of property overrides.'),

@@ -74,7 +74,7 @@ var Schema = (function () {
     objects: { collection: 'objects', id: 'id', label: 'Objects', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''),
       f('kind', 'select', 'deco', 'What it does', { options: ['deco', 'container', 'door', 'switch', 'trap', 'rest', 'sign', 'npc', 'spawn', 'teleport', 'trigger', 'craft'] }),
-      f('sprite', 'image', ''), f('sprite_top', 'image', '', 'Upper tile for tall objects'),
+      f('sprite', 'image', ''),
       f('sprite_states', 'text', '', 'state=sprite pairs, e.g. open=url; empty=url'),
       f('frames', 'number', 1), f('frame_ms', 'number', 200),
       f('walkable', 'bool', false, 'Can you walk onto it? Off = solid (a wall, a table). Independent of sight.'),

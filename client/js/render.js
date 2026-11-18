@@ -188,8 +188,16 @@ var Render = (function () {
     var dw = dImg0 ? Math.round(dImg0.width * sc) : S;
     var dh = dImg0 ? Math.round(dImg0.height * sc) : Math.min(fh, 2 * S);
     var doorLeft = fx + (fw - dw) / 2 + offX, doorBottom = line + offY, doorTop = doorBottom - dh;
+    // An open door with its own picture (sprite_states "open=…", e.g. the frame with the leaf swung away) shows
+    // that picture in the doorway; without one an open door is just the hole. Placed like the closed door.
+    var oImg = open && o.spriteStates && o.spriteStates.open && Assets.get(o.spriteStates.open);
+    function drawOpen() {
+      if (!oImg) return;
+      var ow = Math.round(oImg.width * sc), oh = Math.round(oImg.height * sc);
+      g.drawImage(oImg, 0, 0, oImg.width, oImg.height, fx + (fw - ow) / 2 + offX, doorBottom - oh, ow, oh);
+    }
     if (job.cut) {                                        // the wall pass leaves the doorway clear of stub
-      if (open) return;                                   // open: just the gap
+      if (open) { drawOpen(); return; }                   // open: the open-door picture, or just the gap
       if (dImg0) g.drawImage(dImg0, 0, 0, dImg0.width, dImg0.height, doorLeft, doorTop, dw, dh);
       else { g.fillStyle = shade(col, -0.32); g.fillRect(doorLeft, doorTop, dw, dh); g.strokeStyle = shade(col, -0.5); g.strokeRect(doorLeft + 0.5, doorTop + 0.5, dw - 1, dh - 1); }
       return;
@@ -210,6 +218,7 @@ var Render = (function () {
     } else if (open) og.clearRect(dX, dY, dw, dh);                                   // no art: a plain rectangular hole / panel
     else { og.fillStyle = shade(col, -0.32); og.fillRect(dX, dY, dw, dh); og.strokeStyle = shade(col, -0.5); og.strokeRect(dX + 0.5, dY + 0.5, dw - 1, dh - 1); }
     g.drawImage(off, uL, uT);
+    drawOpen();
   }
 
   // Fill a colour over a wall prim's drawn area (mirrors drawPrim25's rects) — used to tint a closed door
@@ -310,15 +319,9 @@ var Render = (function () {
       blit(ih - baseSrcH, baseSrcH, baseDstY, baseDstH);
     } else {
       blit(0, topSrcH, baseDstY - topSrcH * sc, topSrcH * sc);
-      var top = o.spriteTop && Assets.get(o.spriteTop);     // legacy: a separate stacked top image
-      if (top) {
-        var ft = frameOf(top, o.frames, o.frameMs, now), rows = top.height / ft.sw;
-        g.drawImage(top, ft.sx, 0, ft.sw, top.height, dx, baseDstY - topSrcH * sc - rows * size, destW, rows * size);
-      }
     }
   }
   function hasTop(o, path) {
-    if (o.spriteTop) return true;
     var img = path && Assets.get(path); if (!img) return false;
     return img.height > NT + 1;                             // taller than one footprint tile = overflow above
   }
@@ -566,7 +569,7 @@ var Render = (function () {
           var dOpen = opening === 'arch' || states[e.key] === 'open';
           if (isH) {
             edges.forEach(function (q) { doorFaces[q.x + ',' + q.y] = 1; if (cut) doorGap[q.x + ',' + q.y] = 1; });   // the door draws these faces itself; on a cut wall its whole width is a gap in the stub
-            renderables.push({ sortY: oy + ed0.y * T + 0.26, dark: inDark(ed0.x, ed0.y), door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
+            renderables.push({ sortY: oy + ed0.y * T + 0.6, dark: inDark(ed0.x, ed0.y), door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
           } else edges.forEach(function (q) { vDoor[q.x + ',' + q.y] = dOpen ? 'open' : 'shut'; });   // in a thin N-S wall: a gap, or a tinted slab
           return;
         }

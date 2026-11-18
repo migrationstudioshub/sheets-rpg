@@ -356,7 +356,7 @@ var CStudio = (function () {
   function objForm() {
     var form = $('form'); form.innerHTML = '';
     if (curIndex < 0 || !rows('objects')[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select an object, or click New.' })); return; }
-    var o = rows('objects')[curIndex], p = propsObj(o);
+    var o = rows('objects')[curIndex], p = propsObj(o), statesInput = null;
     form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: rowLabel('objects', o) }), h('span', { className: 'pill', text: 'Objects' }),
       h('button', { title: 'Delete this object', text: '🗑 Delete', style: 'margin-left:auto', onclick: function () {
         if (!confirm('Delete this object?')) return; rows('objects').splice(curIndex, 1); curIndex = -1; persist(); renderNav(); renderList(); renderForm();
@@ -366,7 +366,23 @@ var CStudio = (function () {
       if (fl.key === 'properties') return;
       var el = fieldEl(o, fl);
       if (fl.key === 'kind') { var sel = el.querySelector('select'); if (sel) sel.addEventListener('change', function () { setTimeout(objForm, 0); }); }
-      form.appendChild(el);
+      if (fl.key === 'sprite_states') statesInput = el.querySelector('input');
+      if (fl.key === 'sprite' && o.kind === 'door') {
+        // A door has two pictures, one under the other: sprite-closed is the plain `sprite` field, sprite-open
+        // is the "open" entry of sprite_states (this picker just edits that entry).
+        el.querySelector('label').textContent = 'sprite-closed';
+        var stPairs = function () { var out = []; String(o.sprite_states || '').split(';').forEach(function (q) { var i = q.indexOf('='); if (i > 0) out.push([q.slice(0, i).trim(), q.slice(i + 1).trim()]); }); return out; };
+        var openNow = (stPairs().filter(function (q) { return q[0] === 'open'; })[0] || [])[1] || '';
+        form.appendChild(h('div', { className: 'field' },
+          h('label', { text: 'sprite-open' }),
+          imageControl(o, { key: 'sprite_states' }, openNow, function (v) {
+            var list = stPairs().filter(function (q) { return q[0] !== 'open'; }); if (v) list.push(['open', v]);
+            o.sprite_states = list.map(function (q) { return q[0] + '=' + q[1]; }).join('; '); persist();
+            if (statesInput) statesInput.value = o.sprite_states;
+          }),
+          h('div', { className: 'help', text: 'Shown while the door is open (e.g. the empty frame). Leave empty and an open door is just a hole in the wall.' })));
+      }
+      if (fl.key === 'sprite' && o.kind === 'door') form.insertBefore(el, form.lastChild); else form.appendChild(el);
     });
     // Footprint — the solid tiles this object blocks (bottom-left anchored). w×h, default 1×1.
     // Non-walkable objects block their whole footprint, not just the anchor tile. Width auto-fills

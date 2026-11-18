@@ -175,7 +175,7 @@ var E = {
     Object.keys(c.tilesets).forEach(function (k) { paths.push(c.tilesets[k].image); });
     Object.keys(c.monsters || {}).forEach(function (k) { if (c.monsters[k].sprite) paths.push(c.monsters[k].sprite); });
     Object.keys(c.objects).forEach(function (k) {
-      var o = c.objects[k]; if (o.sprite) paths.push(o.sprite); if (o.spriteTop) paths.push(o.spriteTop);
+      var o = c.objects[k]; if (o.sprite) paths.push(o.sprite);
       Object.keys(o.spriteStates).forEach(function (s) { paths.push(o.spriteStates[s]); });
     });
     Object.keys(c.wallStyles || {}).forEach(function (k) {

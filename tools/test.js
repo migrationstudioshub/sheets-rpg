@@ -9,6 +9,8 @@ const assert = require('assert');
 
 const root = path.join(__dirname, '..');
 const tables = JSON.parse(fs.readFileSync(path.join(root, 'data/tables.json'), 'utf8'));
+// Several moves are replayed here at one frozen instant: switch the referee's walking-speed limit off (it is tested in test_world.js).
+tables.Config = tables.Config.filter(r => r.key !== 'move_burst').concat([{ key: 'move_burst', value: 9999 }]);
 const Content = require('../shared/content.js');
 const Autotile = require('../shared/autotile.js');
 const Rules = require('../shared/rules.js');

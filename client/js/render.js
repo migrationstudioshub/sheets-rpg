@@ -360,11 +360,8 @@ var Render = (function () {
   /** Which sprite to show: an active state (open/empty…) wins, else the facing view, else the base sprite. */
   function objPath(o, st, facing) {
     if (st && o.spriteStates[st]) return o.spriteStates[st];
-    if (facing) {
-      var key = (facing === 'left' || facing === 'right' || facing === 'W' || facing === 'E') ? 'side' : facing;
-      if (o.spriteStates[key]) return o.spriteStates[key];
-    }
-    return o.sprite;
+    if (facing && o.spriteStates[facing]) return o.spriteStates[facing];   // a state named exactly like the facing (older maps)
+    return facing && typeof Rules !== 'undefined' ? Rules.facingSprite(o, String(facing)).path : o.sprite;
   }
 
   /**
@@ -739,7 +736,7 @@ var Render = (function () {
       }
       if (!sight.known(e.x, e.y)) return;                                 // inside a room never seen
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
-      var path = objPath(o, st, facing), flip = facing === 'left' || facing === 'W';
+      var path = objPath(o, st, facing), flip = facing === 'left' || (!!facing && Rules.facingOf(String(facing)) === 'W');
       if (!path && e.bp !== undefined) path = '#built';              // something a player built with no art yet: show a lettered box, never nothing
       var dx = ox + e.x * T, dy = oy + e.y * T, dz = o.draw || 'auto';
       if (dz === 'over') {
@@ -751,7 +748,11 @@ var Render = (function () {
         drawStateMark(g, o, st, dx, dy, T);
         dim(false);
       } else {
-        renderables.push({ sortY: Math.round(oy + e.y * T) + T, dark: inDark(e.x, e.y), alpha: e.need && (e.prog || 0) < e.need ? 0.5 : 1, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
+        // Seen from behind (facing north) a seat's back is on the camera side of whoever is on it, so on the SAME
+        // tile it draws after the character (+0.1: still under a wall on that line, which is +0.25). Any other
+        // facing keeps the tie as it was: the character on the tile is drawn over the object.
+        var back = facing && Rules.turnable(o) && Rules.facingOf(String(facing)) === 'N' ? 0.1 : 0;
+        renderables.push({ sortY: Math.round(oy + e.y * T) + T + back, dark: inDark(e.x, e.y), alpha: e.need && (e.prog || 0) < e.need ? 0.5 : 1, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
       }
     });
 
@@ -881,6 +882,25 @@ var Render = (function () {
    * Build mode: the ghost of the blueprint at the spot under the cursor — the wall or object drawn faint,
    * outlined green where it may go and red where it may not, with the reason. gh = {bp, x, y, side, ok, reason}.
    */
+  /** While building: whose land is whose. Bases you belong to get a green outline, others a red wash. */
+  Renderer.prototype.drawClaims = function (cam, claims, me, gh) {
+    var g = this.g, c = this.content, T = c.config.tile_size || 32, ox = -cam.x, oy = -cam.y;
+    function box(x, y, r) { return [ox + (x - r) * T, oy + (y - r) * T, (2 * r + 1) * T, (2 * r + 1) * T]; }
+    g.save(); g.lineWidth = 2;
+    (claims || []).forEach(function (q) {
+      var b = box(q.x, q.y, q.r), mine = World.isMember(q.e, me);
+      if (!mine) { g.fillStyle = 'rgba(220,70,60,0.16)'; g.fillRect(b[0], b[1], b[2], b[3]); }
+      g.strokeStyle = mine ? 'rgba(111,224,138,0.9)' : 'rgba(255,107,91,0.9)'; g.setLineDash([]);
+      g.strokeRect(b[0] + 1, b[1] + 1, b[2] - 2, b[3] - 2);
+    });
+    var o = gh && gh.bp && gh.bp.places === 'object' ? c.objects[gh.bp.object] : null;
+    if (o && o.kind === 'claim') {                                       // the land this flag would take
+      var r = Number((o.properties || {}).claim_radius) || 8, nb = box(gh.x, gh.y, r);
+      g.strokeStyle = gh.ok ? 'rgba(111,224,138,0.9)' : 'rgba(255,107,91,0.9)'; g.setLineDash([6, 5]);
+      g.strokeRect(nb[0] + 1, nb[1] + 1, nb[2] - 2, nb[3] - 2);
+    }
+    g.restore();
+  };
   Renderer.prototype.drawGhost = function (cam, gh) {
     if (!gh) return;
     var g = this.g, c = this.content, T = c.config.tile_size || 32, ox = -cam.x, oy = -cam.y, map = this.map;
@@ -889,8 +909,9 @@ var Render = (function () {
     var x0, y0, x1, y1;                                                 // the outline: a line for an edge, a box for a tile
     if (bp.places === 'wall') {
       var v = gh.side === 'W', h = bp.wallHeight || 2;
-      (v ? ['vface', 'vcap'] : ['hface', 'hcap']).forEach(function (kind) { drawPrim25(g, c, { kind: kind, x: gh.x, y: gh.y, h: h, style: bp.wallStyle, side: 'c' }, ox, oy, T, false, 0); });
-      x0 = ox + gh.x * T; y0 = oy + gh.y * T; x1 = v ? x0 : x0 + T; y1 = v ? y0 + T : y0;
+      (v ? ['vface', 'vcap'] : ['hface', 'hcap']).forEach(function (kind) { drawPrim25(g, c, { kind: kind, x: gh.x, y: gh.y, h: h, style: bp.wallStyle, side: gh.off || 'c' }, ox, oy, T, false, 0); });
+      var gHd = Math.round(Math.max(4, Math.round(T * 0.32)) / 2), gOff = gh.off === 'r' ? gHd : gh.off === 'l' ? -gHd : 0;   // same nudge the wall is drawn with
+      x0 = ox + gh.x * T + gOff; y0 = oy + gh.y * T; x1 = v ? x0 : x0 + T; y1 = v ? y0 + T : y0;
     } else if (o && layerOf(o) === 'wall') {
       var mp = wallMountPlace(map, o, { x: gh.x, y: gh.y, data: { side: gh.side || 'N' } }, ox, oy, T);
       drawObject(g, o, o.sprite, mp.dx, mp.dy, T, 'base', 0, mp.flip); drawObject(g, o, o.sprite, mp.dx, mp.dy, T, 'top', 0, mp.flip);
@@ -898,7 +919,8 @@ var Render = (function () {
       x0 = ox + gh.x * T; y0 = oy + gh.y * T; x1 = vv ? x0 : x0 + w2 * T; y1 = vv ? y0 + T : y0;
       if (vv) { y0 = oy + (gh.y - hh2 + 1) * T; }
     } else if (o) {
-      drawObject(g, o, o.sprite || '#built', ox + gh.x * T, oy + gh.y * T, T, 'base', 0, false); drawObject(g, o, o.sprite || '#built', ox + gh.x * T, oy + gh.y * T, T, 'top', 0, false);
+      var gfs = Rules.facingSprite(o, gh.facing || 'S'), gpath = gfs.path || '#built';      // the ghost shows the way it faces
+      drawObject(g, o, gpath, ox + gh.x * T, oy + gh.y * T, T, 'base', 0, gfs.flip); drawObject(g, o, gpath, ox + gh.x * T, oy + gh.y * T, T, 'top', 0, gfs.flip);
       var fw = Math.max(1, o.footprintW || 1), fh = Math.max(1, o.footprintH || 1);
       g.globalAlpha = 1; g.strokeStyle = col; g.lineWidth = 2;
       g.strokeRect(ox + gh.x * T + 1, oy + (gh.y - fh + 1) * T + 1, fw * T - 2, fh * T - 2);

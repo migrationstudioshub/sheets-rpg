@@ -4,10 +4,11 @@
  */
 var E = {
   tables: null, content: null, mapId: null,
-  layer: 'terrain', terrainLayer: 'base', tool: 'brush', paletteTab: 'terrain',
+  layer: 'terrain', terrainLayer: 'base', tool: 'rect', paletteTab: 'terrain',   // terrain is laid in blocks: rectangle is its default tool
   brush: { terrain: 'til_3', object: null, monster: null, wall: null },
   wallHeight: 2, hoverEdge: null, mountHover: null,   // edge walls: brush height + hovered edge; mountHover = wall-mount target cell
-  wallSide: 'center',   // N-S walls: 'center' straddles the line; 'cursor' snaps the wall onto whichever tile the cursor is nearer
+  brushFacing: 'S',     // which way the next turnable object (a chair) faces: T or Shift+wheel turns it
+  wallSide: 'cursor',   // N-S walls: 'center' straddles the line; 'cursor' snaps the wall onto whichever tile the cursor is nearer
   view: { zoom: 2, x: 40, y: 40 },
   show: { terrain: true, objects: true, grid: true },
   selected: null, hover: null, mode: null,
@@ -309,10 +310,15 @@ var E = {
   E.clearStamp = function () { E.stamp = null; };
   function placeObject(x, y, ref) {
     if (!E.inside(x, y) || !ref) return false;
-    var m = E.map(), old = E.entityAt(x, y);
-    if (old && old.ref === ref) return false;
+    var m = E.map(), old = E.entityAt(x, y), def = E.content.objects[ref];
+    var face = def && Rules.turnable(def) && E.brushFacing !== 'S' ? E.brushFacing : '';
+    if (old && old.ref === ref) {                           // painting the same thing again only turns it
+      if (!def || !Rules.turnable(def) || Rules.facingOf(old) === (face || 'S')) return false;
+      if (face) old.data.facing = face; else delete old.data.facing;
+      return old;
+    }
     if (old) m.entities.splice(m.entities.indexOf(old), 1);
-    var e = { key: E.newKey(m), x: x, y: y, ref: ref, data: {} };
+    var e = { key: E.newKey(m), x: x, y: y, ref: ref, data: face ? { facing: face } : {} };
     m.entities.push(e);
     return e;
   }
@@ -390,6 +396,11 @@ var E = {
     return e;
   }
   E.setPaletteTab = function (t) {
+    // Terrain defaults to the rectangle tool; things placed one at a time (objects, monsters, walls) to the brush.
+    if (t !== E.paletteTab) {
+      if (t === 'terrain' && E.tool === 'brush') E.tool = 'rect';
+      else if (E.paletteTab === 'terrain' && E.tool === 'rect' && (t === 'objects' || t === 'monsters' || t === 'walls')) E.tool = 'brush';
+    }
     E.paletteTab = t;
     E.layer = t === 'terrain' ? 'terrain' : t === 'walls' ? 'walls' : t === 'roof' ? 'roof' : t === 'nobuild' ? 'nobuild' : t === 'spawn' ? 'spawn' : 'objects';
   };
@@ -403,6 +414,24 @@ var E = {
     return true;
   }
   function clearSpawn() { var m = E.map(); if (!m || !m.spawn) return false; m.spawn = null; if (Panels.palette) Panels.palette(); return true; }
+  // While a wall stroke is held, it stays on the grid line it started on (same direction, same line, and in
+  // 'cursor' mode the same side): the cursor only chooses how far along that line. lock = the stroke's first edge.
+  E.edgeOnLine = function (ev, lock) {
+    var r = canvas.getBoundingClientRect(), s = cellSize(), m = E.map();
+    var fx = (ev.clientX - r.left - E.view.x) / s, fy = (ev.clientY - r.top - E.view.y) / s;
+    if (lock.orient === 'h') return { orient: 'h', x: Math.max(0, Math.min(m.width - 1, Math.floor(fx))), y: lock.y, side: lock.side };
+    return { orient: 'v', x: lock.x, y: Math.max(0, Math.min(m.height - 1, Math.floor(fy))), side: lock.side };
+  };
+  // Paint every segment from the last one painted to this one, so a fast drag leaves no gaps.
+  function paintWallRun(from, to) {
+    var along = to.orient === 'h' ? 'x' : 'y', a = from ? from[along] : to[along], b = to[along], step = a <= b ? 1 : -1, changed = false;
+    for (var i = a; ; i += step) {
+      var e = { orient: to.orient, x: to.x, y: to.y, side: to.side }; e[along] = i;
+      if (paintWall(e)) changed = true;
+      if (i === b) break;
+    }
+    return changed;
+  }
   E.clearSpawn = clearSpawn;
   // ---- edge walls ----
   function wallToken(edge) {
@@ -497,7 +526,7 @@ var E = {
     if (E.layer === 'objects' && e && eo && eo.kind === 'spawn' && e.data.monster) { E.brush.monster = e.data.monster; E.setPaletteTab('monsters'); }
     else if (E.layer === 'objects' && e) { E.brush.object = e.ref; E.setPaletteTab('objects'); }
     else { var picked = E.cells()[y][x]; if (picked) E.brush.terrain = picked; E.setPaletteTab('terrain'); }
-    E.setTool('brush'); Panels.palette();
+    E.setTool(E.paletteTab === 'terrain' ? 'rect' : 'brush'); Panels.palette();
   }
 
   // ------------------------------------------------------------ maps
@@ -634,7 +663,7 @@ var E = {
         var mp = Render.wallMountPlace(m, eo, e, vx, vy, s);                           // screen position (with view offset)
         var ms = Render.wallMountPlace(m, eo, e, 0, 0, s);                             // sort key in the no-offset space the other items use
         items.push({ sortY: ms.sortY, ent: e, o: eo, dx: mp.dx, dy: mp.dy, flip: mp.flip });
-      } else items.push({ sortY: Math.round(e.y * s) + s, ent: e, o: eo, dx: vx + e.x * s, dy: vy + e.y * s });
+      } else items.push({ sortY: Math.round(e.y * s) + s, ent: e, o: eo, dx: vx + e.x * s, dy: vy + e.y * s, face: eo && e.data && e.data.facing ? Rules.facingSprite(eo, e) : null });
     });
     if (Render.wall25) Render.wall25(c, m).forEach(function (p) {
       var isCap = p.kind === 'hcap' || p.kind === 'vcap';
@@ -648,9 +677,10 @@ var E = {
       if (!o) g.drawImage(Assets.placeholder('?', '#a33', t), it.dx, it.dy, s, s);
       else if (o.kind === 'spawn' && !o.sprite) drawSpawn(e, o, it.dx, it.dy, s);   // spriteless: editor-only marker
       else {
-        var path = (e.data && e.data.state && o.spriteStates[e.data.state]) || o.sprite;
-        Render.drawObject(g, o, path, it.dx, it.dy, s, 'base', 0, it.flip);
-        Render.drawObject(g, o, path, it.dx, it.dy, s, 'top', 0, it.flip);   // overflow (no-op when the sprite is one tile)
+        var path = (e.data && e.data.state && o.spriteStates[e.data.state]) || (it.face ? it.face.path : o.sprite);
+        var flp = it.flip || !!(it.face && it.face.flip);                    // turned objects show the way they face
+        Render.drawObject(g, o, path, it.dx, it.dy, s, 'base', 0, flp);
+        Render.drawObject(g, o, path, it.dx, it.dy, s, 'top', 0, flp);   // overflow (no-op when the sprite is one tile)
         if (o.kind === 'spawn') drawSpawnBadge(e, o, vx + e.x * s, vy + e.y * s, s);   // a sprited spawner (nest…): show what it spawns
       }
       g.globalAlpha = 1;
@@ -770,8 +800,10 @@ var E = {
           var bm = c.monsters[E.brush.monster], bmi = bm && Assets.get(bm.sprite);
           if (bmi) g.drawImage(bmi, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
         } else if (E.layer === 'objects' && E.brush.object) {
-          var bo = c.objects[E.brush.object], bi = bo && Assets.get(bo.sprite);
-          if (bi) g.drawImage(bi, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
+          var bo = c.objects[E.brush.object], bfs = bo && Rules.turnable(bo) ? Rules.facingSprite(bo, E.brushFacing) : null;
+          var bi = bo && Assets.get(bfs ? bfs.path : bo.sprite), bgx = vx + E.hover.x * s, bgy = vy + E.hover.y * s;
+          if (bi && bfs && bfs.flip) { g.save(); g.translate(bgx + s, bgy); g.scale(-1, 1); g.drawImage(bi, 0, 0, s, s); g.restore(); }
+          else if (bi) g.drawImage(bi, bgx, bgy, s, s);
         } else if (E.layer === 'terrain') {
           var tt = c.terrain[E.brush.terrain], gx = vx + E.hover.x * s, gy = vy + E.hover.y * s, gts, gimg;
           if (tt && tt.autotile && (gts = c.tilesets[tt.autotile]) && (gimg = Assets.get(gts.image))) {
@@ -861,7 +893,7 @@ var E = {
       if (E.tool !== 'erase' && !E.brush.wall) { Panels.status('pick a wall style in the palette first', true); return; }
       E.checkpoint();
       var wch = paintWall(edge);
-      drag = { kind: 'wall', changed: wch };
+      drag = { kind: 'wall', changed: wch, lock: edge, last: edge };
       if (wch) E.markDirty('map'); else E.undo.pop();
       return;
     }
@@ -898,7 +930,7 @@ var E = {
     var cell = cellAt(ev);
     if (!E.hover || E.hover.x !== cell.x || E.hover.y !== cell.y) { E.hover = cell; Panels.cellInfo(cell); E.redraw(); }
     if (E.layer === 'walls') {   // track the nearest edge for the walls-layer highlight (and to paint while dragging)
-      var ed = E.edgeAt(ev), he = E.hoverEdge;
+      var ed = drag && drag.kind === 'wall' && drag.lock ? E.edgeOnLine(ev, drag.lock) : E.edgeAt(ev), he = E.hoverEdge;
       if (!he || !ed || he.orient !== ed.orient || he.x !== ed.x || he.y !== ed.y || he.side !== ed.side) { E.hoverEdge = ed; E.redraw(); }
     } else if (E.wallMountBrush()) {   // track the mount cell (south-facing wall) for the wall-mount ghost
       var mc = E.mountCellAt(ev), mh = E.mountHover;
@@ -906,7 +938,10 @@ var E = {
     }
     if (!drag) return;
     if (drag.kind === 'wall') {
-      if (paintWall(E.edgeAt(ev))) { drag.changed = true; E.markDirty('map'); }
+      if (!drag.lock) { drag.lock = drag.last = E.edgeAt(ev); if (!drag.lock) return; }     // the press was off the map: lock on entering it
+      var we = E.edgeOnLine(ev, drag.lock);
+      if (paintWallRun(drag.last, we)) { drag.changed = true; E.markDirty('map'); }
+      drag.last = we;
       return;
     }
     if (drag.kind === 'wallobj') {
@@ -943,8 +978,26 @@ var E = {
   canvas.addEventListener('pointercancel', endDrag);
   canvas.addEventListener('pointerleave', function () { E.hover = null; E.hoverEdge = null; E.mountHover = null; E.redraw(); });
 
+  // Turn a turnable object: the selected one if there is one, else the one about to be placed. dir 1 = clockwise.
+  E.turn = function (dir) {
+    var sel = E.selected && E.entityByKey(E.selected), so = sel && E.content.objects[sel.ref];
+    if (sel && so && Rules.turnable(so) && !(so.properties && so.properties.layer === 'wall')) {
+      E.checkpoint();
+      var nf = Rules.nextFacing(sel, dir);
+      if (nf === 'S') delete sel.data.facing; else sel.data.facing = nf;
+      E.markDirty('map'); Panels.inspector(); E.redraw();
+      return true;
+    }
+    var bo = E.layer === 'objects' && E.paletteTab !== 'monsters' && E.brush.object && E.content.objects[E.brush.object];
+    if (!bo || !Rules.turnable(bo)) return false;
+    E.brushFacing = Rules.nextFacing(E.brushFacing, dir);
+    Panels.status('facing ' + ({ N: 'north', E: 'east', S: 'south', W: 'west' })[E.brushFacing] + ' (T or Shift+wheel turns)');
+    E.redraw();
+    return true;
+  };
   canvas.addEventListener('wheel', function (ev) {
     ev.preventDefault();
+    if (ev.shiftKey) { E.turn((ev.deltaY || ev.deltaX) > 0 ? 1 : -1); return; }      // Shift+wheel turns; plain wheel zooms
     var r = canvas.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
     var z = E.view.zoom, nz = Math.max(0.25, Math.min(8, z * (ev.deltaY < 0 ? 1.25 : 0.8)));
     E.view.x = mx - (mx - E.view.x) * nz / z; E.view.y = my - (my - E.view.y) * nz / z; E.view.zoom = nz;
@@ -961,6 +1014,7 @@ var E = {
     if ((ev.ctrlKey || ev.metaKey) && k === 's') { ev.preventDefault(); E.save(); return; }
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     if (k === ' ') { spaceDown = true; canvas.style.cursor = 'grab'; ev.preventDefault(); return; }
+    if (k === 't') { if (!E.turn(1)) Panels.status('nothing to turn: pick or select an object that has pictures for other directions', true); return; }
     if (KEYS[k]) { E.setTool(KEYS[k]); return; }
     if (k === 'g') { E.show.grid = !E.show.grid; Panels.toolbar(); E.redraw(); return; }
     if (k === '1') { E.setPaletteTab('terrain'); Panels.all(); E.redraw(); return; }

@@ -146,6 +146,7 @@
     (events || []).forEach(function (e, i) {
       if (e.text) log(e.text, e.type);
       if (e.type === 'craft') { if (!craftOpen) toggleCraft(); return; }   // you used a workbench / campfire: show what can be made
+      if (e.type === 'claim') { claim = e; $('claimp').hidden = false; claimPanel(); return; }       // your claim flag: who belongs to the base
       if (e.type === 'storage') { storage = e; $('store').hidden = false; storePanel(); return; }   // you opened (or changed) a storage container
       if (e.map && e.map !== me.map) return;
       var t0 = now + i * 120;
@@ -216,10 +217,26 @@
       .catch(function (e) { inFlight = false; setNet('connection problem: ' + e.message, true); });
   }
 
+  var lastCost = 1;                                       // what the last step cost (1 straight, 1.4 diagonal): paces the next one
+  /** The direction the held movement keys add up to: the latest vertical and the latest horizontal key, together a diagonal. */
+  function heldDir() {
+    var v = '', hz = '';
+    for (var i = held.length - 1; i >= 0; i--) {
+      var d = held[i];
+      if (!v && (d === 'N' || d === 'S')) v = d;
+      if (!hz && (d === 'E' || d === 'W')) hz = d;
+    }
+    return v && hz ? v + hz : (v || hz);
+  }
   function step(dir) {
-    var r = Rules.tryMove(content, mapOf(), me.x, me.y, dir, World.viewOpts(content, mapOf(), view, me.id));
-    if (!r.ok && r.who && r.who.monster) { var d = Rules.DIRS[dir]; attackFx(me.x + d.dx, me.y + d.dy); }   // bumped a monster: the server turns this move into an attack
-    me = Object.assign({}, me, { facing: dir }, r.ok ? { x: r.x, y: r.y } : {});
+    var opts = World.viewOpts(content, mapOf(), view, me.id), r = Rules.tryMove(content, mapOf(), me.x, me.y, dir, opts), g = Rules.DIAG[dir];
+    if (!r.ok && g) {                                     // a diagonal that is blocked slides along whichever straight way is open
+      var ra = Rules.tryMove(content, mapOf(), me.x, me.y, g.a, opts), rb = ra.ok ? null : Rules.tryMove(content, mapOf(), me.x, me.y, g.b, opts);
+      if (ra.ok) { dir = g.a; r = ra; } else if (rb.ok) { dir = g.b; r = rb; }
+    }
+    if (!r.ok && r.who && r.who.monster && Rules.DIRS[dir]) { var d = Rules.DIRS[dir]; attackFx(me.x + d.dx, me.y + d.dy); }   // bumped a monster: the server turns this move into an attack
+    me = Object.assign({}, me, { facing: Rules.faceFor(dir, me.facing) }, r.ok ? { x: r.x, y: r.y } : {});
+    lastCost = r.ok ? Rules.stepCost(dir) : 1;
     send({ type: 'move', dirs: [dir] });
   }
   function interact() { if (me) send({ type: 'interact' }); }
@@ -236,7 +253,8 @@
     else if (e.code === 'KeyI') toggleBag();
     else if (e.code === 'KeyB') { if (building) stopBuilding(); else toggleBuild(); }
     else if (e.code === 'KeyC') toggleCraft();
-    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) cancelThrow(); else if (storage) closeStore(); else if (buildOpen) toggleBuild(); else if (building) stopBuilding(); else if (craftOpen) toggleCraft(); else if (bagOpen) toggleBag(); }
+    else if (e.code === 'KeyT') turnBuild(1);
+    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) cancelThrow(); else if (claim) closeClaim(); else if (storage) closeStore(); else if (buildOpen) toggleBuild(); else if (building) stopBuilding(); else if (craftOpen) toggleCraft(); else if (bagOpen) toggleBag(); }
     else if (e.code === 'KeyQ') ability(0);
     else if (e.code === 'KeyE') ability(1);
     else if (e.code === 'KeyR') { if (World.rangedWeapon(content, me)) send({ type: 'reload' }); }
@@ -245,7 +263,7 @@
   addEventListener('keyup', function (e) {
     var d = KEYS[e.code]; if (d) held = held.filter(function (h) { return h !== d; });
   });
-  addEventListener('blur', function () { held = []; aiming = false; leftHeld = false; clearTimeout(holdTimer); updateCursor(); });
+  addEventListener('blur', function () { held = []; aiming = false; leftHeld = false; buildHold = null; clearTimeout(holdTimer); updateCursor(); });
   function cellAt(e) {
     var r = canvas.getBoundingClientRect(), T = content.config.tile_size || 32;
     var px = (e.clientX - r.left) * canvas.width / r.width + lastCam.x, py = (e.clientY - r.top) * canvas.height / r.height + lastCam.y;
@@ -257,6 +275,7 @@
     lastPtr = { clientX: e.clientX, clientY: e.clientY };
     hover = cellAt(e); hoverLabel(e);
     if (aiming && me) aimAt(e);                           // keep facing + gun angle tracking the cursor
+    if (buildHold) buildDrag();
   });
   canvas.addEventListener('pointerleave', function () { hover = null; lastPtr = null; $('tip').hidden = true; });
   // mousedown/up (not pointerdown) so a left-click still fires while the right button is held to aim —
@@ -274,7 +293,8 @@
     hover = cell;
     if (building) {                                       // build mode: a click places the blueprint where the ghost is
       var bt = buildTarget();
-      if (bt) { if (bt.ok) send({ type: 'build', bp: building, x: bt.x, y: bt.y, side: bt.side }); else log(bt.reason, 'info'); }
+      if (bt) { if (bt.ok) send({ type: 'build', bp: building, x: bt.x, y: bt.y, side: bt.side, off: bt.off, facing: bt.facing }); else log(bt.reason, 'info'); }
+      if (bt && bt.side) buildHold = { side: bt.side, x: bt.x, y: bt.y, off: bt.off, repeat: bt.bp.places === 'wall', last: bt.x + ',' + bt.y };
       return;
     }
     if (armed) { castAt(cell); return; }                  // an armed ability still aims + casts on left-click
@@ -293,7 +313,7 @@
   // ---------------------------------------------------------------- mouse: a click acts; it never walks you there
   function lookup() { return World.viewLookup(content, mapOf(), view, me); }
   var TOO_FAR = 'Too far away. Move there with the movement keys.';
-  function near(x, y) { return Math.abs(me.x - x) + Math.abs(me.y - y) <= 1; }
+  function near(x, y) { return Math.abs(me.x - x) <= 1 && Math.abs(me.y - y) <= 1; }   // your cell or any of the eight around it
   function cheb(ax, ay, bx, by) { return Math.max(Math.abs(ax - bx), Math.abs(ay - by)); }
   function count(id) { var s = me.inventory.filter(function (x) { return x.item === id; })[0]; return s ? s.qty : 0; }
   function facingToward(x, y) {
@@ -311,6 +331,8 @@
       return;
     }
     if (a.type === 'work' || a.type === 'dismantle') { send({ type: a.type, target: a.target }); return; }
+    if (a.type === 'shift') { send({ type: 'shift', target: a.target, off: a.off }); return; }
+    if (a.type === 'turn') { send({ type: 'turn', target: a.target }); return; }
     if (a.type === 'interact') {
       var tc = a.at || cell;                                   // wall objects act from a footprint cell, not the clicked face/hole
       if (!near(tc.x, tc.y)) { log(TOO_FAR, 'info'); return; }
@@ -334,8 +356,10 @@
   /** While aiming (right-button held): fire the gun, or swing melee at the tile toward the cursor. */
   function fireToward(cell) {
     if (World.rangedWeapon(content, me)) { shootAt(cell); return; }
-    var dir = facingToward(cell.x, cell.y), d = Rules.DIRS[dir] || { dx: 0, dy: 0 };
-    var tx = me.x + d.dx, ty = me.y + d.dy;
+    // melee swings at whichever of the eight tiles around you lies toward the cursor
+    var ddx = cell.x - me.x, ddy = cell.y - me.y, oct = Math.round(Math.atan2(ddy, ddx) / (Math.PI / 4));
+    var fd = Rules.DIRS[me.facing] || { dx: 0, dy: 0 };                                  // cursor on your own tile: swing the way you face
+    var tx = me.x + (ddx || ddy ? Math.round(Math.cos(oct * Math.PI / 4)) : fd.dx), ty = me.y + (ddx || ddy ? Math.round(Math.sin(oct * Math.PI / 4)) : fd.dy);
     send({ type: 'attack', x: tx, y: ty }); attackFx(tx, ty);
     lastHoldShot = performance.now();
   }
@@ -417,7 +441,7 @@
     if (!id) { log('Belt slot ' + (i + 1) + ' is empty — set an item from the bag (I).', 'info'); return; }
     var it = content.items[id]; if (!it) return;
     if (count(id) < 1) { log('No ' + it.name.toLowerCase() + ' left.', 'info'); return; }
-    if (it.type === 'throwable') {
+    if (World.itemCan(it, 'throw')) {
       disarm();
       throwing = throwing === id ? null : id;                                 // toggle throw-aim
       if (throwing) log('Aim the ' + it.name.toLowerCase() + ' and click to throw (Esc to cancel).', 'info');
@@ -533,7 +557,7 @@
     for (var i = 0; i < 5; i++) (function (i) {
       var id = (me.belt || [])[i], it = id && content.items[id], b = document.createElement('div');
       b.className = 'hk' + (throwing && throwing === id ? ' armed' : '') + (it ? '' : ' empty');
-      b.title = it ? it.name + (it.type === 'throwable' ? ' (throw)' : ' (use)') : 'Empty: assign an item from the bag (I)';
+      b.title = it ? it.name + (World.itemCan(it, 'throw') ? ' (throw)' : ' (use)') : 'Empty: assign an item from the bag (I)';
       var key = document.createElement('span'); key.className = 'key'; key.textContent = i + 1; b.appendChild(key);
       if (it) {
         b.appendChild(icon({ kind: 'item', id: id }));
@@ -568,6 +592,7 @@
     if (!me || !content) return;
     if (e.button === 2) { if (aiming) { me.facing = Math.cos(aimAngle) < 0 ? 'W' : 'E'; aiming = false; leftHeld = false; updateCursor(); } return; }
     if (e.button !== 0) return;
+    buildHold = null;
     var was = leftHeld; leftHeld = false; clearTimeout(holdTimer);
     if (!was || aiming) return;                            // was firing while aiming, or not our press
     if (holdFired) { holdFired = false; return; }          // the hold already opened the action list
@@ -629,7 +654,28 @@
   // ---- build mode (B): pick a blueprint, then click where it goes. Whether a spot is allowed is decided by
   // World.canBuild — the same check the referee runs — so a green ghost means the server will say yes.
   function toggleBuild() { buildOpen = !buildOpen; $('buildp').hidden = !buildOpen; if (buildOpen) buildPanel(); }
-  function stopBuilding() { building = null; updateCursor(); }
+  function stopBuilding() { building = null; buildHold = null; updateCursor(); }
+  // While the button is held on a wall blueprint, the ghost stays on the grid line the press started on
+  // (same direction, same line): dragging lays wall after wall along it instead of hopping between lines.
+  var buildHold = null;                                   // {side, x, y, repeat, last} from the press
+  // Which way the thing being placed faces (objects with pictures for other directions): T or Shift+wheel turns it.
+  var buildFacing = 'S';
+  function turnBuild(dir) {
+    var bp = building && content.blueprints && content.blueprints[building], o = bp && bp.places === 'object' ? content.objects[bp.object] : null;
+    if (!o || World.isWallFixture(o) || !Rules.turnable(o)) return false;
+    buildFacing = Rules.nextFacing(buildFacing, dir);
+    return true;
+  }
+  canvas.addEventListener('wheel', function (e) {
+    if (e.shiftKey && building && turnBuild((e.deltaY || e.deltaX) > 0 ? 1 : -1)) e.preventDefault();
+  }, { passive: false });
+  function buildDrag() {
+    if (!buildHold || !buildHold.repeat || !building) return;
+    var bt = buildTarget(), k = bt && bt.x + ',' + bt.y;
+    if (!bt || k === buildHold.last) return;
+    buildHold.last = k;
+    if (bt.ok) send({ type: 'build', bp: building, x: bt.x, y: bt.y, side: bt.side, off: bt.off });
+  }
   function buildPanel() {
     var box = $('build-items'); box.innerHTML = '';
     var bps = World.blueprintsFor(content, me), groups = {}, order = [];
@@ -652,7 +698,7 @@
         });
         if (!b.toolOk) { var why = document.createElement('span'); why.className = 'lack'; why.textContent = ' — needs a ' + b.tool; name.appendChild(why); }
         var bt = document.createElement('button'); bt.textContent = 'Place';
-        bt.onclick = function () { building = b.id; toggleBuild(); updateCursor(); };
+        bt.onclick = function () { building = b.id; buildFacing = 'S'; toggleBuild(); updateCursor(); };
         row.appendChild(pic); row.appendChild(name); row.appendChild(bt); box.appendChild(row);
       });
     });
@@ -667,7 +713,7 @@
     var bp = building && content.blueprints && content.blueprints[building];
     if (!bp || !lastPtr || !me) return null;
     var pt = pointAt(lastPtr), map = mapOf(), o = bp.places === 'object' ? content.objects[bp.object] : null;
-    var x, y, side;
+    var x, y, side, off = '';
     if (bp.places === 'wall' || (o && World.isWallFixture(o))) {        // snaps to the nearest grid line, like the map editor
       var hC = { x: Math.floor(pt.fx), y: Math.round(pt.fy), side: 'N' }, vC = { x: Math.round(pt.fx), y: Math.floor(pt.fy), side: 'W' }, pick = null;
       if (o) {                                                         // a door or window prefers the line that has a wall
@@ -676,12 +722,46 @@
       }
       if (!pick) pick = Math.abs(pt.fx - vC.x) < Math.abs(pt.fy - hC.y) ? vC : hC;
       x = pick.x; y = pick.y; side = pick.side;
+      if (buildHold) {                                                 // held: stay on the line the press chose
+        side = buildHold.side;
+        if (side === 'N') { y = buildHold.y; x = Math.floor(pt.fx); } else { x = buildHold.x; y = Math.floor(pt.fy); }
+      }
+      // a N-S wall sits on the side of the line the cursor is on (like the map editor), kept while the button is held
+      if (bp.places === 'wall' && side === 'W') off = buildHold ? buildHold.off : (pt.fx >= x ? 'r' : 'l');
     } else { x = Math.floor(pt.fx); y = Math.floor(pt.fy); }
     var chk = World.canBuild(content, map, lookup(), me, bp, x, y, side);
-    return { bp: bp, x: x, y: y, side: side, ok: chk.ok, reason: chk.reason || '' };
+    var facing = o && !World.isWallFixture(o) && Rules.turnable(o) ? buildFacing : '';
+    return { bp: bp, x: x, y: y, side: side, off: off, facing: facing, ok: chk.ok, reason: chk.reason || '' };
   }
   // ---- storage panel: a container you built. Left = what is in it (Take), below = your bag (Put).
   function closeStore() { storage = null; $('store').hidden = true; }
+  // The members panel of your own claim flag (the referee sends a 'claim' event when you use it).
+  var claim = null;
+  function closeClaim() { claim = null; $('claimp').hidden = true; }
+  function claimPanel() {
+    var box = $('claim-body'); box.innerHTML = '';
+    function el(tag, cls, text) { var d = document.createElement(tag); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
+    $('claim-title').textContent = 'Your base';
+    box.appendChild(el('div', 'empty', 'The land ' + claim.radius + ' tiles around this flag is yours. Only you and your members can build here, open the doors and crates built here, or damage anything.'));
+    box.appendChild(el('h4', '', 'Members'));
+    if (!claim.members.length) box.appendChild(el('div', 'empty', 'No members yet.'));
+    claim.members.forEach(function (m) {
+      var r = el('div', 'slot'), name = el('div', 'name'), btns = el('div', 'btns'), bt = el('button', '', 'Remove');
+      name.appendChild(el('b', '', m.name));
+      bt.onclick = function () { send({ type: 'claim', key: claim.key, op: 'remove', id: m.id }); };
+      btns.appendChild(bt); r.appendChild(name); r.appendChild(btns); box.appendChild(r);
+    });
+    box.appendChild(el('h4', '', 'Add a member'));
+    var row = el('div', 'slot'), inp = document.createElement('input'), add = el('button', '', 'Add');
+    inp.type = 'text'; inp.placeholder = 'Their name'; inp.maxLength = 24; inp.style.cssText = 'flex:1; min-width:0; width:auto';
+    row.style.display = 'flex'; row.style.gap = '6px'; add.style.cssText = 'flex:none; width:auto';
+    function go() { var v = inp.value.trim(); if (v) send({ type: 'claim', key: claim.key, op: 'add', name: v }); }
+    add.onclick = go;
+    inp.onkeydown = function (ev) { ev.stopPropagation(); if (ev.key === 'Enter') go(); else if (ev.key === 'Escape') closeClaim(); };
+    inp.onkeyup = function (ev) { ev.stopPropagation(); };
+    row.appendChild(inp); row.appendChild(add); box.appendChild(row);
+    box.appendChild(el('div', 'empty', 'They have to be in this area with you when you add them.'));
+  }
   function storePanel() {
     var box = $('store-items'); box.innerHTML = '';
     var keys = Object.keys(storage.inv || {});
@@ -795,10 +875,11 @@
       name.firstChild.textContent = it.name + (s.qty > 1 ? ' ×' + s.qty : '');
       name.lastChild.textContent = describe(it) + (equipped ? ' · equipped' : '');
       row.appendChild(pic); row.appendChild(name);
-      if (it.type === 'consumable' || it.type === 'throwable') name.appendChild(slots(s.item, 'belt'));
-      if (it.type === 'consumable' || it.slot) {
+      var eats = World.itemCan(it, 'consume');
+      if (eats || World.itemCan(it, 'throw')) name.appendChild(slots(s.item, 'belt'));
+      if (eats || it.slot) {
         var b = document.createElement('button');
-        b.textContent = it.slot ? (equipped ? 'Unequip' : 'Equip') : 'Use';
+        b.textContent = eats ? 'Use' : (equipped ? 'Unequip' : 'Equip');
         b.onclick = function () { useItem(s.item); };
         row.appendChild(b);
       }
@@ -818,6 +899,7 @@
   $('craft-close').onclick = toggleCraft;
   $('build-close').onclick = toggleBuild;
   $('store-close').onclick = closeStore;
+  $('claim-close').onclick = closeClaim;
 
   // ---------------------------------------------------------------- map and loop
   function enterMap() {
@@ -836,10 +918,15 @@
     });
   }
 
+  var TAP_JOIN_MS = 35;
+  // Glide towards where the character really is, k tiles of DISTANCE per call: a diagonal step is longer, so it
+  // takes longer (about 1.4 times), which is also what the referee charges for it.
   function ease(cur, target, k) {
-    if (Math.abs(target.x - cur.x) > 2 || Math.abs(target.y - cur.y) > 2) { cur.x = target.x; cur.y = target.y; return; }
-    cur.x += Math.sign(target.x - cur.x) * Math.min(Math.abs(target.x - cur.x), k);
-    cur.y += Math.sign(target.y - cur.y) * Math.min(Math.abs(target.y - cur.y), k);
+    var dx = target.x - cur.x, dy = target.y - cur.y;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) { cur.x = target.x; cur.y = target.y; return; }
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist <= k || dist < 1e-6) { cur.x = target.x; cur.y = target.y; return; }
+    cur.x += dx / dist * k; cur.y += dy / dist * k;
   }
 
   function frame(now) {
@@ -849,8 +936,9 @@
     var dt = Math.min(100, lastFrame ? now - lastFrame : 16); lastFrame = now;
     var moving = Math.abs(shown.x - me.x) > 0.01 || Math.abs(shown.y - me.y) > 0.01;
     if (!moving && !bagOpen) {
-      if (tap) { step(tap); tap = null; lastStep = now; }
-      else if (held.length && now - holdSince >= HOLD_MS && now - lastStep >= moveMs) { step(held[held.length - 1]); lastStep = now; }
+      // A tap waits a moment before stepping, so two keys pressed together count as one diagonal step, not an L.
+      if (tap) { if (performance.now() - holdSince >= TAP_JOIN_MS) { step(heldDir() || tap); tap = null; lastStep = now; } }
+      else if (held.length && now - holdSince >= HOLD_MS && now - lastStep >= moveMs * lastCost) { step(heldDir()); lastStep = now; }
     }
     // When the live world is pushed over Firebase, polling is just a heartbeat (advance idle monsters,
     // refresh our own state) — not how we see others — so it can be slow, which keeps request and
@@ -949,7 +1037,7 @@
       vis = sight.vis; mem = seenCells[me.map];
     }
     renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null });
-    if (building) renderer.drawGhost(cam, buildTarget());
+    if (building) { var gh0 = buildTarget(); renderer.drawClaims(cam, World.claimsOn(content, mapOf()), me, gh0); renderer.drawGhost(cam, gh0); }
     if (armed) renderer.drawAim(cam, aimOverlay());
     else if (throwing) renderer.drawAim(cam, throwOverlay());
     // a ready gun shows no on-canvas aim — the crosshair cursor is the aim (see updateCursor)

@@ -19,6 +19,7 @@
   input, select, textarea { width: 100%; } input[type=checkbox] { width: auto; }
   #nav { grid-area: nav; background: var(--panel); border-right: 1px solid var(--line); overflow: auto; padding: 8px; }
   #nav button { display: flex; justify-content: space-between; width: 100%; text-align: left; border: 0; background: transparent; border-radius: 6px; padding: 6px 8px; margin-bottom: 2px; }
+  #nav .navgroup { color: var(--dim); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; padding: 10px 8px 4px; } #nav .navgroup:first-child { padding-top: 2px; }
   #nav button.on { background: #2f4f7a; } #nav button .n { color: var(--dim); }
   #main { grid-area: main; display: grid; grid-template-columns: 280px 1fr; min-height: 0; }
   #list { border-right: 1px solid var(--line); overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
@@ -119,7 +120,7 @@
 
   <script>
     (function () {
-      var files = ['../shared/schema.js', '../client/js/config.js', '../client/js/content_store.js', '../client/js/tint.js', 'js/cstudio.js'];
+      var files = ['../shared/schema.js', '../shared/content.js', '../client/js/config.js', '../client/js/content_store.js', '../client/js/tint.js', 'js/cstudio.js'];
       var v = Date.now();
       (function next(i) {
         if (i >= files.length) { if (window.CStudio) CStudio.init(); return; }

@@ -77,12 +77,12 @@
   #join input, #join select { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid #3a3f4b; background: #14161b; color: #fff; }
   #join label { display: grid; gap: 4px; color: #b9b6b0; font-size: 12px; }
   .primary { padding: 8px; background: #3d6fb6; border: 0; color: #fff; }
-  #bag .panel, #craft .panel, #buildp .panel, #store .panel { width: 420px; max-height: 80%; overflow: auto; }
+  #bag .panel, #craft .panel, #buildp .panel, #store .panel, #claimp .panel { width: 420px; max-height: 80%; overflow: auto; }
   #bag-head, #craft-head, .phead { display: flex; justify-content: space-between; align-items: center; }
-  #buildp h4, #store h4 { margin: 6px 0 0; font-size: 12px; color: #9a978f; font-weight: 600; }
+  #buildp h4, #store h4, #claimp h4 { margin: 6px 0 0; font-size: 12px; color: #9a978f; font-weight: 600; }
   #buildp .slot .name span.lack { color: #e0796b; }
   #buildp .slot.cant { opacity: .6; }
-  #store .slot .btns, #buildp .slot .btns { display: flex; gap: 4px; }
+  #store .slot .btns, #buildp .slot .btns, #claimp .slot .btns { display: flex; gap: 4px; }
   #craft h4 { margin: 6px 0 0; font-size: 12px; color: #9a978f; font-weight: 600; text-transform: none; }
   #craft .slot .name span.lack { color: #e0796b; }
   #craft .slot .btns { display: flex; gap: 4px; }
@@ -144,6 +144,12 @@
       <div class="panel">
         <div class="phead"><strong id="store-title">Storage</strong><button id="store-close">Close (Esc)</button></div>
         <div id="store-items" style="display:grid; gap:6px"></div>
+      </div>
+    </div>
+    <div id="claimp" class="overlay" hidden>
+      <div class="panel">
+        <div class="phead"><strong id="claim-title">Your base</strong><button id="claim-close">Close (Esc)</button></div>
+        <div id="claim-body" style="display:grid; gap:6px"></div>
       </div>
     </div>
     <div id="craft" class="overlay" hidden>

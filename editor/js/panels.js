@@ -262,7 +262,7 @@ var Panels = (function () {
             else if (type === 'monster') { E.brush.monster = d.id; E.layer = 'objects'; }
             else if (type === 'wallStyle') { E.brush.wall = d.id; E.layer = 'walls'; }
             else { E.brush.object = d.id; E.layer = 'objects'; }
-            if (E.tool === 'select' || E.tool === 'pick' || E.tool === 'erase') E.tool = 'brush';
+            if (E.tool === 'select' || E.tool === 'pick' || E.tool === 'erase') E.tool = type === 'terrain' ? 'rect' : 'brush';
             toolbar(); list(); E.redraw();
           },
           ondblclick: function () { editDef(type, d.id); } }, thumb(type, d.id), h('span', { text: d.name }));
@@ -459,6 +459,11 @@ var Panels = (function () {
       Object.keys(E.content.objects).map(function (id) { var d = E.content.objects[id];
         return h('option', { value: id, text: d.name + ' (' + d.kind + ')', selected: id === e.ref }); }));
     wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'object' }), objSel));
+    if (o && Rules.turnable(o) && !(o.properties && o.properties.layer === 'wall')) {      // a chair and the like: which way it faces
+      var fNow = Rules.facingOf(e), fSel = h('select', { title: 'T or Shift+wheel also turns it', onchange: function () { setProp(e.key, E.mapId, 'facing', fSel.value === 'S' ? undefined : fSel.value); E.redraw(); } },
+        [['S', 'South (as drawn)'], ['W', 'West'], ['N', 'North'], ['E', 'East']].map(function (d) { return h('option', { value: d[0], text: d[1], selected: d[0] === fNow }); }));
+      wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'facing' }), fSel));
+    }
 
     if (o && o.properties && o.properties.layer === 'wall') {   // wall-mounted object: standing on the wall base, raised in tiles
       wrap.appendChild(h('div', { className: 'sub', text: 'Wall mount' }));

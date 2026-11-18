@@ -12,6 +12,9 @@ global.Rules = Rules;
 const World = require('../shared/world.js');
 
 const tables = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/tables.json'), 'utf8'));
+// These tests replay many moves at one frozen instant; the referee's walking-speed limit would (rightly) refuse
+// that, so it is switched off here and tested on its own further down.
+tables.Config = tables.Config.filter(r => r.key !== 'move_burst').concat([{ key: 'move_burst', value: 9999 }]);
 let passed = 0;
 function test(name, fn) { fn(); passed++; console.log('ok -', name); }
 
@@ -267,8 +270,9 @@ test('timed spike traps go up and down every second and only hurt while up', () 
   assert.match(texts(ev), /spike trap \(opposite\) hits you for 10/);
   World.advance(s.c, s.ws, 'map_1', [s.p], 3800, mid, []);              // same up-phase: only once
   assert.strictEqual(s.p.hp, 110);
-  World.advance(s.c, s.ws, 'map_1', [s.p], 5100, mid, []);              // next cycle: again
-  assert.strictEqual(s.p.hp, 100);
+  ev = [];
+  World.advance(s.c, s.ws, 'map_1', [s.p], 5100, mid, ev);              // next cycle: again
+  assert.strictEqual(ev.filter(e => /spike trap/.test(e.text || '')).length, 1);   // (a bat cutting corners may have arrived by now too, so count the trap's own hit)
 });
 
 test('step traps spring when stepped on, then re-arm', () => {
@@ -1447,6 +1451,8 @@ test('a door needs a wall; once built it opens, closes and gates the wall like a
   assert.match(doAct(s, { type: 'dismantle', target: N44 }), /Take down what hangs on it first/);
   const stf = (e) => World.stateOf(s.c, s.ws, 'yard', e);
   assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'N', {}).ok, false);
+  assert.match(doAct(s, { type: 'interact', x: 4, y: 4 }), /You work on the door \(1\/4\)/, 'a frame does not open: using it works on it');
+  for (let i = 0; i < 3; i++) doAct(s, { type: 'work', target: { t: 'ent', key: door.key } });
   doAct(s, { type: 'interact', x: 4, y: 4 });                              // open it
   assert.strictEqual(stf(door), 'open');
   assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'N', {}).ok, true, 'open: you walk through the wall');
@@ -1480,6 +1486,402 @@ test('a storage crate keeps what you put in; smashed, it leaves the contents in 
   assert.deepStrictEqual(left.map(e => e.ref), ['obj_rubble']);
   assert.deepStrictEqual(left[0].inv, { wood: 6, nails: 5 }, 'nothing was lost');
   assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'E', {}).ok, true, 'rubble can be walked over');
+});
+
+// ---- claims (base building Phase 4)
+// A wide open field (30x13), an authored chest far to the east, two players: Builder (p) and Raider (q).
+function land(cfg) {
+  const t = JSON.parse(JSON.stringify(tables));
+  const row = Array(30).fill('til_1');
+  t.Maps.push({ id: 'land', name: 'Land', width: 30, height: 13, terrain: JSON.stringify(Array(13).fill(row)), spawn: JSON.stringify({ x: 29, y: 12 }) });
+  t.MapEntities.push({ map: 'land', key: 'land.e1', x: 27, y: 2, ref: 'obj_0', data: '' });
+  Object.keys(cfg || {}).forEach(k => { const r = t.Config.find(x => x.key === k); if (r) r.value = cfg[k]; else t.Config.push({ key: k, value: cfg[k] }); });
+  const c = Content.build(t), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Builder', 'warrior'), q = World.newPlayer(c, 'p2', 'Raider', 'warrior');
+  const s = { c, ws, p, q };
+  put(s, 'land', 8, 6, 'E');
+  Object.assign(q, { map: 'land', x: 12, y: 6, facing: 'W' });
+  [p, q].forEach(pl => [['hammer', 1], ['wood', 60], ['nails', 40], ['cloth', 10]].forEach(g => World.give(c, pl, g[0], g[1], [])));
+  return s;
+}
+const landMap = (s) => { World.syncEdges(s.c, s.ws, 'land'); return World.liveMap(s.c, s.ws, 'land'); };
+const actAs = (s, who, a) => { clock += 5000; return texts(World.act(s.c, s.ws, who, a, clock, mid, [s.p, s.q])); };
+const finish = (s, who, target) => { for (let i = 0; i < 8; i++) actAs(s, who, { type: 'work', target }); };
+function claimed(s) {                                   // Builder plants a flag at (9,6): radius 6 -> x 3..15, y 0..12
+  assert.match(actAs(s, s.p, { type: 'build', bp: 'bp_claim', x: 9, y: 6 }), /frame of a claim flag/);
+  const flag = landMap(s).entities.filter(e => e.ref === 'obj_claim')[0];
+  finish(s, s.p, { t: 'ent', key: flag.key });
+  return flag;
+}
+
+test('a claim flag makes the land around it yours: others cannot build there, nor claim next to it', () => {
+  const s = land(), flag = claimed(s);
+  assert.deepStrictEqual([flag.owner, flag.members, s.p.claims], ['Builder', [], [{ map: 'land', key: flag.key }]]);
+  assert.strictEqual(World.claimAt(s.c, landMap(s), 15, 12), flag);
+  assert.strictEqual(World.claimAt(s.c, landMap(s), 16, 6), null);
+  assert.ok(World.mayUse(s.c, landMap(s), s.p, 10, 6) && !World.mayUse(s.c, landMap(s), s.q, 10, 6));
+  assert.match(actAs(s, s.q, { type: 'build', bp: 'bp_wood_wall', x: 12, y: 6, side: 'N' }), /This land belongs to Builder/);
+  s.q.x = 16;
+  assert.match(actAs(s, s.q, { type: 'build', bp: 'bp_wood_wall', x: 16, y: 6, side: 'W' }), /This land belongs to Builder/, 'a wall on the border touches claimed land');
+  assert.match(actAs(s, s.q, { type: 'build', bp: 'bp_wood_wall', x: 17, y: 6, side: 'N' }), /frame of a wooden wall/, 'outside it, anyone builds');
+  assert.match(actAs(s, s.q, { type: 'build', bp: 'bp_claim', x: 17, y: 7 }), /Too close to another base/);
+  assert.match(actAs(s, s.p, { type: 'build', bp: 'bp_claim', x: 8, y: 5 }), /You already have a base/);
+  assert.match(actAs(s, s.p, { type: 'build', bp: 'bp_wood_wall', x: 8, y: 6, side: 'N' }), /frame of a wooden wall/, 'the owner builds at home');
+});
+
+test('a claim cannot swallow the map\'s own chests, the arrival point, or what someone else built', () => {
+  const s = land();
+  put(s, 'land', 21, 3, 'E');
+  assert.match(actAs(s, s.p, { type: 'build', bp: 'bp_claim', x: 22, y: 3 }), /Too close to the wooden chest/);
+  put(s, 'land', 22, 10, 'E');
+  assert.match(actAs(s, s.p, { type: 'build', bp: 'bp_claim', x: 23, y: 11 }), /Too close to where people arrive/);
+  s.q.x = 12;
+  actAs(s, s.q, { type: 'build', bp: 'bp_wood_wall', x: 12, y: 6, side: 'N' });
+  put(s, 'land', 8, 6, 'E');
+  assert.match(actAs(s, s.p, { type: 'build', bp: 'bp_claim', x: 9, y: 6 }), /Someone else has built here/);
+});
+
+test('inside a base only its people open what was built, take it apart or damage it; members are added by name', () => {
+  const s = land(), flag = claimed(s);
+  actAs(s, s.p, { type: 'build', bp: 'bp_crate', x: 8, y: 5 });
+  const crate = landMap(s).entities.filter(e => e.ref === 'obj_crate')[0], cT = { t: 'ent', key: crate.key };
+  finish(s, s.p, cT);
+  actAs(s, s.p, { type: 'store', key: crate.key, op: 'put', item: 'wood', qty: 5 });
+  Object.assign(s.q, { x: 9, y: 5, facing: 'W' });
+  assert.match(actAs(s, s.q, { type: 'interact', x: 8, y: 5 }), /belongs to Builder's base/);
+  assert.match(actAs(s, s.q, { type: 'store', key: crate.key, op: 'take', item: 'wood', qty: 5 }), /belongs to Builder's base/);
+  assert.strictEqual(crate.inv.wood, 5);
+  assert.match(actAs(s, s.q, { type: 'dismantle', target: cT }), /not yours to take apart/);
+  actAs(s, s.q, { type: 'attack', x: 8, y: 5 });
+  assert.strictEqual(World.structInfo(s.c, landMap(s), cT).hp, 30, 'a raider\'s blows do nothing');
+  const labels = World.actionsAt(s.c, landMap(s), World.viewLookup(s.c, landMap(s), World.view(s.c, s.ws, 'land', s.q, [s.p, s.q], -1), s.q), s.q, 8, 5).map(a => a.label);
+  assert.ok(!labels.some(l => /Attack|Take/.test(l)), 'and the menu does not offer what would be refused: ' + labels);
+  assert.match(actAs(s, s.q, { type: 'interact', x: 9, y: 6 }), /This is Builder's base\.$/);
+  // members
+  assert.match(actAs(s, s.q, { type: 'claim', key: flag.key, op: 'add', name: 'Raider' }), /Only Builder can do that/);
+  let ev = World.act(s.c, s.ws, s.p, { type: 'interact', x: 9, y: 6 }, clock += 5000, mid, [s.p, s.q]);
+  assert.ok(ev.some(e => e.type === 'claim' && e.mine && e.radius === 6), 'the owner gets the members panel');
+  assert.match(actAs(s, s.p, { type: 'claim', key: flag.key, op: 'add', name: 'Nobody' }), /No one called "Nobody" is here/);
+  assert.match(actAs(s, s.p, { type: 'claim', key: flag.key, op: 'add', name: 'raider' }), /Raider is now a member/);
+  assert.deepStrictEqual(flag.members, [{ id: 'p2', name: 'Raider' }]);
+  ev = World.act(s.c, s.ws, s.q, { type: 'interact', x: 8, y: 5 }, clock += 5000, mid, [s.p, s.q]);
+  assert.ok(ev.some(e => e.type === 'storage'), 'a member opens the crate');
+  assert.match(actAs(s, s.q, { type: 'build', bp: 'bp_wood_wall', x: 9, y: 5, side: 'N' }), /frame of a wooden wall/, 'and builds');
+  assert.match(actAs(s, s.q, { type: 'dismantle', target: { t: 'ent', key: flag.key } }), /not yours to take apart/, 'but the flag is the owner\'s alone');
+  actAs(s, s.p, { type: 'claim', key: flag.key, op: 'remove', id: 'p2' });
+  assert.match(actAs(s, s.q, { type: 'interact', x: 8, y: 5 }), /belongs to Builder's base/, 'removed: locked out again');
+});
+
+test('outside a base anything built can be knocked down by anyone; pvp_structures opens bases to raids', () => {
+  let s = land();
+  put(s, 'land', 20, 6, 'N');
+  actAs(s, s.p, { type: 'build', bp: 'bp_wood_wall', x: 20, y: 6, side: 'N' });
+  const W = { t: 'wall', orient: 'h', x: 20, y: 6 };
+  finish(s, s.p, W);
+  Object.assign(s.q, { x: 20, y: 5, facing: 'S' });
+  actAs(s, s.q, { type: 'attack', x: 20, y: 6 });
+  assert.ok(World.structInfo(s.c, landMap(s), W).hp < 40, 'no claim covers it: it takes the blow');
+  assert.match(actAs(s, s.q, { type: 'dismantle', target: W }), /not yours to take apart/, 'but only its builder gets the materials back');
+  s = land({ pvp_structures: 'on' });
+  claimed(s);
+  actAs(s, s.p, { type: 'build', bp: 'bp_wood_wall', x: 8, y: 6, side: 'N' });
+  const H = { t: 'wall', orient: 'h', x: 8, y: 6 };
+  finish(s, s.p, H);
+  Object.assign(s.q, { x: 8, y: 5, facing: 'S' });
+  actAs(s, s.q, { type: 'attack', x: 8, y: 6 });
+  assert.ok(World.structInfo(s.c, landMap(s), H).hp < 40, 'with raids on, a base wall can be damaged');
+  assert.match(actAs(s, s.q, { type: 'build', bp: 'bp_wood_wall', x: 8, y: 5, side: 'N' }), /This land belongs to Builder/, 'though still not built on');
+});
+
+test('a destroyed claim dissolves: what stood there is nobody\'s, and its owner may claim again', () => {
+  const s = land(), flag = claimed(s);
+  actAs(s, s.p, { type: 'build', bp: 'bp_wood_wall', x: 8, y: 6, side: 'N' });
+  const H = { t: 'wall', orient: 'h', x: 8, y: 6 };
+  finish(s, s.p, H);
+  World.damageStructure(s.c, s.ws, 'land', { t: 'ent', key: flag.key }, 999, { kind: 'monster', now: clock }, []);
+  assert.strictEqual(World.claimAt(s.c, landMap(s), 9, 6), null);
+  assert.strictEqual(World.structInfo(s.c, landMap(s), H).by, null);
+  Object.assign(s.q, { x: 8, y: 5, facing: 'S' });
+  assert.match(actAs(s, s.q, { type: 'dismantle', target: H }), /You take the wooden wall apart/, 'anyone may clear it away');
+  assert.match(actAs(s, s.p, { type: 'build', bp: 'bp_claim', x: 9, y: 6 }), /frame of a claim flag/);
+  assert.strictEqual(s.p.claims.length, 1, 'the dead claim no longer counts');
+  // taking your own flag apart frees the slot too
+  const f2 = landMap(s).entities.filter(e => e.ref === 'obj_claim')[0];
+  assert.match(actAs(s, s.p, { type: 'dismantle', target: { t: 'ent', key: f2.key } }), /You take the claim flag apart/);
+  assert.deepStrictEqual(s.p.claims, []);
+});
+
+// ---- item types (Content Studio → Item Types): what an item can do comes from its type's ticks
+function typed(types, items) {
+  const t = JSON.parse(JSON.stringify(tables));
+  t.ItemTypes = (t.ItemTypes || []).filter(r => !types.some(n => n.id === r.id)).concat(types);
+  items.forEach(i => t.Items.push(i));
+  const c = Content.build(t), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Tester', 'warrior');
+  return { c, ws, p };
+}
+const useIt = (s, id) => { clock += 1000; return texts(World.act(s.c, s.ws, s.p, { type: 'use', item: id }, clock, mid)); };
+
+test('an item type of your own can be consumable, with a cooldown from the type or the item', () => {
+  const s = typed([{ id: 'food', name: 'Food', consume: true, cooldown_s: 10 }],
+    [{ id: 'apple', name: 'Apple', type: 'food', heal: 5 }, { id: 'tea', name: 'Tea', type: 'food', heal: 5, cooldown_s: 0 }]);
+  assert.deepStrictEqual([s.c.items.apple.can.consume, s.c.items.apple.cooldownMs, s.c.items.tea.cooldownMs], [true, 10000, 0]);
+  World.give(s.c, s.p, 'apple', 3, []); World.give(s.c, s.p, 'tea', 3, []);
+  s.p.hp = 1;
+  assert.match(useIt(s, 'apple'), /You use the apple/);
+  assert.match(useIt(s, 'apple'), /again in 9 s/);
+  assert.strictEqual(World.count(s.p, 'apple'), 2, 'a refused use spends nothing');
+  assert.match(useIt(s, 'tea'), /You use the tea/, 'the cooldown is per item');
+  assert.match(useIt(s, 'tea'), /You use the tea/, 'and an item can switch its type\'s cooldown off');
+  clock += 10000;
+  assert.match(useIt(s, 'apple'), /You use the apple/);
+  assert.ok(World.beltItems(s.c, s.p).indexOf('apple') >= 0, 'it belongs on the belt like any consumable');
+});
+
+test('unticking a behaviour on a type takes it away from its items; equip uses the type\'s slot', () => {
+  const s = typed([{ id: 'consumable', name: 'Consumable', consume: false }, { id: 'hat', name: 'Hat', equip: true, slot: 'helm' }, { id: 'trinket', name: 'Trinket' }],
+    [{ id: 'pill', name: 'Pill', type: 'consumable', heal: 5 }, { id: 'cap', name: 'Cap', type: 'hat', def: 1 }, { id: 'ring', name: 'Ring', type: 'trinket', slot: 'finger' }]);
+  ['pill', 'cap', 'ring'].forEach(i => World.give(s.c, s.p, i, 1, []));
+  s.p.hp = 1;
+  assert.match(useIt(s, 'pill'), /can't use that/);
+  assert.match(useIt(s, 'cap'), /You equip the cap/);
+  assert.strictEqual(s.p.equipment.helm, 'cap');
+  assert.match(useIt(s, 'ring'), /can't use that/, 'a type that cannot be equipped ignores an item\'s slot');
+});
+
+test('with no ItemTypes tab, and for content built before item types, the old type names still decide', () => {
+  const t = JSON.parse(JSON.stringify(tables)); delete t.ItemTypes;
+  const c = Content.build(t);
+  const some = k => Object.keys(c.items).filter(id => c.items[id].type === k)[0];
+  assert.ok(c.items[some('consumable')].can.consume && c.items[some('throwable')].can.throw && c.items[some('weapon')].can.shoot && c.items[some('weapon')].can.equip);
+  assert.ok(!c.items[some('weapon')].can.consume);
+  assert.ok(World.itemCan({ type: 'consumable' }, 'consume') && World.itemCan({ type: 'throwable' }, 'throw') && World.itemCan({ type: 'armor', slot: 'armor' }, 'equip'));
+  assert.ok(!World.itemCan({ type: 'material' }, 'consume') && !World.itemCan(null, 'equip'));
+});
+
+test('a type\'s own properties reach its items, with the type\'s default unless the item sets one', () => {
+  const s = typed([{ id: 'food', name: 'Food', consume: true, properties: JSON.stringify([{ name: 'spoils_after_h', type: 'number', def: 24 }, { name: 'cooked', type: 'bool', def: false }]) }],
+    [{ id: 'apple', name: 'Apple', type: 'food' }, { id: 'stew', name: 'Stew', type: 'food', props: JSON.stringify({ cooked: true }) }]);
+  assert.deepStrictEqual(s.c.items.apple.props, { spoils_after_h: 24, cooked: false });
+  assert.deepStrictEqual(s.c.items.stew.props, { spoils_after_h: 24, cooked: true });
+});
+
+test('a N-S wall can be built to one side of its line and moved later; only its looks change', () => {
+  const s = land();
+  put(s, 'land', 20, 6, 'W');
+  assert.match(actAs(s, s.p, { type: 'build', bp: 'bp_wood_wall', x: 20, y: 6, side: 'W', off: 'r' }), /frame of a wooden wall/);
+  const V = { t: 'wall', orient: 'v', x: 20, y: 6 };
+  finish(s, s.p, V);
+  assert.strictEqual(landMap(s).vWalls[6][20], 'wall_wood:2:r');
+  assert.ok(Rules.edgeBlocked(s.c, landMap(s), 'v', 20, 6, 'move'), 'it still blocks on the grid line');
+  const menu = who => World.actionsAt(s.c, landMap(s), World.viewLookup(s.c, landMap(s), World.view(s.c, s.ws, 'land', who, [s.p, s.q], -1), who), who, 19, 6).map(a => a.label);
+  assert.deepStrictEqual(menu(s.p).filter(l => /^Move/.test(l)), ['Move the wooden wall left', 'Move the wooden wall to the middle']);
+  assert.match(actAs(s, s.p, { type: 'shift', target: V, off: 'l' }), /You move the wooden wall to the left/);
+  assert.strictEqual(landMap(s).vWalls[6][20], 'wall_wood:2:l');
+  actAs(s, s.p, { type: 'shift', target: V, off: '' });
+  assert.strictEqual(landMap(s).vWalls[6][20], 'wall_wood:2');
+  // someone else may not move it, and is not offered to
+  Object.assign(s.q, { x: 19, y: 6, facing: 'E' });
+  assert.match(actAs(s, s.q, { type: 'shift', target: V, off: 'r' }), /not yours to move/);
+  assert.ok(!menu(s.q).some(l => /^Move/.test(l)));
+  // an E-W wall has no side to move to, and ignores one at building
+  put(s, 'land', 22, 6, 'N');
+  actAs(s, s.p, { type: 'build', bp: 'bp_wood_wall', x: 22, y: 6, side: 'N', off: 'r' });
+  assert.strictEqual(landMap(s).hWalls[6][22], 'wall_wood:2');
+  assert.match(actAs(s, s.p, { type: 'shift', target: { t: 'wall', orient: 'h', x: 22, y: 6 }, off: 'r' }), /running north to south/);
+});
+
+// ---- objects that can be turned: one object, pictures for the other directions, blocked sides turn with it
+function chairs() {
+  const t = JSON.parse(JSON.stringify(tables));
+  const row = Array(12).fill('til_1');
+  t.Maps.push({ id: 'room', name: 'Room', width: 12, height: 9, terrain: JSON.stringify(Array(9).fill(row)), spawn: JSON.stringify({ x: 11, y: 8 }) });
+  t.Objects.push({ id: 'obj_chair', name: 'Chair', kind: 'deco', sprite: 'chair_s.png', sprite_states: 'north=chair_n.png; side=chair_e.png', walkable: true,
+    properties: JSON.stringify({ hp: 10, material: 'wood', pass_n: false }) });           // facing south, its back (north) is shut
+  t.Objects.push({ id: 'obj_stool', name: 'Stool', kind: 'deco', sprite: 'stool.png', sprite_states: '', walkable: true, properties: JSON.stringify({ hp: 10, material: 'wood' }) });
+  t.Blueprints.push({ id: 'bp_chair', name: 'Chair', category: 'furniture', places: 'object', object: 'obj_chair', cost: 'wood:1', work: 0, tool: '' });
+  t.Blueprints.push({ id: 'bp_stool', name: 'Stool', category: 'furniture', places: 'object', object: 'obj_stool', cost: 'wood:1', work: 0, tool: '' });
+  t.MapEntities.push({ map: 'room', key: 'room.e1', x: 2, y: 2, ref: 'obj_chair', data: JSON.stringify({ facing: 'W' }) });
+  const c = Content.build(t), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Builder', 'warrior'), q = World.newPlayer(c, 'p2', 'Other', 'warrior');
+  const s = { c, ws, p, q };
+  put(s, 'room', 6, 4, 'E');
+  Object.assign(q, { map: 'room', x: 10, y: 8, facing: 'W' });
+  World.give(c, p, 'wood', 20, []);
+  return s;
+}
+const roomMap = s => { World.syncEdges(s.c, s.ws, 'room'); return World.liveMap(s.c, s.ws, 'room'); };
+const roomAct = (s, who, a) => { clock += 5000; return texts(World.act(s.c, s.ws, who, a, clock, mid, [s.p, s.q])); };
+
+test('a turnable object shows the picture for the way it faces, and its blocked sides turn with it', () => {
+  const s = chairs(), chair = s.c.objects.obj_chair;
+  assert.ok(Rules.turnable(chair) && !Rules.turnable(s.c.objects.obj_stool));
+  assert.deepStrictEqual(['S', 'W', 'N', 'E'].map(f => Rules.facingSprite(chair, f)),
+    [{ path: 'chair_s.png', flip: false }, { path: 'chair_e.png', flip: true }, { path: 'chair_n.png', flip: false }, { path: 'chair_e.png', flip: false }]);
+  assert.deepStrictEqual([Rules.nextFacing('S', 1), Rules.nextFacing('W', 1), Rules.nextFacing('E', 1), Rules.nextFacing('S', -1)], ['W', 'N', 'S', 'E']);
+  assert.deepStrictEqual(['down', 'left', 'side', '', 'N'].map(f => Rules.facingOf({ data: { facing: f } })), ['S', 'W', 'E', 'S', 'N'], 'older words still read');
+  // facing south the back is north; a quarter turn clockwise (facing west) puts the back to the east
+  const shut = f => { const ps = Rules.passOf(chair, { data: { facing: f } }); return Object.keys(ps).filter(k => !ps[k]).join(''); };
+  assert.deepStrictEqual([shut('S'), shut('W'), shut('N'), shut('E')], ['n', 'e', 's', 'w']);
+  // the authored chair at (2,2) faces west: you cannot step onto it from the east, nor off it to the east
+  const m = roomMap(s);
+  assert.strictEqual(Rules.tryMove(s.c, m, 3, 2, 'W').ok, false);
+  assert.strictEqual(Rules.tryMove(s.c, m, 2, 2, 'E').ok, false);
+  assert.ok(Rules.tryMove(s.c, m, 2, 1, 'S').ok && Rules.tryMove(s.c, m, 2, 2, 'N').ok, 'its north side is open now');
+});
+
+test('players place a turnable object the way they chose, and turn it afterwards; others may not', () => {
+  const s = chairs();
+  assert.match(roomAct(s, s.p, { type: 'build', bp: 'bp_chair', x: 7, y: 4, facing: 'N' }), /You build|Chair|chair/);
+  const chair = roomMap(s).entities.filter(e => e.ref === 'obj_chair' && e.x === 7)[0], T = { t: 'ent', key: chair.key };
+  assert.strictEqual(chair.data.facing, 'N');
+  assert.strictEqual(Rules.tryMove(s.c, roomMap(s), 7, 5, 'N').ok, false, 'facing north, its back is to the south');
+  const menu = who => World.actionsAt(s.c, roomMap(s), World.viewLookup(s.c, roomMap(s), World.view(s.c, s.ws, 'room', who, [s.p, s.q], -1), who), who, 7, 4).map(a => a.label);
+  assert.ok(menu(s.p).indexOf('Turn the chair') >= 0);
+  assert.match(roomAct(s, s.p, { type: 'turn', target: T }), /You turn the chair/);
+  assert.strictEqual(chair.data.facing, 'E', 'a quarter turn clockwise from north');
+  roomAct(s, s.p, { type: 'turn', target: T });
+  assert.strictEqual(chair.data.facing, undefined, 'back to south, the way it was drawn');
+  roomAct(s, s.p, { type: 'turn', target: T, facing: 'W' });
+  assert.strictEqual(chair.data.facing, 'W');
+  Object.assign(s.q, { x: 7, y: 3, facing: 'S' });
+  assert.match(roomAct(s, s.q, { type: 'turn', target: T }), /not yours to turn/);
+  assert.ok(menu(s.q).indexOf('Turn the chair') < 0);
+  // something with one picture has no other way to face
+  roomAct(s, s.p, { type: 'build', bp: 'bp_stool', x: 6, y: 5, facing: 'N' });
+  const stool = roomMap(s).entities.filter(e => e.ref === 'obj_stool')[0];
+  assert.strictEqual(stool.data.facing, undefined);
+  assert.match(roomAct(s, s.p, { type: 'turn', target: { t: 'ent', key: stool.key } }), /can't be turned/);
+  assert.match(roomAct(s, s.p, { type: 'turn', target: { t: 'ent', key: 'room.e1' } }), /can't be turned/, 'nor can what the map came with');
+});
+
+// ---- walking: the referee's speed limit, and diagonal steps
+// An open field with one wall corner in it: a wall along the north of (5,5) and one along its east side.
+function field(cfg) {
+  const t = JSON.parse(JSON.stringify(tables));
+  const row = Array(14).fill('til_1'), H = 12;
+  const hW = Array.from({ length: H + 1 }, () => Array(14).fill('')), vW = Array.from({ length: H }, () => Array(15).fill(''));
+  hW[5][5] = 'wall_wood:2'; vW[5][6] = 'wall_wood:2';
+  t.Maps.push({ id: 'field', name: 'Field', width: 14, height: H, terrain: JSON.stringify(Array(H).fill(row)), hWalls: JSON.stringify(hW), vWalls: JSON.stringify(vW), spawn: JSON.stringify({ x: 13, y: 11 }) });
+  t.Objects.push({ id: 'obj_block', name: 'Block', kind: 'deco', sprite: '', walkable: false, properties: '' });
+  t.MapEntities.push({ map: 'field', key: 'field.e1', x: 9, y: 8, ref: 'obj_block', data: '' });
+  t.MapEntities.push({ map: 'field', key: 'field.e2', x: 11, y: 9, ref: 'obj_0', data: '' });       // a chest, for reaching diagonally
+  t.Config = t.Config.filter(r => r.key !== 'move_burst' && r.key !== 'move_ms').concat(Object.keys(cfg || {}).map(k => ({ key: k, value: cfg[k] })));
+  const c = Content.build(t), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Walker', 'warrior');
+  const s = { c, ws, p };
+  put(s, 'field', 2, 2, 'S');
+  return s;
+}
+const walk = (s, dirs, at) => { World.act(s.c, s.ws, s.p, { type: 'move', dirs }, at, mid, [s.p]); return [s.p.x, s.p.y]; };
+
+test('the referee limits walking speed: a burst, then one step per move_ms, whatever the page sends', () => {
+  const s = field({ move_ms: 100, move_burst: 4 });
+  assert.deepStrictEqual(walk(s, Array(20).fill('E'), 10000), [6, 2], 'twenty steps asked for, the burst of four given');
+  assert.deepStrictEqual(walk(s, Array(20).fill('E'), 10000), [6, 2], 'asking again at once gives nothing');
+  assert.deepStrictEqual(walk(s, Array(20).fill('E'), 10085), [7, 2], 'one more step once its time has passed');
+  assert.deepStrictEqual(walk(s, ['E', 'E', 'E'], 10600), [10, 2], 'an honest batch that waited its turn goes through whole');
+  // a diagonal covers more ground, so it costs more: 1.4 steps
+  const d = field({ move_ms: 100, move_burst: 4 });
+  assert.deepStrictEqual(walk(d, Array(10).fill('SE'), 10000), [4, 4], 'four steps of budget pay for two diagonals (2.8), not three');
+  // turning on the spot and walking into something cost nothing, and time away does not pile up past the burst
+  const w = field({ move_ms: 100, move_burst: 4 });
+  put(w, 'field', 0, 0, 'S');
+  walk(w, Array(10).fill('W'), 10000);
+  assert.deepStrictEqual(walk(w, Array(20).fill('E'), 10000), [4, 0], 'bumping the map edge spent none of the budget');
+  assert.deepStrictEqual(walk(w, Array(20).fill('E'), 99999), [8, 0], 'a long rest refills to the burst, no further');
+});
+
+test('diagonal steps: allowed in the open, never round a corner or onto something, facing stays four-way', () => {
+  const s = field({ move_burst: 999 });
+  assert.deepStrictEqual(walk(s, ['SE', 'NE', 'NW', 'SW'], 1000), [2, 2], 'all four diagonals, there and back');
+  assert.strictEqual(s.p.facing, 'W', 'the last two (NW, SW) both agree with facing west, so it is kept');
+  walk(s, ['NE'], 2000);
+  assert.strictEqual(s.p.facing, 'E', 'else it looks sideways');
+  // the corner at (5,5): wall on its north side and on its east side
+  const m = World.liveMap(s.c, s.ws, 'field');
+  const go = (x, y, dir) => Rules.tryMove(s.c, m, x, y, dir);
+  assert.strictEqual(go(5, 5, 'NE').ok, false, 'from inside the corner: both ways round are walled');
+  assert.strictEqual(go(6, 4, 'SW').ok, false, 'nor back in from outside');
+  assert.strictEqual(go(5, 5, 'NW').ok, false, 'one way round is walled (north): refused even though the other is open');
+  assert.strictEqual(go(5, 5, 'SE').ok, false, 'likewise past the east wall');
+  assert.ok(go(5, 5, 'SW').ok && go(4, 6, 'NE').ok, 'the open corner of the same cell is fine');
+  assert.strictEqual(go(5, 5, 'NE').corner, true);
+  // a solid object: not onto it, and not squeezing past its corner
+  assert.strictEqual(go(8, 7, 'SE').ok, false, 'onto the block');
+  assert.strictEqual(go(8, 8, 'NE').ok, false, 'past its corner (the block is one of the two ways round)');
+  assert.ok(go(8, 9, 'NE').ok === false && go(10, 9, 'NW').ok === false);
+  assert.ok(go(7, 7, 'SE').ok, 'a diagonal that only touches the block corner to corner is fine');
+  // the map edge, and a creature in the way
+  assert.strictEqual(go(0, 0, 'NW').ok, false);
+  const occ = { occupied: (x, y) => (x === 3 && y === 3 ? { monster: { id: 'm1' } } : x === 2 && y === 3 ? { monster: { id: 'm2' } } : null) };
+  assert.strictEqual(Rules.tryMove(s.c, m, 2, 2, 'SE', occ).reason, 'occupied', 'the landing cell must be free');
+  assert.ok(Rules.tryMove(s.c, m, 1, 2, 'SE', { occupied: (x, y) => (x === 1 && y === 3 ? { monster: {} } : null) }).ok, 'a creature beside the path is not a wall');
+  assert.deepStrictEqual([Rules.stepCost('N'), Rules.stepCost('SW'), Rules.isDir('NE'), Rules.isDir('X')], [1, 1.4, true, false]);
+});
+
+test('a monster chasing you cuts corners the same way, and walking into one diagonally is not an attack', () => {
+  const s = field({ move_burst: 999 });
+  World.advance(s.c, s.ws, 'field', [s.p], 1000, mid, []);
+  const ms = World.mapState(s.ws, 'field'), ref = Object.keys(s.c.monsters)[0], def = s.c.monsters[ref];
+  def.aggro = 10;                                                     // make sure it notices the player from afar
+  ms.monsters.push({ id: 'field.m1', ref, x: 3, y: 3, hp: def.hp, last: 1000, facing: 'S', spawn: '' });
+  const hp0 = ms.monsters[0].hp;
+  World.act(s.c, s.ws, s.p, { type: 'move', dirs: ['SE'] }, 1000, mid, [s.p]);
+  assert.deepStrictEqual([s.p.x, s.p.y, ms.monsters[0].hp], [2, 2, hp0], 'blocked by the monster, and no blow struck');
+  put(s, 'field', 6, 0, 'S');                                         // far away, straight up a diagonal from (3,3)
+  World.advance(s.c, s.ws, 'field', [s.p], 1000 + def.moveMs + 1, mid, []);
+  const mo = ms.monsters[0];
+  assert.deepStrictEqual([mo.x, mo.y], [4, 2], 'it steps diagonally toward its target');
+});
+
+// ---- reaching diagonally: using and hitting what is on any of the eight tiles around you
+test('you can hit and use things diagonally, but never round the end of a wall', () => {
+  const s = field({ move_burst: 999 });
+  World.advance(s.c, s.ws, 'field', [s.p], 1000, mid, []);
+  const ms = World.mapState(s.ws, 'field'), ref = Object.keys(s.c.monsters)[0], def = s.c.monsters[ref];
+  const mon = (id, x, y) => { const m = { id, ref, x, y, hp: 9999, last: 9e12, facing: 'S', spawn: '' }; ms.monsters.push(m); return m; };
+  const say = a => { clock += 5000; return texts(World.act(s.c, s.ws, s.p, a, clock, mid, [s.p])); };
+  const m = World.liveMap(s.c, s.ws, 'field');
+  // the wall corner at (5,5): walls on its north and east sides
+  assert.deepStrictEqual([[6, 4], [4, 4], [6, 6], [4, 6]].map(q => Rules.reachBlocked(s.c, m, 5, 5, q[0], q[1])), [true, true, true, false],
+    'three of its diagonals pass a wall end; only the south-west one is clear');
+  assert.strictEqual(Rules.reachBlocked(s.c, m, 5, 5, 5, 4), true);
+  assert.strictEqual(Rules.reachBlocked(s.c, m, 5, 5, 5, 6), false);
+  // melee
+  const open = mon('field.m1', 3, 3), behind = mon('field.m2', 6, 4);
+  put(s, 'field', 2, 2, 'S');
+  assert.match(say({ type: 'attack', x: 3, y: 3 }), /You hit the/);
+  assert.ok(open.hp < 9999);
+  put(s, 'field', 5, 5, 'S');
+  assert.match(say({ type: 'attack', x: 6, y: 4 }), /A wall is in the way/);
+  assert.strictEqual(behind.hp, 9999);
+  put(s, 'field', 1, 1, 'S');
+  assert.match(say({ type: 'attack', x: 3, y: 3 }), /Too far away/, 'two tiles off is still out of reach');
+  // a solid object on the diagonal can be struck, and things can be used from the diagonal
+  put(s, 'field', 8, 7, 'S');
+  const acts = World.actionsAt(s.c, m, World.viewLookup(s.c, m, World.view(s.c, s.ws, 'field', s.p, [s.p], -1), s.p), s.p, 10, 8).map(a => a.label);
+  assert.ok(Array.isArray(acts));
+  put(s, 'field', 10, 8, 'S');
+  assert.match(say({ type: 'interact', x: 11, y: 9 }), /^(?!.*Too far away)/, 'the chest at (11,9) is in reach from (10,8)');
+  assert.ok(World.actionsAt(s.c, m, World.viewLookup(s.c, m, World.view(s.c, s.ws, 'field', s.p, [s.p], -1), s.p), s.p, 11, 9).length > 0);
+  put(s, 'field', 9, 7, 'S');
+  assert.match(say({ type: 'interact', x: 11, y: 9 }), /Too far away/);
+});
+
+test('a monster beside you diagonally attacks instead of shuffling round, unless a wall end is between', () => {
+  const s = field({ move_burst: 999 });
+  World.advance(s.c, s.ws, 'field', [s.p], 1000, mid, []);
+  const ms = World.mapState(s.ws, 'field'), ref = Object.keys(s.c.monsters)[0], def = s.c.monsters[ref];
+  def.aggro = 10;
+  const mo = { id: 'field.m1', ref, x: 3, y: 3, hp: def.hp, last: 1000, facing: 'S', spawn: '' };
+  ms.monsters.push(mo);
+  put(s, 'field', 2, 2, 'S');
+  const hp0 = s.p.hp, ev = [];
+  World.advance(s.c, s.ws, 'field', [s.p], 1000 + def.moveMs + 1, mid, ev);
+  assert.ok(s.p.hp < hp0 && /hits you/.test(texts(ev)), 'it strikes from the diagonal');
+  assert.deepStrictEqual([mo.x, mo.y], [3, 3], 'without moving first');
+  // across the wall corner it cannot: it has to walk round
+  s.p.hp = hp0; Object.assign(mo, { x: 6, y: 4, last: 50000 });
+  put(s, 'field', 5, 5, 'S');
+  World.advance(s.c, s.ws, 'field', [s.p], 50000 + def.moveMs + 1, mid, []);
+  assert.strictEqual(s.p.hp, hp0, 'no blow through the corner');
 });
 
 console.log(`\n${passed} world tests passed`);

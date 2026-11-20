@@ -6,7 +6,13 @@
  *   players/<token>       full player state (private), a JSON string
  *   state/maps/<mapId>    ONE MAP's live state (private), a JSON string:
  *                         { states, timers, monsters, ..., log: [recent events], seq: last event number }
- *   world/<mapId>         the public view clients subscribe to (monsters + players on that map)
+ *   world/<mapId>         the public view clients subscribe to, written PIECE BY PIECE (see pushView):
+ *                         { map, v: 2, now, seq, doors, players: [...],
+ *                           m: { <monster key>: "x,y,hp,facing,statuses" }   what moves — only the ones that changed are written
+ *                           d: { <monster key>: JSON {ref, maxHp, look} } }  what does not (its looks) — written once
+ *   here/<groundId>/<token> = when that player last acted in that building (a map and its floors): who is around,
+ *                         so a step reads those characters
+ *                         and not every character ever made
  *
  * Why per map, and why a transaction: the whole world used to be one record (state/world) written
  * last-write-wins, so two actions landing in the same ~200 ms overwrote each other's changes. Now each
@@ -26,7 +32,8 @@ const crypto = require('crypto');
 function create(deps) {
   const db = deps.db, getContent = deps.getContent, World = deps.World;
   const clock = deps.now || Date.now, rng = deps.random || Math.random;
-  const lastView = {};   // per warm instance: last public view written per map, so identical pushes are skipped
+  const INSTANCE = crypto.randomUUID().slice(0, 8);   // this warm instance: a map record remembers who ran its last step (pi)
+  const pushed = {};     // per warm instance and map: what this instance last wrote to world/<mapId> (see pushView)
   let migrating = null;
 
   // Records are stored as JSON strings because their keys (entity ids like "map_3.e9", flag names)
@@ -35,33 +42,55 @@ function create(deps) {
     if (v == null) return fallback;
     return typeof v === 'string' ? JSON.parse(v) : v;        // tolerate records written as plain objects
   }
-  async function readPlayers() {
-    const snap = await db.ref('players').get();
-    const raw = snap.val() || {}, out = {};
-    Object.keys(raw).forEach(tok => { try { out[tok] = parseVal(raw[tok]); } catch (e) { /* skip unreadable */ } });
-    return out;
+  async function readOne(token) {
+    const snap = await db.ref('players/' + token).get(), raw = snap.val();
+    if (raw == null) return null;
+    try { return parseVal(raw); } catch (e) { return null; }
+  }
+  /**
+   * Adds to `all` ({token: player}) whoever is in these buildings according to here/<groundId> and has acted in the last
+   * minute. One read per map, then one per character found — all at once. `stale` collects index entries a day old.
+   */
+  async function loadPresent(all, mapIds, now, stale, skip) {
+    const lists = await Promise.all(mapIds.map(id => db.ref('here/' + id).get().then(sn => sn.val() || {})));
+    const want = {};
+    lists.forEach((h, i) => Object.keys(h).forEach(tok => {
+      const seen = Number(h[tok]) || 0;
+      if (now - seen < 60000) { if (!all[tok] && tok !== skip) want[tok] = 1; }   // (skip: the one whose step this is, read already)
+      else if (stale && now - seen > 86400000 && stale.length < 20) stale.push('here/' + mapIds[i] + '/' + tok);
+    }));
+    const recs = await Promise.all(Object.keys(want).map(tok => readOne(tok).then(r => [tok, r])));
+    recs.forEach(([tok, r]) => { if (r && !all[tok]) all[tok] = r; });
   }
   function presentOn(all, mapId, now) {
     return Object.keys(all).map(tok => all[tok])
       .filter(q => q.map === mapId && now - (q._seen || 0) < 60000);
   }
 
-  /** The fast-moving, fully-global part of a map's state: all monsters and all players present. */
-  function firebaseView(content, ms, mapId, players, now) {
+  /** A monster's id as a database key (ids hold '.', which keys may not). The game page decodes it. */
+  function mKey(id) { return encodeURIComponent(String(id)).replace(/\./g, '%2E'); }
+  /**
+   * A map's public view, split the way it is stored: head = the small things (players present, door states),
+   * m = each living monster's moving part as a short string, d = each one's fixed part (kind, full health, looks).
+   */
+  function viewParts(content, ms, mapId, players) {
     // doors = which doors (and other things on the walls) are not in their usual state, for players watching this
     // floor from another one. A JSON string: entity keys hold '.', which the database forbids in keys.
     const one = { maps: {} }; one.maps[mapId] = ms;
     const fst = World.fixtureStates(content, one, mapId);
+    const m = {}, d = {};
+    (ms.monsters || []).forEach(mo => {
+      if (mo.dead) return;
+      const def = content.monsters[mo.ref], k = mKey(mo.id);
+      m[k] = [mo.x, mo.y, mo.hp, mo.facing || 'S', (mo.statuses || []).map(st => st.id).join('|')].join(',');
+      d[k] = JSON.stringify({ id: mo.id, ref: mo.ref, maxHp: def ? def.hp : mo.hp, look: mo.look || undefined });
+    });
     return {
-      map: mapId, now: now, seq: ms.seq || 0, doors: Object.keys(fst).length ? JSON.stringify(fst) : null,
-      monsters: (ms.monsters || []).filter(m => !m.dead).map(m => {
-        const d = content.monsters[m.ref];
-        return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing,
-          statuses: (m.statuses || []).map(st => st.id), look: m.look || undefined };
-      }),
+      doors: Object.keys(fst).length ? JSON.stringify(fst) : null,
       players: (players || []).filter(q => q.map === mapId).map(q => ({
         id: q.id, name: q.name, x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level
-      }))
+      })),
+      m: m, d: d
     };
   }
   // What players built or broke on a floor of a multi-storey building, for those watching it from another floor:
@@ -74,14 +103,52 @@ function create(deps) {
     lastStruct[mapId] = rev;
     await db.ref('world/s~' + World.groundId(content, mapId) + '/' + mapId).set({ rev: rev, json: JSON.stringify(World.publicStruct(ms.struct)) });
   }
-  /** Push a map's public view, but only when the moving things actually changed (an idle heartbeat writes nothing). */
-  async function pushView(content, ms, mapId, players, now) {
+  /**
+   * Push a map's public view — only what changed since this instance last wrote it (an idle heartbeat writes
+   * nothing; a step in which three monsters moved writes three short strings). The whole view is written instead
+   * when this instance has no picture of what is stored: its first push for the map, another instance ran the
+   * map's last step (the record's `pi`), a push failed, or a minute has passed (so a slip never lasts).
+   * Pushes for one map go one after another, and one made from an older state than the last is dropped, so two
+   * steps finishing out of order cannot leave old positions behind.
+   */
+  function pushView(content, ms, mapId, players, now) {
+    const st = pushed[mapId] || (pushed[mapId] = { pv: -1, base: null, fullAt: 0, chain: Promise.resolve() });
+    const job = () => doPush(content, ms, mapId, players, now, st).catch(() => { st.base = null; });
+    st.chain = st.chain.then(job, job);
+    return st.chain;
+  }
+  async function doPush(content, ms, mapId, players, now, st) {
     await pushStruct(content, ms, mapId);
-    const view = firebaseView(content, ms, mapId, players, now);
-    const signature = JSON.stringify(view.monsters) + '|' + JSON.stringify(view.players) + '|' + (view.doors || '');
-    if (lastView[mapId] === signature) return;
-    lastView[mapId] = signature;
-    await db.ref('world/' + mapId).set(view);
+    const info = ms._push || { pv: st.pv + 1, prev: INSTANCE };
+    if (st.base && info.pv <= st.pv && st.pv - info.pv < 50) return;            // an older state than the one already pushed
+    const v = viewParts(content, ms, mapId, players);
+    const head = JSON.stringify(v.players) + '|' + (v.doors || '');
+    const full = !st.base || info.prev !== INSTANCE || now - st.fullAt > 60000 || info.pv <= st.pv;
+    if (full) {
+      const same = st.base && st.base.head === head && sameKeys(st.base.m, v.m) && sameKeys(st.base.d, v.d);
+      st.pv = info.pv;
+      if (same && info.prev === INSTANCE) { st.fullAt = now; return; }          // the minute's check found nothing out of place
+      st.base = { head: head, m: v.m, d: v.d }; st.fullAt = now;
+      await db.ref('world/' + mapId).set({ map: mapId, v: 2, now: now, seq: ms.seq || 0, doors: v.doors, players: v.players, m: v.m, d: v.d });
+      return;
+    }
+    // Each branch is patched on its own (m, d, the head), so what reaches the game page is always "these children of
+    // this node changed" — never a path inside a key, which not every reader takes the same way.
+    const mp = {}, dp = {}, writes = [], at = 'world/' + mapId;
+    Object.keys(v.m).forEach(k => { if (st.base.m[k] !== v.m[k]) mp[k] = v.m[k]; });
+    Object.keys(st.base.m).forEach(k => { if (!(k in v.m)) mp[k] = null; });
+    Object.keys(v.d).forEach(k => { if (st.base.d[k] !== v.d[k]) dp[k] = v.d[k]; });
+    Object.keys(st.base.d).forEach(k => { if (!(k in v.d)) dp[k] = null; });
+    const headChanged = st.base.head !== head;
+    st.pv = info.pv; st.base = { head: head, m: v.m, d: v.d };
+    if (Object.keys(dp).length) writes.push(db.ref(at + '/d').update(dp));
+    if (Object.keys(mp).length) writes.push(db.ref(at + '/m').update(mp));
+    if (headChanged) writes.push(db.ref(at).update({ players: v.players, doors: v.doors, now: now, seq: ms.seq || 0 }));
+    await Promise.all(writes);
+  }
+  function sameKeys(a, b) {
+    const ka = Object.keys(a), kb = Object.keys(b);
+    return ka.length === kb.length && ka.every(k => a[k] === b[k]);
   }
 
   /**
@@ -131,10 +198,13 @@ function create(deps) {
       World.record(ws, ev);
       ms.seq = ws.seq;
       ms.log = (ws.log || []).slice(-50);                    // keep recent events only, to keep the record small
-      out = { all, p, players, ev, ms, transfers: ws.transfers || [] };   // transfers = monsters that took the stairs to another floor
+      const prevInst = ms.pi;                                // pv counts this map's steps, pi names the instance that ran the last one:
+      ms.pv = (ms.pv || 0) + 1; ms.pi = INSTANCE;            // pushView uses them to know whether its picture of world/<map> still holds
+      out = { all, p, players, ev, ms, transfers: ws.transfers || [], push: { pv: ms.pv, prev: prevInst } };   // transfers = monsters that took the stairs to another floor
       return JSON.stringify(ms);
     }, undefined, false);
     if (!result || !result.committed || !out) throw new Error('the world is busy — try again');
+    Object.defineProperty(out.ms, '_push', { value: out.push, enumerable: false });
     return out;
   }
 
@@ -176,19 +246,38 @@ function create(deps) {
   }
 
   /** One game step: catch the world up, run the player's action (if any), persist, report back. */
-  async function step(token, action, since, structRev) {
+  /**
+   * opts (from the game page, both optional): at = the map it believes the player is on, so the characters around
+   * can be read alongside the player's own record; live = the map whose pushed view it is receiving, so the answer
+   * need not carry that map's monsters a second time.
+   */
+  async function step(token, action, since, structRev, opts) {
     const content = await getContent();
     const now = clock();
-    const all = await readPlayers();
-    if (!all[token]) throw new Error('unknown character');
-    Object.keys(all).forEach(tok => World.normalize(content, all[tok]));   // stats/fields, as on every load
-    await migrateLegacy();
+    const hint = opts && opts.at && content.maps[opts.at] ? String(opts.at) : '';
+    const all = {}, loaded = {}, stale = [];
+    // whoever is in the building of this map (its other floors are kept moving too), unless already read
+    const around = async (into, mapId) => {
+      const g = World.groundId(content, mapId);               // the index is kept per building: all its floors in one read
+      if (loaded[g]) return;
+      loaded[g] = 1;
+      const ids = [g];
+      const before = Object.keys(into);
+      await loadPresent(into, ids, now, stale, token);
+      Object.keys(into).forEach(tok => { if (before.indexOf(tok) < 0) World.normalize(content, into[tok]); });
+    };
+    const got = await Promise.all([readOne(token), hint ? around(all, hint) : null, migrateLegacy()]);
+    if (!got[0]) throw new Error('unknown character');
+    all[token] = got[0];
+    World.normalize(content, all[token]);                    // stats/fields, as on every load
+    await around(all, all[token].map);                       // (nothing to do when the hint was right)
 
     const startMap = all[token].map;
     // Monsters following this player by the stairs are on the floor they left; nobody may be there to move it on,
     // so for a short while (player.wake) this player's steps move that floor too.
     const wake = all[token].wake;
     if (wake && wake.map && wake.map !== startMap && now < wake.until && content.maps[wake.map]) {
+      await around(all, wake.map);
       const w = await runOnMap(content, wake.map, JSON.stringify(all), token, null, now, true);
       await deliver(content, w.transfers);
       await pushView(content, w.ms, wake.map, presentOn(all, wake.map, now), now);
@@ -206,6 +295,7 @@ function create(deps) {
     }
     const touched = new Set(first.ev.filter(e => e.to).map(e => e.to));
     if (first.p.map !== startMap) {                             // walked through a door/teleport: arrive on the new map
+      await around(first.all, first.p.map);                     // …among whoever is already there
       last = await runOnMap(content, first.p.map, JSON.stringify(first.all), token, null, now);
       last.ev.filter(e => e.to).forEach(e => touched.add(e.to));
       // The event numbers of the two maps are unrelated, so hand this step's events over directly.
@@ -228,18 +318,23 @@ function create(deps) {
       const q = fin.all[tok];
       if (tok !== token && q && touched.has(q.id)) updates['players/' + tok] = JSON.stringify(q);
     });
-    await db.ref().update(updates);
+    const hereNow = World.groundId(content, p.map), hereWas = World.groundId(content, startMap);
+    updates['here/' + hereNow + '/' + token] = now;             // where this player is (which building), for the others' steps
+    if (hereNow !== hereWas) updates['here/' + hereWas + '/' + token] = null;
+    stale.forEach(path => { updates[path] = null; });
 
-    if (last !== first) await pushView(content, first.ms, startMap, first.players.filter(q => q.id !== p.id), now);   // the map just left
-    await pushView(content, last.ms, p.map, last.players, now);
-    if (shot) await pushView(content, shot.ms, far, shot.players, now);
-
-    await others;
+    // saving and telling everyone go side by side: none of them waits for another
+    const jobs = [db.ref().update(updates), pushView(content, last.ms, p.map, last.players, now), others];
+    if (last !== first) jobs.push(pushView(content, first.ms, startMap, first.players.filter(q => q.id !== p.id), now));   // the map just left
+    if (shot) jobs.push(pushView(content, shot.ms, far, shot.players, now));
+    await Promise.all(jobs);
     const ws = { seq: last.ms.seq, log: last.ms.log, maps: {} };
     ws.maps[p.map] = last.ms;
     // structRev = the structure-layer revision the client already has; after a map change it knows nothing
-    return { player: World.publicPlayer(content, p), world: World.view(content, ws, p.map, p, last.players, last !== first ? -1 : structRev),
-      events: events, seq: last.ms.seq };
+    const world = World.view(content, ws, p.map, p, last.players, last !== first ? -1 : structRev);
+    // The page is already being pushed this map's monsters: do not send the whole list again with every answer.
+    if (opts && opts.live && String(opts.live) === p.map && last === first) { delete world.monsters; world.pushed = 1; }
+    return { player: World.publicPlayer(content, p), world: world, events: events, seq: last.ms.seq };
   }
 
   async function join(name, cls) {

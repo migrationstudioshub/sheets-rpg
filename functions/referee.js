@@ -181,6 +181,7 @@ function create(deps) {
    */
   async function runOnMap(content, mapId, allJson, token, action, now, absent) {
     let out = null;
+    if (deps.warm) deps.warm('state/maps/' + mapId);          // keep this record cached here: see index.js (warm)
     const result = await db.ref('state/maps/' + mapId).transaction(cur => {
       const ms = parseVal(cur, null) || {};
       const all = JSON.parse(allJson), p = all[token];

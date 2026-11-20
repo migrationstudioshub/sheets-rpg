@@ -52,6 +52,7 @@ var Schema = (function () {
       f('autotile', 'ref', '', 'Autotiled: which tileset', { ref: 'tilesets' }),
       f('layer', 'select', 'base', 'Layer this paints on by default: base (opaque ground) or overlay (transparent, sits on top of the ground)', { options: ['base', 'overlay'] }),
       f('frames', 'number', 1), f('frame_ms', 'number', 200),
+      f('build_over', 'bool', false, 'Open ground (grass, dirt, sand…): players may lay a floor on top of it. Leave off for real floors and for anything that must not be covered (water, roads)'),
       f('pass_n', 'bool', true, 'Can leave northward'), f('pass_e', 'bool', true),
       f('pass_s', 'bool', true), f('pass_w', 'bool', true), f('notes', 'text', '')
     ] },
@@ -183,8 +184,9 @@ var Schema = (function () {
 
     blueprints: { collection: 'blueprints', id: 'id', label: 'Blueprints', singular: 'blueprint', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''),
-      f('category', 'select', 'walls', 'Tab in the build menu', { options: ['walls', 'doors', 'furniture', 'stations', 'defences', 'other'] }),
-      f('places', 'select', 'wall', 'wall = a wall segment on a grid line; object = a map object (on a tile, or on a wall if the object is wall-mounted)', { options: ['wall', 'object'] }),
+      f('category', 'select', 'walls', 'Tab in the build menu', { options: ['walls', 'floors', 'doors', 'furniture', 'stations', 'defences', 'other'] }),
+      f('places', 'select', 'wall', 'wall = a wall segment on a grid line; object = a map object (on a tile, or on a wall if the object is wall-mounted); tile = a piece of floor, laid where there is none, joined onto floor that is already there. A tile blueprint also serves as a ROOF: the build menu offers Floor and Roof for it — as a roof it is placed from below, over the storey you stand on, becomes the floor of the storey above and must rest on walls', { options: ['wall', 'object', 'tile'] }),
+      f('terrain', 'ref', '', 'For tiles: the terrain it lays. For stairs: the floor laid on the landing above (empty = the floor under their foot)', { ref: 'terrain' }),
       f('wall_style', 'ref', '', 'For walls: the wall style it builds', { ref: 'wallStyles' }),
       f('object', 'ref', '', 'For objects: the object it builds', { ref: 'objects' }),
       f('cost', 'items', '', 'Materials used up to build it'),
@@ -194,7 +196,7 @@ var Schema = (function () {
       f('needs_wall', 'bool', true, 'Wall-mounted objects (doors, windows): the spot must already have a wall'),
       f('upgrade_of', 'ref', '', 'This is an upgrade of that blueprint: it can be applied to one already built', { ref: 'blueprints' }),
       f('unlock', 'text', '', 'Condition to know it, e.g. level:3 or flag:found_plans'),
-      f('icon', 'image', '', 'Menu icon (empty = the object or wall art)'),
+      f('icon', 'image', '', 'Picture in the build menu (empty = the object\'s or the terrain\'s own art)'),
       f('notes', 'text', '')
     ] },
     recipes: { collection: 'recipes', id: 'id', label: 'Recipes', singular: 'recipe', authored: 'studio', fields: [

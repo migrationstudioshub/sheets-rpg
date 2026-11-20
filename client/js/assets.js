@@ -55,7 +55,10 @@ var Assets = (function () {
     });
     // whatever a blueprint can build may appear on any map, so its art is loaded everywhere
     Object.keys(content.blueprints || {}).forEach(function (k) {
-      var o = content.objects[content.blueprints[k].object]; if (!o) return;
+      var b = content.blueprints[k];
+      if (b.icon) paths[b.icon] = 1;                                     // its picture in the build menu
+      if (b.terrain) scanTerrain([[b.terrain]]);                         // the floor it lays (or leaves on a landing)
+      var o = content.objects[b.object]; if (!o) return;
       if (o.sprite) paths[o.sprite] = 1;
       Object.keys(o.spriteStates || {}).forEach(function (st) { paths[o.spriteStates[st]] = 1; });
     });

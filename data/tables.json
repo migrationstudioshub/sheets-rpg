@@ -36,6 +36,21 @@
    "notes": "A wall that hides something you can see within this many tiles of you drops to a stub (the walls of the room you are in always do)"
   },
   {
+   "key": "floor_blur",
+   "value": 0.6,
+   "notes": "How out of focus the floors below you look when you stand upstairs, in pixels (0 = sharp, 0.6 = slight, 1.5 = strong)"
+  },
+  {
+   "key": "skills",
+   "value": "",
+   "notes": "on = class skills are in the game (Q/E ability boxes, the abilities list in the bag, the mana bar). Empty = switched off for now: players are shown none of it."
+  },
+  {
+   "key": "floor_removed_terrain",
+   "value": "",
+   "notes": "Terrain id left on the ground when a player takes up a floor they laid there. Empty = the terrain named Dirt, if there is one; none = the ground comes back as it was."
+  },
+  {
    "key": "wall_cut_alpha",
    "value": 0.45,
    "notes": "Opacity (0-1) of doors, windows and switches left standing on a wall that has dropped to a stub"
@@ -249,6 +264,21 @@
    "key": "move_burst",
    "value": 6,
    "notes": "How many steps a player may take in one go before the referee makes them wait (walking speed itself is move_ms). Stops speed cheats; raise it only if honest players on slow connections get pulled back"
+  },
+  {
+   "key": "sight_per_floor",
+   "value": 3,
+   "notes": "Multi-storey maps: how many tiles further a player sees for each floor they are above the ground"
+  },
+  {
+   "key": "roof_support",
+   "value": 3,
+   "notes": "How many tiles from a wall (or a pillar: an object with property support) a piece of roof or upstairs floor may be, counted through the roof already there. 0 = no rule."
+  },
+  {
+   "key": "auto_floors",
+   "value": 2,
+   "notes": "How many empty storeys the game supplies above every map for players to build on (roofs, upper floors). 0 = only the floors made in the map editor."
   }
  ],
  "Tilesets": [
@@ -568,7 +598,8 @@
    "pass_w": 0,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_1",
@@ -583,7 +614,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_2",
@@ -598,7 +630,8 @@
    "pass_w": 0,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_3",
@@ -613,7 +646,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_4",
@@ -628,7 +662,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_5",
@@ -643,7 +678,8 @@
    "pass_w": 0,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_6",
@@ -658,7 +694,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_7",
@@ -673,7 +710,8 @@
    "pass_w": 0,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_8",
@@ -688,7 +726,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_9",
@@ -703,7 +742,8 @@
    "pass_w": 0,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_10",
@@ -718,7 +758,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "til_11",
@@ -733,7 +774,8 @@
    "pass_w": 0,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported (passability fixed: was walkable)"
+   "notes": "imported (passability fixed: was walkable)",
+   "build_over": false
   },
   {
    "id": "til_12",
@@ -748,7 +790,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "imported"
+   "notes": "imported",
+   "build_over": false
   },
   {
    "id": "fields",
@@ -763,7 +806,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "Autotiled: edges and corners are picked automatically"
+   "notes": "Autotiled: edges and corners are picked automatically",
+   "build_over": false
   },
   {
    "id": "g_asphalt",
@@ -778,7 +822,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "from the tileset maker"
+   "notes": "from the tileset maker",
+   "build_over": false
   },
   {
    "id": "g_sidewalk",
@@ -793,7 +838,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "from the tileset maker"
+   "notes": "from the tileset maker",
+   "build_over": false
   },
   {
    "id": "g_dirt",
@@ -808,7 +854,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "from the tileset maker"
+   "notes": "from the tileset maker",
+   "build_over": true
   },
   {
    "id": "g_grass",
@@ -823,7 +870,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "from the tileset maker"
+   "notes": "from the tileset maker",
+   "build_over": true
   },
   {
    "id": "f_wood",
@@ -838,7 +886,8 @@
    "pass_w": 1,
    "frames": "",
    "frame_ms": "",
-   "notes": "from the tileset maker"
+   "notes": "from the tileset maker",
+   "build_over": false
   },
   {
    "id": "w_brick",
@@ -853,7 +902,8 @@
    "pass_w": 0,
    "frames": "",
    "frame_ms": "",
-   "notes": "from the tileset maker"
+   "notes": "from the tileset maker",
+   "build_over": false
   },
   {
    "id": "w_concrete",
@@ -868,7 +918,8 @@
    "pass_w": 0,
    "frames": "",
    "frame_ms": "",
-   "notes": "from the tileset maker"
+   "notes": "from the tileset maker",
+   "build_over": false
   }
  ],
  "WallStyles": [
@@ -6286,6 +6337,7 @@
   {
    "category": "walls",
    "places": "wall",
+   "terrain": "",
    "wall_style": "wall_wood",
    "wall_height": 2,
    "object": "",
@@ -6304,6 +6356,7 @@
   {
    "category": "walls",
    "places": "wall",
+   "terrain": "",
    "wall_style": "wall_metal",
    "wall_height": 2,
    "object": "",
@@ -6322,6 +6375,7 @@
   {
    "category": "doors",
    "places": "object",
+   "terrain": "",
    "wall_style": "",
    "wall_height": 2,
    "object": "obj_edge_door",
@@ -6340,6 +6394,7 @@
   {
    "category": "defences",
    "places": "object",
+   "terrain": "",
    "wall_style": "",
    "wall_height": 2,
    "object": "obj_barricade",
@@ -6358,6 +6413,7 @@
   {
    "category": "furniture",
    "places": "object",
+   "terrain": "",
    "wall_style": "",
    "wall_height": 2,
    "object": "obj_crate",
@@ -6376,6 +6432,7 @@
   {
    "category": "stations",
    "places": "object",
+   "terrain": "",
    "wall_style": "",
    "wall_height": 2,
    "object": "obj_workbench",
@@ -6394,6 +6451,7 @@
   {
    "category": "other",
    "places": "object",
+   "terrain": "",
    "wall_style": "",
    "wall_height": 2,
    "object": "obj_claim",
@@ -6408,6 +6466,25 @@
    "notes": "",
    "id": "bp_claim",
    "name": "Claim flag"
+  },
+  {
+   "category": "floors",
+   "places": "tile",
+   "terrain": "f_wood",
+   "wall_style": "",
+   "wall_height": "",
+   "object": "",
+   "cost": "wood:2, nails:1",
+   "work": 0,
+   "tool": "hammer",
+   "station": "",
+   "needs_wall": false,
+   "upgrade_of": "",
+   "unlock": "",
+   "icon": "",
+   "notes": "A piece of floor. The build menu also offers it as a Roof: put up from below, it covers the storey you stand on and is the floor of the storey above.",
+   "id": "bp_wood_floor",
+   "name": "Wooden floor"
   }
  ]
 }

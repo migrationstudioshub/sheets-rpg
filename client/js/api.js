@@ -39,10 +39,11 @@ var Api = (function () {
     World.advance(c, ws, p.map, [p], now, Math.random, ev);
     if (action) ev = ev.concat(World.act(c, ws, p, action, now, Math.random, [p]));
     if (p.map !== from) World.advance(c, ws, p.map, [p], now, Math.random, ev);
+    World.advanceFloors(c, ws, p.map, null, now, Math.random, []);   // the rest of the building you are in stays alive
     World.deliver(c, ws);
     World.record(ws, ev);
     this.save();
-    return Promise.resolve({ player: World.publicPlayer(c, p), world: World.view(c, ws, p.map, p, [p], p.map !== from || since === -1 ? -1 : this.structRev),
+    return Promise.resolve({ player: World.publicPlayer(c, p), world: World.view(c, ws, p.map, p, [p], p.map !== from || since === -1 ? -1 : this.structRev, null, since === -1 ? null : this.floorRevs),
       events: World.eventsFor(ws, since, p), seq: ws.seq });
   };
   Offline.prototype.resume = function () {
@@ -96,8 +97,8 @@ var Api = (function () {
   };
   // structRev: the revision of the map's structure layer (built / damaged / destroyed things) this client
   // already holds — set by the game after each answer — so the server only re-sends the layer when it changed.
-  Online.prototype.act = function (action, since) { return this.call({ action: 'act', token: this.token, 'do': action, since: since, structRev: this.structRev }); };
-  Online.prototype.poll = function (since) { return this.call({ action: 'poll', token: this.token, since: since, structRev: this.structRev }); };
+  Online.prototype.act = function (action, since) { return this.call({ action: 'act', token: this.token, 'do': action, since: since, structRev: this.structRev, floorRevs: this.floorRevs }); };
+  Online.prototype.poll = function (since) { return this.call({ action: 'poll', token: this.token, since: since, structRev: this.structRev, floorRevs: this.floorRevs }); };
   /**
    * Listen for live updates to one map (monsters and players), pushed by the server through Firebase.
    * onWorld({map, now, seq, monsters, players}) runs on every change. Returns a function that stops listening.
@@ -113,6 +114,24 @@ var Api = (function () {
         if (!msg || msg.data == null) return;          // null = the node is empty (no one on this map yet)
         if (msg.path === '/') onWorld(msg.data);        // we always PUT the whole node, so the change arrives at '/'
       } catch (e) { /* keep-alive and auth-revoked frames aren't JSON we care about */ }
+    }
+    es.addEventListener('put', handle);
+    es.addEventListener('patch', handle);
+    return function () { es.close(); };
+  };
+  /**
+   * Listen for what players built or broke on every floor of one building (pushed by the server, only when it
+   * changes). onFloor(floorId, {rev, json} | null) runs once per floor at the start and again on each change.
+   */
+  Online.prototype.watchStructs = function (groundId, onFloor) {
+    if (!GAME_CONFIG.FIREBASE_URL || typeof EventSource === 'undefined') return function () {};
+    var es = new EventSource(GAME_CONFIG.FIREBASE_URL.replace(/\/+$/, '') + '/world/' + encodeURIComponent('s~' + groundId) + '.json');
+    function handle(ev) {
+      try {
+        var msg = JSON.parse(ev.data); if (!msg) return;
+        if (msg.path === '/') Object.keys(msg.data || {}).forEach(function (id) { onFloor(id, msg.data[id]); });
+        else if (/^\/[^/]+$/.test(msg.path)) onFloor(msg.path.slice(1), msg.data);
+      } catch (e) { /* keep-alive frames */ }
     }
     es.addEventListener('put', handle);
     es.addEventListener('patch', handle);
@@ -158,7 +177,8 @@ var Api = (function () {
     return fetch('/?action=content').then(function (r) { return r.json(); })
       .then(function (res) { if (res.error) throw new Error(res.error); return (this.content = res.content); }.bind(this));
   };
-  Lan.prototype.watchMap = function () { return function () {}; };   // no Firebase on the LAN; poll sees others
+  Lan.prototype.watchMap = function () { return function () {}; };
+  Lan.prototype.watchStructs = function () { return function () {}; };   // no Firebase on the LAN; poll sees others
 
   function create() {
     // Add ?offline to the URL to force offline mode (runs shared/world.js here against

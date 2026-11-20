@@ -20,6 +20,8 @@
   // building: buildOpen = the blueprint list is showing; building = the blueprint id you are placing (a ghost
   // follows the cursor until Esc); storage = the built container whose contents panel is open
   var buildOpen = false, building = null, storage = null;
+  var buildRoof = false;                 // placing a floor blueprint as a ROOF over the storey you stand on (V switches)
+  var removing = false, wallsDown = false;                // wallsDown (H, while removing): walls drawn as stubs so what is behind can be picked                                   // the remove tool (X, or the Build panel): a click takes apart what you built
   var armed = null;                      // {slot, id, skill} while an ability (Q/E) waits for a target
   var throwing = null;                   // belt item id armed for a throw (click to throw, Esc to cancel)
   // mouse: right-button held = aiming; left = interact (tap) / action list (hold) / fire (while aiming)
@@ -91,6 +93,42 @@
     var base = content.maps[me.map];
     return struct && struct.rev ? World.liveMapFromStruct(content, base, struct) : base;
   }
+  // The same layer for the OTHER floors of the building you are in ({floorId: struct}), so they are drawn, seen
+  // through and aimed at as they really are. Offline and on a LAN it comes with the answers (only when it
+  // changed: api.floorRevs says what we hold); online each building's floors are pushed (api.watchStructs).
+  var floorStructs = {}, floorVer = 0, floorBuilding = '';
+  function floorMap(id) {
+    if (me && id === me.map) return mapOf();
+    var st = floorStructs[id], base = content.maps[id];
+    return st && st.rev ? World.liveMapFromStruct(content, base, st) : base;
+  }
+  function floorMaps() {
+    var out = {};
+    World.floorsOf(content, me.map).forEach(function (f) { if (f.id !== me.map) out[f.id] = floorMap(f.id); });
+    return out;
+  }
+  function setFloorStruct(id, st) {
+    if (((floorStructs[id] || {}).rev || 0) === ((st && st.rev) || 0)) return false;
+    if (st && st.rev) floorStructs[id] = st; else delete floorStructs[id];
+    var revs = {}; Object.keys(floorStructs).forEach(function (k) { revs[k] = floorStructs[k].rev; });
+    api.floorRevs = revs; floorVer++;
+    return true;
+  }
+  /** A floor's layer changed: load any new art, then bake that floor again. */
+  function floorChanged(id) {
+    if (!me || !renderer || !renderer.map || id === me.map) return;
+    var at = me.map;
+    Assets.loadForMap(content, floorMap(id)).then(function () { if (me && me.map === at) renderer.setMap(mapOf(), floorMaps()); });
+  }
+  function takeFloorStructs(w) {
+    var g = World.groundId(content, me.map);
+    if (g !== floorBuilding) { floorBuilding = g; floorStructs = {}; api.floorRevs = {}; floorVer++; }
+    if (!w || !w.floors) return;
+    Object.keys(w.floors).forEach(function (id) {
+      var f = w.floors[id];
+      if (f.struct ? setFloorStruct(id, f.struct) : (!f.structRev && setFloorStruct(id, null))) floorChanged(id);
+    });
+  }
   /** Take the layer from a server answer. True when what we hold changed. */
   function takeStruct(w) {
     if (!w) return false;
@@ -106,16 +144,19 @@
     if (res.world && res.world.now) clockOffset = res.world.now - Date.now();
     if (typeof res.seq === 'number') since = res.seq;
     var p = res.player;
+    var holdQ = queue.filter(function (a) { return a.type === 'hold'; }).pop();
+    if (holdQ && p && typeof p.held === 'number') p = predictHold(p, holdQ.slot);   // a slot choice still on its way: keep showing it
     var moving = queue.some(function (a) { return a.type === 'move'; });
     if (!me || p.map !== me.map) {
       floorWait = 0;
-      me = p; view = res.world; struct = null; takeStruct(res.world); handleEvents(res.events);
+      me = p; view = res.world; struct = null; takeStruct(res.world); takeFloorStructs(res.world); handleEvents(res.events);
       return enterMap();
     }
     // keep our predicted position while moves are still on their way; otherwise trust the server
     me = moving ? Object.assign({}, p, { x: me.x, y: me.y, facing: me.facing }) : p;
     view = res.world;
-    if (takeStruct(res.world)) { renderer.setMap(mapOf()); sight.key = ''; }   // something was built or broken: redraw walls, re-check sight
+    takeFloorStructs(res.world);
+    if (takeStruct(res.world)) { renderer.setMap(mapOf(), floorMaps()); sight.key = ''; }   // something was built or broken: redraw walls, re-check sight
     handleEvents(res.events);
     hud();
     if (bagOpen) bag();
@@ -144,34 +185,123 @@
     floorUnwatch.forEach(function (stop) { stop(); }); floorUnwatch = []; floorWorlds = {};
     if (!api.watchMap || !me) return;
     liveUnwatch = api.watchMap(me.map, mergeLiveWorld);
+    if (api.watchStructs && World.floorsOf(content, me.map).length > 1) floorUnwatch.push(api.watchStructs(World.groundId(content, me.map), function (id, rec) {
+      var st = null; try { st = rec && rec.json ? JSON.parse(rec.json) : null; } catch (e) { st = null; }
+      if (content.maps[id] && setFloorStruct(id, st)) floorChanged(id);
+    }));
     World.floorsOf(content, me.map).forEach(function (f) {
       if (f.id !== me.map) floorUnwatch.push(api.watchMap(f.id, function (w) { if (w && w.map === f.id) floorWorlds[f.id] = w; }));
     });
   }
+  /**
+   * The ground you can see on the floors BELOW from where you stand (over a balcony edge, out of a window you are
+   * at): [{ dz, cells: {"x,y": 1} }]. The renderer shows those cells clearly and leaves the rest dim. Worked out
+   * again only when you move or a moment has passed (a door upstairs may have opened).
+   */
+  // The floors below are drawn lower on the screen, one wall-height per floor, so a cell of a lower floor can land
+  // on the same spot of the screen as a cell of a HIGHER one (a floor in between, or your own) — and the higher
+  // one is nearer the camera: it covers it. Is the cell (x,y) of floor z hidden like that?
+  function coveredFrom(z, x, y) {
+    var myZ = mapOf().z || 0;
+    return World.floorsOf(content, me.map).some(function (g) {
+      if (g.z <= z || g.z > myZ) return false;
+      var gm = floorMap(g.id), gy = y + (g.z - z) * Rules.WALL_H;
+      return !!(gm && gm.terrain[gy] && gm.terrain[gy][x]);
+    });
+  }
+  var floorSightMemo = { key: '', t: 0, out: [] };
+  function floorSight() {
+    var map = mapOf(), myZ = map.z || 0;
+    if (myZ <= 0) return [];
+    var key = me.map + ':' + me.x + ',' + me.y + ':' + floorVer, nowT = performance.now();
+    if (floorSightMemo.key === key && nowT - floorSightMemo.t < 400) return floorSightMemo.out;
+    var out = [], sf = lookup().stateOf, rad = World.sightRadius(content, map);
+    World.floorsOf(content, me.map).forEach(function (f) {
+      if (f.z >= myZ || f.z < 0) return;
+      var fm = floorMap(f.id), cells = {}, any = false;
+      var xa = Math.max(0, me.x - rad), xb = Math.min(fm.width - 1, me.x + rad), ya = Math.max(0, me.y - rad), yb = Math.min(fm.height - 1, me.y + rad);
+      for (var y = ya; y <= yb; y++) for (var x = xa; x <= xb; x++)
+        if (World.seesAcross(content, map, me.x, me.y, fm, x, y, rad, sf) && !coveredFrom(f.z, x, y)) { cells[x + ',' + y] = 1; any = true; }
+      if (any) out.push({ dz: f.z - myZ, cells: cells });
+    });
+    floorSightMemo = { key: key, t: nowT, out: out };
+    return out;
+  }
+  /** Which doors stand open (and the like) on the other floors of the building: { floorId: {entityKey: state} }. */
+  var doorsMemo = {};
+  function floorStates() {
+    var out = {};
+    World.floorsOf(content, me.map).forEach(function (f) {
+      if (f.id === me.map) return;
+      var w = floorWorlds[f.id] || (view.floors && view.floors[f.id]); if (!w) return;
+      var st = w.states;
+      if (!st && w.doors) {                                              // online it comes as text; read it once per change
+        var memo = doorsMemo[f.id];
+        if (!memo || memo.text !== w.doors) { memo = doorsMemo[f.id] = { text: w.doors, st: null }; try { memo.st = JSON.parse(w.doors); } catch (e) { memo.st = null; } }
+        st = memo.st;
+      }
+      if (st) out[f.id] = st;
+    });
+    return out;
+  }
   /** Creatures on other floors that you can see from where you stand: [{ dz, actors }] for the renderer. */
-  function floorActors() {
+  var shownFloor = {};
+  function floorActors(dt) {
+    var keep = {};
+    function glide(key, a, k) { var q = shownFloor[key] || (shownFloor[key] = { x: a.x, y: a.y }); ease(q, a, k); keep[key] = 1; return q; }
     var out = [], map = mapOf(), myZ = map.z || 0, fam = World.floorsOf(content, me.map);
     if (fam.length < 2) return out;
     var sf = lookup().stateOf;
     fam.forEach(function (f) {
       if (f.id === me.map) return;
       var w = floorWorlds[f.id] || (view.floors && view.floors[f.id]); if (!w) return;
-      var fm = content.maps[f.id], dz = f.z - myZ, list = [];
-      if (!fm._edgeOv) World.syncEdgesView(content, fm, function () { return ''; });   // its windows and arches, so sight through them works both ways
+      var fm = floorMap(f.id), dz = f.z - myZ, list = [];
+      if (!Object.prototype.hasOwnProperty.call(fm, '_edgeOv')) World.syncEdgesView(content, fm, function () { return ''; });   // its windows and arches, so sight through them works both ways
       var rad = World.sightRadius(content, dz < 0 ? map : fm);
-      function inView(x, y) { return dz < 0 ? World.seesAcross(content, map, me.x, me.y, fm, x, y, rad, sf) : World.seesAcross(content, fm, x, y, map, me.x, me.y, rad); }
+      function inView(x, y) { return dz < 0 ? World.seesAcross(content, map, me.x, me.y, fm, x, y, rad, sf) && !coveredFrom(f.z, x, y) : World.seesAcross(content, fm, x, y, map, me.x, me.y, rad); }
       (w.monsters || []).forEach(function (m) {
         if (!inView(m.x, m.y)) return;
         var d = content.monsters[m.ref] || { name: m.ref, sprite: '' }, lay = monsterLayers(m);
-        list.push({ x: m.x, y: m.y, facing: m.facing, name: d.name, sprite: lay ? '' : (d.sprite || ''), layers: lay || undefined, hp: m.hp, maxHp: m.maxHp });
+        var gm = glide(f.id + ':' + m.id, m, (dt || 16) / 250);            // drawn gliding; tx,ty = the tile it is really on
+        list.push({ x: gm.x, y: gm.y, tx: m.x, ty: m.y, facing: m.facing, name: d.name, sprite: lay ? '' : (d.sprite || ''), layers: lay || undefined, hp: m.hp, maxHp: m.maxHp, fmap: f.id, monster: true });
       });
       (w.players || []).forEach(function (q) {
         if (q.id === me.id || !inView(q.x, q.y)) return;
-        list.push({ x: q.x, y: q.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp });
+        var gq = glide(f.id + ':p:' + q.id, q, (dt || 16) / (content.config.move_ms || 140));
+        list.push({ x: gq.x, y: gq.y, tx: q.x, ty: q.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp });
       });
       if (list.length) out.push({ dz: dz, actors: list });
     });
+    Object.keys(shownFloor).forEach(function (k) { if (!keep[k]) delete shownFloor[k]; });
+    seenOnFloors = out;
     return out;
+  }
+  // A creature on another floor is DRAWN a wall-height up or down the screen per floor, so the tile under the
+  // cursor (on your own floor's grid) stands for a different tile of that floor: the same x, and y + dz storeys.
+  var seenOnFloors = [];
+  /** The monster on another floor that is drawn at this cell of your view, if you can see one there: {map, x, y, name}. */
+  function floorTargetAt(cell) {
+    for (var i = 0; i < seenOnFloors.length; i++) {
+      var f = seenOnFloors[i];
+      for (var k = 0; k < f.actors.length; k++) {
+        var a = f.actors[k];
+        if (a.monster && a.tx === cell.x && a.ty === cell.y + f.dz * Rules.WALL_H) return { map: a.fmap, x: a.tx, y: a.ty, name: a.name, dz: f.dz };
+      }
+    }
+    return null;
+  }
+  /** Shoot something seen on another floor of the building. `cell` is where it is drawn (for the tracer). */
+  function shootFloor(ft, cell) {
+    var chk = World.shotAcross(content, me, mapOf(), floorMap(ft.map), ft.x, ft.y, lookup().stateOf);
+    if (!chk.ok) { log(chk.reason, 'info'); return; }
+    var w = chk.weapon, cost = w.ammoCost || 1, ammoName = content.items[w.ammo] ? content.items[w.ammo].name.toLowerCase() : w.ammo;
+    if (Number(w.clip) > 0) {
+      if (((me.mags && me.mags[w.id]) || 0) < cost) { log(count(w.ammo) >= cost ? 'Out of ammo — press R to reload.' : 'Out of ' + ammoName + '.', 'info'); return; }
+    } else if (w.ammo && count(w.ammo) < cost) { log('Out of ' + ammoName + '.', 'info'); return; }
+    if (!aiming) me.facing = facingToward(cell.x, cell.y);
+    lastHoldShot = performance.now();
+    send({ type: 'shoot', map: ft.map, x: ft.x, y: ft.y });
+    fx.push({ kind: 'tracer', from: { x: me.x, y: me.y }, to: { x: cell.x, y: cell.y }, color: w.tint || '#ffd36b', t0: performance.now(), life: 160 });
   }
 
   var COLORS = { hit: '#ff6b5b', heal: '#6fe08a', loot: '#ffd65a', level: '#ffd65a', kill: '#ffffff', death: '#ff6b5b' };
@@ -224,6 +354,7 @@
   function send(action) {
     var last = queue[queue.length - 1];
     if (action.type === 'move' && last && last.type === 'move' && !last.sent) last.dirs = last.dirs.concat(action.dirs);
+    else if (action.type === 'hold' && last && last.type === 'hold' && !last.sent) last.slot = action.slot;   // scrolling past slots: only the last one matters
     else queue.push(action);
     flush();
   }
@@ -291,14 +422,19 @@
     if (e.repeat) return;
     if (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyF') { e.preventDefault(); interact(); }
     else if (e.code === 'KeyI') toggleBag();
-    else if (e.code === 'KeyB') { if (building) stopBuilding(); else toggleBuild(); }
+    else if (e.code === 'KeyB') { if (building || removing) stopBuilding(); else toggleBuild(); }
+    else if (e.code === 'KeyX') { if (removing) stopBuilding(); else startRemoving(); }
+    else if (e.code === 'KeyH' && removing) { wallsDown = !wallsDown; log(wallsDown ? 'Walls shown low: point at the base of a wall to pick it.' : 'Walls shown whole: point at the face of a wall to pick it.', 'info'); }
     else if (e.code === 'KeyC') toggleCraft();
     else if (e.code === 'KeyT') turnBuild(1);
-    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) cancelThrow(); else if (claim) closeClaim(); else if (storage) closeStore(); else if (buildOpen) toggleBuild(); else if (building) stopBuilding(); else if (craftOpen) toggleCraft(); else if (bagOpen) toggleBag(); }
-    else if (e.code === 'KeyQ') ability(0);
-    else if (e.code === 'KeyE') ability(1);
+    else if (e.code === 'KeyV' && building && content.blueprints[building] && content.blueprints[building].places === 'tile') {
+      buildRoof = !buildRoof; log(buildRoof ? 'Roof: click cells of this storey to cover them (V: back to floor).' : 'Floor: click where it should be laid (V: as a roof).', 'info');
+    }
+    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) { if (holdMode()) selectSlot(-1); else cancelThrow(); } else if (claim) closeClaim(); else if (storage) closeStore(); else if (buildOpen) toggleBuild(); else if (building || removing) stopBuilding(); else if (craftOpen) toggleCraft(); else if (bagOpen) toggleBag(); }
+    else if (e.code === 'KeyQ' && skillsOn()) ability(0);
+    else if (e.code === 'KeyE' && skillsOn()) ability(1);
     else if (e.code === 'KeyR') { if (World.rangedWeapon(content, me)) send({ type: 'reload' }); }
-    else if (/^Digit[1-5]$/.test(e.code) && me) beltKey(Number(e.code.slice(5)) - 1);
+    else if (/^Digit[0-9]$/.test(e.code) && me && (Number(e.code.slice(5)) + 9) % 10 < BELT) beltKey((Number(e.code.slice(5)) + 9) % 10);   // 1-9, then 0 = the tenth
   });
   addEventListener('keyup', function (e) {
     var d = KEYS[e.code]; if (d) held = held.filter(function (h) { return h !== d; });
@@ -330,15 +466,21 @@
     }
     if (e.button !== 0) return;
     closeMenu();
-    hover = cell;
+    hover = cell; lastPtr = { clientX: e.clientX, clientY: e.clientY };   // the click itself says where (no move may have come first)
+    if (removing) {                                       // remove tool: a click takes apart what is outlined
+      var rt = removeTarget();
+      if (rt) { if (rt.ok) send({ type: 'dismantle', target: rt.target }); else log(rt.reason, 'info'); }
+      return;
+    }
     if (building) {                                       // build mode: a click places the blueprint where the ghost is
       var bt = buildTarget();
-      if (bt) { if (bt.ok) send({ type: 'build', bp: building, x: bt.x, y: bt.y, side: bt.side, off: bt.off, facing: bt.facing }); else log(bt.reason, 'info'); }
+      if (bt) { if (bt.ok) send({ type: 'build', bp: building, x: bt.x, y: bt.y, side: bt.side, off: bt.off, facing: bt.facing, roof: bt.roof || undefined }); else log(bt.reason, 'info'); }
       if (bt && bt.side) buildHold = { side: bt.side, x: bt.x, y: bt.y, off: bt.off, repeat: bt.bp.places === 'wall', last: bt.x + ',' + bt.y };
       return;
     }
     if (armed) { castAt(cell); return; }                  // an armed ability still aims + casts on left-click
     if (throwing) { throwAt(cell); return; }
+    if (aiming && heldUse()) { useHeld(); return; }       // food, a bandage… in hand: the click uses it
     if (aiming) { leftHeld = true; fireToward(cell); return; }   // fire/attack while aiming
     // not aiming: left-click interacts. A quick tap does the default action; holding opens the action list.
     leftHeld = true; holdFired = false; pendingCell = cell; holdMenuEvt = e;
@@ -361,6 +503,9 @@
     if (!dx && !dy) return me.facing;
     return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
   }
+  /** What a quick click (or the pointer cursor) goes for: the first action that is not a change to something built —
+   *  taking apart, sliding, turning, and hitting your own work are deliberate (the held-click list, or the remove tool). */
+  function tapAction(acts) { return acts.filter(function (a) { return a.type !== 'dismantle' && a.type !== 'shift' && a.type !== 'turn' && !(a.type === 'attack' && a.own); })[0] || null; }
   /** A click acts on the cell if it is in range; otherwise it tells you to walk there. Shooting is handled separately. */
   function doAction(a, cell) {
     if (a.type === 'shoot') return shootAt(cell);
@@ -381,6 +526,8 @@
   }
   /** Fire the equipped ranged weapon at a cell (an enemy, or anywhere). */
   function shootAt(cell) {
+    var ft = lookup().monsterAt(cell.x, cell.y) ? null : floorTargetAt(cell);   // nothing on your floor there, but something seen on another
+    if (ft) return shootFloor(ft, cell);
     var map = mapOf(), reach = World.shotReach(content, map, me, cell.x, cell.y, lookup());
     if (!reach.ok) { log(reach.reason, 'info'); return; }
     var w = reach.weapon, cost = w.ammoCost || 1, ammoName = content.items[w.ammo] ? content.items[w.ammo].name.toLowerCase() : w.ammo;
@@ -412,10 +559,45 @@
     aimAngle = Math.atan2(dy, dx);
     if (dx || dy) me.facing = dx < 0 ? 'W' : 'E';
   }
+  // Throwing down from an upper floor. The floors below are DRAWN a wall-height lower on the screen per floor, so
+  // a cursor cell where your own floor has nothing (open air) stands for a cell of a floor below: same x, y + dz storeys.
+  function ownFloorAt(x, y) { var m = mapOf(); return !!(m.terrain[y] && m.terrain[y][x]); }
+  function floorsBelow() {
+    var myZ = mapOf().z || 0;
+    if (myZ <= 0) return [];
+    return World.floorsOf(content, me.map).filter(function (f) { return f.z < myZ && f.z >= 0; }).sort(function (a, b) { return b.z - a.z; })
+      .map(function (f) { return { map: floorMap(f.id), dz: f.z - myZ }; });
+  }
+  /** Where a throw aimed at this cell of your view would land on a floor below: {map, x, y, dz}, or null. */
+  function throwFloorAt(cell, it) {
+    if (ownFloorAt(cell.x, cell.y)) return null;
+    var below = floorsBelow(), sf = lookup().stateOf;
+    for (var i = 0; i < below.length; i++) {
+      var f = below[i], x = cell.x, y = cell.y + f.dz * Rules.WALL_H;
+      if (World.throwAcross(content, me, it, mapOf(), f.map, x, y, sf).ok) return { map: f.map, x: x, y: y, dz: f.dz };
+      if (f.map.terrain[y] && f.map.terrain[y][x]) return null;             // that floor is what you are pointing at there: nothing lower shows through it
+    }
+    return null;
+  }
+  /** A floor's blast cells, moved to where that floor is drawn in your view. */
+  function blastOnFloor(ft, it) {
+    return World.blastCells(content, ft.map, ft.x, ft.y, it.throwArea || 0, function () { return ''; })
+      .map(function (c) { return { x: c.x, y: c.y - ft.dz * Rules.WALL_H }; });
+  }
   /** Throw the armed belt item (grenade/molotov) at a cell within its range. */
   function throwAt(cell) {
     var it = content.items[throwing]; if (!it) { cancelThrow(); return; }
     if (count(throwing) < 1) { log('Out of ' + it.name.toLowerCase() + '.', 'info'); cancelThrow(); return; }
+    var ft = throwFloorAt(cell, it);
+    if (ft) {                                                                 // down onto a floor below
+      me.facing = facingToward(cell.x, cell.y);
+      send({ type: 'throw', item: throwing, map: ft.map.id, x: ft.x, y: ft.y });
+      var tf = performance.now();
+      fx.push({ kind: 'proj', from: { x: me.x, y: me.y }, to: { x: cell.x, y: cell.y }, color: it.tint || '#ff8c3b', t0: tf, life: 300 });
+      fx.push({ kind: 'flash', x: cell.x, y: cell.y, r: it.throwArea || 0, cells: blastOnFloor(ft, it), color: it.tint || '#ff8c3b', t0: tf + 280, life: 450 });
+      cancelThrow();
+      return;
+    }
     if (cheb(me.x, me.y, cell.x, cell.y) > (it.throwRange || 4)) { log(TOO_FAR, 'info'); return; }
     me.facing = facingToward(cell.x, cell.y);
     send({ type: 'throw', item: throwing, x: cell.x, y: cell.y });
@@ -428,9 +610,9 @@
     fx.push({ kind: 'flash', x: land.x, y: land.y, r: it.throwArea || 0, cells: World.blastCells(content, map, land.x, land.y, it.throwArea || 0, sf), color: it.tint || '#ff8c3b', t0: t0 + 280, life: 450 });
     cancelThrow();
   }
-  function cancelThrow() { if (throwing) { throwing = null; updateCursor(); hotbar(); } }
+  function cancelThrow() { if (throwing && !holdMode()) { throwing = null; updateCursor(); hotbar(); } }   // (a held grenade stays in hand: see hotbar)
   function updateCursor() {
-    canvas.style.cursor = (aiming || armed || throwing || building) ? 'crosshair' : '';
+    canvas.style.cursor = (aiming || armed || throwing || building || removing) ? 'crosshair' : '';
   }
 
   function openMenu(e, cell, acts) {
@@ -454,12 +636,17 @@
   /** Just the cursor hint: a pointer over something you can act on, a crosshair while aiming, else default. */
   function hoverLabel() {
     $('tip').hidden = true;                                 // no hover tooltip
-    if (!me || aiming || armed || throwing) { updateCursor(); return; }
+    if (!me || aiming || armed || throwing || removing) { updateCursor(); return; }
     if (!hover) { canvas.style.cursor = ''; return; }
-    canvas.style.cursor = World.actionsAt(content, mapOf(), lookup(), me, hover.x, hover.y)[0] ? 'pointer' : 'default';
+    var hft = floorTargetAt(hover);
+    canvas.style.cursor = tapAction(World.actionsAt(content, mapOf(), lookup(), me, hover.x, hover.y)) || (hft && World.rangedWeapon(content, me)) ? 'pointer' : 'default';
+    canvas.title = hft ? hft.name + (hft.dz < 0 ? ' — on the floor below' : ' — on the floor above') : '';
   }
 
-  // ---------------------------------------------------------------- abilities (Q/E) and the belt (1-5)
+  // ---------------------------------------------------------------- the belt (keys 1-9, 0), and abilities (Q/E) when skills are on
+  var BELT = World.BELT_SIZE || 5;
+  function skillsOn() { return !!content && String(content.config.skills || '').toLowerCase() === 'on'; }   // off for now: no Q/E, no abilities in the bag, no mana bar
+  function slotKey(i) { return String((i + 1) % 10); }
   function serverNow() { return Date.now() + clockOffset; }
   function readyIn(id) { return Math.max(0, ((me.cooldowns || {})[id] || 0) - serverNow()); }
   /** Q/E: arm an ability, or fire it now if it needs no aim (or is already armed). */
@@ -474,9 +661,45 @@
     if (armed && armed.id === sk.id) { if (hover) castAt(hover); return; }    // second press: cast at the cursor
     armed = { slot: i, id: sk.id, skill: sk.id }; updateCursor(); hotbar();
   }
-  /** 1-5: a throwable arms throw-aim; anything else (food/bandage/medkit) is used at once. */
+  // ---- what you hold: one belt slot is in your hands (me.held, the referee's World.holdSlot). The wheel and 1-8 choose it.
+  // A weapon there is the weapon you fight with; a grenade is ready to throw; food and the like wait for a click.
+  /** False against a referee from before held slots (it sends no `held`): the belt then works the old way. */
+  function holdMode() { return !!me && typeof me.held === 'number'; }
+  function heldId() { return holdMode() && me.held >= 0 ? (me.belt || [])[me.held] || '' : ''; }
+  /** The thing in hand if a click should use it up (eat, drink, bandage), else null. */
+  function heldUse() { var it = content.items[heldId()]; return it && World.itemCan(it, 'consume') ? it : null; }
+  function useHeld() {
+    var it = heldUse(); if (!it) return;
+    if (count(it.id) < 1) { log('No ' + it.name.toLowerCase() + ' left.', 'info'); return; }
+    useItem(it.id);
+  }
+  /** What the referee will answer to choosing a slot, so the choice shows at once. */
+  function predictHold(p, i) {
+    var id = i >= 0 ? (p.belt || [])[i] : '', it = id && content.items[id], eq = Object.assign({}, p.equipment);
+    var has = it && (p.inventory || []).some(function (s) { return s.item === id && s.qty > 0; });
+    if (it && it.slot === 'weapon' && has) eq.weapon = id; else delete eq.weapon;
+    return Object.assign({}, p, { held: i, equipment: eq });
+  }
+  function selectSlot(i) {
+    if (!holdMode() || me.held === i) return;
+    if (armed) disarm();
+    me = predictHold(me, i);
+    send({ type: 'hold', slot: i });
+    hud(); if (bagOpen) bag();
+  }
+  var lastWheel = 0;
+  canvas.addEventListener('wheel', function (e) {
+    if (e.shiftKey || !holdMode() || building || removing) return;      // Shift+wheel turns the thing being built
+    e.preventDefault();
+    var d = (e.deltaY || e.deltaX) > 0 ? 1 : -1, now = performance.now();
+    if (now - lastWheel < 50) return;                                   // a touchpad sends a stream of these
+    lastWheel = now;
+    selectSlot(me.held < 0 ? (d > 0 ? 0 : BELT - 1) : (me.held + d + BELT) % BELT);
+  }, { passive: false });
+  /** 1-8: take that belt slot in hand. (Old referee: a throwable arms throw-aim; anything else is used at once.) */
   function beltKey(i) {
     if (!me) return;
+    if (holdMode()) { selectSlot(i); return; }
     var id = (me.belt || [])[i];
     if (!id) { log('Belt slot ' + (i + 1) + ' is empty — set an item from the bag (I).', 'info'); return; }
     var it = content.items[id]; if (!it) return;
@@ -555,7 +778,13 @@
       var l = World.throwLanding(content, map, me.x, me.y, c.x, c.y, sf);
       return l.x === c.x && l.y === c.y;
     });
+    // …and, from an upper floor, the ground below that you can drop it on (shown where that floor is drawn)
+    var storeys = floorsBelow().reduce(function (n, f) { return Math.max(n, -f.dz); }, 0) * Rules.WALL_H;
+    if (storeys) for (var yy = me.y - rng; yy <= me.y + rng + storeys; yy++) for (var xx = me.x - rng; xx <= me.x + rng; xx++)
+      if (throwFloorAt({ x: xx, y: yy }, it)) cells.push({ x: xx, y: yy });
     if (!hover) return { cells: cells, hover: null, from: me, color: it.tint || '#ff8c3b' };
+    var hft = throwFloorAt(hover, it);
+    if (hft) return { cells: cells, hover: { x: hover.x, y: hover.y, ok: true }, blast: blastOnFloor(hft, it), from: me, color: it.tint || '#ff8c3b' };
     var land = World.throwLanding(content, map, me.x, me.y, hover.x, hover.y, sf);
     var inRange = cheb(me.x, me.y, hover.x, hover.y) <= rng;
     var blast = inRange ? World.blastCells(content, map, land.x, land.y, it.throwArea || 0, sf) : null;
@@ -578,7 +807,7 @@
   function hotbar() {
     if (!me) return;
     var ab = $('abilities'); ab.innerHTML = '';
-    ['Q', 'E'].forEach(function (lab, i) {
+    (skillsOn() ? ['Q', 'E'] : []).forEach(function (lab, i) {
       var id = (me.abilities || [])[i], sk = id && content.skills[id], b = document.createElement('div');
       b.className = 'hk' + (armed && armed.slot === i && armed.id === id ? ' armed' : '') + (sk ? '' : ' empty');
       b.title = sk ? describeSkill(sk) : 'Empty: assign an ability from the bag (I)';
@@ -593,12 +822,18 @@
       b.onclick = function () { ability(i); };
       ab.appendChild(b);
     });
+    if (holdMode()) {                                      // a grenade in hand is aimed and thrown with a click
+      var hIt = content.items[heldId()], th = hIt && World.itemCan(hIt, 'throw') && count(hIt.id) > 0 ? hIt.id : null;
+      if (th !== throwing) { throwing = th; updateCursor(); }
+    }
     var belt = $('belt'); belt.innerHTML = '';
-    for (var i = 0; i < 5; i++) (function (i) {
+    for (var i = 0; i < BELT; i++) (function (i) {
       var id = (me.belt || [])[i], it = id && content.items[id], b = document.createElement('div');
-      b.className = 'hk' + (throwing && throwing === id ? ' armed' : '') + (it ? '' : ' empty');
-      b.title = it ? it.name + (World.itemCan(it, 'throw') ? ' (throw)' : ' (use)') : 'Empty: assign an item from the bag (I)';
-      var key = document.createElement('span'); key.className = 'key'; key.textContent = i + 1; b.appendChild(key);
+      var inHand = holdMode() && me.held === i;
+      b.className = 'hk' + (inHand ? ' held' : !holdMode() && throwing && throwing === id ? ' armed' : '') + (it ? '' : ' empty');
+      b.title = !it ? 'Empty: assign an item from the bag (I)' : !holdMode() ? it.name + (World.itemCan(it, 'throw') ? ' (throw)' : ' (use)')
+        : it.name + (!inHand ? '' : World.itemCan(it, 'consume') ? ' — in hand: click to use it' : World.itemCan(it, 'throw') ? ' — in hand: click where to throw it' : ' — in hand');
+      var key = document.createElement('span'); key.className = 'key'; key.textContent = slotKey(i); b.appendChild(key);
       if (it) {
         b.appendChild(icon({ kind: 'item', id: id }));
         var q = document.createElement('span'); q.className = 'qty';
@@ -606,7 +841,7 @@
         q.textContent = st ? '×' + st.qty : '0'; b.appendChild(q);
         if (!st) b.classList.add('low');
       }
-      b.onclick = function () { beltKey(i); };
+      b.onclick = function () { if (holdMode() && me.held === i && heldUse()) useHeld(); else beltKey(i); };
       belt.appendChild(b);
     })(i);
     tickHotbar();
@@ -638,44 +873,57 @@
     if (holdFired) { holdFired = false; return; }          // the hold already opened the action list
     if (pendingCell) {                                     // quick tap → the default interaction
       var acts = World.actionsAt(content, mapOf(), lookup(), me, pendingCell.x, pendingCell.y);
-      if (acts.length) doAction(acts[0], pendingCell);
+      var tapA = tapAction(acts);
+      if (tapA) doAction(tapA, pendingCell);
+      else if (heldUse()) useHeld();                       // nothing to act on there: the click uses what is in hand
+      else if (World.rangedWeapon(content, me) && floorTargetAt(pendingCell)) shootAt(pendingCell);   // a creature on another floor: shoot it
     }
   });
   $('btn-use').onclick = interact;
   $('btn-bag').onclick = toggleBag;
+  $('btn-help').onclick = function () { $('help').hidden = !$('help').hidden; };
+  $('help-close').onclick = $('help').onclick = function () { $('help').hidden = true; };
 
   // ---------------------------------------------------------------- HUD and bag
   function hud() {
     if (!me) return;
     $('hud-map').textContent = mapOf().name;
     $('hp-fill').style.width = Math.max(0, 100 * me.hp / me.maxHp) + '%';
-    $('hp-text').textContent = 'HP ' + Math.max(0, me.hp) + ' / ' + me.maxHp;
+    $('hp-text').textContent = Math.max(0, me.hp) + ' / ' + me.maxHp;
     var span = me.xpNext ? me.xpNext - me.xpThis : 0;
     $('xp-fill').style.width = span ? Math.min(100, 100 * (me.xp - me.xpThis) / span) + '%' : '100%';
     $('xp-text').textContent = 'Lv ' + me.level + (me.xpNext ? ' · ' + me.xp + ' / ' + me.xpNext + ' XP' : ' · max');
     $('gold').textContent = me.gold + ' gold';
     $('mp-fill').style.width = me.maxMp ? Math.max(0, 100 * me.mp / me.maxMp) + '%' : '0%';
     $('mp-text').textContent = 'MP ' + me.mp + ' / ' + me.maxMp;
+    $('mp-bar').hidden = !skillsOn();                      // mana only pays for skills
     var food = me.hunger == null ? 100 : me.hunger, water = me.thirst == null ? 100 : me.thirst;
-    $('food-fill').style.width = Math.max(0, Math.min(100, food)) + '%';
-    $('food-text').textContent = 'Food ' + Math.round(food) + '%';
+    $('food-fill').style.height = Math.max(0, Math.min(100, food)) + '%';        // round gauges: they drain from the top
+    $('food-bar').title = 'Food ' + Math.round(food) + '%';
     $('food-bar').classList.toggle('low', food <= 25);
-    $('water-fill').style.width = Math.max(0, Math.min(100, water)) + '%';
-    $('water-text').textContent = 'Water ' + Math.round(water) + '%';
+    $('water-fill').style.height = Math.max(0, Math.min(100, water)) + '%';
+    $('water-bar').title = 'Water ' + Math.round(water) + '%';
     $('water-bar').classList.toggle('low', water <= 25);
     var rw = World.rangedWeapon(content, me), wset = $('weapon-set');          // equipped gun: magazine + reserve
     if (rw) {
       var reserve = (me.inventory.filter(function (s) { return s.item === rw.ammo; })[0] || {}).qty || 0;
       var clip = Number(rw.clip) || 0, loaded = (me.mags && me.mags[rw.id]) || 0;
+      // bottom right of the view: "in the gun / in the bag" over the rounds themselves (one shape per round it holds)
       var wl = $('weapon'); wl.innerHTML = '';
-      wl.appendChild(icon({ kind: 'item', id: me.equipment.weapon }));
-      var nm = document.createElement('span'); nm.className = 'wname'; nm.textContent = rw.name; wl.appendChild(nm);
+      var line = document.createElement('div'); line.className = 'wline'; wl.appendChild(line);
+      var nm = document.createElement('span'); nm.className = 'wname'; nm.textContent = rw.name; line.appendChild(nm);
       if (clip > 0) {
-        var mag = document.createElement('span'); mag.className = 'wammo' + (loaded < (rw.ammoCost || 1) ? ' low' : ''); mag.textContent = loaded + '/' + clip; wl.appendChild(mag);
-        var rv = document.createElement('span'); rv.className = 'wreserve'; rv.textContent = reserve; wl.appendChild(rv);
-        if (loaded < (rw.ammoCost || 1)) { var rl = document.createElement('span'); rl.className = 'wreload'; rl.textContent = 'R'; wl.appendChild(rl); }
+        var dry = loaded < (rw.ammoCost || 1);
+        if (dry) { var rl = document.createElement('span'); rl.className = 'wreload'; rl.textContent = 'R'; line.appendChild(rl); }
+        var mag = document.createElement('span'); mag.className = 'wammo' + (dry ? ' low' : ''); mag.textContent = loaded + ' / ' + reserve; line.appendChild(mag);
+        wl.title = loaded + ' of ' + clip + ' in the ' + rw.name.toLowerCase() + ', ' + reserve + ' more in the bag';
+        if (clip <= 40) {
+          var rounds = document.createElement('div'); rounds.className = 'rounds';
+          for (var ri = 0; ri < clip; ri++) { var rd = document.createElement('i'); rd.className = 'round' + (ri < clip - loaded ? ' spent' : ''); rounds.appendChild(rd); }
+          wl.appendChild(rounds);
+        }
       } else {
-        var am = document.createElement('span'); am.className = 'wammo' + (reserve < (rw.ammoCost || 1) ? ' low' : ''); am.textContent = '×' + reserve; wl.appendChild(am);
+        var am = document.createElement('span'); am.className = 'wammo' + (reserve < (rw.ammoCost || 1) ? ' low' : ''); am.textContent = '×' + reserve; line.appendChild(am);
       }
       wset.hidden = false;
     } else wset.hidden = true;
@@ -694,7 +942,59 @@
   // ---- build mode (B): pick a blueprint, then click where it goes. Whether a spot is allowed is decided by
   // World.canBuild — the same check the referee runs — so a green ghost means the server will say yes.
   function toggleBuild() { buildOpen = !buildOpen; $('buildp').hidden = !buildOpen; if (buildOpen) buildPanel(); }
-  function stopBuilding() { building = null; buildHold = null; updateCursor(); }
+  function stopBuilding() { building = null; removing = false; buildHold = null; updateCursor(); }
+  function startRemoving() {
+    if (!me) return;
+    building = null; buildHold = null; removing = true; wallsDown = true;   // walls start down: what you see is what a click picks
+    if (buildOpen) toggleBuild();
+    log('Remove tool: click something you built to take it apart. Walls are shown low so you can reach behind them (H shows them whole). Esc or X stops.', 'info');
+    updateCursor();
+  }
+  /**
+   * What the remove tool would take apart where the cursor is: {target, info, ok, reason, edges}. Only things that
+   * were built count. Tried in the order a player means them: a wall or door on the grid line the cursor is right on,
+   * an object standing in the tile, something hung on the wall whose picture is there, the wall whose face is there
+   * (an east-west wall rises above its line), the nearest line of the tile, and last the laid floor underfoot.
+   * World.canRemove — the referee's own check — says whether it may go.
+   */
+  function removeTarget() {
+    if (!removing || !lastPtr || !me) return null;
+    var pt = pointAt(lastPtr), map = mapOf(), st = map._struct, cx = Math.floor(pt.fx), cy = Math.floor(pt.fy), list = [], lk = lookup();
+    if (!st) return null;
+    function onEdge(orient, x, y) {
+      (st.ents || []).forEach(function (e) {
+        var o = content.objects[e.ref];
+        if (World.isWallFixture(o) && World.fixtureEdges(o, e).some(function (q) { return q.orient === orient && q.x === x && q.y === y; })) list.push({ t: 'ent', key: e.key });
+      });
+      list.push({ t: 'wall', orient: orient, x: x, y: y });
+    }
+    var hy = Math.round(pt.fy), vx = Math.round(pt.fx), dh = Math.abs(pt.fy - hy), dv = Math.abs(pt.fx - vx), NEAR = 0.28;
+    function lines(limit) {
+      var h = dh <= limit, v = dv <= limit;
+      if (h && v) { if (dv < dh) { onEdge('v', vx, cy); onEdge('h', cx, hy); } else { onEdge('h', cx, hy); onEdge('v', vx, cy); } }
+      else if (h) onEdge('h', cx, hy); else if (v) onEdge('v', vx, cy);
+    }
+    lines(NEAR);
+    Rules.blockersAt(content, map, cx, cy).concat(Rules.entitiesAt(map, cx, cy)).forEach(function (e) { if (!World.isWallFixture(content.objects[e.ref])) list.push({ t: 'ent', key: e.key }); });
+    if (!wallsDown) {                                       // walls down (H): their faces are not in the way, so not picked by them
+      var wm = World.wallMountAt(content, map, cx, cy); if (wm) list.push({ t: 'ent', key: wm.key });
+      for (var up = 1; up <= Rules.WALL_H; up++) list.push({ t: 'wall', orient: 'h', x: cx, y: cy + up });
+    }
+    if (wallsDown) list.push({ t: 'tile', x: cx, y: cy });   // …and the floor comes before a line that is merely the nearest
+    lines(0.5);
+    list.push({ t: 'tile', x: cx, y: cy });
+    list.push({ t: 'roof', x: cx, y: cy });                 // last: the piece of roof over that cell (shown tinted while the tool is out)
+    var first = null;
+    for (var i = 0; i < list.length; i++) {
+      var chk = World.canRemove(content, map, lk, me, list[i]);
+      if (!chk.info) continue;                              // nothing built there
+      var out = { target: list[i], info: chk.info, ok: chk.ok, reason: chk.reason || '',
+        edges: chk.info.t === 'ent' && World.isWallFixture(chk.info.obj) ? World.fixtureEdges(chk.info.obj, chk.info.e) : null };
+      if (chk.ok) return out;
+      first = first || out;
+    }
+    return first;
+  }
   // While the button is held on a wall blueprint, the ghost stays on the grid line the press started on
   // (same direction, same line): dragging lays wall after wall along it instead of hopping between lines.
   var buildHold = null;                                   // {side, x, y, repeat, last} from the press
@@ -702,7 +1002,7 @@
   var buildFacing = 'S';
   function turnBuild(dir) {
     var bp = building && content.blueprints && content.blueprints[building], o = bp && bp.places === 'object' ? content.objects[bp.object] : null;
-    if (!o || World.isWallFixture(o) || !Rules.turnable(o)) return false;
+    if (!o || World.isWallFixture(o) || !(o.kind === 'stairs' || Rules.turnable(o))) return false;     // stairs turn too: the way they climb
     buildFacing = Rules.nextFacing(buildFacing, dir);
     return true;
   }
@@ -719,6 +1019,14 @@
   function buildPanel() {
     var box = $('build-items'); box.innerHTML = '';
     var bps = World.blueprintsFor(content, me), groups = {}, order = [];
+    var rrow = document.createElement('div'); rrow.className = 'slot';
+    var rpic = document.createElement('canvas'); rpic.width = rpic.height = 32; rpic.getContext('2d').drawImage(Assets.placeholder('X', '#a33', 32), 0, 0);
+    rpic.className = 'pic';
+    var rname = document.createElement('div'); rname.className = 'name';
+    var rb = document.createElement('b'); rb.textContent = 'Remove'; rname.appendChild(rb);
+    var rsp = document.createElement('span'); rsp.textContent = 'Take apart walls, doors, objects and floor you built (X)'; rname.appendChild(rsp);
+    var rbt = document.createElement('button'); rbt.textContent = 'Use'; rbt.onclick = startRemoving;
+    rrow.appendChild(rpic); rrow.appendChild(rname); rrow.appendChild(rbt); box.appendChild(rrow);
     if (!bps.length) box.insertAdjacentHTML('beforeend', '<div class="empty">You don\'t know how to build anything yet.</div>');
     bps.forEach(function (b) { if (!groups[b.category]) { groups[b.category] = []; order.push(b.category); } groups[b.category].push(b); });
     order.forEach(function (g) {
@@ -726,7 +1034,19 @@
       groups[g].forEach(function (b) {
         var o = b.places === 'object' ? content.objects[b.object] : null, can = b.afford && b.toolOk;
         var row = document.createElement('div'); row.className = 'slot' + (can ? '' : ' cant');
-        var img = o && Assets.get(o.sprite), pic = img ? img.cloneNode() : Assets.placeholder(b.name, '#555', 32);
+        // its picture: the blueprint's own icon, else what it builds (the object, or one tile of the floor it lays)
+        var img = (b.icon && Assets.get(b.icon)) || (o && Assets.get(o.sprite)), pic = null;
+        var flo = !img && (b.places === 'tile' || b.places === 'roof') ? content.terrain[b.terrain] : null;
+        if (flo) {
+          var bts = flo.autotile && content.tilesets[flo.autotile], bti = bts && typeof Scatter !== 'undefined' && Scatter.tileInfo(bts.image);
+          var tim = (flo.sprite && Assets.get(flo.sprite)) || (bti && bti.baseTile && Assets.get(bti.baseTile));
+          if (tim) {                                                       // a strip of frames or a big picture: its first tile only
+            var ts = Math.min(tim.width, tim.height);
+            pic = document.createElement('canvas'); pic.width = pic.height = 32;
+            var pg = pic.getContext('2d'); pg.imageSmoothingEnabled = false; pg.drawImage(tim, 0, 0, ts, ts, 0, 0, 32, 32);
+          }
+        }
+        if (!pic) pic = img ? img.cloneNode() : Assets.placeholder(b.name, '#555', 32);
         pic.className = 'pic';
         var name = document.createElement('div'); name.className = 'name';
         var bb = document.createElement('b'); bb.textContent = b.name; name.appendChild(bb);
@@ -737,9 +1057,16 @@
           name.appendChild(sp);
         });
         if (!b.toolOk) { var why = document.createElement('span'); why.className = 'lack'; why.textContent = ' — needs a ' + b.tool; name.appendChild(why); }
-        var bt = document.createElement('button'); bt.textContent = 'Place';
-        bt.onclick = function () { building = b.id; buildFacing = 'S'; toggleBuild(); updateCursor(); };
-        row.appendChild(pic); row.appendChild(name); row.appendChild(bt); box.appendChild(row);
+        var pickBp = function (roof) { removing = false; building = b.id; buildRoof = !!roof; buildFacing = o && o.kind === 'stairs' ? 'N' : 'S'; toggleBuild(); updateCursor(); };   // stairs climb north unless turned (T)
+        var bt = document.createElement('button'); bt.textContent = b.places === 'tile' ? 'Floor' : 'Place';
+        bt.onclick = function () { pickBp(false); };
+        var btns = document.createElement('div'); btns.className = 'btns'; btns.appendChild(bt);
+        if (b.places === 'tile') {                              // a floor is also a roof: the same piece, put up over the storey you stand on
+          var br = document.createElement('button'); br.textContent = 'Roof'; br.title = 'Put it up as a roof over where you stand. It becomes the floor of the storey above, and must rest on walls.';
+          br.onclick = function () { pickBp(true); log('Roof: click cells of this storey to cover them. Green = well held, yellow = as far from a wall as it can go, red = it would fall. V switches to floor.', 'info'); };
+          btns.appendChild(br);
+        }
+        row.appendChild(pic); row.appendChild(name); row.appendChild(btns); box.appendChild(row);
       });
     });
   }
@@ -752,6 +1079,8 @@
   function buildTarget() {
     var bp = building && content.blueprints && content.blueprints[building];
     if (!bp || !lastPtr || !me) return null;
+    var asRoof = buildRoof && bp.places === 'tile' && !!World.asRoof;
+    if (asRoof) bp = World.asRoof(bp);
     var pt = pointAt(lastPtr), map = mapOf(), o = bp.places === 'object' ? content.objects[bp.object] : null;
     var x, y, side, off = '';
     if (bp.places === 'wall' || (o && World.isWallFixture(o))) {        // snaps to the nearest grid line, like the map editor
@@ -769,9 +1098,10 @@
       // a N-S wall sits on the side of the line the cursor is on (like the map editor), kept while the button is held
       if (bp.places === 'wall' && side === 'W') off = buildHold ? buildHold.off : (pt.fx >= x ? 'r' : 'l');
     } else { x = Math.floor(pt.fx); y = Math.floor(pt.fy); }
-    var chk = World.canBuild(content, map, lookup(), me, bp, x, y, side);
-    var facing = o && !World.isWallFixture(o) && Rules.turnable(o) ? buildFacing : '';
-    return { bp: bp, x: x, y: y, side: side, off: off, facing: facing, ok: chk.ok, reason: chk.reason || '' };
+    var stairs = !!o && o.kind === 'stairs';
+    var chk = World.canBuild(content, map, lookup(), me, bp, x, y, side, stairs ? buildFacing : undefined);
+    var facing = stairs ? buildFacing : (o && !World.isWallFixture(o) && Rules.turnable(o) ? buildFacing : '');
+    return { bp: bp, x: x, y: y, side: side, off: off, facing: facing, ok: chk.ok, reason: chk.reason || '', risk: chk.risk || '', roof: asRoof };   // risk: a roof's safe | edge | fall
   }
   // ---- storage panel: a container you built. Left = what is in it (Take), below = your bag (Put).
   function closeStore() { storage = null; $('store').hidden = true; }
@@ -873,9 +1203,9 @@
     var box = $('bag-items'); box.innerHTML = '';
     $('bag-stats').textContent = (content.classes[me['class']] ? content.classes[me['class']].name + ' · ' : '') +
       'Attack ' + me.atk + ' · Defence ' + me.def + ' · ' + me.gold + ' gold';
-    // bar 'ability' = the two Q/E skill slots; bar 'belt' = the five 1-5 item slots
+    // bar 'ability' = the two Q/E skill slots; bar 'belt' = the 1-8 item slots
     function slots(id, bar) {
-      var arr = bar === 'ability' ? (me.abilities || []) : (me.belt || []), labels = bar === 'ability' ? ['Q', 'E'] : ['1', '2', '3', '4', '5'];
+      var arr = bar === 'ability' ? (me.abilities || []) : (me.belt || []), labels = bar === 'ability' ? ['Q', 'E'] : arr.slice(0, BELT).map(function (_, n) { return slotKey(n); });
       var wrap = document.createElement('div'); wrap.className = 'slots';
       labels.forEach(function (lab, i) {
         var b = document.createElement('button'); b.textContent = lab;
@@ -886,8 +1216,9 @@
       });
       return wrap;
     }
-    var h1 = document.createElement('h4'); h1.textContent = 'Abilities (Q / E)'; box.appendChild(h1);
-    (me.skills || []).forEach(function (id) {
+    var skOn = skillsOn();
+    if (skOn) { var h1 = document.createElement('h4'); h1.textContent = 'Abilities (Q / E)'; box.appendChild(h1); }
+    (skOn ? me.skills || [] : []).forEach(function (id) {
       var sk = content.skills[id]; if (!sk) return;
       var row = document.createElement('div'); row.className = 'sk';
       row.appendChild(icon({ kind: 'skill', id: id }));
@@ -900,7 +1231,7 @@
     });
     var cls = content.classes[me['class']];
     var next = cls && cls.skills.filter(function (s) { return s.level > me.level; })[0];
-    if (next && content.skills[next.skill]) { var nx = document.createElement('div'); nx.className = 'empty'; nx.textContent = 'Next: ' + content.skills[next.skill].name + ' at level ' + next.level; box.appendChild(nx); }
+    if (skOn && next && content.skills[next.skill]) { var nx = document.createElement('div'); nx.className = 'empty'; nx.textContent = 'Next: ' + content.skills[next.skill].name + ' at level ' + next.level; box.appendChild(nx); }
     var h2 = document.createElement('h4'); h2.textContent = 'Items'; box.appendChild(h2);
     if (!me.inventory.length) box.insertAdjacentHTML('beforeend', '<div class="empty">Your bag is empty.</div>');
     me.inventory.forEach(function (s, i) {
@@ -916,7 +1247,7 @@
       name.lastChild.textContent = describe(it) + (equipped ? ' · equipped' : '');
       row.appendChild(pic); row.appendChild(name);
       var eats = World.itemCan(it, 'consume');
-      if (eats || World.itemCan(it, 'throw')) name.appendChild(slots(s.item, 'belt'));
+      if (eats || World.itemCan(it, 'throw') || it.slot === 'weapon' || (it.tools || []).length) name.appendChild(slots(s.item, 'belt'));
       if (eats || it.slot) {
         var b = document.createElement('button');
         b.textContent = eats ? 'Use' : (equipped ? 'Unequip' : 'Equip');
@@ -948,9 +1279,9 @@
     hud();
     setNet('loading art…');
     // the art of every floor of this building: the floors below are drawn too when you stand upstairs
-    var famMaps = World.floorsOf(content, me.map).map(function (f) { return content.maps[f.id]; }).filter(function (m) { return m && m.id !== me.map; });
+    var famMaps = World.floorsOf(content, me.map).map(function (f) { return floorMap(f.id); }).filter(function (m) { return m && m.id !== me.map; });
     return Promise.all([Assets.loadForMap(content, mapOf())].concat(famMaps.map(function (m) { return Assets.loadForMap(content, m); }))).then(function () {
-      renderer.setMap(mapOf());
+      renderer.setMap(mapOf(), floorMaps());
       timed = mapOf().entities.filter(function (e) {
         var o = content.objects[e.ref]; return o && o.kind === 'trap' && World.props(content, e).trigger === 'timed';
       });
@@ -1079,7 +1410,10 @@
       }
       vis = sight.vis; mem = seenCells[me.map];
     }
-    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null, floorActors: floorActors() });
+    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null, cutAll: removing && wallsDown, floorActors: floorActors(dt), floorStates: floorStates(), floorSight: floorSight() });
+    if (removing) renderer.drawRemove(cam, removeTarget(), wallsDown);
+    var bpNow = building && content.blueprints && content.blueprints[building];
+    if (removing || (bpNow && (bpNow.places === 'roof' || bpNow.places === 'tile'))) renderer.drawRoofs(cam, mapOf());   // where roof already is: you stand under it and cannot see it
     if (building) { var gh0 = buildTarget(); renderer.drawClaims(cam, World.claimsOn(content, mapOf()), me, gh0); renderer.drawGhost(cam, gh0); }
     if (armed) renderer.drawAim(cam, aimOverlay());
     else if (throwing) renderer.drawAim(cam, throwOverlay());
@@ -1122,6 +1456,7 @@
     var sel = $('map-pick');
     if (api.mode !== 'offline') { sel.hidden = true; return; }
     Object.keys(content.maps).forEach(function (id) {
+      if (content.maps[id].auto) return;                   // the empty storeys the game supplies: nowhere to stand
       var o = document.createElement('option'); o.value = id; o.textContent = content.maps[id].name + (content.maps[id].z ? ' (floor ' + content.maps[id].z + ')' : ''); sel.appendChild(o);
     });
     sel.value = me.map;
@@ -1139,12 +1474,12 @@
   $('hud-mode').textContent = api.mode;
   setNet('loading game data…');
   api.loadContent().then(function (c) {
+    if (Content.autoFloors) Content.autoFloors(c);          // the empty storeys above every map, for roofs and upper floors (same ids as the referee's)
     content = c;
     var T = c.config.tile_size || 32;
     canvas.width = (c.config.view_w || 15) * T;
     canvas.height = (c.config.view_h || 11) * T;
-    canvas.style.width = canvas.width * GAME_CONFIG.SCALE + 'px';
-    $('below').style.width = canvas.style.width;
+    $('frame').style.setProperty('--ar', (canvas.width / canvas.height).toFixed(4));   // the view fills the window, keeping its shape (index.html)
     renderer = new Render.Renderer(canvas, c);
     return api.resume();
   }).then(function (res) {
@@ -1159,7 +1494,7 @@
     return res;
   }).then(apply).then(function () {
     setupDebug();
-    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use or attack what you face · Q/E abilities · 1-5 belt · I bag · C craft · B build.', 'info');
+    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use or attack what you face · ' + (skillsOn() ? 'Q/E abilities · ' : '') + 'mouse wheel or 1-9, 0 choose what you hold from the belt (click to use food and the like) · I bag · C craft · B build.', 'info');
     if (api.staleDraft) log('Your map editor draft was made from older game data, so the game is using the latest data instead. Open the editor to update or discard the draft.', 'death');
     requestAnimationFrame(frame);
   }).catch(function (e) {

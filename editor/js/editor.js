@@ -704,7 +704,7 @@ var E = {
   E.redraw = function () { E.needsDraw = true; };
   // Authoring aid: an arrow along a staircase's run, pointing the way it climbs, and a box where it lands upstairs.
   function stairArrow(e, o, vx, vy, s) {
-    var dir = Rules.stairDir(e), d = Rules.DIRS[dir], n = Math.max(1, Math.round(Number((e.data && e.data.length) || (o.properties || {}).length) || 2));
+    var dir = Rules.stairDir(e), d = Rules.DIRS[dir], n = Rules.stairLen();
     var x0 = vx + (e.x + 0.5) * s, y0 = vy + (e.y + 0.5) * s, x1 = x0 + d.dx * (n - 0.6) * s, y1 = y0 + d.dy * (n - 0.6) * s, a = s * 0.22;
     g.save(); g.strokeStyle = '#ffe08a'; g.fillStyle = '#ffe08a'; g.lineWidth = Math.max(2, s * 0.08);
     g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
@@ -717,7 +717,7 @@ var E = {
   E.openStairwell = function (e) {
     var o = E.content.objects[e.ref], m = E.map(), up = E.floors().filter(function (f) { return f.z === (m.z || 0) + 1; })[0];
     if (!up) return 'There is no floor above this one yet: add it with “+ Above”.';
-    var um = E.content.maps[up.id], dir = Rules.stairDir(e), d = Rules.DIRS[dir], n = Math.max(1, Math.round(Number((e.data && e.data.length) || (o.properties || {}).length) || 2)), cleared = 0;
+    var um = E.content.maps[up.id], dir = Rules.stairDir(e), d = Rules.DIRS[dir], n = Rules.stairLen(), cleared = 0;
     for (var i = 0; i < n; i++) {
       var x = e.x + i * d.dx, y = e.y + i * d.dy;
       if (um.terrain[y] && um.terrain[y][x]) { um.terrain[y][x] = ''; cleared++; }

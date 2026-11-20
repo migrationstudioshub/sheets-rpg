@@ -2674,7 +2674,8 @@ var World = (function () {
     // your own cell is never across an edge, so both are exempt.
     var blocked = !wm && (f.x !== p.x || f.y !== p.y) && moveBlockedEdge(c, map, p.x, p.y, f.x, f.y);
     var ms = mapState(ws, p.map), m = (wm || blocked) ? null : monsterAt(ms, f.x, f.y);
-    if (m && verb !== 'picklock') { attack(c, ws, p.map, p, m, now, rng, ev); return; }
+    // A creature there is never attacked by using or clicking: fighting is aiming (hold right-click) and clicking.
+    if (m && verb !== 'picklock') { ev.push({ type: 'info', to: p.id, text: 'Hold right-click to aim, then click to attack.' }); return; }
     var e = wm;
     if (!e) {
       var fced = blocked ? [] : Rl().entitiesAt(map, f.x, f.y);
@@ -2806,7 +2807,7 @@ var World = (function () {
           break;                                           // the rest of this batch was aimed at the floor just left
         }
         if (r.ok) { p.x = r.x; p.y = r.y; p.mvB -= cost; if (onStep(c, ws, p, now, ev)) break; }
-        else if (r.reason === 'occupied' && r.who.monster && !Rl().DIAG[dir]) attack(c, ws, p.map, p, r.who.monster, now, rng, ev);   // bumping attacks straight on only
+        // (walking into a creature does nothing: an attack is a deliberate click, never a bump)
       }
     } else if (action.type === 'interact') {
       var tgt = action.x != null && action.y != null ? { x: Math.round(Number(action.x)), y: Math.round(Number(action.y)) } : null;
@@ -2855,10 +2856,7 @@ var World = (function () {
   function actionsAt(c, map, lk, p, x, y) {
     var out = [], m = lk.monsterAt(x, y);
     if (m) {
-      var md = c.monsters[m.ref] || { name: m.ref };
-      if (rangedWeapon(c, p)) out.push({ type: 'shoot', verb: '', label: 'Shoot the ' + lower(md.name) });
-      else out.push({ type: 'attack', verb: '', label: 'Attack the ' + lower(md.name) });
-      return out;
+      return out;                                           // nothing a plain click does to a creature: attacks are aimed (right-click held), then clicked
     }
     var ents = Rl().entitiesAt(map, x, y).filter(function (e) { var o = objOf(c, e); return o && INTERACTIVE[o.kind]; });
     var e = ents[0], at = null;

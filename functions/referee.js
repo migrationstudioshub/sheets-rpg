@@ -88,7 +88,9 @@ function create(deps) {
     return {
       doors: Object.keys(fst).length ? JSON.stringify(fst) : null,
       players: (players || []).filter(q => q.map === mapId).map(q => ({
-        id: q.id, name: q.name, x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level
+        // class + equipment + hair: what the others need to draw this player as they are (the same fields an answer carries)
+        id: q.id, name: q.name, 'class': q['class'] || '', equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '',
+        x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level
       })),
       m: m, d: d
     };

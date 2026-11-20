@@ -175,6 +175,9 @@ test('a step reads the characters on its own map, not every character there is',
   assert.deepStrictEqual(read, [a.token, b.token].sort(), 'Ana\'s step read Ana and Ben only');
   assert.ok(!s.db.stats.gets.includes('players'), 'never the whole list');
   assert.ok(r.world.players.some(q => q.name === 'Ben'), 'and Ben is there for her');
+  const benPushed = s.db.read('world/' + mapId).players.filter(q => q.name === 'Ben')[0], benAnswer = r.world.players.filter(q => q.name === 'Ben')[0];
+  ['class', 'equipment', 'hair', 'hairColor'].forEach(k => assert.deepStrictEqual(benPushed[k], benAnswer[k], 'the push draws Ben as the answer does: ' + k));
+  assert.ok(benPushed['class']);
   assert.ok(idle.token);
   // a wrong guess about the map costs a second look, not a wrong answer
   const r2 = await s.referee.step(a.token, null, r.seq, undefined, { at: 'map_0' });

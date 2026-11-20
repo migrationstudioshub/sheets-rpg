@@ -130,7 +130,18 @@ async function deleteMap(id, key) {
 }
 
 // Live play (join | load | poll | act): the step logic, bound to the real database.
-const referee = require('./referee.js').create({ db, getContent, World });
+// A transaction on a record this instance is not listening to starts blind: the database answers with the whole
+// record, every time — for a map with 80 monsters that is ~27 KB downloaded on EVERY step and heartbeat, which is what
+// used up the daily download allowance (about 800 MB a day for one tab left open). With a listener the instance holds
+// the record: its own writes cost no download, a transaction commits first time (one round trip fewer), and data only
+// comes down again when ANOTHER instance changed the record. The transaction still checks, so a stale copy is only a retry.
+const warmed = {};
+function warm(path) {
+  if (warmed[path] || Object.keys(warmed).length >= 60) return;
+  warmed[path] = true;
+  db.ref(path).on('value', () => {}, () => { delete warmed[path]; });
+}
+const referee = require('./referee.js').create({ db, getContent, World, warm });
 const step = referee.step, join = referee.join;
 
 function cors(res) {

@@ -437,6 +437,10 @@
   function useItem(id) { send({ type: 'use', item: id }); }
 
   // ---------------------------------------------------------------- input
+  // when the player last did anything (see the heartbeat in the loop)
+  var lastInput = performance.now();
+  ['keydown', 'mousedown', 'wheel', 'pointermove', 'touchstart'].forEach(function (t) { addEventListener(t, function () { lastInput = performance.now(); }, { passive: true, capture: true }); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) lastInput = performance.now(); });
   function press(d) { held = held.filter(function (h) { return h !== d; }).concat(d); tap = d; holdSince = performance.now(); }
   addEventListener('keydown', function (e) {
     if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT') return;
@@ -1343,6 +1347,12 @@
     var pollMs = api.mode !== 'online' ? 250
       : livePush ? (content.config.heartbeat_ms || 3000)
       : (content.config.poll_ms || 500);
+    // Every heartbeat is a paid request. Nobody watching (the tab is hidden) = none at all; nobody playing (no key or
+    // mouse for a minute) = a slow one. The first input, or coming back to the tab, asks at once.
+    if (livePush) {
+      if (document.hidden) pollMs = Infinity;
+      else if (performance.now() - lastInput > (content.config.idle_after_ms || 60000)) pollMs = content.config.idle_heartbeat_ms || 20000;
+    }
     if (now - lastReply > pollMs) poll();
 
     ease(shown, me, dt / moveMs);

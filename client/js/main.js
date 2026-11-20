@@ -144,6 +144,9 @@
     if (res.world && res.world.now) clockOffset = res.world.now - Date.now();
     if (typeof res.seq === 'number') since = res.seq;
     var p = res.player;
+    api.at = p && p.map;                                    // told to the referee with the next request (who to read around you)
+    // An answer without monsters = the referee knows they are being pushed to us: keep the ones we hold.
+    if (res.world && !res.world.monsters) res.world.monsters = (view && me && p && view.map === res.world.map && view.monsters) || [];
     var holdQ = queue.filter(function (a) { return a.type === 'hold'; }).pop();
     if (holdQ && p && typeof p.held === 'number') p = predictHold(p, holdQ.slot);   // a slot choice still on its way: keep showing it
     var moving = queue.some(function (a) { return a.type === 'move'; });
@@ -184,7 +187,7 @@
     if (liveUnwatch) { liveUnwatch(); liveUnwatch = null; }
     floorUnwatch.forEach(function (stop) { stop(); }); floorUnwatch = []; floorWorlds = {};
     if (!api.watchMap || !me) return;
-    liveUnwatch = api.watchMap(me.map, mergeLiveWorld);
+    liveUnwatch = api.watchMap(me.map, mergeLiveWorld, true);
     if (api.watchStructs && World.floorsOf(content, me.map).length > 1) floorUnwatch.push(api.watchStructs(World.groundId(content, me.map), function (id, rec) {
       var st = null; try { st = rec && rec.json ? JSON.parse(rec.json) : null; } catch (e) { st = null; }
       if (content.maps[id] && setFloorStruct(id, st)) floorChanged(id);
@@ -1472,6 +1475,7 @@
   $('hud-mode').textContent = api.mode;
   setNet('loading game data…');
   api.loadContent().then(function (c) {
+    if (Content.tidyMaps) Content.tidyMaps(c);              // (settings of map objects sent as text by an older referee: parsed here)
     if (Content.autoFloors) Content.autoFloors(c);          // the empty storeys above every map, for roofs and upper floors (same ids as the referee's)
     content = c;
     var T = c.config.tile_size || 32;

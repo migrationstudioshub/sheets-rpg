@@ -53,6 +53,14 @@ A game action is sent as `do` (not `action`!): `{type: 'move', dirs} | {type: 'i
   loads from `API_URL`; the live world is **pushed** over Firebase (`FIREBASE_URL`), so polling is a slow heartbeat.
   State lives in the Realtime Database: `players/<token>` and `state/maps/<mapId>` (one record per map, written in a transaction) are **JSON strings** (their keys hold
   `.`, which RTDB forbids in keys); `world/<mapId>` is a plain object clients read.
+  **What a step costs (Nov 2026, `functions/referee.js`):** the pushed `world/<mapId>` is written piece by piece — `m/<key>` a short
+  string per monster (only the ones that changed), `d/<key>` its fixed part (kind, looks) once, players/doors when they change;
+  `pushView` keeps what this instance last wrote and rewrites the whole record only when it cannot trust that (first push, another
+  instance ran the map's last step — the record's `pi`/`pv` —, a failure, or a minute passed). `Api.watchMap` rebuilds the list from
+  those pieces. The page sends `live` (the map whose push it is receiving → answers leave the monsters out) and `at` (its map → the
+  step reads its own record and `here/<groundId>`, the who-is-in-this-building index, side by side, then only those characters —
+  never the whole `players` tree). Saves and pushes run side by side. Keep it that way: nothing per step may grow with the number
+  of monsters on the map or of characters ever made.
 - **Online** (`API_URL` set, `FUNCTIONS_URL` empty): the Apps Script referee checks everything (~1.5 s). Same action
   protocol; also `GET ?action=content|tables|reload`. With `FIREBASE_URL` set it also writes the pushed live world.
 - **Offline** (`API_URL` empty): `client/js/api.js` runs `shared/world.js` in the browser against `data/tables.json`

@@ -23,7 +23,7 @@ function test(name, fn) { queue.push({ name, fn }); }
 
 function fakeDb() {
   const tree = {};
-  const stats = { sets: [], txAttempts: 0 };
+  const stats = { sets: [], txAttempts: 0, ops: [], gets: [] };   // ops: [{type: 'put'|'patch', path, data}] as a stream would deliver them
   let beforeCommit = null;                       // test hook: runs once just before a transaction commits
   function parts(p) { return String(p || '').split('/').filter(Boolean); }
   function read(p) { let n = tree; for (const k of parts(p)) { if (n == null || typeof n !== 'object') return null; n = n[k]; } return n === undefined ? null : n; }
@@ -35,10 +35,10 @@ function fakeDb() {
   }
   function ref(p) {
     return {
-      get: async () => ({ val: () => { const v = read(p); return v == null ? null : JSON.parse(JSON.stringify(v)); } }),
-      set: async (v) => write(p, v),
+      get: async () => { stats.gets.push(String(p)); return { val: () => { const v = read(p); return v == null ? null : JSON.parse(JSON.stringify(v)); } }; },
+      set: async (v) => { stats.ops.push({ type: 'put', path: String(p), data: JSON.parse(JSON.stringify(v)) }); write(p, v); },
       remove: async () => write(p, null),
-      update: async (obj) => { Object.keys(obj).forEach(k => write((p ? p + '/' : '') + k, obj[k])); },
+      update: async (obj) => { stats.ops.push({ type: 'patch', path: String(p || ''), data: JSON.parse(JSON.stringify(obj)) }); Object.keys(obj).forEach(k => write((p ? p + '/' : '') + k, obj[k])); },
       transaction: async (fn) => {
         stats.txAttempts++;
         fn(null);                                               // first run: no cached value, like the real client
@@ -68,6 +68,126 @@ function setup() {
 }
 function mapRec(db, mapId) { const v = db.read('state/maps/' + mapId); return v == null ? null : JSON.parse(v); }
 function playerRec(db, token) { return JSON.parse(db.read('players/' + token)); }
+
+// ---- the live push, as the game page receives it: client/js/api.js run here with a stand-in EventSource
+function gamePage() {
+  const vm = require('vm'), sources = [];
+  function FakeES(url) { this.url = url; this.on = {}; sources.push(this); }
+  FakeES.prototype.addEventListener = function (t, h) { this.on[t] = h; };
+  FakeES.prototype.close = function () { this.closed = true; };
+  const box = { GAME_CONFIG: { FIREBASE_URL: 'https://db.test', FUNCTIONS_URL: 'https://fn.test' }, EventSource: FakeES,
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} }, JSON, Object, String, Number, Promise, encodeURIComponent };
+  vm.createContext(box);
+  vm.runInContext(fs.readFileSync(path.join(root, 'client/js/api.js'), 'utf8') + '\nthis.Api = Api;', box);
+  const api = box.Api.create();
+  return {
+    api,
+    /** Listen to a map; feed(db) hands over whatever the database has written to world/<mapId> since last time. */
+    watch(mapId, main) {
+      let world = null, fed = 0; const stop = api.watchMap(mapId, w => { world = w; }, main), es = sources[sources.length - 1], at = 'world/' + mapId;
+      return {
+        stop, world: () => world,
+        feed(db) {
+          const ops = db.stats.ops.slice(fed); fed = db.stats.ops.length; let n = 0, bytes = 0;
+          ops.forEach(op => {
+            if (op.path !== at && op.path.indexOf(at + '/') !== 0) return;
+            const msg = JSON.stringify({ path: '/' + op.path.slice(at.length).replace(/^\//, ''), data: op.data });
+            n++; bytes += msg.length; es.on[op.type]({ type: op.type, data: msg });
+          });
+          return { events: n, bytes };
+        },
+        start(db) { es.on.put({ type: 'put', data: JSON.stringify({ path: '/', data: db.read(at) }) }); fed = db.stats.ops.length; }   // what a new listener is sent first
+      };
+    }
+  };
+}
+const byId = (list) => JSON.parse(JSON.stringify(list || [])).sort((a, b) => (a.id < b.id ? -1 : 1));   // (plain copies: the page runs in its own sandbox)
+
+test('the live push sends only the monsters that changed, their looks once, and the game page rebuilds the same list', async () => {
+  const s = setup();
+  s.content.monsters[Object.keys(s.content.monsters)[0]].hp = 30;
+  const j = await s.referee.join('Ana', '');
+  const r0 = await s.referee.step(j.token, null, -1), mapId = r0.player.map;
+  const total = r0.world.monsters.length;
+  assert.ok(total >= 3, 'the start map has monsters');
+  const first = s.db.read('world/' + mapId);
+  assert.strictEqual(first.v, 2);
+  assert.strictEqual(Object.keys(first.m).length, total, 'one short entry per monster');
+  assert.ok(Object.keys(first.m).every(k => !/[.#$\[\]\/]/.test(k)), 'keys the database accepts');
+  assert.ok(typeof first.m[Object.keys(first.m)[0]] === 'string' && first.m[Object.keys(first.m)[0]].length < 40);
+  // a game page starts listening, then the world moves on
+  const page = gamePage(), feed = page.watch(mapId, true);
+  assert.strictEqual(page.api.liveMap, '', 'nothing has arrived yet');
+  feed.start(s.db);
+  assert.strictEqual(page.api.liveMap, mapId);
+  assert.deepStrictEqual(byId(feed.world().monsters), byId(r0.world.monsters), 'the pieces add up to the list the answer carries');
+  let seq = r0.seq, sawDelta = false, sawNoLooks = true;
+  for (let i = 0; i < 25; i++) {
+    s.tick(700);
+    const rec = mapRec(s.db, mapId);
+    if (i === 5) { rec.monsters[0].hp -= 3; s.db.write('state/maps/' + mapId, JSON.stringify(rec)); }          // one gets hurt
+    if (i === 9) { rec.monsters[1].dead = true; rec.monsters[1].respawnAt = s.now() + 9e9; s.db.write('state/maps/' + mapId, JSON.stringify(rec)); }   // one dies
+    const before = s.db.stats.ops.length;
+    const r = await s.referee.step(j.token, null, seq); seq = r.seq;
+    const ops = s.db.stats.ops.slice(before).filter(o => o.path.indexOf('world/' + mapId) === 0);
+    if (ops.some(o => o.type === 'put')) continue;                                    // (a whole rewrite: the minute's check)
+    const mOps = ops.filter(o => o.path === 'world/' + mapId + '/m');
+    if (mOps.length) { sawDelta = true; assert.ok(Object.keys(mOps[0].data).length < total, 'not the whole list'); }
+    if (ops.some(o => o.path === 'world/' + mapId + '/d' && Object.keys(o.data).some(k => o.data[k] != null))) sawNoLooks = false;
+    feed.feed(s.db);
+    const truth = World.view(s.content, { maps: { [mapId]: mapRec(s.db, mapId) } }, mapId, playerRec(s.db, j.token), []).monsters;
+    assert.deepStrictEqual(byId(feed.world().monsters), byId(truth), 'after step ' + i + ' the page holds exactly what the referee does');
+  }
+  assert.ok(sawDelta, 'monsters moved and were sent as changes');
+  assert.ok(sawNoLooks, 'no monster\'s looks were sent a second time');
+  assert.strictEqual(feed.world().monsters.length, total - 1, 'the dead one left the list');
+  feed.stop();
+  assert.strictEqual(page.api.liveMap, '');
+});
+
+test('an answer leaves the monsters out for a page that is receiving the push, and only then', async () => {
+  const s = setup();
+  const j = await s.referee.join('Ana', '');
+  const r0 = await s.referee.step(j.token, null, -1), mapId = r0.player.map;
+  const plain = await s.referee.step(j.token, null, r0.seq, undefined, { at: mapId });
+  assert.ok(Array.isArray(plain.world.monsters) && plain.world.monsters.length, 'a page that says nothing gets the list');
+  const live = await s.referee.step(j.token, null, plain.seq, undefined, { at: mapId, live: mapId });
+  assert.ok(!('monsters' in live.world) && live.world.pushed === 1);
+  assert.ok(JSON.stringify(live).length < JSON.stringify(plain).length, 'and it is a smaller answer');
+  const other = await s.referee.step(j.token, null, live.seq, undefined, { at: mapId, live: 'map_0' });
+  assert.ok(Array.isArray(other.world.monsters), 'listening to some other map does not count');
+});
+
+test('a step reads the characters on its own map, not every character there is', async () => {
+  const s = setup();
+  const a = await s.referee.join('Ana', ''), b = await s.referee.join('Ben', ''), far = await s.referee.join('Cai', '');
+  const ra = await s.referee.step(a.token, null, -1), mapId = ra.player.map;
+  await s.referee.step(b.token, null, -1);
+  // Cai is on another map; Dee was made long ago and never came back
+  const cai = playerRec(s.db, far.token); cai.map = 'map_0'; cai.x = 1; cai.y = 1; s.db.write('players/' + far.token, JSON.stringify(cai));
+  await s.referee.step(far.token, null, -1);
+  const idle = await s.referee.join('Dee', '');
+  assert.deepStrictEqual(Object.keys(s.db.read('here/' + mapId)).sort(), [a.token, b.token].sort(), 'who is on the map');
+  assert.deepStrictEqual(Object.keys(s.db.read('here/map_0')), [far.token]);
+  s.db.stats.gets.length = 0;
+  const r = await s.referee.step(a.token, null, ra.seq, undefined, { at: mapId });
+  const read = s.db.stats.gets.filter(p => p.indexOf('players/') === 0).map(p => p.slice(8)).sort();
+  assert.deepStrictEqual(read, [a.token, b.token].sort(), 'Ana\'s step read Ana and Ben only');
+  assert.ok(!s.db.stats.gets.includes('players'), 'never the whole list');
+  assert.ok(r.world.players.some(q => q.name === 'Ben'), 'and Ben is there for her');
+  assert.ok(idle.token);
+  // a wrong guess about the map costs a second look, not a wrong answer
+  const r2 = await s.referee.step(a.token, null, r.seq, undefined, { at: 'map_0' });
+  assert.ok(r2.world.players.some(q => q.name === 'Ben'));
+  // someone gone for over a minute is not read; gone for a day, their entry is cleared away
+  s.tick(61000);
+  s.db.stats.gets.length = 0;
+  await s.referee.step(a.token, null, r2.seq, undefined, { at: mapId });
+  assert.deepStrictEqual(s.db.stats.gets.filter(p => p.indexOf('players/') === 0), ['players/' + a.token]);
+  s.tick(86400000);
+  await s.referee.step(a.token, null, -1, undefined, { at: mapId });
+  assert.deepStrictEqual(Object.keys(s.db.read('here/' + mapId)), [a.token]);
+});
 
 test('joining and loading stores the world per map, not as one record', async () => {
   const s = setup();

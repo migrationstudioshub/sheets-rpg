@@ -2517,6 +2517,19 @@ function roofYard(cfg) {
   return s;
 }
 
+test('maps that arrive with the settings of their things as text (straight from a map document) are mended', () => {
+  const c = Content.build(tables), m = c.maps.map_3;
+  const door = m.entities.filter(e => s_kind(c, e) === 'door')[0];
+  m.entities.push({ key: 'map_3.t1', x: '4', y: '5', ref: door.ref, data: JSON.stringify({ side: 'W', target: 'map_3:1:1' }) }, { key: 'map_3.t2', x: 1, y: 1, ref: door.ref, data: '' }, { key: 'junk' });
+  m._block = { stale: 1 };
+  Content.linkFloors(c);
+  const t1 = m.entities.filter(e => e.key === 'map_3.t1')[0], t2 = m.entities.filter(e => e.key === 'map_3.t2')[0];
+  assert.deepStrictEqual([t1.data.side, t1.data.target, t1.x, t1.y], ['W', 'map_3:1:1', 4, 5]);
+  assert.deepStrictEqual(t2.data, {});
+  assert.ok(!m.entities.some(e => e.key === 'junk') && !('_block' in m), 'no thing without a ref, no cache that came along');
+});
+function s_kind(c, e) { const o = c.objects[e.ref]; return o && o.kind; }
+
 test('every map gets empty storeys above it to build on, unless it has its own or building is off', () => {
   const s = roofYard();
   assert.deepStrictEqual(World.floorsOf(s.c, 'yard').map(f => [f.z, f.id]), [[0, 'yard'], [1, 'yard_z1'], [2, 'yard_z2']]);

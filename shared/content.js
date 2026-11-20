@@ -326,7 +326,31 @@ var Content = (function () {
    * z, floorOf ('' on a ground map) and floors = { "0": groundId, "1": id, … } shared by the whole family.
    * A floor whose ground map is missing, or whose level is taken, becomes an ordinary map. Safe to run again.
    */
+  /**
+   * Makes every map's things the shape the rules expect, whatever road the map came by. A map saved from the map
+   * editor is stored with each thing's settings (`data`) as JSON TEXT — fine for a sheet row, which build() parses,
+   * but the referee also takes maps straight from their own documents, and there the text came through unparsed:
+   * `e.data.side` and `e.data.target` read as nothing, so every door and window on a north-south wall was taken for
+   * one on an east-west wall, and no teleport knew where it led. Also drops any derived cache (`_block`, `_edgeOv`…)
+   * that travelled with the content: those belong to whoever computed them. Safe to run again.
+   */
+  function tidyMaps(c) {
+    var maps = c.maps || {};
+    Object.keys(maps).forEach(function (id) {
+      var m = maps[id]; if (!m) return;
+      Object.keys(m).forEach(function (k) { if (k.charAt(0) === '_') delete m[k]; });
+      m.entities = (m.entities || []).filter(function (e) { return e && str(e.ref); });
+      m.entities.forEach(function (e) {
+        if (!e.data || typeof e.data !== 'object') e.data = json(e.data, {});
+        if (!e.data || typeof e.data !== 'object' || Array.isArray(e.data)) e.data = {};
+        e.x = num(e.x, 0); e.y = num(e.y, 0);
+      });
+      if (typeof m.spawn === 'string') m.spawn = json(m.spawn, null);
+    });
+    return c;
+  }
   function linkFloors(c) {
+    tidyMaps(c);
     var maps = c.maps || {}, ids = Object.keys(maps);
     // Recovery: a floor saved through a referee from before floors existed comes back WITHOUT floor_of / z (that
     // referee stores a fixed list of fields and drops the rest), which would turn it into a second, separate map
@@ -364,6 +388,7 @@ var Content = (function () {
    * call this. Safe to run again, and on content that already carries them.
    */
   function autoFloors(c) {
+    tidyMaps(c);
     var cfg = c.config || {}, n = cfg.auto_floors === undefined || cfg.auto_floors === '' ? 2 : Math.round(Number(cfg.auto_floors));
     if (!(n > 0) || String(cfg.build || 'on') === 'off') return c;
     var maps = c.maps || {}, added = false;
@@ -413,6 +438,6 @@ var Content = (function () {
     return hash({ row: row, ents: ents });
   }
 
-  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, linkFloors: linkFloors, autoFloors: autoFloors };
+  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, linkFloors: linkFloors, autoFloors: autoFloors, tidyMaps: tidyMaps };
 })();
 if (typeof module !== 'undefined') module.exports = Content;

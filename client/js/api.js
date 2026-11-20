@@ -97,27 +97,66 @@ var Api = (function () {
   };
   // structRev: the revision of the map's structure layer (built / damaged / destroyed things) this client
   // already holds — set by the game after each answer — so the server only re-sends the layer when it changed.
-  Online.prototype.act = function (action, since) { return this.call({ action: 'act', token: this.token, 'do': action, since: since, structRev: this.structRev, floorRevs: this.floorRevs }); };
-  Online.prototype.poll = function (since) { return this.call({ action: 'poll', token: this.token, since: since, structRev: this.structRev, floorRevs: this.floorRevs }); };
+  // at: the map the game believes you are on (set by the game after each answer), so the referee can read the
+  // characters around you alongside your own. live: the map whose pushed view is arriving (watchMap), so the
+  // referee leaves that map's monsters out of its answers — they are already here.
+  Online.prototype.act = function (action, since) { return this.call({ action: 'act', token: this.token, 'do': action, since: since, structRev: this.structRev, floorRevs: this.floorRevs, at: this.at, live: this.liveMap || undefined }); };
+  Online.prototype.poll = function (since) { return this.call({ action: 'poll', token: this.token, since: since, structRev: this.structRev, floorRevs: this.floorRevs, at: this.at, live: this.liveMap || undefined }); };
   /**
    * Listen for live updates to one map (monsters and players), pushed by the server through Firebase.
-   * onWorld({map, now, seq, monsters, players}) runs on every change. Returns a function that stops listening.
+   * onWorld({map, now, seq, monsters, players, doors}) runs on every change. Returns a function that stops listening.
    * Does nothing (polling still works) if FIREBASE_URL is unset or the browser has no EventSource.
+   *
+   * The server writes the record piece by piece (functions/referee.js, pushView): only the monsters that changed
+   * arrive, as changes to a copy of the record kept here; the world handed to onWorld is rebuilt from that copy.
+   * main = this is the map you stand on: while its pushes are arriving, this.liveMap names it (see act / poll).
    */
-  Online.prototype.watchMap = function (mapId, onWorld) {
+  Online.prototype.watchMap = function (mapId, onWorld, main) {
     if (!GAME_CONFIG.FIREBASE_URL || typeof EventSource === 'undefined') return function () {};
-    var url = GAME_CONFIG.FIREBASE_URL.replace(/\/+$/, '') + '/world/' + encodeURIComponent(mapId) + '.json';
-    var es = new EventSource(url);
+    var self = this, url = GAME_CONFIG.FIREBASE_URL.replace(/\/+$/, '') + '/world/' + encodeURIComponent(mapId) + '.json';
+    var es = new EventSource(url), copy = null, fixed = {};       // fixed: each monster's unchanging part, parsed once
+    if (main) self.liveMap = '';
+    function setAt(path, data, merge) {                           // one change to the copy: replace (put) or merge (patch) at a path
+      var ks = String(path || '/').split('/').filter(Boolean);
+      if (!ks.length && !merge) { copy = data; fixed = {}; return; }
+      if (copy == null || typeof copy !== 'object') copy = {};
+      if (merge) {                                                // a patch: each key is a child, or a path to one ("m/abc")
+        Object.keys(data || {}).forEach(function (k) { setAt(ks.concat(k.split('/')).join('/'), data[k], false); });
+        return;
+      }
+      var n = copy;
+      for (var i = 0; i < ks.length - 1; i++) { if (n[ks[i]] == null || typeof n[ks[i]] !== 'object') n[ks[i]] = {}; n = n[ks[i]]; }
+      if (data == null) delete n[ks[ks.length - 1]]; else n[ks[ks.length - 1]] = data;
+      if (ks[0] === 'd') delete fixed[ks[1]];
+    }
+    function world() {
+      var w = { map: copy.map || mapId, now: copy.now, seq: copy.seq, doors: copy.doors, players: copy.players || [] };
+      if (!copy.m && copy.monsters) { w.monsters = copy.monsters; return w; }   // a referee from before pushes came in pieces
+      var m = copy.m || {}, d = copy.d || {};
+      w.monsters = Object.keys(m).map(function (k) {
+        var f = fixed[k];
+        if (!f) { try { f = JSON.parse(d[k] || 'null'); } catch (e) { f = null; } if (f) fixed[k] = f; }
+        if (!f) return null;                                      // its fixed part has not arrived yet: next change
+        var q = String(m[k]).split(',');
+        return { id: f.id, ref: f.ref, x: Number(q[0]), y: Number(q[1]), hp: Number(q[2]), maxHp: f.maxHp, facing: q[3] || 'S',
+          statuses: q[4] ? q[4].split('|') : [], look: f.look || undefined };
+      }).filter(Boolean);
+      return w;
+    }
     function handle(ev) {
       try {
         var msg = JSON.parse(ev.data);                 // Realtime DB streaming sends { path, data }
-        if (!msg || msg.data == null) return;          // null = the node is empty (no one on this map yet)
-        if (msg.path === '/') onWorld(msg.data);        // we always PUT the whole node, so the change arrives at '/'
+        if (!msg) return;
+        setAt(msg.path, msg.data, ev.type === 'patch');
+        if (copy == null || typeof copy !== 'object') { copy = null; return; }   // null = the node is empty (no one on this map yet)
+        if (main) self.liveMap = mapId;
+        onWorld(world());
       } catch (e) { /* keep-alive and auth-revoked frames aren't JSON we care about */ }
     }
     es.addEventListener('put', handle);
     es.addEventListener('patch', handle);
-    return function () { es.close(); };
+    es.onerror = function () { if (main && self.liveMap === mapId) self.liveMap = ''; };   // lost the stream: answers carry the monsters again until it is back
+    return function () { es.close(); if (main && self.liveMap === mapId) self.liveMap = ''; };
   };
   /**
    * Listen for what players built or broke on every floor of one building (pushed by the server, only when it

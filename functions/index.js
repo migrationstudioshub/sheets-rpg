@@ -14,7 +14,8 @@
  * Realtime Database layout (the game step itself lives in ./referee.js — see the notes there):
  *   players/<token>      full player state (private; only this function reads/writes it)
  *   state/maps/<mapId>   one map's live state: monsters, object states, its event log and seq (private)
- *   world/<mapId>        the public view clients subscribe to (monsters + players on that map)
+ *   world/<mapId>        the public view clients subscribe to (monsters + players on that map), written piece by piece
+ *   here/<groundId>/<token> who is in a building (when they last acted): a step reads those characters only
  *
  * Each step runs in a transaction on its map's record, so simultaneous actions no longer overwrite
  * each other. (The old single state/world record is split up automatically the first time this runs.)
@@ -138,6 +139,12 @@ function cors(res) {
   res.set('Access-Control-Allow-Headers', 'Content-Type');
 }
 
+// The built content as sent to the game page: without the caches the rules hang on maps (_block, _edgeOv, _at…),
+// which are this server's working notes — big, and wrong for anyone else to trust.
+function sendContent(res, content) {
+  res.type('application/json').send(JSON.stringify({ content: content }, (k, v) => (k.charAt(0) === '_' ? undefined : v)));
+}
+
 exports.game = onRequest({ region: 'us-central1', cors: true, secrets: [EDITOR_KEY] }, async (req, res) => {
   cors(res);
   if (req.method === 'OPTIONS') { res.status(204).end(); return; }
@@ -145,7 +152,7 @@ exports.game = onRequest({ region: 'us-central1', cors: true, secrets: [EDITOR_K
     // Content reads are allowed over GET too, so the client loads them with a simple fetch(url?action=content).
     if (req.method === 'GET') {
       const qa = (req.query && req.query.action) || '';
-      if (qa === 'content') { res.json({ content: await getContent() }); return; }
+      if (qa === 'content') { sendContent(res, await getContent()); return; }
       if (qa === 'records') { res.json(await records()); return; }
       if (qa === 'maps') { res.json(await readMaps()); return; }
       res.json({ error: 'unknown action' }); return;
@@ -154,12 +161,12 @@ exports.game = onRequest({ region: 'us-central1', cors: true, secrets: [EDITOR_K
     let out;
     switch (body.action) {
       case 'join': out = await join(body.name, body['class']); break;
-      case 'load': out = await step(body.token, null, -1); break;
-      case 'poll': out = await step(body.token, null, body.since, body.structRev); break;
-      case 'act':  out = await step(body.token, body['do'], body.since, body.structRev); break;
+      case 'load': out = await step(body.token, null, -1, undefined, { at: body.at }); break;
+      case 'poll': out = await step(body.token, null, body.since, body.structRev, { at: body.at, live: body.live }); break;
+      case 'act':  out = await step(body.token, body['do'], body.since, body.structRev, { at: body.at, live: body.live }); break;
       case 'resetStructures': requireEditor(body.key); out = await referee.resetStructures(body.map); break;
       case 'save': out = { ok: true }; break;                 // state is persisted every step already
-      case 'content': out = { content: await getContent() }; break;
+      case 'content': sendContent(res, await getContent()); return;
       case 'records': out = await records(); break;
       case 'maps': out = await readMaps(); break;
       case 'publish': out = await publish(body.tables, body.key); break;

@@ -162,13 +162,18 @@ test('slimes and rats spawn from the spawn markers within their radius', () => {
   ms.filter(m => m.ref === 'slime').forEach(m => assert.ok(Math.abs(m.x - 4) <= 3 && Math.abs(m.y - 13) <= 3));
 });
 
-test('bumping into a monster attacks it; killing it gives XP, gold and loot', () => {
+test('walking into a monster does not attack it; an attack does, and killing it gives XP, gold and loot', () => {
   const s = fresh();
   World.advance(s.c, s.ws, 'map_3', [s.p], 0, mid, []);
   const slime = World.mapState(s.ws, 'map_3').monsters.find(m => m.ref === 'slime');
   put(s, 'map_3', slime.x + 1, slime.y, 'W');
-  let ev = [];
-  for (let i = 0; i < 5 && !slime.dead; i++) ev = ev.concat(act(s, { type: 'move', dirs: ['W'] }, 1000 + i * 600, dice([0.0])));
+  const hp0 = slime.hp;
+  let ev = act(s, { type: 'move', dirs: ['W'] }, 400, dice([0.0]));
+  assert.doesNotMatch(texts(ev), /You hit/);                       // a bump is not an attack
+  assert.deepStrictEqual([slime.hp, s.p.x], [hp0, slime.x + 1]);
+  assert.match(texts(act(s, { type: 'interact' }, 500, dice([0.0]))), /Hold right-click to aim/);   // nor is F / a plain click
+  assert.strictEqual(slime.hp, hp0);
+  for (let i = 0; i < 5 && !slime.dead; i++) ev = ev.concat(act(s, { type: 'attack', x: slime.x, y: slime.y }, 1000 + i * 600, dice([0.0])));
   assert.ok(slime.dead, 'slime should be dead');
   assert.match(texts(ev), /You hit the slime/);
   assert.match(texts(ev), /The slime is defeated. \+6 XP/);
@@ -653,7 +658,7 @@ test('action list: default first, for monsters, chests, keys, signs and empty gr
   s.p.x = 9; s.p.y = 13;
   const map = s.c.maps.map_3, v = World.view(s.c, s.ws, 'map_3', s.p, [s.p]), lk = World.viewLookup(s.c, map, v, s.p);
   const labels = (x, y) => World.actionsAt(s.c, map, lk, s.p, x, y).map(a => a.label);
-  assert.deepStrictEqual(labels(5, 13), ['Attack the slime']);   // no ranged weapon: melee
+  assert.deepStrictEqual(labels(5, 13), []);                     // a creature: nothing by a plain click (attacks are aimed, then clicked)
   assert.deepStrictEqual(labels(10, 7), ['Open the wooden chest']);
   assert.deepStrictEqual(labels(8, 11), ['Read the sign']);
   assert.deepStrictEqual(labels(9, 9), ['Open the wooden door']);
@@ -715,7 +720,7 @@ test('a survivor spawns gun-in-hand with a loaded magazine; firing draws from th
   const m = monster(s, 'skeleton', 12, 13);
   s.p.x = 9; s.p.y = 13;                                                          // 3 tiles away, clear line
   const map = s.c.maps.map_3, lk = World.viewLookup(s.c, map, World.view(s.c, s.ws, 'map_3', s.p, [s.p]), s.p);
-  assert.match(World.actionsAt(s.c, map, lk, s.p, 12, 13)[0].label, /^Shoot/);     // shooting is the default
+  assert.deepStrictEqual(World.actionsAt(s.c, map, lk, s.p, 12, 13), []);           // a plain click does nothing to a creature: shots are aimed
   const hp0 = m.hp;
   act(s, { type: 'shoot', x: 12, y: 13 }, 1000);
   assert.strictEqual(s.p.mags.pistol, 11);                                        // spent from the clip

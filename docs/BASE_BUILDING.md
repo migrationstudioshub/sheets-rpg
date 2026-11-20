@@ -131,7 +131,7 @@ Standing preferences of the owner that shape this work (see also the memory note
 
 - Only **players and monsters have hp**. `World.hurt` damages a player; `hitMonster` a monster;
   `damage(atk, def, rng) = max(1, atk − def + rint(−1, 2))`.
-- Attack paths: `attack` (melee, via `act` types `move` bump and `attack`), `shoot` (ranged weapon),
+- Attack paths: `attack` (melee, via `act` type `attack`; walking into a creature no longer attacks), `shoot` (ranged weapon),
   `cast` (skills), `throwItem` (grenades: `throwLanding` + `blastCells`, both stopped by walls that
   block **movement**).
 - **Monster AI** lives inside `World.advance`: pick a target (the engaged player, else nearest within

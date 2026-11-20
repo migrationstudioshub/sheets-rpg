@@ -405,7 +405,6 @@
       send({ type: 'move', dirs: [dir] });
       return;
     }
-    if (!r.ok && r.who && r.who.monster && Rules.DIRS[dir]) { var d = Rules.DIRS[dir]; attackFx(me.x + d.dx, me.y + d.dy); }   // bumped a monster: the server turns this move into an attack
     me = Object.assign({}, me, { facing: Rules.faceFor(dir, me.facing) }, r.ok ? { x: r.x, y: r.y } : {});
     lastCost = r.ok ? Rules.stepCost(dir) : 1;
     send({ type: 'move', dirs: [dir] });
@@ -639,7 +638,7 @@
     if (!me || aiming || armed || throwing || removing) { updateCursor(); return; }
     if (!hover) { canvas.style.cursor = ''; return; }
     var hft = floorTargetAt(hover);
-    canvas.style.cursor = tapAction(World.actionsAt(content, mapOf(), lookup(), me, hover.x, hover.y)) || (hft && World.rangedWeapon(content, me)) ? 'pointer' : 'default';
+    canvas.style.cursor = tapAction(World.actionsAt(content, mapOf(), lookup(), me, hover.x, hover.y)) ? 'pointer' : 'default';
     canvas.title = hft ? hft.name + (hft.dz < 0 ? ' — on the floor below' : ' — on the floor above') : '';
   }
 
@@ -876,7 +875,6 @@
       var tapA = tapAction(acts);
       if (tapA) doAction(tapA, pendingCell);
       else if (heldUse()) useHeld();                       // nothing to act on there: the click uses what is in hand
-      else if (World.rangedWeapon(content, me) && floorTargetAt(pendingCell)) shootAt(pendingCell);   // a creature on another floor: shoot it
     }
   });
   $('btn-use').onclick = interact;
@@ -1494,7 +1492,7 @@
     return res;
   }).then(apply).then(function () {
     setupDebug();
-    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use or attack what you face · ' + (skillsOn() ? 'Q/E abilities · ' : '') + 'mouse wheel or 1-9, 0 choose what you hold from the belt (click to use food and the like) · I bag · C craft · B build.', 'info');
+    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use what you face · ' + (skillsOn() ? 'Q/E abilities · ' : '') + 'mouse wheel or 1-9, 0 choose what you hold from the belt (click to use food and the like) · I bag · C craft · B build.', 'info');
     if (api.staleDraft) log('Your map editor draft was made from older game data, so the game is using the latest data instead. Open the editor to update or discard the draft.', 'death');
     requestAnimationFrame(frame);
   }).catch(function (e) {

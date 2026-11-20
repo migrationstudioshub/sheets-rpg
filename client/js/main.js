@@ -147,6 +147,7 @@
     api.at = p && p.map;                                    // told to the referee with the next request (who to read around you)
     // An answer without monsters = the referee knows they are being pushed to us: keep the ones we hold.
     if (res.world && !res.world.monsters) res.world.monsters = (view && me && p && view.map === res.world.map && view.monsters) || [];
+    if (res.world) rememberLooks(res.world.players);
     var holdQ = queue.filter(function (a) { return a.type === 'hold'; }).pop();
     if (holdQ && p && typeof p.held === 'number') p = predictHold(p, holdQ.slot);   // a slot choice still on its way: keep showing it
     var moving = queue.some(function (a) { return a.type === 'move'; });
@@ -174,6 +175,16 @@
    * things — monsters and other players — between polls, so they glide in near-real-time. Your own
    * player, object states and events still come from the poll/act replies (authoritative, per-player).
    */
+  // How each other player looks (class, gear, hair), for as long as this page is open. An answer stops listing someone
+  // who has been still for a minute, and a push may name them again before the next answer does: without this they
+  // came back as the plain figure. What an answer or a push says about looks always replaces what is remembered.
+  var playerLooks = {};
+  function rememberLooks(list) {
+    (list || []).forEach(function (q) {
+      if (q['class']) playerLooks[q.id] = { 'class': q['class'], equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '' };
+      else if (playerLooks[q.id]) Object.assign(q, playerLooks[q.id]);
+    });
+  }
   function mergeLiveWorld(w) {
     if (!me || !w || w.map !== me.map) return;                 // ignore a push for a map we've already left
     if (w.monsters) view.monsters = w.monsters;
@@ -186,6 +197,7 @@
         if (!out.equipment) out.equipment = {};               // (the database drops an empty one)
         return out;
       });
+      rememberLooks(view.players);
     }
     if (w.now) clockOffset = w.now - Date.now();
   }
@@ -280,7 +292,7 @@
       (w.players || []).forEach(function (q) {
         if (q.id === me.id || !inView(q.x, q.y)) return;
         var gq = glide(f.id + ':p:' + q.id, q, (dt || 16) / (content.config.move_ms || 140));
-        list.push({ x: gq.x, y: gq.y, tx: q.x, ty: q.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp });
+        list.push({ x: gq.x, y: gq.y, tx: q.x, ty: q.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q['class'] || !playerLooks[q.id] ? q : Object.assign({}, q, playerLooks[q.id])) || undefined, hp: q.hp, maxHp: q.maxHp });   // (someone on another floor is known by pushes only)
       });
       if (list.length) out.push({ dz: dz, actors: list });
     });

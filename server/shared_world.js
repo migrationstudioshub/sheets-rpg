@@ -51,11 +51,17 @@ var World = (function () {
   //   struct = { rev, n, walls: {edgeKey: {tok, hp, max, ...}}, ents: [built entities], dmg: {key: hp lost by an
   //              AUTHORED wall/object}, gone: {key: 1 = an authored wall/object that was destroyed} }
   // rev goes up on every change. See docs/BASE_BUILDING.md (5, 6).
-  var NO_STRUCT = { rev: 0, n: 0, walls: {}, ents: [], dmg: {}, gone: {} };
+  // Stage 4 of floors (docs/FLOORS.md) adds: floor = {"x,y": {t: terrainId, by, bp}} tiles players laid; hole =
+  // {"x,y": 1} authored floor removed (a stairwell opened from below); shadow = {claimKey: {x, y, r, by, owner,
+  // members, home}} the claims standing on OTHER floors of this building, which cover this floor too.
+  // Roofs (docs/FLOORS.md, stage 5) add: roof = {"x,y": {t, by, bp, up}} the cells of THIS storey that players put a
+  // roof over. The same piece is a laid floor tile on the storey above (its struct.floor); notices keep the two in step.
+  var NO_STRUCT = { rev: 0, n: 0, walls: {}, ents: [], dmg: {}, gone: {}, floor: {}, hole: {}, shadow: {}, roof: {} };
   function structOf(ws, mapId) {
     var ms = mapState(ws, mapId), st = ms.struct || (ms.struct = {});
     st.rev = st.rev || 0; st.n = st.n || 0;
     st.walls = st.walls || {}; st.ents = st.ents || []; st.dmg = st.dmg || {}; st.gone = st.gone || {};
+    st.floor = st.floor || {}; st.hole = st.hole || {}; st.shadow = st.shadow || {}; st.roof = st.roof || {};
     return st;
   }
   function touchStruct(st) { st.rev = (st.rev || 0) + 1; }
@@ -87,6 +93,42 @@ var World = (function () {
     m.hWalls = overlayGrid(base.hWalls, st, 'h');
     m.vWalls = overlayGrid(base.vWalls, st, 'v');
     m.entities = base.entities.filter(function (e) { return !st.gone[e.key]; }).concat(st.ents || []);
+    var fk = Object.keys(st.floor || {}), hk = Object.keys(st.hole || {});
+    if (fk.length || hk.length) {                             // laid floor tiles and opened stairwells: copy only the rows they touch
+      var terr = base.terrain.slice(), done = {};
+      var setCell = function (k, v) {
+        var q = k.split(','), x = Number(q[0]), y = Number(q[1]);
+        if (!(y >= 0 && y < terr.length) || !(x >= 0)) return;
+        if (!done[y]) { terr[y] = (terr[y] || []).slice(); done[y] = 1; }
+        terr[y][x] = v;
+      };
+      hk.forEach(function (k) { setCell(k, ''); });
+      fk.forEach(function (k) { setCell(k, st.floor[k].t); });
+      m.terrain = terr;
+      // …and covers whatever was painted over the ground there (grass on the overlay layer)
+      if (base.overlay && base.overlay.length && fk.length) {
+        var ovl = base.overlay.slice(), odone = {};
+        fk.forEach(function (k) {
+          var q = k.split(','), x = Number(q[0]), y = Number(q[1]);
+          if (!ovl[y] || !ovl[y][x]) return;
+          if (!odone[y]) { ovl[y] = ovl[y].slice(); odone[y] = 1; }
+          ovl[y][x] = '';
+        });
+        m.overlay = ovl;
+      }
+    }
+    var rk = Object.keys(st.roof || {});
+    if (rk.length) {                                          // roofs players built: indoors, like a roof painted in the editor
+      var rf = (base.roof || []).slice(), rdone = {};
+      rk.forEach(function (k) {
+        var q = k.split(','), x = Number(q[0]), y = Number(q[1]);
+        if (!(y >= 0 && y < base.height) || !(x >= 0 && x < base.width)) return;
+        if (!rdone[y]) { rf[y] = (rf[y] || []).slice(); rdone[y] = 1; }
+        while (rf[y].length < x) rf[y].push('');
+        rf[y][x] = '1';
+      });
+      m.roof = rf; m._roofZones = null;
+    }
     m._block = null; m._at = null; m._edgeOv = null; m._struct = st;   // its OWN derived caches (never the authored map's, via the prototype)
     // not enumerable: the content object is sent to clients as JSON and must not drag live state along
     Object.defineProperty(base, '_live', { value: { rev: st.rev, of: st, map: m }, enumerable: false, writable: true, configurable: true });
@@ -101,7 +143,7 @@ var World = (function () {
     return m;
   }
   function publicStruct(st) {
-    return { rev: st.rev || 0, walls: st.walls || {}, dmg: st.dmg || {}, gone: st.gone || {},
+    return { rev: st.rev || 0, walls: st.walls || {}, dmg: st.dmg || {}, gone: st.gone || {}, floor: st.floor || {}, hole: st.hole || {}, shadow: st.shadow || {}, roof: st.roof || {},
       ents: (st.ents || []).map(function (e) { var o = {}; Object.keys(e).forEach(function (k) { if (k !== 'inv') o[k] = e[k]; }); return o; }) };
   }
 
@@ -157,6 +199,7 @@ var World = (function () {
         var lost = st.ents.splice(i, 1)[0], rub = c.config.rubble_object || 'obj_rubble';
         var lo = objOf(c, lost);
         if (lo && lo.kind === 'claim') {
+          shadowClaim(c, ws, mapId, lost, true);              // the other floors of the base lose it too
           var cr = claimRadius(c, lost);
           st.ents.forEach(function (b) { if (cheb(b.x, b.y, lost.x, lost.y) <= cr) b.by = null; });
           Object.keys(st.walls).forEach(function (wk) {
@@ -224,9 +267,12 @@ var World = (function () {
   function claimRadius(c, e) { var r = Number(props(c, e).claim_radius); return r > 0 ? r : 8; }
   /** Every claim on a live map: [{e (its record), x, y, r}]. */
   function claimsOn(c, map) {
-    var st = map && map._struct; if (!st || !st.ents) return [];
-    return st.ents.filter(function (e) { var o = objOf(c, e); return o && o.kind === 'claim'; })
+    var st = map && map._struct; if (!st) return [];
+    var own = (st.ents || []).filter(function (e) { var o = objOf(c, e); return o && o.kind === 'claim'; })
       .map(function (e) { return { e: e, x: e.x, y: e.y, r: claimRadius(c, e) }; });
+    // …and the claims standing on the other floors of this building: a base is the whole column (st.shadow)
+    var sh = st.shadow || {};
+    return own.concat(Object.keys(sh).map(function (k) { return { e: sh[k], x: sh[k].x, y: sh[k].y, r: sh[k].r, shadow: true }; }));
   }
   /** The claim record covering a cell, or null. */
   function claimAt(c, map, x, y) {
@@ -274,6 +320,43 @@ var World = (function () {
     return yes(c.config.pvp_structures);
   }
   /** The claims this player still holds: entries for this map are checked against what stands there. */
+  // ---- word between floors ----
+  // Each floor is its own record, so what one floor must tell another travels as a NOTICE in ws.transfers:
+  //   { map, monster }            a monster that took the stairs (see leaveFloor)
+  //   { map, shadow: {key, rec} } a claim on another floor of the building appeared, changed, or (rec null) went
+  //   { map, tiles: [...] }       floor to lay ({x, y, t, ifNone, s}) or open ({x, y, hole: 1}) — stairs or a roof built below
+  //   { map, roofs: [...] }       this storey gained ({x, y, t, by, bp}) or lost ({x, y, gone: 1}) cover: floor laid or taken up above
+  // World.deliver applies them where the whole world is in memory; the referee applies them to the other floor's
+  // record. Either way through applyNotice, so both do exactly the same thing.
+  function notify(ws, mapId, notice) { notice.map = mapId; (ws.transfers = ws.transfers || []).push(notice); ws.dirty = true; }
+  /** Apply one notice to a floor's state record (ms). Safe on a record that has never been used. */
+  function applyNotice(c, mapId, ms, t) {
+    if (!ms || !t) return;
+    if (t.monster) { (ms.arrivals = ms.arrivals || []).push(t.monster); return; }
+    var st = ms.struct || (ms.struct = {}), base = c.maps[mapId];
+    st.rev = st.rev || 0; st.n = st.n || 0;                   // the whole shape, as structOf makes it: this record may be brand new
+    st.walls = st.walls || {}; st.ents = st.ents || []; st.dmg = st.dmg || {}; st.gone = st.gone || {};
+    st.floor = st.floor || {}; st.hole = st.hole || {}; st.shadow = st.shadow || {}; st.roof = st.roof || {};
+    if (t.shadow) { if (t.shadow.rec) st.shadow[t.shadow.key] = t.shadow.rec; else delete st.shadow[t.shadow.key]; }
+    (t.tiles || []).forEach(function (q) {
+      var k = q.x + ',' + q.y, authored = !!(base && base.terrain[q.y] && base.terrain[q.y][q.x]);
+      if (q.hole) { delete st.floor[k]; if (authored) st.hole[k] = 1; }
+      else if (!(q.ifNone && ((authored && !st.hole[k]) || st.floor[k]))) { st.floor[k] = { t: q.t, by: q.by || null, bp: q.bp || '' }; if (q.s) st.floor[k].s = q.s; delete st.hole[k]; }
+    });
+    (t.roofs || []).forEach(function (q) {
+      var k = q.x + ',' + q.y;
+      if (q.gone) delete st.roof[k];
+      else if (!st.roof[k]) st.roof[k] = { t: q.t, by: q.by || null, bp: q.bp || '', up: 1 };
+    });
+    st.rev++;
+  }
+  /** Tell the other floors of the building about a claim on this one (gone = it no longer stands). */
+  function shadowClaim(c, ws, mapId, e, gone) {
+    floorsOf(c, mapId).forEach(function (f) {
+      if (f.id === mapId) return;
+      notify(ws, f.id, { shadow: { key: e.key, rec: gone ? null : { key: e.key, ref: e.ref, x: e.x, y: e.y, r: claimRadius(c, e), by: e.by, owner: e.owner, members: e.members || [], home: mapId } } });
+    });
+  }
   function heldClaims(map, p) {
     var st = (map && map._struct) || NO_STRUCT;
     return (p.claims || []).filter(function (q) { return !map || q.map !== map.id || (st.ents || []).some(function (b) { return b.key === q.key; }); });
@@ -306,6 +389,7 @@ var World = (function () {
       if (e.members.length === before) return say('They are not a member.');
     } else return;
     touchStruct(st); ws.dirty = true;
+    shadowClaim(c, ws, p.map, e, false);                    // members changed: the other floors hear of it
     claimEvent(c, p, e, ev);
   }
 
@@ -330,6 +414,7 @@ var World = (function () {
   /** Where a blueprint would go: {kind:'wall'|'fixture'|'floor', edges, cells (every tile it touches), obj}. null = nonsense. */
   function buildSpot(c, map, bp, x, y, side) {
     if (bp.places === 'wall') { var ed = sideEdge(x, y, side); return { kind: 'wall', edges: [ed], cells: edgeCells(ed) }; }
+    if (bp.places === 'tile' || bp.places === 'roof') return c.terrain[bp.terrain] ? { kind: bp.places, edges: [], cells: [{ x: x, y: y }] } : null;
     var o = c.objects[bp.object]; if (!o) return null;
     if (isWallFixture(o)) {
       var eds = fixtureEdges(o, { x: x, y: y, data: { side: String(side || 'N').toUpperCase() === 'W' ? 'W' : 'N' } }), cells = [];
@@ -344,7 +429,7 @@ var World = (function () {
    * May p build blueprint bp at cell (x,y) (side N|W for walls and wall-mounted things)? {ok, reason}.
    * map = the live map; lk = serverLookup / viewLookup. The ghost preview and the referee both ask this.
    */
-  function canBuild(c, map, lk, p, bp, x, y, side) {
+  function canBuild(c, map, lk, p, bp, x, y, side, facing) {
     function no(t) { return { ok: false, reason: t }; }
     if (String(c.config.build || 'on') === 'off') return no('Building is turned off.');
     if (!bp || (bp.unlock && !check(c, p, bp.unlock))) return no('You don\'t know how to build that.');
@@ -370,6 +455,53 @@ var World = (function () {
     if (total >= cfgNum(c, 'structure_cap_per_map', 600)) return no('This area is full of structures.');
     if (mine >= cfgNum(c, 'structure_cap_per_player', 150)) return no('You have built as much as you can here.');
     var R = Rl();
+    if (spot.kind === 'tile') {
+      // A piece of floor: only where there is none, and it has to join onto floor already there (no floating slabs).
+      // …or on open ground: terrain ticked build_over (grass, dirt), or the bare earth a taken-up floor left.
+      if (hasFloorAt(map, x, y) && (map.terrain[y][x] === bp.terrain || !openGround(c, map, x, y))) return no('There is already a floor there.');
+      if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(function (d) { return hasFloorAt(map, x + d[0], y + d[1]); })) return no('A floor has to join onto one that is already there.');
+      if ((map.z || 0) > 0) {
+        // Upstairs a floor is also the roof of the storey below, so it obeys the same support rule. The walls below
+        // are another record, so from up here it is counted the careful way: from the floor it joins onto
+        // (the map's own floor counts as resting on a wall; a laid piece remembers its own count, rec.s).
+        var fS = roofSpan(c), fbest = Infinity;
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
+          if (!hasFloorAt(map, x + d[0], y + d[1])) return;
+          var fr = st.floor[(x + d[0]) + ',' + (y + d[1])];
+          fbest = Math.min(fbest, fr && !fr.bare ? (Number(fr.s) || 1) : 1);
+        });
+        var fres = riskOf(fS, fbest + 1);
+        if (!fres.ok) return fres;
+        fres.spot = spot; return fres;
+      }
+      return { ok: true, spot: spot };
+    }
+    if (spot.kind === 'roof') {
+      // A roof over this storey = a piece of floor on the storey above. It rests on walls: a piece may be at most
+      // roof_support tiles from one, counted through the roof already there (roofSteps).
+      if (!upperOf(c, map)) return no('Nothing can be built above here.');
+      if (covered(c, map, x, y)) return no('There is already a roof there.');
+      if (R.stairAt(c, map, x, y)) return no('Stairs come up through here.');
+      var rres = riskOf(roofSpan(c), roofSteps(c, map, x, y));
+      if (!rres.ok) return rres;
+      rres.spot = spot; return rres;
+    }
+    if (spot.kind === 'floor' && spot.obj.kind === 'stairs') {
+      // Stairs climb from this floor to the one above: it must exist (the owner adds floors in the map editor),
+      // the whole run must be clear floor, and there must be room to land.
+      var sf = facing && R.DIRS[facing] ? facing : 'N', sd = R.DIRS[sf], sn = R.stairLen();
+      if (!(map.floors && map.floors[(map.z || 0) + 1])) return no('There is no floor above here to climb to.');
+      for (var si = 0; si <= sn; si++) {
+        var sx = x + si * sd.dx, sy = y + si * sd.dy;
+        if (!inMap(map, sx, sy)) return no('Out of the map.');
+        if (si === sn) break;                                 // (the landing only has to be on the map)
+        if (!hasFloorAt(map, sx, sy)) return no('Stairs need floor under them.');
+        if (noBuild(map, sx, sy)) return no('You can\'t build here.');
+        if ((map.entities || []).some(function (e) { return e.x === sx && e.y === sy && !isWallFixture(objOf(c, e)); }) || R.stairAt(c, map, sx, sy)) return no('Something is in the way of the stairs.');
+        var se = si ? R.wallEdge(sx - sd.dx, sy - sd.dy, sf) : null;                       // the line between this step and the one before
+        if (se && R.edgeBlocked(c, map, se.orient, se.x, se.y, 'move')) return no('A wall crosses the stairs.');
+      }
+    }
     if (spot.kind === 'wall') {
       var ed = spot.edges[0];
       if (ed.orient === 'h' ? (ed.x >= map.width || ed.y > map.height) : (ed.x > map.width || ed.y >= map.height)) return no('Out of the map.');
@@ -414,6 +546,69 @@ var World = (function () {
     }
     return { ok: true, spot: spot };
   }
+  // ---- roofs (docs/FLOORS.md, stage 5) ----
+  /** A floor blueprint (places: tile) used the other way: as a roof over the storey you stand on. One entry serves both
+   *  (`build` takes `roof: true`; the build menu offers Floor and Roof for it). Anything else comes back as it is. */
+  function asRoof(bp) { return bp && bp.places === 'tile' ? Object.assign({}, bp, { places: 'roof' }) : bp; }
+  /** How many tiles from a wall a roof piece may be (Config roof_support, default 3; 0 = no rule). */
+  function roofSpan(c) { return Math.max(0, Math.round(cfgNum(c, 'roof_support', 3))); }
+  /** The storey above this map, as authored (null when the building has none). */
+  function upperOf(c, map) { var id = map && map.floors && map.floors[(map.z || 0) + 1]; return (id && c.maps[id]) || null; }
+  /** Covered by something the map itself has: a roof painted in the editor, or the authored floor of the storey above. */
+  function authoredCover(c, map, x, y) { return roofTile(c.maps[map.id] || map, x, y) || hasFloorAt(upperOf(c, map), x, y); }
+  /**
+   * IS THIS CELL UNDER COVER? (map = the live map.) A roof players built, a roof painted in the editor, or the floor
+   * of the storey above. The one question for anything that falls or flies in from above (rain, later).
+   */
+  function covered(c, map, x, y) {
+    var st = map && map._struct;
+    return !!(st && st.roof && st.roof[x + ',' + y]) || authoredCover(c, map, x, y);
+  }
+  /**
+   * What holds the built roof up, per live map: steps = {"x,y": n} for every built roof cell, n = how many tiles
+   * it is from a wall (1 = it rests on one), counted through roof cells side to side; cells that reach no wall are
+   * left out. A wall on any of the cell's four sides holds it, and so does an object with properties.support (a
+   * pillar) standing in it; roof joined onto the map's own cover counts as one step further than a wall.
+   */
+  function roofSupport(c, map) {
+    if (Object.prototype.hasOwnProperty.call(map, '_roofSup') && map._roofSup) return map._roofSup;
+    var st = map._struct || NO_STRUCT, keys = Object.keys(st.roof || {}), steps = {}, pillars = {}, R = Rl();
+    (map.entities || []).forEach(function (e) { var o = objOf(c, e); if (o && o.properties && yes(o.properties.support)) pillars[e.x + ',' + e.y] = 1; });
+    function held(x, y) { return !!(pillars[x + ',' + y] || R.wallAt(map, 'h', x, y) || R.wallAt(map, 'h', x, y + 1) || R.wallAt(map, 'v', x, y) || R.wallAt(map, 'v', x + 1, y)); }
+    var out = { steps: steps, held: held }, cells = keys.map(function (k) { var q = k.split(','); return { k: k, x: Number(q[0]), y: Number(q[1]) }; });
+    var D = [[1, 0], [-1, 0], [0, 1], [0, -1]], level = cells.filter(function (cl) { return held(cl.x, cl.y); }), n = 1;
+    level.forEach(function (cl) { steps[cl.k] = 1; });
+    var second = cells.filter(function (cl) { return !steps[cl.k] && D.some(function (d) { return authoredCover(c, map, cl.x + d[0], cl.y + d[1]); }); });
+    while (level.length || (n === 1 && second.length)) {
+      var next = [];
+      level.forEach(function (cl) {
+        D.forEach(function (d) {
+          var k = (cl.x + d[0]) + ',' + (cl.y + d[1]);
+          if (st.roof[k] && !steps[k]) { steps[k] = n + 1; next.push({ k: k, x: cl.x + d[0], y: cl.y + d[1] }); }
+        });
+      });
+      if (n === 1) second.forEach(function (cl) { if (!steps[cl.k]) { steps[cl.k] = 2; next.push(cl); } });
+      level = next; n++;
+    }
+    Object.defineProperty(map, '_roofSup', { value: out, enumerable: false, writable: true, configurable: true });
+    return out;
+  }
+  /** How many tiles from a wall a NEW roof piece at (x,y) would be (1 = on a wall; Infinity = it joins nothing that holds). */
+  function roofSteps(c, map, x, y) {
+    var sup = roofSupport(c, map), best = Infinity;
+    if (sup.held(x, y)) return 1;
+    [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
+      var nx = x + d[0], ny = y + d[1], s = sup.steps[nx + ',' + ny] || (authoredCover(c, map, nx, ny) ? 1 : 0);
+      if (s && s + 1 < best) best = s + 1;
+    });
+    return best;
+  }
+  /** The answer for a piece that would be `steps` tiles from a wall: safe, at the limit (edge), or it would fall. */
+  function riskOf(span, steps) {
+    if (!span || steps < span) return { ok: true, steps: steps === Infinity ? 1 : steps, risk: 'safe' };
+    if (steps === span) return { ok: true, steps: steps, risk: 'edge' };
+    return { ok: false, risk: 'fall', reason: steps === Infinity ? 'A roof has to rest on a wall, or join onto roof that does.' : 'Too far from a wall: it would fall.' };
+  }
   /** The blueprints this player knows, with what each costs and whether they can pay. For the build menu. */
   function blueprintsFor(c, p) {
     var bps = c.blueprints || {};
@@ -421,7 +616,7 @@ var World = (function () {
       .filter(function (b) { return !b.unlock || check(c, p, b.unlock); })
       .map(function (b) {
         var cost = list(b.cost).map(function (g) { return { item: g.item, qty: g.qty, have: count(p, g.item) }; });
-        return { id: b.id, name: b.name, category: b.category, places: b.places, object: b.object, wallStyle: b.wallStyle, wallHeight: b.wallHeight,
+        return { id: b.id, name: b.name, category: b.category, places: b.places, object: b.object, terrain: b.terrain, icon: b.icon, wallStyle: b.wallStyle, wallHeight: b.wallHeight,
           tool: b.tool, toolOk: !b.tool || hasTool(c, p, b.tool), cost: cost, afford: cost.every(function (g) { return g.have >= g.qty; }), upgradeOf: b.upgradeOf };
       });
   }
@@ -459,11 +654,28 @@ var World = (function () {
   function build(c, ws, p, a, now, ev, players) {
     function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
     var bp = (c.blueprints || {})[String(a.bp || '')], x = Math.round(Number(a.x)), y = Math.round(Number(a.y));
-    var map = liveMap(c, ws, p.map), chk = canBuild(c, map, serverLookup(c, ws, p.map, players || [p]), p, bp, x, y, a.side);
+    if (a.roof) bp = asRoof(bp);                              // a floor blueprint put up as a roof
+    var map = liveMap(c, ws, p.map), chk = canBuild(c, map, serverLookup(c, ws, p.map, players || [p]), p, bp, x, y, a.side, a.facing);
     if (!chk.ok) return say(chk.reason);
     list(bp.cost).forEach(function (g) { take(p, g.item, g.qty); });
     var st = structOf(ws, p.map), need = bp.work, pct = cfgNum(c, 'frame_hp_pct', 0.2), max, rec;
     function live(mx) { return need > 0 && mx > 0 ? Math.max(1, Math.round(mx * pct)) : mx; }
+    if (chk.spot.kind === 'tile') {                           // a piece of floor: laid at once, no frame
+      st.floor[x + ',' + y] = { t: bp.terrain, by: p.id, bp: bp.id }; delete st.hole[x + ',' + y];
+      if (chk.steps) st.floor[x + ',' + y].s = chk.steps;
+      var below = (map.z || 0) > 0 && map.floors && map.floors[(map.z || 0) - 1];   // upstairs, a floor is the roof of the storey below
+      if (below && c.maps[below]) notify(ws, below, { roofs: [{ x: x, y: y, t: bp.terrain, by: p.id, bp: bp.id }] });
+      touchStruct(st); ws.dirty = true;
+      ev.push({ type: 'struct', map: p.map, op: 'place', x: x, y: y, by: p.id });
+      return say('You lay ' + aAn(lower(bp.name)) + '.');
+    }
+    if (chk.spot.kind === 'roof') {                           // a roof over this storey: the storey above gets it as floor
+      st.roof[x + ',' + y] = { t: bp.terrain, by: p.id, bp: bp.id };
+      notify(ws, upperOf(c, map).id, { tiles: [{ x: x, y: y, t: bp.terrain, by: p.id, bp: bp.id, s: chk.steps || 1 }] });
+      touchStruct(st); ws.dirty = true;
+      ev.push({ type: 'struct', map: p.map, op: 'place', x: x, y: y, by: p.id });
+      return say('You put up ' + (a.roof ? 'a roof of ' + lower(bp.name) : aAn(lower(bp.name))) + (chk.risk === 'edge' ? '. It is as far from a wall as it can go.' : '.'));
+    }
     if (chk.spot.kind === 'wall') {
       var ed = chk.spot.edges[0];
       max = Number(c.wallStyles[bp.wallStyle].hp) || 0;
@@ -473,15 +685,84 @@ var World = (function () {
       var o = chk.spot.obj, pr = o.properties || {};
       max = Number(pr.hp) || 0;
       rec = { key: p.map + '.b' + (++st.n), x: x, y: y, ref: bp.object, data: chk.spot.kind === 'fixture' ? { side: String(a.side || 'N').toUpperCase() === 'W' ? 'W' : 'N' }
+          : o.kind === 'stairs' ? { facing: Rl().DIRS[a.facing] ? a.facing : 'N' }       // stairs always say which way they climb
           : (a.facing && Rl().turnable(o) && Rl().facingOf(String(a.facing)) !== 'S' ? { facing: Rl().facingOf(String(a.facing)) } : {}),
         hp: live(max), max: max, bp: bp.id, by: p.id, built: now, prog: 0, need: need };
       if (o.kind === 'container' && Number(pr.storage) > 0) rec.inv = {};
-      if (o.kind === 'claim') { rec.owner = p.name; rec.members = []; p.claims = heldClaims(map, p).concat([{ map: p.map, key: rec.key }]); }
+      if (o.kind === 'claim') { rec.owner = p.name; rec.members = []; p.claims = heldClaims(map, p).concat([{ map: p.map, key: rec.key }]); shadowClaim(c, ws, p.map, rec, false); }
+      if (o.kind === 'stairs') {
+        openAbove(c, ws, p.map, map, rec, bp, p);
+        var sdr = Rl().DIRS[Rl().stairDir(rec)];                 // the stairwell is open: no roof over the run
+        for (var sri = 0; sri < Rl().stairLen(); sri++) delete st.roof[(rec.x + sri * sdr.dx) + ',' + (rec.y + sri * sdr.dy)];
+      }
       st.ents.push(rec);
     }
     touchStruct(st); ws.dirty = true;
     ev.push({ type: 'struct', map: p.map, op: 'place', x: x, y: y, by: p.id });
     say(need > 0 ? 'You set up the frame of ' + aAn(lower(bp.name)) + '. Work on it to finish.' : 'You build ' + aAn(lower(bp.name)) + '.');
+  }
+  // Stairs built here open the floor above: the cells over the run become a stairwell, and the landing gets a
+  // piece of floor if it has none. That is the other floor's record, so it goes as a notice.
+  function openAbove(c, ws, mapId, map, rec, bp, p) {
+    var up = map.floors && map.floors[(map.z || 0) + 1]; if (!up) return;
+    var o = objOf(c, rec), d = Rl().DIRS[Rl().stairDir(rec)], n = Rl().stairLen(), tiles = [];
+    for (var i = 0; i < n; i++) tiles.push({ x: rec.x + i * d.dx, y: rec.y + i * d.dy, hole: 1 });
+    var lay = c.terrain[bp.terrain] ? bp.terrain : (map.terrain[rec.y] && map.terrain[rec.y][rec.x]);
+    if (lay) tiles.push({ x: rec.x + n * d.dx, y: rec.y + n * d.dy, t: lay, ifNone: true, by: p.id, bp: bp.id, s: 99 });   // s 99: a landing holds itself, but no floor may be hung from it
+    notify(ws, up, { tiles: tiles });
+  }
+  /** May a floor be laid over what is at (x,y)? Ground ticked build_over (and nothing else painted on it), or bare earth. */
+  function openGround(c, map, x, y) {
+    var st = map._struct, rec = st && st.floor && st.floor[x + ',' + y];
+    if (rec) return !!rec.bare;
+    var t = c.terrain[map.terrain[y][x]], ov = map.overlay && map.overlay[y] && map.overlay[y][x];
+    return !!t && t.buildOver && (!ov || !!(c.terrain[ov] && c.terrain[ov].buildOver));
+  }
+  /** What the ground is left as when a floor laid on it is taken up: Config floor_removed_terrain (a terrain id;
+   *  'none' = the ground comes back as it was), else the terrain called Dirt, if there is one. */
+  function bareTerrain(c) {
+    var id = String(c.config.floor_removed_terrain || '').trim();
+    if (id) return c.terrain[id] ? id : '';
+    return Object.keys(c.terrain).filter(function (k) { return k.toLowerCase() === 'dirt' || String(c.terrain[k].name).trim().toLowerCase() === 'dirt'; })[0] || '';
+  }
+  /** Take up a piece of floor that was laid (target {t:'tile', x, y}): part of its materials come back. */
+  function liftTile(c, ws, p, t, now, ev, players) {
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    var st = structOf(ws, p.map), map = liveMap(c, ws, p.map), k = t.x + ',' + t.y;
+    var chk = canRemove(c, map, serverLookup(c, ws, p.map, players || [p]), p, t);
+    if (!chk.ok) return say(chk.reason);
+    var rec = st.floor[k], bp = (c.blueprints || {})[rec.bp];
+    // Over open air it leaves a gap; over the ground, bare earth (the grass does not come back)
+    var under = c.maps[p.map].terrain[t.y] && c.maps[p.map].terrain[t.y][t.x], bare = under && !st.hole[k] ? bareTerrain(c) : '';
+    if (bare) st.floor[k] = { t: bare, bare: 1 }; else delete st.floor[k];
+    var lmap = c.maps[p.map], below = (lmap.z || 0) > 0 && lmap.floors && lmap.floors[(lmap.z || 0) - 1];
+    if (below && c.maps[below]) notify(ws, below, { roofs: [{ x: t.x, y: t.y, gone: 1 }] });   // the storey below loses that piece of roof
+    var share = cfgNum(c, 'dismantle_refund_pct', 0.5);
+    list(bp ? bp.cost : '').forEach(function (g) { var q = Math.floor(g.qty * share); if (q > 0) give(c, p, g.item, q, ev); });
+    touchStruct(st); ws.dirty = true;
+    ev.push({ type: 'struct', map: p.map, op: 'remove', x: t.x, y: t.y, by: p.id });
+    say('You take up the floor.');
+  }
+  /** Take down a piece of roof from below (target {t:'roof', x, y}): the floor it was upstairs goes with it. */
+  function liftRoof(c, ws, p, t, now, ev, players) {
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    var st = structOf(ws, p.map), map = liveMap(c, ws, p.map), k = t.x + ',' + t.y;
+    var chk = canRemove(c, map, serverLookup(c, ws, p.map, players || [p]), p, t);
+    if (!chk.ok) return say(chk.reason);
+    var rec = st.roof[k], bp = (c.blueprints || {})[rec.bp], up = upperOf(c, map);
+    delete st.roof[k];
+    if (up) notify(ws, up.id, { tiles: [{ x: t.x, y: t.y, hole: 1 }] });
+    var share = cfgNum(c, 'dismantle_refund_pct', 0.5);
+    list(bp ? bp.cost : '').forEach(function (g) { var q = Math.floor(g.qty * share); if (q > 0) give(c, p, g.item, q, ev); });
+    touchStruct(st); ws.dirty = true;
+    ev.push({ type: 'struct', map: p.map, op: 'remove', x: t.x, y: t.y, by: p.id });
+    say('You take down the roof.');
+  }
+  /** May p take up the laid floor at (x,y)? Its layer, or anyone in the base it lies in; anyone, if nobody's. */
+  function tileMine(c, map, p, x, y) {
+    var st = map && map._struct, rec = st && st.floor && st.floor[x + ',' + y]; if (!rec || rec.bare) return false;
+    var cl = claimAt(c, map, x, y);
+    return cl ? isMember(cl, p) : (!rec.by || rec.by === p.id);
   }
   /** Is p standing where they can work on / take apart this structure? */
   function besideTarget(c, map, p, tg) {
@@ -513,6 +794,7 @@ var World = (function () {
   function cleanTarget(t) {
     if (!t || typeof t !== 'object') return null;
     if (t.t === 'wall' && (t.orient === 'h' || t.orient === 'v')) return { t: 'wall', orient: t.orient, x: Math.round(Number(t.x)), y: Math.round(Number(t.y)) };
+    if (t.t === 'tile' || t.t === 'roof') return { t: t.t, x: Math.round(Number(t.x)), y: Math.round(Number(t.y)) };
     return t.t === 'ent' && t.key ? { t: 'ent', key: String(t.key) } : null;
   }
   /** One go at a frame (it gets nearer to finished) or at something damaged (it is repaired a bit, for materials). */
@@ -545,24 +827,63 @@ var World = (function () {
     touchStruct(st); ws.dirty = true;
     say('You repair the ' + tg.name + ' (' + hp + '/' + tg.max + ').');
   }
+  /**
+   * May p take this apart right now? t = {t:'wall', orient, x, y} | {t:'ent', key} | {t:'tile', x, y} on a LIVE map.
+   * Answers {ok, reason, info, cells}. The one question behind the remove tool's outline (client) and the referee:
+   * it must have been built, be within building reach, be yours (or your base's), and be free of what depends on it.
+   */
+  function canRemove(c, map, lk, p, t) {
+    function no(why, info) { return { ok: false, reason: why, info: info || null }; }
+    var st = (map && map._struct) || NO_STRUCT, reach = cfgNum(c, 'build_reach', 2), bp;
+    function far(cells) { return !cells.some(function (cl) { return cheb(p.x, p.y, cl.x, cl.y) <= reach; }); }
+    if (!map || !t) return no('Pick something.');
+    if (t.t === 'roof') {                                     // a piece of roof over this storey, taken down from below
+      var rr = st.roof && st.roof[t.x + ',' + t.y], rcell = [{ x: t.x, y: t.y }];
+      if (!rr) return no('There is no roof there that was built.');
+      var ri = { t: 'roof', x: t.x, y: t.y, name: 'roof', rec: rr };
+      if (far(rcell)) return no('Too far away.', ri);
+      var rcl = claimAt(c, map, t.x, t.y);
+      if (!(rcl ? isMember(rcl, p) : (!rr.by || rr.by === p.id))) return no('That is not yours to take apart.', ri);
+      bp = (c.blueprints || {})[rr.bp];
+      if (bp && bp.tool && !hasTool(c, p, bp.tool)) return no('You need ' + aAn(bp.tool) + '.', ri);
+      return { ok: true, info: ri, cells: rcell };
+    }
+    if (t.t === 'tile') {
+      var rec = st.floor && st.floor[t.x + ',' + t.y], cell = [{ x: t.x, y: t.y }];
+      if (!rec || rec.bare) return no('You can only take up floor that was laid.');
+      var ti = { t: 'tile', x: t.x, y: t.y, name: 'floor', rec: rec };
+      if (far(cell)) return no('Too far away.', ti);
+      if (!tileMine(c, map, p, t.x, t.y)) return no('That is not yours to take apart.', ti);
+      if ((p.x === t.x && p.y === t.y) || lk.monsterAt(t.x, t.y) || lk.playerAt(t.x, t.y)) return no('Someone is standing on it.', ti);
+      if ((map.entities || []).some(function (e) { return e.x === t.x && e.y === t.y && !isWallFixture(objOf(c, e)); }) || Rl().stairAt(c, map, t.x, t.y)) return no('Clear what stands on it first.', ti);
+      bp = (c.blueprints || {})[rec.bp];
+      if (bp && bp.tool && !hasTool(c, p, bp.tool)) return no('You need ' + aAn(bp.tool) + '.', ti);
+      return { ok: true, info: ti, cells: cell };
+    }
+    var tg = resolveOn(c, map, st, t);
+    if (!tg || !tg.built) return no('You can only take apart what was built.');
+    var cells = structCells(tg);
+    if (far(cells)) return no('Too far away.', tg);
+    if (!mayDismantle(c, map, p, tg)) return no('That is not yours to take apart.', tg);
+    bp = (c.blueprints || {})[tg.rec.bp];
+    if (bp && bp.tool && !hasTool(c, p, bp.tool)) return no('You need ' + aAn(bp.tool) + '.', tg);
+    if (tg.rec.inv && Object.keys(tg.rec.inv).length) return no('Empty it first.', tg);
+    if (tg.t === 'wall' && (map.entities || []).some(function (e) { var o = objOf(c, e); return isWallFixture(o) && fixtureEdges(o, e).some(function (q) { return q.orient === tg.orient && q.x === tg.x && q.y === tg.y; }); }))
+      return no('Take down what hangs on it first.', tg);
+    return { ok: true, info: tg, cells: cells };
+  }
   /** Take apart something that was built: it leaves the map and part of its materials come back. */
-  function dismantle(c, ws, p, t, now, ev) {
+  function dismantle(c, ws, p, t, now, ev, players) {
     function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
-    var map = liveMap(c, ws, p.map), tg = resolveTarget(c, ws, p.map, t);
-    if (!tg || !tg.built) return say('You can only take apart what was built.');
-    if (!besideTarget(c, map, p, tg)) return say('Too far away.');
-    if (!mayDismantle(c, map, p, tg)) return say('That is not yours to take apart.');
-    var bp = (c.blueprints || {})[tg.rec.bp];
-    if (bp && bp.tool && !hasTool(c, p, bp.tool)) return say('You need ' + aAn(bp.tool) + '.');
-    if (tg.rec.inv && Object.keys(tg.rec.inv).length) return say('Empty it first.');
+    var map = liveMap(c, ws, p.map), chk = canRemove(c, map, serverLookup(c, ws, p.map, players || [p]), p, t);
+    if (!chk.ok) return say(chk.reason);
+    var tg = chk.info, bp = (c.blueprints || {})[tg.rec.bp];
     var st = structOf(ws, p.map), ms = mapState(ws, p.map);
     if (tg.t === 'wall') {
-      var hung = (map.entities || []).some(function (e) { var o = objOf(c, e); return isWallFixture(o) && fixtureEdges(o, e).some(function (q) { return q.orient === tg.orient && q.x === tg.x && q.y === tg.y; }); });
-      if (hung) return say('Take down what hangs on it first.');
       delete st.walls[tg.key];
     } else {
       st.ents.splice(st.ents.indexOf(tg.rec), 1); delete ms.states[tg.key]; delete ms.timers[tg.key];
-      if (tg.obj.kind === 'claim') p.claims = (p.claims || []).filter(function (q) { return !(q.map === p.map && q.key === tg.key); });
+      if (tg.obj.kind === 'claim') { p.claims = (p.claims || []).filter(function (q) { return !(q.map === p.map && q.key === tg.key); }); shadowClaim(c, ws, p.map, tg.rec, true); }
     }
     var ratio = tg.max > 0 ? Math.max(0, Math.min(1, tg.hp / tg.max)) : 1, share = cfgNum(c, 'dismantle_refund_pct', 0.5);
     list(bp ? bp.cost : '').forEach(function (g) { var q = Math.floor(g.qty * share * ratio); if (q > 0) give(c, p, g.item, q, ev); });
@@ -740,7 +1061,7 @@ var World = (function () {
     p.map = map.id; p.x = at.x; p.y = at.y; p.facing = (sp && sp.facing) || 'S';
     p.hp = stats(c, p).maxHp; p.mp = stats(c, p).maxMp;
     p.hunger = 100; p.thirst = 100;
-    p.cooldowns = {}; p.statuses = []; p.mags = {}; p.abilities = ['', '']; p.belt = ['', '', '', '', ''];
+    p.cooldowns = {}; p.statuses = []; p.mags = {}; p.abilities = ['', '']; p.belt = emptyBelt();
     list(classOf(c, p).startItems).forEach(function (s) { give(c, p, s.item, s.qty, [], true); });
     // equip the first weapon/armor they start with, so e.g. a survivor spawns with the pistol in hand
     list(classOf(c, p).startItems).forEach(function (s) {
@@ -749,7 +1070,48 @@ var World = (function () {
     });
     var wep0 = rangedWeapon(c, p); if (wep0) loadMag(c, p, wep0);   // a spawned gun starts with a full magazine
     fillLoadout(c, p);
+    adoptWeapon(c, p);
     return p;
+  }
+  /** The hotbar: this many belt slots (keys 1-9 and 0). With Config `skills` on, the two abilities (Q, E) show beside it. */
+  var BELT_SIZE = 10;
+  /** Skills are switched off for now (Config `skills`: on brings back Q/E, the bag's abilities and the mana bar).
+   *  The rules for them are untouched; this only decides what players are shown and told. */
+  function skillsOn(c) { return String((c.config || {}).skills || '').toLowerCase() === 'on'; }
+  function emptyBelt() { var a = []; while (a.length < BELT_SIZE) a.push(''); return a; }
+  /** The belt slot an item sits in, putting it there first if it is not on the belt (an empty slot, else the one in hand). */
+  function beltSlotFor(p, id) {
+    p.belt = p.belt || emptyBelt();
+    var i = p.belt.indexOf(id);
+    if (i < 0) { i = p.belt.indexOf(''); if (i < 0) i = p.held >= 0 ? p.held : BELT_SIZE - 1; p.belt[i] = id; }
+    return i;
+  }
+  /** A character with no belt slot chosen yet (new, or saved before the belt held weapons): the weapon they wear
+   *  goes on the belt and is what they hold; with no weapon they hold nothing (-1). */
+  function adoptWeapon(c, p) {
+    var w = (p.equipment || {}).weapon;
+    p.held = w && c.items[w] ? beltSlotFor(p, w) : -1;
+  }
+  /**
+   * What is in your hands is the belt slot you chose (p.held; -1 = nothing). A weapon there is the weapon you wear;
+   * anything else (food, a grenade, a tool, an empty slot) puts the weapon away. Using what you hold is a separate
+   * action (`use`, `throw`), so nothing is eaten by choosing it.
+   */
+  function holdSlot(c, p, slot, ev) {
+    slot = Math.floor(Number(slot)); if (!(slot >= 0 && slot < BELT_SIZE)) slot = -1;
+    p.held = slot; p.equipment = p.equipment || {};
+    var id = slot >= 0 ? (p.belt || [])[slot] : '', it = id && c.items[id], was = p.equipment.weapon || '';
+    var wep = !!(it && it.slot === 'weapon' && count(p, id) > 0);
+    if (wep && it.equipIf && !check(c, p, it.equipIf)) {
+      wep = false;
+      var req = /level:(\d+)/.exec(it.equipIf);
+      if (ev) ev.push({ type: 'info', to: p.id, text: 'You cannot use the ' + lower(it.name) + ' yet.' + (req ? ' (Requires level ' + req[1] + '.)' : '') });
+    }
+    if (wep) {
+      p.equipment.weapon = id;
+      if (was !== id && itemCan(it, 'shoot') && Number(it.clip) > 0 && !((p.mags && p.mags[id]) || 0)) loadMag(c, p, it);   // a freshly drawn gun loads its magazine
+    } else delete p.equipment.weapon;
+    if ((p.equipment.weapon || '') !== was) { syncLoadout(c, p); p.hp = Math.min(p.hp, stats(c, p).maxHp); }
   }
   /** Fills in anything missing (e.g. a character saved before milestone 3). */
   function normalize(c, p) {
@@ -760,7 +1122,7 @@ var World = (function () {
     p.mags = obj(p.mags, {}); if (!p.mags || typeof p.mags !== 'object' || Array.isArray(p.mags)) p.mags = {};   // rounds loaded per gun
     p.abilities = obj(p.abilities, null); p.belt = obj(p.belt, null);
     if (!Array.isArray(p.abilities) || !Array.isArray(p.belt)) {
-      p.abilities = ['', '']; p.belt = ['', '', '', '', ''];
+      p.abilities = ['', '']; p.belt = emptyBelt();
       var oldBar = obj(p.loadout, null);              // pre-rework: one mixed 5-slot bar of "skill:x"/"item:x"
       if (Array.isArray(oldBar)) oldBar.forEach(function (e) {
         var k = String(e || '').split(':')[0], id = String(e || '').slice(k.length + 1); if (!id) return;
@@ -770,10 +1132,12 @@ var World = (function () {
       p._fill = true;
     }
     while (p.abilities.length < 2) p.abilities.push('');
-    while (p.belt.length < 5) p.belt.push('');
+    while (p.belt.length < BELT_SIZE) p.belt.push('');           // older characters had five
     delete p.loadout;
     p.abilities = p.abilities.map(function (id) { return id && c.skills && c.skills[id] ? id : ''; });   // drop skills no longer in the data (e.g. the old gunshot)
     p.belt = p.belt.map(function (id) { return id && c.items[id] ? id : ''; });
+    if (typeof p.held !== 'number' || isNaN(p.held)) adoptWeapon(c, p);
+    else p.held = Math.max(-1, Math.min(BELT_SIZE - 1, Math.floor(p.held)));
     p.level = Number(p.level) || 1; p.xp = Number(p.xp) || 0; p.gold = Number(p.gold) || 0;
     p.x = Number(p.x) || 0; p.y = Number(p.y) || 0; p.facing = p.facing || 'S'; p.respawn = p.respawn || '';
     if (!p['class'] || !c.classes[p['class']]) p['class'] = c.config.start_class || Object.keys(c.classes)[0] || '';
@@ -805,15 +1169,15 @@ var World = (function () {
     return what === 'consume' ? it.type === 'consumable' : what === 'throw' ? it.type === 'throwable'
          : what === 'shoot' ? it.type === 'weapon' : what === 'equip' ? !!it.slot : false;
   }
-  /** Items that belong on the quick belt: things you consume or throw. */
+  /** Items that belong on the belt: things you consume or throw, weapons and tools. */
   function beltItems(c, p) {
     return (p.inventory || []).map(function (s) { return s.item; }).filter(function (id) {
-      var it = c.items[id]; return itemCan(it, 'consume') || itemCan(it, 'throw');
+      var it = c.items[id]; return itemCan(it, 'consume') || itemCan(it, 'throw') || !!(it && (it.slot === 'weapon' || (it.tools || []).length));
     });
   }
-  /** Fills empty ability slots (Q/E) with usable skills, and empty belt slots (1-5) with carried consumables/throwables. */
+  /** Fills empty ability slots (Q/E) with usable skills, and empty belt slots with what belongs there (beltItems). */
   function fillLoadout(c, p) {
-    p.abilities = p.abilities || ['', '']; p.belt = p.belt || ['', '', '', '', ''];
+    p.abilities = p.abilities || ['', '']; p.belt = p.belt || emptyBelt();
     usableSkills(c, p).forEach(function (id) {
       if (p.abilities.indexOf(id) >= 0) return;
       var i = p.abilities.indexOf(''); if (i >= 0) p.abilities[i] = id;
@@ -827,7 +1191,7 @@ var World = (function () {
   function syncLoadout(c, p) {
     var usable = usableSkills(c, p);
     p.abilities = (p.abilities || ['', '']).map(function (id) { return id && usable.indexOf(id) < 0 ? '' : id; });
-    p.belt = (p.belt || ['', '', '', '', '']).map(function (id) { return id && c.items[id] ? id : ''; });
+    p.belt = (p.belt || emptyBelt()).map(function (id) { return id && c.items[id] ? id : ''; });
     fillLoadout(c, p);
   }
 
@@ -1169,8 +1533,18 @@ var World = (function () {
   function deliver(c, ws) {
     var list = ws.transfers || [];
     ws.transfers = [];
-    list.forEach(function (t) { if (!c.maps[t.map]) return; var ms = mapState(ws, t.map); (ms.arrivals = ms.arrivals || []).push(t.monster); ws.dirty = true; });
+    list.forEach(function (t) { if (!c.maps[t.map]) return; applyNotice(c, t.map, mapState(ws, t.map), t); ws.dirty = true; });
     return list.length;
+  }
+
+  /**
+   * Keeps the OTHER floors of a building moving while somebody is in it, so what a player watches from a window or
+   * a balcony is alive — for a world held whole in memory (offline play, a LAN host). playersOn(mapId) = who is there.
+   */
+  function advanceFloors(c, ws, mapId, playersOn, now, rng, ev) {
+    floorsOf(c, mapId).forEach(function (f) {
+      if (f.id !== mapId && c.maps[f.id]) advance(c, ws, f.id, (playersOn && playersOn(f.id)) || [], now, rng, ev);
+    });
   }
 
   /** Moves the world on to `now`: timers, respawns, monsters wandering, chasing and attacking. */
@@ -1281,9 +1655,16 @@ var World = (function () {
           if (followStairs(c, ws, mapId, map, ms, m, here, now)) return;      // gone to the other floor
         } else if (rng() < 0.5) {
           var dir = 'NESW'.charAt(rint(rng, 0, 3));
-          var r2 = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
           var sp = entity(c, mapId, m.spawn), rad = sp ? (Number(props(c, sp).radius) || 0) + 2 : 3;
-          if (r2.ok && !r2.map && (!sp || (Math.abs(r2.x - sp.x) <= rad && Math.abs(r2.y - sp.y) <= rad))) { m.x = r2.x; m.y = r2.y; m.facing = dir; }
+          // Away from home (it chased someone and lost them): it does not freeze there. It mills about, and half
+          // its steps head back, so it drifts home.
+          var away = !!sp && (Math.abs(m.x - sp.x) > rad || Math.abs(m.y - sp.y) > rad);
+          if (away && rng() < 0.5) {
+            var hx = sp.x - m.x, hy = sp.y - m.y;
+            dir = Math.abs(hx) >= Math.abs(hy) ? (hx > 0 ? 'E' : 'W') : (hy > 0 ? 'S' : 'N');
+          }
+          var r2 = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
+          if (r2.ok && !r2.map && (!sp || away || (Math.abs(r2.x - sp.x) <= rad && Math.abs(r2.y - sp.y) <= rad))) { m.x = r2.x; m.y = r2.y; m.facing = dir; }
         }
       }
     });
@@ -1341,7 +1722,7 @@ var World = (function () {
       ev.push({ type: 'level', map: p.map, x: p.x, y: p.y, to: p.id, text: 'Level up! You are now level ' + lv + '.' });
       knownSkills(c, p).forEach(function (id) {
         if (before.indexOf(id) >= 0) return;
-        ev.push({ type: 'level', to: p.id, text: 'You learned ' + c.skills[id].name + '.' });
+        if (skillsOn(c)) ev.push({ type: 'level', to: p.id, text: 'You learned ' + c.skills[id].name + '.' });
       });
       fillLoadout(c, p);
     }
@@ -1550,10 +1931,11 @@ var World = (function () {
     var mids = [], fam = upper.floors || {}, k;
     for (k = lz + 1; k < uz; k++) if (fam[k] && c.maps[fam[k]]) mids.push(c.maps[fam[k]]);
     var sf = stateFn || function () { return ''; }, line = lineCells(ux, uy, lx, ly), out = false;
+    var from = { x: ux, y: uy, tx: lx, ty: ly };                    // the one upstairs and what they look at: a window shows its cone to someone standing at it
     for (var i = 1; i < line.length; i++) {
       var a = line[i - 1], b = line[i];
       if (!out) {
-        if (edgeBlocksSight(c, upper, a, b)) return false;
+        if (edgeBlocksSight(c, upper, a, b, from)) return false;
         if (!hasFloorAt(upper, b.x, b.y)) out = true;
         else if (blocksSight(c, upper, b.x, b.y, sf)) return false;
       } else if (hasFloorAt(upper, b.x, b.y)) return false;         // another part of a building at the viewer's height
@@ -1562,9 +1944,27 @@ var World = (function () {
     return out;
   }
   /** What stands on a floor, as other floors may be shown it: { monsters: [...] } in the same shape the view uses. */
-  function peek(c, ws, mapId) {
+  /**
+   * The states of a floor's doors and of whatever hangs on its walls, where they differ from the usual one
+   * ({key: state}) — what someone looking at that floor from another one needs to draw it as it really is.
+   */
+  function fixtureStates(c, ws, mapId) {
+    var out = {}, map = liveMap(c, ws, mapId);
+    if (map) map.entities.forEach(function (e) {
+      var o = objOf(c, e), k = kindOf(c, e); if (!o || !k || !k.states.length || !(o.kind === 'door' || isWallFixture(o))) return;
+      var st = stateOf(c, ws, mapId, e);
+      if (st !== k.states[0]) out[e.key] = st;
+    });
+    return out;
+  }
+  function peek(c, ws, mapId, everyone, but, haveRev) {
     var ms = ws.maps && ws.maps[mapId];
-    return { monsters: ((ms && ms.monsters) || []).filter(function (m) { return !m.dead; }).map(function (m) {
+    // what players built or broke there travels only when the asker is behind (haveRev = the revision they hold)
+    var sv = ms && ms.struct, srev = sv ? sv.rev || 0 : 0;
+    return { structRev: srev, struct: srev && haveRev !== srev ? publicStruct(sv) : undefined, states: fixtureStates(c, ws, mapId), players: (everyone || []).filter(function (q) { return q.map === mapId && q.hp > 0 && !(but && q.id === but.id); }).map(function (q) {
+      return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '',
+        x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level };
+    }), monsters: ((ms && ms.monsters) || []).filter(function (m) { return !m.dead; }).map(function (m) {
       var d = c.monsters[m.ref];
       return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing, look: m.look || undefined };
     }) };
@@ -1787,8 +2187,52 @@ var World = (function () {
   }
 
   /** Fire the equipped ranged weapon toward (x,y): a ray that pierces `penetration` enemies with damage falloff. */
+  /**
+   * May p, standing on `mine` (their live map), shoot the cell (tx,ty) of another floor `theirs` of the same
+   * building? Only along a clear view between the two floors (seesAcross), within the weapon's range.
+   */
+  function shotAcross(c, p, mine, theirs, tx, ty, stateFn) {
+    var w = rangedWeapon(c, p);
+    if (!w) return { ok: false, reason: 'You have no ranged weapon equipped.' };
+    if (!mine || !theirs || mine.id === theirs.id || groundId(c, mine.id) !== groundId(c, theirs.id)) return { ok: false, reason: 'Pick a target.' };
+    if (!inMap(theirs, tx, ty)) return { ok: false, reason: 'Out of the map.' };
+    if (cheb(p.x, p.y, tx, ty) > w.range) return { ok: false, reason: 'Too far away. Move closer with the movement keys.' };
+    var up = (mine.z || 0) > (theirs.z || 0);
+    var clear = up ? seesAcross(c, mine, p.x, p.y, theirs, tx, ty, w.range, stateFn) : seesAcross(c, theirs, tx, ty, mine, p.x, p.y, w.range, stateFn);
+    return clear ? { ok: true, weapon: w } : { ok: false, reason: 'You have no clear shot.' };
+  }
+  // A shot at another floor (action.map). The referee runs it on the TARGET floor's record, where the creature
+  // is — so ws holds that floor, and the shooter's own floor only as authored. One creature, no piercing, and
+  // nothing built is damaged.
+  function shootAcross(c, ws, p, a, now, rng, ev, players) {
+    function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
+    var w = rangedWeapon(c, p);
+    if (!w) return say('You have no ranged weapon equipped.');
+    if (hasStatus(p, 'stun')) return say('You are stunned.');
+    if (now < ((p.cooldowns || {})._shoot || 0)) return;
+    var theirs = liveMap(c, ws, String(a.map)), tx = Math.round(Number(a.x)), ty = Math.round(Number(a.y));
+    if (isNaN(tx) || isNaN(ty)) return say('Pick a target.');
+    var chk = shotAcross(c, p, liveMap(c, ws, p.map), theirs, tx, ty, function (e) { return stateOf(c, ws, p.map, e); });
+    if (!chk.ok) return say(chk.reason);
+    var ammoId = w.ammo, cost = w.ammoCost || 1, clip = Number(w.clip) || 0;
+    if (clip > 0) {
+      p.mags = p.mags || {};
+      if ((p.mags[w.id] || 0) < cost) return say(count(p, ammoId) >= cost ? 'Out of ammo — press R to reload.' : 'Out of ' + lower(itemName(c, ammoId)) + '.');
+    } else if (ammoId && count(p, ammoId) < cost) return say('Out of ' + lower(itemName(c, ammoId)) + '.');
+    faceTo(p, tx, ty);
+    if (clip > 0) p.mags[w.id] = (p.mags[w.id] || 0) - cost; else if (ammoId) take(p, ammoId, cost);
+    p.cooldowns = p.cooldowns || {}; p.cooldowns._shoot = now + (Number(w.fireMs) || Number(c.config.attack_ms) || 0);
+    var m = monsterAt(mapState(ws, theirs.id), tx, ty);
+    if (m) {
+      var dmg = Math.max(1, damage(stats(c, p).atk, monStats(c, m).def, rng));
+      hitMonster(c, ws, theirs.id, p, m, dmg, now, rng, ev, 'You shoot the ' + lower(c.monsters[m.ref].name) + ' for ' + dmg + '.');
+      if (!m.dead) m.engaged = p.id;
+    }
+    ev.push({ type: 'shoot', map: theirs.id, by: p.id, from: { x: p.x, y: p.y }, to: { x: tx, y: ty }, aim: { x: tx, y: ty }, color: w.tint || '#ffd36b', fromMap: p.map });
+  }
   function shoot(c, ws, p, a, now, rng, ev, players) {
     function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
+    if (a.map && String(a.map) !== p.map) return shootAcross(c, ws, p, a, now, rng, ev, players);
     var w = rangedWeapon(c, p);
     if (!w) return say('You have no ranged weapon equipped.');
     if (hasStatus(p, 'stun')) return say('You are stunned.');
@@ -1833,6 +2277,21 @@ var World = (function () {
     }
   }
 
+  /**
+   * May p, standing on `mine` (their live map), throw this item DOWN onto the cell (tx,ty) of a lower floor
+   * `theirs` of the same building? Only where they have a clear view of that cell from above (seesAcross: over an
+   * open edge, or out of a window they stand at), within the item's throw range, and onto a cell it can lie on.
+   * Never upwards.
+   */
+  function throwAcross(c, p, it, mine, theirs, tx, ty, stateFn) {
+    if (!mine || !theirs || mine.id === theirs.id || groundId(c, mine.id) !== groundId(c, theirs.id)) return { ok: false, reason: 'Pick a spot.' };
+    if ((mine.z || 0) <= (theirs.z || 0)) return { ok: false, reason: 'You can\'t throw that far up.' };
+    if (!inMap(theirs, tx, ty)) return { ok: false, reason: 'Out of the map.' };
+    var range = (it && it.throwRange) || 4;
+    if (cheb(p.x, p.y, tx, ty) > range) return { ok: false, reason: 'Too far away. Move closer with the movement keys.' };
+    if (!seesAcross(c, mine, p.x, p.y, theirs, tx, ty, range, stateFn) || blocksSight(c, theirs, tx, ty, function () { return ''; })) return { ok: false, reason: 'You have no clear throw.' };
+    return { ok: true };
+  }
   /** Throw a belt item (grenade/molotov) at (x,y): area damage + status, up to throw_range away. */
   function throwItem(c, ws, p, a, now, rng, ev, players) {
     function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
@@ -1841,27 +2300,37 @@ var World = (function () {
     if (count(p, id) < 1) return say('Out of ' + lower(it.name) + '.');
     if (hasStatus(p, 'stun')) return say('You are stunned.');
     if (now < ((p.cooldowns || {})._throw || 0)) return;
-    var map = liveMap(c, ws, p.map), tx = Math.round(Number(a.x)), ty = Math.round(Number(a.y));
+    var tx = Math.round(Number(a.x)), ty = Math.round(Number(a.y));
     if (isNaN(tx) || isNaN(ty)) return say('Pick a spot.');
-    if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return say('Out of the map.');
-    if (cheb(p.x, p.y, tx, ty) > (it.throwRange || 4)) return say('Too far away. Move closer with the movement keys.');
-    var stateFn = function (e) { return stateOf(c, ws, p.map, e); };
-    // The throw always happens; if a wall is in the way the grenade stops and goes off against it.
-    var land = throwLanding(c, map, p.x, p.y, tx, ty, stateFn);
+    // Down onto a lower floor of the building (action.map). The referee runs this on the TARGET floor's record, so
+    // ws holds that floor and the thrower's own floor only as authored. It lands where it was aimed and goes off there.
+    var far = a.map && String(a.map) !== p.map ? String(a.map) : null;
+    var blastMap = far || p.map, map = liveMap(c, ws, blastMap), land;
+    var stateFn = function (e) { return stateOf(c, ws, blastMap, e); };
+    if (far) {
+      var chk = throwAcross(c, p, it, liveMap(c, ws, p.map), map, tx, ty, function (e) { return stateOf(c, ws, p.map, e); });
+      if (!chk.ok) return say(chk.reason);
+      land = { x: tx, y: ty };
+    } else {
+      if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return say('Out of the map.');
+      if (cheb(p.x, p.y, tx, ty) > (it.throwRange || 4)) return say('Too far away. Move closer with the movement keys.');
+      // The throw always happens; if a wall is in the way the grenade stops and goes off against it.
+      land = throwLanding(c, map, p.x, p.y, tx, ty, stateFn);
+    }
     take(p, id, 1);
     p.cooldowns = p.cooldowns || {}; p.cooldowns._throw = now + (Number(it.fireMs) || 0);
     faceTo(p, tx, ty);
-    var ms = mapState(ws, p.map), area = Number(it.throwArea) || 0;
+    var ms = mapState(ws, blastMap), area = Number(it.throwArea) || 0;
     // Splash from where it detonates, onto only the monsters the blast can actually reach (not through walls).
     var mons = (ms.monsters || []).filter(function (m) {
       return !m.dead && cheb(m.x, m.y, land.x, land.y) <= area && clearLine(c, map, land.x, land.y, m.x, m.y, stateFn, edgeBlocksMove);
     });
-    ev.push({ type: 'throw', map: p.map, by: p.id, item: id, from: { x: p.x, y: p.y }, to: { x: land.x, y: land.y },
-      area: area, color: it.tint || '#ff8c3b' });
+    ev.push({ type: 'throw', map: blastMap, by: p.id, item: id, from: { x: p.x, y: p.y }, to: { x: land.x, y: land.y },
+      area: area, color: it.tint || '#ff8c3b', fromMap: far ? p.map : undefined });
     mons.forEach(function (m) {
       if (Number(it.throwPower) > 0) {
         var dmg = Math.max(1, Math.round(it.throwPower - monStats(c, m).def) + rint(rng, -1, 1));
-        hitMonster(c, ws, p.map, p, m, dmg, now, rng, ev, 'The ' + lower(it.name) + ' hits the ' + lower(c.monsters[m.ref].name) + ' for ' + dmg + '.');
+        hitMonster(c, ws, blastMap, p, m, dmg, now, rng, ev, 'The ' + lower(it.name) + ' hits the ' + lower(c.monsters[m.ref].name) + ' for ' + dmg + '.');
       }
       if (it.throwStatus) applyStatus(c, m, it.throwStatus, Number(it.throwStatusMs) || 3000, now, p.id);
     });
@@ -1882,24 +2351,25 @@ var World = (function () {
         if (isWallFixture(o) && fixtureEdges(o, e).some(function (q) { return seenT[R2.edgeKey(q.orient, q.x, q.y)]; })) targets.unshift({ t: 'ent', key: e.key });
       });
       targets.forEach(function (t) {
-        var r1 = damageStructure(c, ws, p.map, t, Number(it.throwPower), { kind: 'blast', by: p.id, player: p, now: now }, ev);
+        var r1 = damageStructure(c, ws, blastMap, t, Number(it.throwPower), { kind: 'blast', by: p.id, player: p, now: now }, ev);
         if (r1 && r1.dealt) broke++;
-        if (it.burns && !(r1 && r1.destroyed)) { var r2 = damageStructure(c, ws, p.map, t, Number(it.throwPower) / 2, { kind: 'fire', by: p.id, player: p, now: now }, ev); if (r2 && r2.dealt) broke++; }
+        if (it.burns && !(r1 && r1.destroyed)) { var r2 = damageStructure(c, ws, blastMap, t, Number(it.throwPower) / 2, { kind: 'fire', by: p.id, player: p, now: now }, ev); if (r2 && r2.dealt) broke++; }
       });
     }
     if (!mons.length && !broke) say('The ' + lower(it.name) + ' goes off, hitting nothing.');
   }
 
-  /** Rearrange a bar. bar 'ability' = the 2 Q/E skill slots; 'belt' = the 5 item slots. */
+  /** Rearrange a bar. bar 'ability' = the 2 Q/E skill slots; 'belt' = the BELT_SIZE item slots. */
   function setLoadout(c, p, bar, slot, entry, ev) {
     slot = Number(slot); entry = String(entry || '');
-    var ab = bar !== 'belt', arr = ab ? p.abilities : p.belt, lim = ab ? 2 : 5;
+    var ab = bar !== 'belt', arr = ab ? p.abilities : p.belt, lim = ab ? 2 : BELT_SIZE;
     if (!arr || !(slot >= 0 && slot < lim)) return;
     if (entry && ab && usableSkills(c, p).indexOf(entry) < 0) { ev.push({ type: 'info', to: p.id, text: 'You can\'t use that skill.' }); return; }
     if (entry && !ab && !c.items[entry]) { ev.push({ type: 'info', to: p.id, text: 'That can\'t go on the belt.' }); return; }
     var was = arr.indexOf(entry);
     if (entry && was >= 0) arr[was] = arr[slot];               // swap if it was already on the bar
     arr[slot] = entry;
+    if (!ab && typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);   // what is in hand may have just changed
   }
 
   // ------------------------------------------------------------ data-driven actions
@@ -2045,14 +2515,14 @@ var World = (function () {
   }
   function roofZoneAt(map, x, y) { return roofTile(map, x, y) ? (roofZones(map)[x + ',' + y] || null) : null; }
   // Record that this player has now been inside the room they stand in (persisted per player, per map).
-  function markExplored(c, p) {
-    var z = roofZoneAt(c.maps[p.map], p.x, p.y); if (!z) return;
+  function markExplored(c, p, map) {
+    var z = roofZoneAt(map || c.maps[p.map], p.x, p.y); if (!z) return;
     var ex = p.explored || (p.explored = {}); (ex[p.map] || (ex[p.map] = {}))[z] = 1;
   }
 
   function onStep(c, ws, p, now, ev) {
     var map = liveMap(c, ws, p.map), moved = false;
-    markExplored(c, p);                                                // stepped into a room? remember it
+    markExplored(c, p, map);                                           // stepped into a room? remember it
     Rl().entitiesAt(map, p.x, p.y).forEach(function (e) {
       if (moved) return;
       var o = objOf(c, e); if (!o) return;
@@ -2293,13 +2763,14 @@ var World = (function () {
       }
       if (it.onUse) run(c, ws, p, it.onUse, now, ev);
     } else if (it.slot) {
-      if (p.equipment[it.slot] === id) { delete p.equipment[it.slot]; ev.push({ type: 'info', to: p.id, text: 'You put away the ' + lower(it.name) + '.' }); }
+      if (p.equipment[it.slot] === id) { delete p.equipment[it.slot]; if (it.slot === 'weapon') p.held = -1; ev.push({ type: 'info', to: p.id, text: 'You put away the ' + lower(it.name) + '.' }); }
       else {
         if (it.equipIf && !check(c, p, it.equipIf)) {
           var req = /level:(\d+)/.exec(it.equipIf);
           ev.push({ type: 'info', to: p.id, text: 'You cannot equip the ' + lower(it.name) + ' yet.' + (req ? ' (Requires level ' + req[1] + '.)' : '') });
           return;
         }
+        if (it.slot === 'weapon') p.held = beltSlotFor(p, id);            // a weapon is worn by holding its belt slot
         p.equipment[it.slot] = id; ev.push({ type: 'info', to: p.id, text: 'You equip the ' + lower(it.name) + '.' });
         if (itemCan(it, 'shoot') && Number(it.clip) > 0 && !((p.mags && p.mags[id]) || 0)) loadMag(c, p, it);   // a freshly drawn gun loads its magazine
       }
@@ -2330,7 +2801,7 @@ var World = (function () {
         var r = Rl().tryMove(c, liveMap(c, ws, p.map), p.x, p.y, dir, moveOpts(c, ws, p.map, players, p));
         if (r.ok && r.map && r.map !== p.map) {            // walked off the head (or into the well) of a staircase: now on another floor
           var leftMap = p.map, leftX = p.x, leftY = p.y;
-          p.map = r.map; p.x = r.x; p.y = r.y; p.mvB -= cost; markExplored(c, p);
+          p.map = r.map; p.x = r.x; p.y = r.y; p.mvB -= cost; markExplored(c, p, liveMap(c, ws, p.map));
           tagFollowers(c, ws, leftMap, p, r.stairs, leftX, leftY, dir, now);
           break;                                           // the rest of this batch was aimed at the floor just left
         }
@@ -2364,7 +2835,8 @@ var World = (function () {
       var stT = cleanTarget(action.target);
       if (!stT) ev.push({ type: 'info', to: p.id, text: 'Pick something.' });
       else if (action.type === 'work') work(c, ws, p, stT, now, ev);
-      else if (action.type === 'dismantle') dismantle(c, ws, p, stT, now, ev);
+      else if (stT.t === 'tile' || stT.t === 'roof') { if (action.type === 'dismantle') (stT.t === 'roof' ? liftRoof : liftTile)(c, ws, p, stT, now, ev, players); else ev.push({ type: 'info', to: p.id, text: 'Pick something.' }); }
+      else if (action.type === 'dismantle') dismantle(c, ws, p, stT, now, ev, players);
       else if (action.type === 'shift') shiftWall(c, ws, p, stT, action.off, now, ev);
       else if (action.type === 'turn') turnObj(c, ws, p, stT, action.facing, now, ev);
       else upgrade(c, ws, p, stT, action.bp, now, ev);
@@ -2372,6 +2844,7 @@ var World = (function () {
     else if (action.type === 'store') storeAct(c, ws, p, action, now, ev);
     else if (action.type === 'claim') claimAct(c, ws, p, action, now, ev, players);
     else if (action.type === 'loadout') setLoadout(c, p, action.bar, action.slot, action.entry, ev);
+    else if (action.type === 'hold') holdSlot(c, p, action.slot, ev);
     return ev;
   }
 
@@ -2408,7 +2881,8 @@ var World = (function () {
     // A breakable wall, door or object right next to you can be attacked (listed after any way to use it).
     if (near(p, x, y) && !(x === p.x && y === p.y)) {
       var stg = strikeTarget(c, map, p, x, y), sinfo = stg && structInfo(c, map, stg);
-      if (sinfo && !protectedOn(c, map, sinfo, p)) out.push({ type: 'attack', verb: '', label: 'Attack the ' + sinfo.name });
+      // (own = something you built or may take apart: hitting it is never what a quick click means — the client skips it)
+      if (sinfo && !protectedOn(c, map, sinfo, p)) out.push({ type: 'attack', verb: '', label: 'Attack the ' + sinfo.name, own: !!sinfo.built && mayDismantle(c, map, p, sinfo) });
     }
     // Something built or damaged right there: finish / repair it, or take your own work apart.
     if (near(p, x, y)) {
@@ -2427,11 +2901,14 @@ var World = (function () {
         }
       }
     }
+    // A piece of floor you (or your base) laid, right beside you: it can be taken up again.
+    if (near(p, x, y) && !(x === p.x && y === p.y) && tileMine(c, map, p, x, y) && !out.length)
+      out.push({ type: 'dismantle', verb: '', target: { t: 'tile', x: x, y: y }, label: 'Take up the floor' });
     return out;                                                 // movement is keyboard-only: no "walk here"
   }
 
   // ------------------------------------------------------------ what a player sees
-  function view(c, ws, mapId, p, players, structRev) {
+  function view(c, ws, mapId, p, players, structRev, everyone, floorRevs) {   // floorRevs = {floorId: structure revision the client holds}   // everyone = all players in the world, for the other floors' people
     var ms = mapState(ws, mapId), states = {}, map = liveMap(c, ws, mapId), now = Date.now();
     Object.keys(ms.states).forEach(function (k) { states[k] = ms.states[k]; });
     if (map) map.entities.forEach(function (e) {
@@ -2449,7 +2926,7 @@ var World = (function () {
     // The other floors of this building, when this world holds their state (offline play, a LAN host). The live
     // referee holds one floor at a time: there the client listens to each floor's own pushed view instead.
     var others;
-    floorsOf(c, mapId).forEach(function (f) { if (f.id !== mapId && ws.maps && ws.maps[f.id]) (others = others || {})[f.id] = peek(c, ws, f.id); });
+    floorsOf(c, mapId).forEach(function (f) { if (f.id !== mapId && ws.maps && ws.maps[f.id]) (others = others || {})[f.id] = peek(c, ws, f.id, everyone, p, floorRevs ? floorRevs[f.id] : undefined); });
     return {
       map: mapId, states: states, now: now, floors: others,
       structRev: srev, struct: srev && structRev !== srev ? publicStruct(sv) : undefined,
@@ -2505,7 +2982,7 @@ var World = (function () {
       hp: p.hp, maxHp: s.maxHp, mp: Math.floor(Number(p.mp) || 0), maxMp: s.maxMp, atk: s.atk, def: s.def, level: p.level, xp: p.xp,
       hunger: Math.round(Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)),
       thirst: Math.round(Number(p.thirst) == null || isNaN(Number(p.thirst)) ? 100 : Number(p.thirst)),
-      skills: usableSkills(c, p), abilities: p.abilities, belt: p.belt, mags: p.mags || {}, cooldowns: p.cooldowns || {},
+      skills: usableSkills(c, p), abilities: p.abilities, belt: p.belt, held: p.held, mags: p.mags || {}, cooldowns: p.cooldowns || {},
       statuses: (p.statuses || []).map(function (st) { return { id: st.id, until: st.until }; }),
       xpNext: xpFor(c, p.level + 1), xpThis: xpFor(c, p.level) || 0, gold: p.gold,
       // rooms this player has entered (per map) — the client needs it so `roof_reveal: permanent` keeps
@@ -2523,13 +3000,14 @@ var World = (function () {
     syncEdges: syncEdges, syncEdgesView: syncEdgesView, isEdgeDoor: isEdgeDoor, isWallFixture: isWallFixture, openingOf: openingOf,
     mountEdgeOf: mountEdgeOf, fixtureEdges: fixtureEdges, wallMountAt: wallMountAt, wallMountUseCell: wallMountUseCell,
     visibleCells: visibleCells, perceive: perceive,
-    roofZoneAt: roofZoneAt, roofZones: roofZones,
+    roofZoneAt: roofZoneAt, roofZones: roofZones, covered: covered, asRoof: asRoof, roofSteps: roofSteps, roofSpan: roofSpan, roofSupport: roofSupport,
     liveMap: liveMap, liveMapFromStruct: liveMapFromStruct, structOf: structOf, publicStruct: publicStruct,
     structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure,
     recipesFor: recipesFor, hasTool: hasTool,
     canBuild: canBuild, blueprintsFor: blueprintsFor, noBuild: noBuild, buildSpot: buildSpot,
-    claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, itemCan: itemCan, beltItems: beltItems,
+    claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, canRemove: canRemove, itemCan: itemCan, beltItems: beltItems, BELT_SIZE: BELT_SIZE, skillsOn: skillsOn, holdSlot: holdSlot,
     groundId: groundId, floorId: floorId, floorsOf: floorsOf, deliver: deliver,
-    sightRadius: sightRadius, seesAcross: seesAcross, peek: peek };
+    sightRadius: sightRadius, seesAcross: seesAcross, peek: peek, advanceFloors: advanceFloors, fixtureStates: fixtureStates,
+    applyNotice: applyNotice, shotAcross: shotAcross, throwAcross: throwAcross, tileMine: tileMine };
 })();
 if (typeof module !== 'undefined') module.exports = World;

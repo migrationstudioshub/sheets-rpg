@@ -211,12 +211,16 @@ var Rules = (function () {
   // tile below. The run cannot be entered or left by its sides, nor crossed diagonally.
   var BACK = { N: 'S', S: 'N', E: 'W', W: 'E' };
   function stairDir(e) { return e && e.data && e.data.facing ? facingOf(e) : 'N'; }
+  // Every staircase runs along STAIR_LEN tiles (2): with a storey WALL_H (2) high, each tile of the run climbs one
+  // tile. Like a wall's height it is fixed, not a setting; an older `length` on an object is ignored.
+  var STAIR_LEN = 2;
+  function stairLen() { return STAIR_LEN; }
   function stairsOn(content, map) {
     if (map._stairs && map._stairsOf === map.entities) return map._stairs;
     var out = [];
     (map.entities || []).forEach(function (e) {
       var o = content.objects[e.ref]; if (!o || o.kind !== 'stairs') return;
-      var dir = stairDir(e), d = DIRS[dir], n = Math.max(1, Math.round(Number((e.data && e.data.length) || (o.properties || {}).length) || 2));
+      var dir = stairDir(e), d = DIRS[dir], n = stairLen();
       out.push({ e: e, o: o, dir: dir, n: n, x: e.x, y: e.y, dx: d.dx, dy: d.dy });
     });
     map._stairs = out; map._stairsOf = map.entities;
@@ -373,7 +377,7 @@ var Rules = (function () {
     parseWall: parseWall, wallAt: wallAt, wallEdge: wallEdge, wallBetween: wallBetween, wallBetweenCells: wallBetweenCells,
     wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight,
     edgeKey: edgeKey, edgeBlocked: edgeBlocked, sharedEdge: sharedEdge, blockedBetween: blockedBetween, reachBlocked: reachBlocked,
-    stairDir: stairDir, stairsOn: stairsOn, stairAt: stairAt, stairHeight: stairHeight,
+    STAIR_LEN: STAIR_LEN, stairLen: stairLen, stairDir: stairDir, stairsOn: stairsOn, stairAt: stairAt, stairHeight: stairHeight,
     facingOf: facingOf, turnable: turnable, facingSprite: facingSprite, nextFacing: nextFacing, passOf: passOf };
 })();
 if (typeof module !== 'undefined') module.exports = Rules;

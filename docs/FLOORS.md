@@ -1,6 +1,6 @@
 # Floors: multi-storey buildings and basements
 
-Status: **stages 1, 2 and 3 built** (18 Nov 2026; not yet run on the real server). Stage 4 not started (see §9). Decisions in §1 were made by the owner on 18 Nov 2026.
+Status: **all four stages built** (18 Nov 2026; not yet run on the real server). See §9 for what each does and its limits. Decisions in §1 were made by the owner on 18 Nov 2026.
 
 This is the plan for real multi-storey construction inside one map: upper floors, basements, staircases you
 walk and teleports between floors, drawn raised, with sight between floors. Read it before touching anything
@@ -62,7 +62,9 @@ floor. Use it for ladders, trapdoors, lifts.
 
 ### 4.2 Walkable staircase (stage 2)
 A new object kind `stairs`. It lies on the **lower** of the two floors it joins, occupies a straight run of
-tiles (`properties.length`, default 2) and has a direction — the facing from turnable objects (`data.facing`):
+tiles — always 2 (`Rules.STAIR_LEN`; like a wall's height it is fixed, an older `properties.length` is ignored),
+so each tile of the run climbs one tile. Its picture is ONE step tile, drawn once per tile of the run, each one
+tile higher on the screen than the one before (`Render.drawStairStep`) — and has a direction — the facing from turnable objects (`data.facing`):
 the way you walk to go **up**.
 
 - You step onto the bottom tile like any walkable object, and keep walking in the stair's direction.
@@ -101,6 +103,9 @@ Stage 3 (full):
   terrain on your floor) without meeting a sight-blocking wall — so through a window, or over the unwalled
   edge of a balcony — carries on over the floors below. There it is stopped only by things as tall as you are:
   cells that have a floor at your height, i.e. other buildings. Single-storey walls do not stop it.
+  A window works as on one floor: only for someone standing right at it, and only a narrow cone straight out
+  (`seesAcross` passes the upstairs viewer as `from`). The client lights the ground cells in view
+  (`floorSight` in `main.js` → `opts.floorSight`); the rest of the floors below stays dim.
 - You never see **into** a roofed interior from above.
 - **Height bonus**: sight radius grows by Config `sight_per_floor` (default 3) per floor above ground.
 - **It is mutual**: if A can see B across floors, B can see A.
@@ -110,10 +115,10 @@ Stage 3 (full):
 ## 7. Combat, monsters, claims
 
 - Melee and interaction: same floor only, always.
-- Shots and thrown items between floors: stage 4, along the same rays as §6.
+- Shots between floors follow the same rays as §6 (stage 4). A thrown item goes DOWN the same way (`World.throwAcross`, `throw` takes `map`): onto a cell of a lower floor you can see, within its throw range, never up; it lands where aimed and its blast runs on that floor. Skills do not cross floors.
 - Monsters follow a player by the stairs (stage 2): see "What stage 2 actually does". A teleport between floors
   (a ladder) is still a way to shake them off.
-- A claim covers the **whole column**: the same radius on every floor of the family (stage 4, with building).
+- A claim covers the **whole column**: the same radius on every floor of the family (stage 4).
 - No-build masks and roofs are per floor. The roof of the top floor is the building's roof.
 
 ## 8. Building floors (stage 4)
@@ -130,7 +135,7 @@ Stage 3 (full):
 | 1 | Floors in data and rules (`floor_of`, `z`, `linkFloors`), saving/serving them, the editor's floor switch and family operations, teleports between floors, simple raised drawing | **built** |
 | 2 | Walkable staircases with the gradual rise, for players and monsters | **built** |
 | 3 | Full raised drawing (facades, cutaway), sight between floors, height bonus | **built** (clicks onto other floors moved to stage 4) |
-| 4 | Shots between floors and clicking what you see on them; players build floors and stairs; claims by column | not started |
+| 4 | Shots between floors and clicking what you see on them; players build floors and stairs; claims by column | **built** |
 
 ### What stage 1 actually does
 - `Content.linkFloors`, `World.groundId / floorId / floorsOf`; map rows carry `floor_of` + `z`; the function's
@@ -170,7 +175,24 @@ Stage 3 (full):
 - What stands on the other floors reaches the client two ways: `view.floors` (`World.peek`) when the world holds
   those floors — offline play, the LAN host — and, online, by listening to each sibling floor's pushed
   `world/<floorId>` (one more listener per floor of the building you are in).
-- The client (`floorActors` in main.js) keeps the creatures it has a clear view of and hands them to the renderer.
+- **The whole building stays alive while someone is in it.** Offline and on the LAN host every step also runs
+  `World.advanceFloors` (the other floors of the player's building; `peek` carries their players too, from the
+  `everyone` argument of `World.view`). Online each floor is its own record, so `tickFloors` in `functions/referee.js`
+  moves the floors with nobody on them, alongside the player's own step: at most once per Config `floor_tick_ms`
+  (1000), and a floor with no monsters is left alone for 30 s. A floor with a player on it is moved by that player.
+- **Doors and windows of other floors are drawn as on their own floor.** Each floor reports the states of its doors
+  and wall fixtures that differ from the usual (`World.fixtureStates`): in `peek().states` offline / on the LAN, and
+  as the JSON string `doors` in the pushed `world/<floorId>` online. The client hands them to the renderer
+  (`opts.floorStates`); `otherFloorFixtures` + `drawOtherPrim` in render.js draw an open door as a hole, a window as
+  see-through panes, and openings in N-S walls as a gap / slab / glass.
+- **What players built on another floor is shown too** (its `struct` layer). Offline / LAN: `peek()` carries
+  `structRev` and, when the client is behind (`floorRevs` in the request → `World.view`), `struct`. Online:
+  `pushStruct` in `functions/referee.js` writes `world/s~<groundId>/<floorId>` = `{rev, json}` only when the revision
+  changes, and the client listens once per building (`api.watchStructs`). The client keeps `floorStructs` and
+  `floorMap(id)` (main.js) gives a floor's LIVE map: the renderer bakes other floors from it (`setMap(map, floorMaps)`),
+  and sight, cover, shots and throws between floors read it. Lower floors are blurred a little (Config `floor_blur`,
+  pixels, default 0.6, 0 = off) and their creatures are drawn within their own floor, under everything above.
+- The client (`floorActors` in main.js) eases what it shows from tile to tile (`tx,ty` = the real tile) and keeps the creatures it has a clear view of and hands them to the renderer.
 - Drawing: creatures seen on floors below are drawn bright over the dimmed lower floors. From the ground or a
   lower floor, the floors above are drawn as the upper part of the building (`Renderer.above`): roof colour over
   cells marked roofed up there, the floor itself where they are not (a terrace), and the walls — each a
@@ -183,6 +205,67 @@ Stage 3 (full):
   facade is not sorted against ground-floor walls (it is simply drawn over them).
 - Not done here: clicking or shooting at something on another floor — it needs the rules for shots between
   floors, so it moved to stage 4. Terrain elevation (docs/UNDERGROUND_AND_ELEVATION.md) will reuse this sight rule.
+
+### What stage 4 actually does
+- **Word between floors.** Each floor is its own record, so one floor tells another by a NOTICE in `ws.transfers`:
+  `{map, monster}`, `{map, shadow}`, `{map, tiles}`. `World.applyNotice(c, mapId, ms, notice)` applies one;
+  `World.deliver` uses it offline and on the LAN host, the referee's `deliver` inside a transaction on the other
+  floor's record. Anything new that must cross floors should travel this way.
+- **Claims by column.** A claim is copied to the other floors of its building as a *shadow* (`struct.shadow`),
+  kept in step when it is built, taken apart, destroyed or its members change. `World.claimsOn` returns shadows
+  too, so `claimAt / mayUse / foreignClaim / protectedOn` cover every floor without knowing about floors.
+- **Laying floor.** A blueprint with `places: tile` and a `terrain` lays one piece of floor where there is none,
+  joined (side to side) onto floor already there. Stored in `struct.floor`; `liveMapFromStruct` puts it in the
+  live map's terrain. `{type:'dismantle', target:{t:'tile', x, y}}` takes it up (half the cost back).
+- **Building stairs.** A blueprint whose object is of kind `stairs`: `build` takes `facing` (the way they climb);
+  the run must be clear floor and a floor above must exist. Building them sends a `tiles` notice upstairs: the
+  cells over the run become a stairwell (`struct.hole` where the map had floor) and the landing gets floor if it
+  has none.
+- **Shots between floors.** `{type:'shoot', map: <floorId>, x, y}`; `World.shotAcross` is the check (a ranged
+  weapon, in range, and `seesAcross`). The referee runs such a shot on the TARGET floor's record (`runOnMap(…,
+  'remote')`) so the hit, the kill and its rewards happen where the creature is. In the game a creature on
+  another floor is clicked where it is drawn (`floorTargetAt`); the cursor names it.
+- Known limits: players can only build up or down where the owner has added a floor to the map (even an empty
+  one) — floors are not created at play time; laid floor needs no support beneath it, cannot be damaged and has
+  no frame; taking stairs apart leaves the stairwell open; a lost claim frees the structures on its own floor
+  only; a shot between floors hits one creature, pierces nothing, damages nothing built, and on the live
+  referee does not see walls players built on the shooter's own floor; throwables go down only, skills do not cross
+  floors; what players built on other floors is still not drawn from here.
+
+### What stage 5 actually does: roofs (Nov 2026)
+
+A roof over a storey and the floor of the storey above are ONE thing, kept in two records.
+
+- **Storeys everywhere.** `Content.autoFloors(c)` gives every ground map the empty floors above it that it lacks
+  (Config `auto_floors`, default 2; 0 = none; none when `build` is off). They are ordinary floors with id
+  `<ground>_z<n>`, marked `auto`, and exist only in the BUILT content: the referee (`functions/index.js`), the game
+  page (`main.js`) and the LAN host call it; the editors do not, so the map editor never sees them. The renderer
+  does not bake one until something stands on it.
+- **One blueprint, two uses.** There is no separate roof entry: a FLOOR blueprint (`places: tile`) is put up as a roof
+  with `{type:'build', …, roof: true}` (`World.asRoof(bp)` is the same blueprint with `places: 'roof'`; the build
+  menu shows Floor and Roof for it, V switches while placing). `places: roof` in data still works but is not offered.
+- **The roof.** As a roof (`places: roof` + `terrain`) it is placed from below, on a cell of the storey you stand on.
+  `build` writes `struct.roof["x,y"] = {t, by, bp}` on THIS storey and sends a `tiles` notice up, where the same
+  piece becomes laid floor (`struct.floor`, carrying `s` = its step count). `liveMapFromStruct` folds
+  `struct.roof` into the live map's `roof` grid, so a built roof is "indoors" exactly like one painted in the
+  editor (rooms, hiding, `markExplored`).
+- **Support.** `World.roofSupport(c, liveMap)` counts, for every built roof cell, how many tiles it is from a wall
+  (1 = a wall on one of its four sides, or an object with `properties.support` — a pillar — standing in it),
+  through roof cells side to side. `roofSteps` answers for a new cell; `riskOf` turns it into
+  `safe | edge | fall` against Config `roof_support` (3; 0 = no rule). `canBuild` returns `risk` and the ghost
+  is drawn green / yellow / red from it. Joining onto the map's own cover counts as one step further than a wall.
+- **From above.** A floor tile laid upstairs (`places: tile`, z > 0) obeys the same limit, counted the careful way
+  from the floor it joins (each laid piece remembers `s`; the walls below are another record), and sends a
+  `roofs` notice down so the storey below is covered. Taking floor up upstairs un-covers it (`roofs … gone`).
+- **Taking down from below.** `{type:'dismantle', target:{t:'roof', x, y}}` (`liftRoof`, checked by `canRemove`):
+  the piece goes, the floor upstairs with it (a `tiles … hole` notice), half the cost comes back.
+- **Cover.** `World.covered(c, liveMap, x, y)` — a built roof, a painted roof, or the authored floor above — is the
+  one question for anything that comes from above (rain, fliers: not built yet).
+- **Stairs** open the roof over their run; a roof cannot be put over a staircase.
+- Known limits: nothing collapses yet — taking away the wall under a roof leaves it hanging (new pieces next to it
+  then show red); a roof taken down from below does not check what stands on it upstairs; the landing a staircase
+  makes upstairs is not counted as cover below; roofs have no health; on the live referee a floor record only
+  learns of the other one through notices, so the two are in step a moment later, not in the same instant.
 
 ## 10. Rules for the code
 

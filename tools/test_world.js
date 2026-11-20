@@ -537,6 +537,10 @@ test('mana comes back over time; mana potions restore it', () => {
 
 test('reaching level 3 teaches the third skill; the ability bar (Q/E) holds two and can be rearranged', () => {
   const s = hero('mage');
+  const quiet = [], q = hero('mage');
+  World.run(q.c, q.ws, q.p, 'xp:60', 0, quiet);
+  assert.doesNotMatch(texts(quiet), /You learned/);                           // skills are switched off: nothing is said about them
+  s.c.config.skills = 'on';
   const ev = [];
   World.run(s.c, s.ws, s.p, 'xp:60', 0, ev);
   assert.strictEqual(s.p.level, 3);
@@ -548,6 +552,48 @@ test('reaching level 3 teaches the third skill; the ability bar (Q/E) holds two 
   assert.match(texts(World.act(s.c, s.ws, s.p, { type: 'loadout', bar: 'ability', slot: 1, entry: 'heal' }, 0, mid, [s.p])), /can't use that skill/);
   World.act(s.c, s.ws, s.p, { type: 'loadout', bar: 'belt', slot: 0, entry: 'potion' }, 0, mid, [s.p]);
   assert.strictEqual(s.p.belt[0], 'potion');                                  // consumables go on the belt
+  // the belt is ten slots; a character saved with five grows, keeping what was on it
+  assert.strictEqual(World.BELT_SIZE, 10);
+  s.p.belt = ['potion', '', '', '', ''];
+  World.normalize(s.c, s.p);
+  assert.deepStrictEqual(s.p.belt, ['potion', '', '', '', '', '', '', '', '', '']);
+  World.act(s.c, s.ws, s.p, { type: 'loadout', bar: 'belt', slot: 9, entry: 'potion' }, 0, mid, [s.p]);
+  assert.strictEqual(s.p.belt[9], 'potion');
+  World.act(s.c, s.ws, s.p, { type: 'loadout', bar: 'belt', slot: 10, entry: 'potion' }, 0, mid, [s.p]);
+  assert.strictEqual(s.p.belt.length, 10);                                    // no eleventh slot
+});
+
+test('the belt slot you hold decides the weapon; holding food puts the weapon away and eats nothing until used', () => {
+  const s = hero('survivor', 3), p = s.p, act = a => World.act(s.c, s.ws, p, a, 0, mid, [p]);
+  const at = id => p.belt.indexOf(id);
+  ['pistol', 'rifle', 'grenade', 'bandage'].forEach(id => assert.ok(at(id) >= 0, id + ' starts on the belt'));
+  assert.strictEqual(p.held, at('pistol'));                                   // the pistol they spawn with is in hand
+  assert.strictEqual(p.equipment.weapon, 'pistol');
+  act({ type: 'hold', slot: at('rifle') });
+  assert.strictEqual(p.equipment.weapon, 'rifle');
+  assert.strictEqual(World.rangedWeapon(s.c, p).id, 'rifle');
+  assert.ok(p.mags.rifle > 0, 'a freshly drawn gun is loaded');
+  const rations = World.count(p, 'ration');
+  p.hunger = 40;
+  act({ type: 'hold', slot: at('ration') });
+  assert.strictEqual(p.equipment.weapon, undefined);                          // food in hand: no weapon
+  assert.strictEqual(World.rangedWeapon(s.c, p), null);
+  assert.strictEqual(World.count(p, 'ration'), rations);                      // choosing it eats nothing
+  act({ type: 'use', item: 'ration' });
+  assert.strictEqual(World.count(p, 'ration'), rations - 1);                  // the click does
+  assert.strictEqual(World.publicPlayer(s.c, p).held, at('ration'));
+  act({ type: 'hold', slot: 99 });
+  assert.strictEqual(p.held, -1);                                             // nothing in hand
+  act({ type: 'use', item: 'pistol' });                                       // Equip in the bag = hold its belt slot
+  assert.strictEqual(p.held, at('pistol'));
+  assert.strictEqual(p.equipment.weapon, 'pistol');
+  act({ type: 'loadout', bar: 'belt', slot: at('pistol'), entry: 'bandage' });   // swapping what sits in the held slot
+  assert.strictEqual(p.equipment.weapon, undefined);
+  // a character saved before held slots: the weapon they wear goes on the belt and into their hands
+  const old = hero('warrior').p; delete old.held; old.belt = ['potion', '', '', '', ''];
+  World.normalize(s.c, old);
+  assert.strictEqual(old.belt[old.held], 'wooden_sword');
+  assert.strictEqual(old.equipment.weapon, 'wooden_sword');
 });
 
 // ---------------------------------------------------------------- mouse interactions
@@ -2133,6 +2179,112 @@ test('from upstairs you see the ground outside past an open edge, never under yo
   assert.strictEqual(World.seesAcross(walled, walled.maps.keep_z1, 8, 4, walled.maps.keep, 10, 4), true, 'the next row has no wall');
 });
 
+test('an upstairs window shows the ground outside to someone standing at it, in a narrow cone', () => {
+  const c = keep(t => {
+    const u = t.Maps.find(r => r.id === 'keep_z1'), vW = Array.from({ length: 12 }, () => Array(15).fill(''));
+    for (let y = 3; y <= 8; y++) vW[y][9] = 'wall_wood:2';                       // the whole east side of the upper floor is wall
+    u.vWalls = JSON.stringify(vW);
+    t.Objects.push({ id: 'test_win', name: 'Window', kind: 'deco', walkable: true, properties: '{"layer":"wall","opening":"window"}' });
+    t.MapEntities.push({ key: 'keep_z1.e1', map: 'keep_z1', x: 8, y: 6, ref: 'test_win', data: '{"side":"E"}' });
+  });
+  const up = c.maps.keep_z1, g = c.maps.keep;
+  World.syncEdgesView(c, up, () => '');
+  const sees = (ux, uy, lx, ly) => World.seesAcross(c, up, ux, uy, g, lx, ly, 16);
+  assert.strictEqual(sees(8, 6, 10, 6), true, 'at the window: the ground straight out');
+  assert.strictEqual(sees(8, 6, 13, 6), true, 'and further along the same line');
+  assert.strictEqual(sees(8, 6, 10, 9), false, 'but only a narrow cone');
+  assert.strictEqual(sees(7, 6, 10, 6), false, 'a step back from the window it is just wall');
+  assert.strictEqual(sees(8, 5, 10, 5), false, 'and so is the wall beside it');
+  // the same view lets a shot through
+  const p = { x: 8, y: 6, map: 'keep_z1', inventory: [], equipment: {}, mags: {} };
+  World.give(c, p, 'pistol', 1, []); p.equipment.weapon = 'pistol'; p.mags.pistol = 5;
+  assert.strictEqual(World.shotAcross(c, p, up, g, 10, 6, () => '').ok, true, 'you can shoot out of it');
+  p.x = 7;
+  assert.strictEqual(World.shotAcross(c, p, up, g, 10, 6, () => '').ok, false, 'not from a step back');
+});
+
+test('from the second floor up, the floor in between hides the ground beneath it', () => {
+  // floor 1 covers x 3..8; floor 2 only x 3..5 — so from floor 2, x 6..8 is floor 1's open terrace
+  const c = keep(t => {
+    const top = Array.from({ length: 12 }, (_, y) => Array.from({ length: 14 }, (_, x) => (x >= 3 && x <= 5 && y >= 3 && y <= 8 ? 'til_1' : '')));
+    t.Maps.push({ id: 'keep_z2', name: 'Keep', width: 14, height: 12, terrain: JSON.stringify(top), floor_of: 'keep', z: 2 });
+  });
+  const top = c.maps.keep_z2, mid = c.maps.keep_z1, g = c.maps.keep;
+  assert.strictEqual(World.seesAcross(c, top, 5, 5, mid, 7, 5), true, 'the terrace of the floor below is in view');
+  assert.strictEqual(World.seesAcross(c, top, 5, 5, g, 7, 5), false, 'the ground UNDER that terrace is not');
+  assert.strictEqual(World.seesAcross(c, top, 5, 5, g, 6, 5), false);
+  assert.strictEqual(World.seesAcross(c, top, 5, 5, g, 10, 5), false, 'nor the ground beyond it along that line: the terrace is in the way');
+  assert.strictEqual(World.seesAcross(c, top, 5, 2 + 1, g, 5, 0), true, 'the ground past an edge with nothing below it is');
+  assert.strictEqual(World.seesAcross(c, top, 5, 5, g, 4, 5), false, 'nor what is under both floors');
+});
+
+test('a monster left far from its spawn point does not freeze: it mills about and drifts home', () => {
+  const c = keep(t => { t.MapEntities.push({ map: 'keep', key: 'keep.e90', x: 2, y: 9, ref: 'obj_8', data: JSON.stringify({ monster: Object.keys(Content.build(t).monsters)[0], count: 1, radius: 1 }) }); });
+  const ws = { maps: {} };
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  World.advance(c, ws, 'keep', [], 1000, rnd, []);
+  const m = World.mapState(ws, 'keep').monsters.find(k => k.spawn === 'keep.e90');
+  Object.assign(m, { x: 12, y: 1, last: 1000 });                    // where a chase left it
+  const far = () => Math.max(Math.abs(m.x - 2), Math.abs(m.y - 9));
+  let moved = 0, px = m.x, py = m.y;
+  for (let t = 2000; t < 200000; t += 1000) { World.advance(c, ws, 'keep', [], t, rnd, []); if (m.x !== px || m.y !== py) moved++; px = m.x; py = m.y; }
+  assert.ok(moved > 20, 'it kept moving (' + moved + ' steps)');
+  assert.ok(far() <= 3, 'and ended up back around its spawn point (' + m.x + ',' + m.y + ')');
+});
+
+test('the other floors of a building you are in keep moving, and their people are in your view', () => {
+  const c = keep();
+  const ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Watcher', 'warrior'), q = World.newPlayer(c, 'p2', 'Walker', 'warrior');
+  Object.assign(p, { map: 'keep_z1', x: 8, y: 5 }); Object.assign(q, { map: 'keep', x: 11, y: 6 });
+  const ref = Object.keys(c.monsters)[0];
+  World.advance(c, ws, 'keep', [], 1000, mid, []);
+  World.mapState(ws, 'keep').monsters.push({ id: 'keep.m1', ref, x: 10, y: 2, hp: 5, last: 1000, facing: 'S', spawn: '' });
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const spots = new Set();
+  for (let t = 2000; t < 60000; t += 1000) {
+    World.advance(c, ws, 'keep_z1', [p], t, rnd, []);
+    World.advanceFloors(c, ws, 'keep_z1', () => [], t, rnd, []);
+    const m = World.mapState(ws, 'keep').monsters.find(k => k.id === 'keep.m1');
+    spots.add(m.x + ',' + m.y);
+  }
+  assert.ok(World.mapState(ws, 'keep').monsters.find(k => k.id === 'keep.m1').last > 50000, 'the ground floor was moved on though nobody stood on it');
+  assert.ok(spots.size > 1, 'and its monster wandered');
+  assert.ok(ws.maps.keep_zm1, 'every floor of the building is kept, the cellar too');
+  const v = World.view(c, ws, 'keep_z1', p, [p], -1, [p, q]);
+  assert.deepStrictEqual(v.floors.keep.players.map(k => [k.name, k.x, k.y]), [['Walker', 11, 6]], 'someone on the ground is in the view of the floor above');
+  assert.deepStrictEqual(World.view(c, ws, 'keep', q, [q], -1, [p, q]).floors.keep_z1.players.map(k => k.name), ['Watcher'], 'and the other way round');
+});
+
+test('the view of another floor says which of its doors stand open', () => {
+  const c = keep(t => {
+    const door = t.Objects.find(o => o.kind === 'door');
+    t.MapEntities.push({ map: 'keep', key: 'keep.e91', x: 12, y: 10, ref: door.id, data: '' }, { map: 'keep', key: 'keep.e92', x: 13, y: 10, ref: door.id, data: '' });
+  });
+  const ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Watcher', 'warrior');
+  Object.assign(p, { map: 'keep_z1', x: 8, y: 5 });
+  World.advance(c, ws, 'keep_z1', [p], 1000, mid, []); World.advance(c, ws, 'keep', [], 1000, mid, []);
+  assert.deepStrictEqual(World.view(c, ws, 'keep_z1', p, [p]).floors.keep.states, {}, 'shut doors are the usual state: nothing to say');
+  World.mapState(ws, 'keep').states['keep.e91'] = 'open';
+  assert.deepStrictEqual(World.view(c, ws, 'keep_z1', p, [p]).floors.keep.states, { 'keep.e91': 'open' });
+  assert.deepStrictEqual(World.fixtureStates(c, ws, 'keep'), { 'keep.e91': 'open' });
+});
+
+test('what players built on another floor travels with the view, only when the asker is behind', () => {
+  const c = keep();
+  const ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Watcher', 'warrior');
+  Object.assign(p, { map: 'keep_z1', x: 8, y: 5 });
+  World.advance(c, ws, 'keep_z1', [p], 1000, mid, []); World.advance(c, ws, 'keep', [], 1000, mid, []);
+  let f = World.view(c, ws, 'keep_z1', p, [p]).floors.keep;
+  assert.strictEqual(f.structRev, 0); assert.strictEqual(f.struct, undefined, 'nothing built: nothing sent');
+  const st = World.structOf(ws, 'keep');
+  st.floor['11,2'] = { t: 'til_1' }; st.rev = 3;
+  f = World.view(c, ws, 'keep_z1', p, [p]).floors.keep;
+  assert.strictEqual(f.structRev, 3); assert.ok(f.struct && f.struct.floor['11,2'], 'the layer comes along');
+  f = World.view(c, ws, 'keep_z1', p, [p], -1, null, { keep: 3 }).floors.keep;
+  assert.strictEqual(f.struct, undefined, 'up to date: only the revision number');
+  assert.ok(World.view(c, ws, 'keep_z1', p, [p], -1, null, { keep: 2 }).floors.keep.struct, 'behind: sent again');
+});
+
 test('being higher widens your view, and the view carries the other floors when the world holds them', () => {
   const c = keep();
   assert.deepStrictEqual([World.sightRadius(c, c.maps.keep), World.sightRadius(c, c.maps.keep_z1), World.sightRadius(c, c.maps.keep_zm1)], [16, 19, 16]);
@@ -2150,6 +2302,307 @@ test('being higher widens your view, and the view carries the other floors when 
   assert.deepStrictEqual(Object.keys(v.floors), ['keep']);
   assert.deepStrictEqual(v.floors.keep.monsters.map(m => [m.id, m.x, m.y]), [['keep.m1', 10, 5]], 'the living ones, where they stand');
   assert.strictEqual(World.view(c, ws, 'map_3', p, [p]).floors, undefined);
+});
+
+// ---- floors stage 4: claims by column, laying floor, building stairs, shooting between floors
+// 'plot': open ground 30x13 (arrival point far east) with a floor above that so far is only a patch x 8..10, y 5..7.
+function plot(cfg, mutate) {
+  const t = JSON.parse(JSON.stringify(tables));
+  const row = Array(30).fill('til_1');
+  const upper = Array.from({ length: 13 }, (_, y) => Array.from({ length: 30 }, (_, x) => (x >= 8 && x <= 10 && y >= 5 && y <= 7 ? 'til_1' : '')));
+  t.Maps.push({ id: 'plot', name: 'Plot', width: 30, height: 13, terrain: JSON.stringify(Array(13).fill(row)), spawn: JSON.stringify({ x: 29, y: 12 }) });
+  t.Maps.push({ id: 'plot_z1', name: 'Plot', width: 30, height: 13, terrain: JSON.stringify(upper), floor_of: 'plot', z: 1 });
+  t.Objects.push({ id: 'obj_steps', name: 'Stairs', kind: 'stairs', sprite: '', walkable: false, properties: JSON.stringify({ length: 2, hp: 40, material: 'wood' }) });
+  t.Blueprints.push({ id: 'bp_floor', name: 'Wooden floor', category: 'other', places: 'tile', terrain: 'til_1', cost: 'wood:2', work: 0, tool: '' });
+  t.Blueprints.push({ id: 'bp_steps', name: 'Stairs', category: 'other', places: 'object', object: 'obj_steps', cost: 'wood:6', work: 0, tool: '' });
+  Object.keys(cfg || {}).forEach(k => { t.Config = t.Config.filter(r => r.key !== k).concat([{ key: k, value: cfg[k] }]); });
+  if (mutate) mutate(t);
+  const c = Content.build(t), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Builder', 'warrior'), q = World.newPlayer(c, 'p2', 'Raider', 'warrior');
+  const s = { c, ws, p, q };
+  put(s, 'plot', 8, 6, 'E');
+  Object.assign(q, { map: 'plot', x: 12, y: 6, facing: 'W' });
+  [p, q].forEach(pl => [['hammer', 1], ['wood', 80], ['nails', 40], ['cloth', 10]].forEach(g => World.give(c, pl, g[0], g[1], [])));
+  return s;
+}
+const live = (s, id) => { World.syncEdges(s.c, s.ws, id); return World.liveMap(s.c, s.ws, id); };
+const doAs = (s, who, a) => { clock += 5000; const out = texts(World.act(s.c, s.ws, who, a, clock, mid, [s.p, s.q])); World.deliver(s.c, s.ws); return out; };
+
+test('a claim covers every floor of its building: the floors above and below are the base too', () => {
+  const s = plot();
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_claim', x: 9, y: 6 }), /frame of a claim flag/);
+  const flag = live(s, 'plot').entities.filter(e => e.ref === 'obj_claim')[0];
+  const up = live(s, 'plot_z1');
+  assert.deepStrictEqual(World.claimsOn(s.c, up).map(q => [q.x, q.y, q.r, !!q.shadow, q.e.by]), [[9, 6, 6, true, 'p1']], 'the floor above knows of it');
+  assert.ok(World.mayUse(s.c, up, s.p, 9, 6) && !World.mayUse(s.c, up, s.q, 9, 6));
+  Object.assign(s.q, { map: 'plot_z1', x: 10, y: 6, facing: 'E' });
+  assert.match(doAs(s, s.q, { type: 'build', bp: 'bp_floor', x: 11, y: 6 }), /This land belongs to Builder/, 'an outsider cannot build upstairs in someone\'s base');
+  Object.assign(s.q, { map: 'plot_z1', x: 10, y: 6 });
+  put(s, 'plot_z1', 9, 6, 'E');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 9, y: 4 }), /You lay a wooden floor/, 'the owner can');
+  // a second claim cannot be planted above or below the first
+  assert.match(doAs(s, s.q, { type: 'build', bp: 'bp_claim', x: 10, y: 7 }), /belongs to Builder|Too close to another base/);
+  // members are told to the other floors
+  Object.assign(s.q, { map: 'plot', x: 10, y: 7 }); put(s, 'plot', 9, 7, 'N');
+  for (let i = 0; i < 8; i++) doAs(s, s.p, { type: 'work', target: { t: 'ent', key: flag.key } });
+  assert.match(doAs(s, s.p, { type: 'claim', key: flag.key, op: 'add', name: 'Raider' }), /Raider is now a member/);
+  assert.ok(World.mayUse(s.c, live(s, 'plot_z1'), s.q, 9, 6), 'a member is a member on every floor');
+  // and when the claim goes, so does its hold on the other floors
+  World.damageStructure(s.c, s.ws, 'plot', { t: 'ent', key: flag.key }, 999, { kind: 'monster', now: clock }, []);
+  World.deliver(s.c, s.ws);
+  assert.deepStrictEqual(World.claimsOn(s.c, live(s, 'plot_z1')), []);
+});
+
+test('laying floor: only where there is none and joined to floor already there; it can be taken up again', () => {
+  const s = plot();
+  put(s, 'plot_z1', 10, 6, 'E'); Object.assign(s.q, { map: 'plot_z1', x: 8, y: 5 });
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 9, y: 6 }), /already a floor there/);
+  put(s, 'plot_z1', 10, 5, 'E');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 11, y: 4 }), /join onto one that is already there/, 'touching only at a corner is not joined');
+  put(s, 'plot_z1', 10, 6, 'E');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 12, y: 6 }), /can't reach there/, 'nor can you build across a gap');
+  const wood = World.count(s.p, 'wood');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 11, y: 6 }), /You lay a wooden floor/);
+  assert.strictEqual(World.count(s.p, 'wood'), wood - 2);
+  assert.strictEqual(live(s, 'plot_z1').terrain[6][11], 'til_1');
+  assert.strictEqual(s.c.maps.plot_z1.terrain[6][11], '', 'the map as authored is never changed');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 12, y: 6 }), /You lay/, 'floor can now go on from the new piece');
+  doAs(s, s.p, { type: 'move', dirs: ['E'] });
+  assert.deepStrictEqual([s.p.x, s.p.y], [11, 6], 'and be walked on');
+  // taking it up
+  const acts = () => World.actionsAt(s.c, live(s, 'plot_z1'), World.viewLookup(s.c, live(s, 'plot_z1'), World.view(s.c, s.ws, 'plot_z1', s.p, [s.p, s.q], -1), s.p), s.p, 12, 6).map(a => a.label);
+  assert.deepStrictEqual(acts(), ['Take up the floor']);
+  assert.match(doAs(s, s.p, { type: 'dismantle', target: { t: 'tile', x: 11, y: 6 } }), /Someone is standing on it/);
+  Object.assign(s.q, { x: 11, y: 7 });
+  assert.match(doAs(s, s.q, { type: 'dismantle', target: { t: 'tile', x: 12, y: 6 } }), /Too far away|not yours/);
+  assert.match(doAs(s, s.p, { type: 'dismantle', target: { t: 'tile', x: 12, y: 6 } }), /You take up the floor/);
+  assert.strictEqual(live(s, 'plot_z1').terrain[6][12], '');
+  assert.strictEqual(World.count(s.p, 'wood'), wood - 3, 'half the materials of that piece come back');
+  assert.match(doAs(s, s.p, { type: 'dismantle', target: { t: 'tile', x: 9, y: 6 } }), /only take up floor that was laid/, 'the map\'s own floor stays');
+});
+
+test('floor can be laid over open ground (terrain ticked build_over); taken up again, it leaves dirt', () => {
+  const s = plot(null, t => {
+    t.Terrain.forEach(r => { if (r.id === 'til_3') r.build_over = true; });       // grass
+    const m = t.Maps.find(r => r.id === 'plot'), g = JSON.parse(m.terrain).map(r => r.slice());
+    g[6][9] = 'til_3'; g[6][10] = 'til_3'; m.terrain = JSON.stringify(g);
+    const ov = Array.from({ length: 13 }, () => Array(30).fill('')); ov[6][9] = 'til_3'; m.overlay = JSON.stringify(ov);
+    t.Blueprints.find(b => b.id === 'bp_floor').terrain = 'til_10';
+  });
+  Object.assign(s.q, { x: 20, y: 10 });
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 8, y: 5 }), /already a floor there/, 'stone floor is not open ground');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 9, y: 6 }), /You lay a wooden floor/, 'grass is');
+  assert.strictEqual(live(s, 'plot').terrain[6][9], 'til_10');
+  assert.strictEqual(live(s, 'plot').overlay[6][9], '', 'the grass painted on top is covered');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 9, y: 6 }), /already a floor there/, 'not twice');
+  // the remove tool asks World.canRemove — the referee's own check — from the map the client draws
+  const lm = live(s, 'plot'), lk = World.viewLookup(s.c, lm, World.view(s.c, s.ws, 'plot', s.p, [s.p, s.q], -1), s.p);
+  assert.strictEqual(World.canRemove(s.c, lm, lk, s.p, { t: 'tile', x: 9, y: 6 }).ok, true);
+  assert.match(World.canRemove(s.c, lm, lk, s.p, { t: 'tile', x: 8, y: 5 }).reason, /only take up floor that was laid/);
+  assert.strictEqual(World.canRemove(s.c, lm, lk, s.p, { t: 'wall', orient: 'h', x: 9, y: 6 }).info, null, 'nothing built there: nothing to outline');
+  assert.match(World.canRemove(s.c, lm, lk, Object.assign({}, s.p, { x: 14, y: 6 }), { t: 'tile', x: 9, y: 6 }).reason, /Too far away/);
+  assert.match(doAs(s, s.p, { type: 'dismantle', target: { t: 'tile', x: 9, y: 6 } }), /You take up the floor/);
+  assert.strictEqual(live(s, 'plot').terrain[6][9], 'g_dirt', 'bare earth, not the grass that was there');
+  assert.strictEqual(live(s, 'plot').overlay[6][9], '');
+  assert.match(doAs(s, s.p, { type: 'dismantle', target: { t: 'tile', x: 9, y: 6 } }), /only take up floor that was laid/, 'the dirt is not a floor');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 9, y: 6 }), /You lay a wooden floor/, 'and can be built on again');
+  // Config floor_removed_terrain = none: the ground comes back as it was
+  const s2 = plot({ floor_removed_terrain: 'none' }, t => {
+    t.Terrain.forEach(r => { if (r.id === 'til_3') r.build_over = true; });
+    const m = t.Maps.find(r => r.id === 'plot'), g = JSON.parse(m.terrain).map(r => r.slice()); g[6][9] = 'til_3'; m.terrain = JSON.stringify(g);
+    t.Blueprints.find(b => b.id === 'bp_floor').terrain = 'til_10';
+  });
+  Object.assign(s2.q, { x: 20, y: 10 });
+  doAs(s2, s2.p, { type: 'build', bp: 'bp_floor', x: 9, y: 6 });
+  assert.match(doAs(s2, s2.p, { type: 'dismantle', target: { t: 'tile', x: 9, y: 6 } }), /You take up the floor/);
+  assert.strictEqual(live(s2, 'plot').terrain[6][9], 'til_3');
+});
+
+test('building stairs opens the floor above and gives them somewhere to land', () => {
+  const s = plot();
+  put(s, 'plot', 9, 8, 'N');
+  // foot (9,6), run to (9,5), landing (9,4): above, (9,6) and (9,5) are floor and (9,4) is open air
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_steps', x: 9, y: 7, facing: 'N' }), /You build a stairs|You build stairs|You build/);
+  const up0 = live(s, 'plot_z1');
+  assert.deepStrictEqual([up0.terrain[7][9], up0.terrain[6][9], up0.terrain[5][9]], ['', '', 'til_1'], 'the stairwell is open over the run, and it lands on floor');
+  const st = live(s, 'plot').entities.filter(e => e.ref === 'obj_steps')[0];
+  assert.deepStrictEqual([st.x, st.y, st.data.facing], [9, 7, 'N']);
+  doAs(s, s.p, { type: 'move', dirs: ['N'] }); doAs(s, s.p, { type: 'move', dirs: ['N'] });
+  assert.deepStrictEqual([s.p.map, s.p.x, s.p.y], ['plot', 9, 6]);
+  doAs(s, s.p, { type: 'move', dirs: ['N'] });
+  assert.deepStrictEqual([s.p.map, s.p.x, s.p.y], ['plot_z1', 9, 5], 'and you can walk up them');
+  // where the landing has no floor, one is laid
+  put(s, 'plot', 15, 8, 'N');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_steps', x: 15, y: 7, facing: 'E' }), /You build/);
+  const up1 = live(s, 'plot_z1');
+  assert.strictEqual(up1.terrain[7][17], 'til_1', 'a landing was laid at the head of the east-climbing stairs');
+  // refusals
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_steps', x: 15, y: 7, facing: 'N' }), /already there|in the way/);
+  put(s, 'plot_z1', 9, 5, 'N');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_steps', x: 8, y: 5, facing: 'N' }), /no floor above here/, 'nothing above the top floor to climb to');
+});
+
+test('you can shoot what you have a clear view of on another floor, and it can be shot back at', () => {
+  const s = plot();
+  World.advance(s.c, s.ws, 'plot', [], 1000, mid, []); World.advance(s.c, s.ws, 'plot_z1', [], 1000, mid, []);
+  const ref = Object.keys(s.c.monsters)[0];
+  const below = World.mapState(s.ws, 'plot').monsters, above = World.mapState(s.ws, 'plot_z1').monsters;
+  const out = { id: 'plot.m1', ref, x: 12, y: 6, hp: 9999, last: 9e12, facing: 'S', spawn: '' }, under = { id: 'plot.m2', ref, x: 9, y: 6, hp: 9999, last: 9e12, facing: 'S', spawn: '' };
+  const edge = { id: 'plot_z1.m1', ref, x: 10, y: 5, hp: 9999, last: 9e12, facing: 'S', spawn: '' };
+  below.push(out, under); above.push(edge);
+  World.give(s.c, s.p, 'pistol', 1, []); World.give(s.c, s.p, 'ammo_pistol', 30, []);
+  put(s, 'plot_z1', 10, 6, 'E');
+  doAs(s, s.p, { type: 'use', item: 'pistol' });
+  assert.ok(World.rangedWeapon(s.c, s.p), 'pistol in hand');
+  assert.match(doAs(s, s.p, { type: 'shoot', map: 'plot', x: 12, y: 6 }), /You shoot the/);
+  assert.ok(out.hp < 9999, 'the one outside on the ground is hit');
+  assert.strictEqual(out.engaged, 'p1');
+  assert.match(doAs(s, s.p, { type: 'shoot', map: 'plot', x: 9, y: 6 }), /no clear shot/);
+  assert.strictEqual(under.hp, 9999, 'the one under your own floor is not');
+  assert.match(doAs(s, s.p, { type: 'shoot', map: 'plot', x: 29, y: 6 }), /Too far away/);
+  assert.match(doAs(s, s.p, { type: 'shoot', map: 'map_3', x: 3, y: 3 }), /Pick a target/, 'only floors of the same building');
+  // from the ground, up at the one standing at the edge
+  put(s, 'plot', 12, 5, 'W');
+  assert.match(doAs(s, s.p, { type: 'shoot', map: 'plot_z1', x: 10, y: 5 }), /You shoot the/);
+  assert.ok(edge.hp < 9999);
+  assert.strictEqual(World.shotAcross(s.c, s.p, s.c.maps.plot, s.c.maps.plot_z1, 10, 5).ok, true);
+  put(s, 'plot', 9, 6, 'N');                                            // standing under the floor: no view of anyone on it
+  assert.strictEqual(World.shotAcross(s.c, s.p, s.c.maps.plot, s.c.maps.plot_z1, 10, 5).reason, 'You have no clear shot.');
+});
+
+test('a grenade can be thrown down from an upper floor onto ground you can see, never up or under your own floor', () => {
+  const s = plot();
+  World.advance(s.c, s.ws, 'plot', [], 1000, mid, []); World.advance(s.c, s.ws, 'plot_z1', [], 1000, mid, []);
+  const ref = Object.keys(s.c.monsters)[0], below = World.mapState(s.ws, 'plot').monsters;
+  const out = { id: 'plot.m1', ref, x: 12, y: 6, hp: 9999, last: 9e12, facing: 'S', spawn: '' }, near = { id: 'plot.m3', ref, x: 13, y: 7, hp: 9999, last: 9e12, facing: 'S', spawn: '' };
+  const under = { id: 'plot.m2', ref, x: 9, y: 6, hp: 9999, last: 9e12, facing: 'S', spawn: '' };
+  below.push(out, near, under);
+  World.give(s.c, s.p, 'grenade', 5, []);
+  const have = () => (s.p.inventory.find(q => q.item === 'grenade') || { qty: 0 }).qty;
+  put(s, 'plot_z1', 10, 6, 'E');
+  assert.match(doAs(s, s.p, { type: 'throw', item: 'grenade', map: 'plot', x: 9, y: 6 }), /no clear throw/, 'not under your own floor');
+  assert.match(doAs(s, s.p, { type: 'throw', item: 'grenade', map: 'plot', x: 20, y: 6 }), /Too far away/);
+  assert.match(doAs(s, s.p, { type: 'throw', item: 'grenade', map: 'map_3', x: 3, y: 3 }), /Pick a spot/, 'only floors of the same building');
+  assert.strictEqual(have(), 5, 'a refused throw costs nothing');
+  assert.match(doAs(s, s.p, { type: 'throw', item: 'grenade', map: 'plot', x: 12, y: 6 }), /grenade hits the/);
+  assert.ok(out.hp < 9999, 'the one it lands on is hit');
+  assert.ok(near.hp < 9999, 'and so is the one beside it, in the blast');
+  assert.strictEqual(under.hp, 9999, 'the one under the floor is out of it');
+  assert.strictEqual(have(), 4);
+  // never upwards
+  put(s, 'plot', 12, 5, 'W'); s.p.cooldowns = {};
+  assert.match(doAs(s, s.p, { type: 'throw', item: 'grenade', map: 'plot_z1', x: 10, y: 5 }), /that far up/);
+  assert.strictEqual(have(), 4);
+});
+
+// ---- roofs (docs/FLOORS.md stage 5): a roof over a storey is floor on the storey above; it rests on walls
+// 'yard': open ground 30x13 with NO floor of its own above it — the game supplies the storeys (Content.autoFloors).
+function roofYard(cfg) {
+  const t = JSON.parse(JSON.stringify(tables));
+  t.Maps.push({ id: 'yard', name: 'Yard', width: 30, height: 13, terrain: JSON.stringify(Array(13).fill(Array(30).fill('til_1'))), spawn: JSON.stringify({ x: 29, y: 12 }) });
+  t.Objects.push({ id: 'obj_pillar', name: 'Pillar', kind: 'deco', sprite: '', walkable: false, properties: JSON.stringify({ support: true }) });
+  t.Blueprints.push({ id: 'bp_roof', name: 'Wooden roof', category: 'roofs', places: 'roof', terrain: 'til_1', cost: 'wood:2', work: 0, tool: '' });
+  t.Blueprints.push({ id: 'bp_floor', name: 'Wooden floor', category: 'other', places: 'tile', terrain: 'til_1', cost: 'wood:2', work: 0, tool: '' });
+  Object.keys(cfg || {}).forEach(k => { t.Config = t.Config.filter(r => r.key !== k).concat([{ key: k, value: cfg[k] }]); });
+  const c = Content.autoFloors(Content.build(t)), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Builder', 'warrior'), q = World.newPlayer(c, 'p2', 'Other', 'warrior');
+  c.maps.yard.entities.push({ key: 'yard.e1', x: 20, y: 6, ref: 'obj_pillar', data: {} });
+  const s = { c, ws, p, q };
+  put(s, 'yard', 8, 7, 'N');
+  Object.assign(q, { map: 'yard', x: 28, y: 12 });
+  [['hammer', 1], ['wood', 80], ['nails', 40]].forEach(g => World.give(c, p, g[0], g[1], []));
+  return s;
+}
+
+test('every map gets empty storeys above it to build on, unless it has its own or building is off', () => {
+  const s = roofYard();
+  assert.deepStrictEqual(World.floorsOf(s.c, 'yard').map(f => [f.z, f.id]), [[0, 'yard'], [1, 'yard_z1'], [2, 'yard_z2']]);
+  assert.ok(s.c.maps.yard_z1.auto && s.c.maps.yard_z1.terrain[6][8] === '' && s.c.maps.yard_z1.width === 30);
+  const before = Object.keys(s.c.maps).length;
+  Content.autoFloors(s.c);
+  assert.strictEqual(Object.keys(s.c.maps).length, before, 'running it again adds nothing');
+  assert.deepStrictEqual(World.floorsOf(roofYard({ auto_floors: 0 }).c, 'yard').length, 1);
+  assert.deepStrictEqual(World.floorsOf(roofYard({ build: 'off' }).c, 'yard').length, 1);
+  const pl = plot(); Content.autoFloors(pl.c);
+  assert.deepStrictEqual(World.floorsOf(pl.c, 'plot').map(f => f.id), ['plot', 'plot_z1', 'plot_z2'], 'a floor the owner made is kept; only the missing one is added');
+  assert.ok(!pl.c.maps.plot_z1.auto);
+});
+
+test('a roof is built from below, rests on walls up to roof_support tiles away, and is the floor of the storey above', () => {
+  const s = roofYard(), bp = s.c.blueprints.bp_roof;
+  const chk = (x, y) => World.canBuild(s.c, live(s, 'yard'), World.viewLookup(s.c, live(s, 'yard'), World.view(s.c, s.ws, 'yard', s.p, [s.p, s.q], -1), s.p), s.p, bp, x, y);
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_roof', x: 8, y: 6 }), /has to rest on a wall/, 'nothing holds it yet');
+  assert.strictEqual(chk(8, 6).risk, 'fall');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_wood_wall', x: 8, y: 6, side: 'N' }), /frame of a wooden wall/);
+  assert.deepStrictEqual([chk(8, 6).risk, chk(8, 6).steps], ['safe', 1]);
+  const wood = World.count(s.p, 'wood');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_roof', x: 8, y: 6 }), /You put up a wooden roof\.$/);
+  assert.strictEqual(World.count(s.p, 'wood'), wood - 2);
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_roof', x: 8, y: 6 }), /already a roof there/);
+  // it is cover, a room, and floor upstairs
+  assert.ok(World.covered(s.c, live(s, 'yard'), 8, 6) && !World.covered(s.c, live(s, 'yard'), 9, 6));
+  assert.strictEqual(World.roofZoneAt(live(s, 'yard'), 8, 6), '8,6');
+  assert.strictEqual(live(s, 'yard_z1').terrain[6][8], 'til_1');
+  assert.strictEqual(s.c.maps.yard_z1.terrain[6][8], '', 'the map as authored is never changed');
+  assert.deepStrictEqual(Object.keys(World.view(s.c, s.ws, 'yard', s.p, [s.p, s.q], -1).struct.roof), ['8,6'], 'the game page is told');
+  // green, green, yellow, red
+  put(s, 'yard', 9, 7, 'N');
+  assert.deepStrictEqual([chk(9, 6).risk, chk(9, 6).steps], ['safe', 2]);
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_roof', x: 9, y: 6 }), /You put up a wooden roof\.$/);
+  assert.deepStrictEqual([chk(10, 6).risk, chk(10, 6).ok], ['edge', true]);
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_roof', x: 10, y: 6 }), /as far from a wall as it can go/);
+  put(s, 'yard', 11, 7, 'N');
+  assert.deepStrictEqual([chk(11, 6).risk, chk(11, 6).ok], ['fall', false]);
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_roof', x: 11, y: 6 }), /Too far from a wall: it would fall/);
+  // a wall further along holds it after all
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_wood_wall', x: 12, y: 6, side: 'N' }), /frame of a wooden wall/);
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_roof', x: 12, y: 6 }), /You put up a wooden roof/);
+  assert.deepStrictEqual([chk(11, 6).risk, chk(11, 6).steps], ['safe', 2]);
+  // a pillar (an object with properties.support) holds a roof like a wall does
+  put(s, 'yard', 20, 7, 'N');
+  assert.deepStrictEqual([chk(20, 6).risk, chk(20, 6).steps, chk(19, 6).risk], ['safe', 1, 'fall']);
+  // taking it down from below: the floor upstairs goes too, half the materials come back
+  put(s, 'yard', 10, 7, 'N');
+  const lk = World.viewLookup(s.c, live(s, 'yard'), World.view(s.c, s.ws, 'yard', s.p, [s.p, s.q], -1), s.p);
+  assert.strictEqual(World.canRemove(s.c, live(s, 'yard'), lk, s.p, { t: 'roof', x: 10, y: 6 }).ok, true);
+  assert.match(World.canRemove(s.c, live(s, 'yard'), lk, s.q, { t: 'roof', x: 10, y: 6 }).reason, /Too far away/);
+  assert.match(World.canRemove(s.c, live(s, 'yard'), lk, s.p, { t: 'roof', x: 10, y: 5 }).reason, /no roof there/);
+  const w2 = World.count(s.p, 'wood');
+  assert.match(doAs(s, s.p, { type: 'dismantle', target: { t: 'roof', x: 10, y: 6 } }), /You take down the roof/);
+  assert.strictEqual(World.count(s.p, 'wood'), w2 + 1);
+  assert.strictEqual(live(s, 'yard_z1').terrain[6][10], '');
+  assert.ok(!World.covered(s.c, live(s, 'yard'), 10, 6));
+  // a FLOOR blueprint serves as a roof too (`roof: true`): one entry, both uses
+  assert.strictEqual(World.asRoof(s.c.blueprints.bp_floor).places, 'roof');
+  assert.strictEqual(World.asRoof(s.c.blueprints.bp_wood_wall).places, 'wall', 'only floors');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 10, y: 6, roof: true }), /You put up a roof of wooden floor/);
+  assert.ok(World.covered(s.c, live(s, 'yard'), 10, 6) && live(s, 'yard_z1').terrain[6][10] === 'til_1');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 10, y: 6 }), /already a floor there/, 'without it, the same blueprint is a floor on the ground');
+  // with the rule off (roof_support 0) a roof goes anywhere
+  const free = roofYard({ roof_support: 0 });
+  assert.match(doAs(free, free.p, { type: 'build', bp: 'bp_roof', x: 8, y: 6 }), /You put up a wooden roof/);
+});
+
+test('upstairs, floor laid or taken up is roof gained or lost below, and it obeys the same support rule', () => {
+  const s = roofYard();
+  doAs(s, s.p, { type: 'build', bp: 'bp_wood_wall', x: 8, y: 6, side: 'N' });
+  doAs(s, s.p, { type: 'build', bp: 'bp_roof', x: 8, y: 6 });
+  put(s, 'yard_z1', 8, 6, 'E');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 9, y: 6 }), /You lay a wooden floor/);
+  assert.ok(World.covered(s.c, live(s, 'yard'), 9, 6), 'the storey below is covered there now');
+  put(s, 'yard_z1', 9, 6, 'E');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 10, y: 6 }), /You lay a wooden floor/);
+  put(s, 'yard_z1', 10, 6, 'E');
+  assert.match(doAs(s, s.p, { type: 'build', bp: 'bp_floor', x: 11, y: 6 }), /it would fall/, 'four from the wall is one too many');
+  assert.match(doAs(s, s.p, { type: 'dismantle', target: { t: 'tile', x: 9, y: 6 } }), /You take up the floor/);
+  assert.ok(!World.covered(s.c, live(s, 'yard'), 9, 6), 'and open to the sky again');
+  // stairs open the roof over their run
+  const s2 = roofYard();
+  s2.c.objects.obj_steps = Object.assign({}, s2.c.objects.obj_pillar, { id: 'obj_steps', name: 'Stairs', kind: 'stairs', properties: { length: 2 } });
+  s2.c.blueprints.bp_steps = Object.assign({}, s2.c.blueprints.bp_roof, { id: 'bp_steps', name: 'Stairs', places: 'object', object: 'obj_steps', terrain: '' });
+  doAs(s2, s2.p, { type: 'build', bp: 'bp_wood_wall', x: 8, y: 6, side: 'N' });
+  doAs(s2, s2.p, { type: 'build', bp: 'bp_roof', x: 8, y: 6 });
+  assert.match(doAs(s2, s2.p, { type: 'build', bp: 'bp_steps', x: 8, y: 6, facing: 'E' }), /You build a stairs|Stairs|stairs/);
+  assert.ok(!World.covered(s2.c, live(s2, 'yard'), 8, 6), 'the stairwell is open');
+  assert.strictEqual(live(s2, 'yard_z1').terrain[6][8], '');
 });
 
 console.log(`\n${passed} world tests passed`);

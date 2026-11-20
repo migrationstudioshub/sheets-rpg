@@ -48,8 +48,12 @@ function create(deps) {
 
   /** The fast-moving, fully-global part of a map's state: all monsters and all players present. */
   function firebaseView(content, ms, mapId, players, now) {
+    // doors = which doors (and other things on the walls) are not in their usual state, for players watching this
+    // floor from another one. A JSON string: entity keys hold '.', which the database forbids in keys.
+    const one = { maps: {} }; one.maps[mapId] = ms;
+    const fst = World.fixtureStates(content, one, mapId);
     return {
-      map: mapId, now: now, seq: ms.seq || 0,
+      map: mapId, now: now, seq: ms.seq || 0, doors: Object.keys(fst).length ? JSON.stringify(fst) : null,
       monsters: (ms.monsters || []).filter(m => !m.dead).map(m => {
         const d = content.monsters[m.ref];
         return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing,
@@ -60,10 +64,21 @@ function create(deps) {
       }))
     };
   }
+  // What players built or broke on a floor of a multi-storey building, for those watching it from another floor:
+  // world/s~<groundId>/<floorId> = { rev, json }, written only when the layer's revision changes. (A JSON string:
+  // its keys hold '.', which the database forbids in keys.)
+  const lastStruct = {};
+  async function pushStruct(content, ms, mapId) {
+    const rev = (ms.struct && ms.struct.rev) || 0;
+    if (!rev || lastStruct[mapId] === rev || World.floorsOf(content, mapId).length < 2) return;
+    lastStruct[mapId] = rev;
+    await db.ref('world/s~' + World.groundId(content, mapId) + '/' + mapId).set({ rev: rev, json: JSON.stringify(World.publicStruct(ms.struct)) });
+  }
   /** Push a map's public view, but only when the moving things actually changed (an idle heartbeat writes nothing). */
   async function pushView(content, ms, mapId, players, now) {
+    await pushStruct(content, ms, mapId);
     const view = firebaseView(content, ms, mapId, players, now);
-    const signature = JSON.stringify(view.monsters) + '|' + JSON.stringify(view.players);
+    const signature = JSON.stringify(view.monsters) + '|' + JSON.stringify(view.players) + '|' + (view.doors || '');
     if (lastView[mapId] === signature) return;
     lastView[mapId] = signature;
     await db.ref('world/' + mapId).set(view);
@@ -104,11 +119,14 @@ function create(deps) {
       ws.maps[mapId] = ms;
       // absent = the acting player is NOT on this map: it is a floor they just left, kept moving so the monsters
       // following them reach the stairs. Nobody there is touched (no players are handed to the rules).
-      const players = absent ? [] : presentOn(all, mapId, now);
+      // absent = 'remote': the player is on another floor of this building and their action lands HERE (a shot at
+      // something they can see on this floor). The floor runs as usual for whoever is on it; the player is not added.
+      const remote = absent === 'remote';
+      const players = absent && !remote ? [] : presentOn(all, mapId, now);
       if (!absent && !players.includes(p)) players.push(p);
       const ev = [];
       World.advance(content, ws, mapId, players, now, rng, ev);
-      if (action && !absent) ev.push(...World.act(content, ws, p, action, now, rng, players));
+      if (action && (!absent || remote)) ev.push(...World.act(content, ws, p, action, now, rng, players));
       if (!absent) p._seen = now;
       World.record(ws, ev);
       ms.seq = ws.seq;
@@ -124,16 +142,37 @@ function create(deps) {
    * Monsters that changed floor (docs/FLOORS.md): each floor is its own record, so they are handed over by
    * adding them to the other floor's `arrivals`, which that floor takes in on its next step.
    */
-  async function deliver(transfers) {
+  async function deliver(content, transfers) {
     const byMap = {};
-    (transfers || []).forEach(t => { if (t && t.map && t.monster) (byMap[t.map] = byMap[t.map] || []).push(t.monster); });
+    (transfers || []).forEach(t => { if (t && t.map) (byMap[t.map] = byMap[t.map] || []).push(t); });
     for (const mapId of Object.keys(byMap)) {
       await db.ref('state/maps/' + mapId).transaction(cur => {
         const ms = parseVal(cur, null) || {};
-        ms.arrivals = (ms.arrivals || []).concat(byMap[mapId]);
+        byMap[mapId].forEach(t => World.applyNotice(content, mapId, ms, t));   // a monster arriving, a claim's shadow, floor laid or opened
         return JSON.stringify(ms);
       }, undefined, false);
     }
+  }
+
+  // The other floors of the building a player is in are kept moving too, so what they watch from a window or a
+  // balcony is alive (docs/FLOORS.md). Each floor is its own record: one with somebody on it is moved by them; an
+  // empty one is moved here, at most every floor_tick_ms, and left alone for a while when nothing lives on it.
+  const floorRun = {}, floorQuiet = {};
+  async function tickFloors(content, all, token, startMap, skip, now) {
+    const every = Number(content.config.floor_tick_ms) || 1000;
+    const due = World.floorsOf(content, startMap).map(f => f.id).filter(id => id !== startMap && !skip.includes(id) && content.maps[id] &&
+      now - (floorRun[id] || 0) >= every && now >= (floorQuiet[id] || 0) && !presentOn(all, id, now).length);
+    if (!due.length) return;
+    const json = JSON.stringify(all);
+    await Promise.all(due.map(async id => {
+      floorRun[id] = now;
+      try {
+        const r = await runOnMap(content, id, json, token, null, now, true);
+        if (!(r.ms.monsters || []).length && !(r.ms.arrivals || []).length) floorQuiet[id] = now + 30000;
+        await deliver(content, r.transfers);
+        await pushView(content, r.ms, id, [], now);
+      } catch (e) { /* that floor is busy: it catches up on the next step */ }
+    }));
   }
 
   /** One game step: catch the world up, run the player's action (if any), persist, report back. */
@@ -151,12 +190,20 @@ function create(deps) {
     const wake = all[token].wake;
     if (wake && wake.map && wake.map !== startMap && now < wake.until && content.maps[wake.map]) {
       const w = await runOnMap(content, wake.map, JSON.stringify(all), token, null, now, true);
-      await deliver(w.transfers);
+      await deliver(content, w.transfers);
       await pushView(content, w.ms, wake.map, presentOn(all, wake.map, now), now);
     }
-    const first = await runOnMap(content, startMap, JSON.stringify(all), token, action, now);
-    await deliver(first.transfers);
-    let last = first, events;
+    // A shot at another floor of the building runs on THAT floor's record, where what it hits lives.
+    const far = action && (action.type === 'shoot' || action.type === 'throw') && action.map && String(action.map) !== startMap && content.maps[action.map] &&
+      World.groundId(content, String(action.map)) === World.groundId(content, startMap) ? String(action.map) : null;
+    const others = tickFloors(content, all, token, startMap, [far, wake && wake.map], now);   // runs alongside; awaited before the answer
+    const first = await runOnMap(content, startMap, JSON.stringify(all), token, far ? null : action, now);
+    await deliver(content, first.transfers);
+    let last = first, events, shot = null;
+    if (far) {
+      shot = await runOnMap(content, far, JSON.stringify(first.all), token, action, now, 'remote');
+      await deliver(content, shot.transfers);
+    }
     const touched = new Set(first.ev.filter(e => e.to).map(e => e.to));
     if (first.p.map !== startMap) {                             // walked through a door/teleport: arrive on the new map
       last = await runOnMap(content, first.p.map, JSON.stringify(first.all), token, null, now);
@@ -167,21 +214,27 @@ function create(deps) {
     } else {
       events = World.eventsFor({ log: first.ms.log }, since, first.p);
     }
-    const p = last.p;
+    if (shot) {                                                 // what the shot did is told to the shooter directly (it is in the other floor's log)
+      shot.ev.filter(e => e.to).forEach(e => touched.add(e.to));
+      events = events.concat(shot.ev.filter(e => e.to === shot.p.id || e.type === 'shoot' || e.type === 'throw'));
+    }
+    const fin = shot || last, p = fin.p;
 
     // Persist the actor and anyone combat touched this step — but NOT idle bystanders, so a simultaneous
     // action by another player can't overwrite their position. Also writes fewer records.
     const updates = {};
     updates['players/' + token] = JSON.stringify(p);
-    Object.keys(last.all).forEach(tok => {
-      const q = last.all[tok];
+    Object.keys(fin.all).forEach(tok => {
+      const q = fin.all[tok];
       if (tok !== token && q && touched.has(q.id)) updates['players/' + tok] = JSON.stringify(q);
     });
     await db.ref().update(updates);
 
     if (last !== first) await pushView(content, first.ms, startMap, first.players.filter(q => q.id !== p.id), now);   // the map just left
     await pushView(content, last.ms, p.map, last.players, now);
+    if (shot) await pushView(content, shot.ms, far, shot.players, now);
 
+    await others;
     const ws = { seq: last.ms.seq, log: last.ms.log, maps: {} };
     ws.maps[p.map] = last.ms;
     // structRev = the structure-layer revision the client already has; after a map change it knows nothing

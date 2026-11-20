@@ -62,6 +62,7 @@ async function getContent() {
   if (!pub || !pub.tables) throw new Error('no published content — seed it with tools/seed_firestore.js');
   const content = Content.build(pub.tables);
   await mergeMaps(content);
+  Content.autoFloors(content);                                      // the empty storeys above every map, for roofs and upper floors
   _content = content; _contentAt = Date.now();
   return _content;
 }

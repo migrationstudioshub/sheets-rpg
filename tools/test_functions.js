@@ -210,6 +210,75 @@ test('floors: a monster following a player upstairs is handed from one floor\'s 
   assert.ok(mapRec(db, 'hall').monsters.find(m => m.id === 'hall.m1').dead, 'and counts as lost on the floor below');
 });
 
+test('floors: a shot at another floor runs on that floor\'s record, and word between floors is delivered', async () => {
+  const t = JSON.parse(JSON.stringify(tables));
+  const row = Array(30).fill('til_1');
+  const upper = Array.from({ length: 13 }, (_, y) => Array.from({ length: 30 }, (_, x) => (x >= 8 && x <= 10 && y >= 5 && y <= 7 ? 'til_1' : '')));
+  t.Maps.push({ id: 'plot', name: 'Plot', width: 30, height: 13, terrain: JSON.stringify(Array(13).fill(row)), spawn: JSON.stringify({ x: 29, y: 12 }) });
+  t.Maps.push({ id: 'plot_z1', name: 'Plot', width: 30, height: 13, terrain: JSON.stringify(upper), floor_of: 'plot', z: 1 });
+  const content = Content.build(t), db = fakeDb();
+  let now = 3000000;
+  const referee = Referee.create({ db, World, getContent: async () => content, now: () => now, random: () => 0.5 });
+  const j = await referee.join('Ana', '');
+  const save = async (rec) => db.ref('players/' + j.token).set(JSON.stringify(rec));
+  let rec = playerRec(db, j.token);
+  Object.assign(rec, { map: 'plot', x: 9, y: 9, facing: 'N' });
+  World.give(content, rec, 'pistol', 1, []); World.give(content, rec, 'ammo_pistol', 30, []); World.give(content, rec, 'wood', 20, []); World.give(content, rec, 'cloth', 10, []);
+  rec.equipment = Object.assign({}, rec.equipment, { weapon: 'pistol' }); rec.mags = { pistol: 12 };
+  await save(rec);
+  now += 1000; await referee.step(j.token, null, -1);                       // the ground floor's record exists now
+  const ref = Object.keys(content.monsters)[0];
+  const ground = mapRec(db, 'plot');
+  ground.monsters = (ground.monsters || []).concat([{ id: 'plot.m1', ref, x: 12, y: 6, hp: 9999, last: 9e12, facing: 'S', spawn: '' }]);
+  await db.ref('state/maps/plot').set(JSON.stringify(ground));
+
+  // a claim planted on the ground reaches the floor above as a shadow
+  now += 1000;
+  const built = await referee.step(j.token, { type: 'build', bp: 'bp_claim', x: 9, y: 8 }, 0);
+  assert.ok(built.events.some(e => /claim flag/.test(e.text || '')), 'the flag went up: ' + built.events.map(e => e.text).join(' | '));
+  const sh = (mapRec(db, 'plot_z1').struct || {}).shadow || {};
+  assert.deepStrictEqual(Object.keys(sh).map(k => [sh[k].x, sh[k].y, sh[k].by]), [[9, 8, rec.id]], 'the upper floor\'s record got the claim\'s shadow');
+
+  // what was built is pushed for whoever watches this floor from another one
+  const pushed = db.read('world/s~plot/plot');
+  assert.ok(pushed && pushed.rev > 0 && JSON.parse(pushed.json).ents.some(e => e.x === 9 && e.y === 8), 'the ground floor\'s built layer is published for the building');
+  const setsBefore = db.stats.sets.filter(k => k.startsWith('world/s~')).length;
+  now += 1000; await referee.step(j.token, null, 0);
+  assert.strictEqual(db.stats.sets.filter(k => k.startsWith('world/s~')).length, setsBefore, 'and not written again while nothing changes');
+
+  // upstairs, at the edge, shooting the monster on the ground outside
+  rec = playerRec(db, j.token);
+  Object.assign(rec, { map: 'plot_z1', x: 10, y: 6, facing: 'E' });
+  await save(rec);
+  now += 1000; await referee.step(j.token, null, -1);
+  now += 1000;
+  const r = await referee.step(j.token, { type: 'shoot', map: 'plot', x: 12, y: 6 }, 0);
+  assert.ok(r.events.some(e => /You shoot the/.test(e.text || '')), 'the shooter is told: ' + r.events.map(e => e.text).join(' | '));
+  assert.ok(mapRec(db, 'plot').monsters.find(m => m.id === 'plot.m1').hp < 9999, 'the monster in the OTHER floor\'s record took the hit');
+  assert.strictEqual(r.player.map, 'plot_z1', 'the shooter stays where they are');
+  assert.strictEqual(playerRec(db, j.token).mags.pistol, 11, 'and the round is spent');
+  assert.strictEqual(r.world.map, 'plot_z1');
+
+  // and dropping a grenade on it from up there
+  rec = playerRec(db, j.token);
+  World.give(content, rec, 'grenade', 2, []);
+  await save(rec);
+  const hpBefore = mapRec(db, 'plot').monsters.find(m => m.id === 'plot.m1').hp;
+  now += 5000;
+  const g = await referee.step(j.token, { type: 'throw', item: 'grenade', map: 'plot', x: 12, y: 6 }, 0);
+  assert.ok(g.events.some(e => /grenade hits the/.test(e.text || '')), 'the thrower is told: ' + g.events.map(e => e.text).join(' | '));
+  assert.ok(mapRec(db, 'plot').monsters.find(m => m.id === 'plot.m1').hp < hpBefore, 'the blast landed in the other floor\'s record');
+  assert.strictEqual((playerRec(db, j.token).inventory.find(s => s.item === 'grenade') || {}).qty, 1, 'and one grenade is spent');
+
+  // while they stand upstairs doing nothing, the ground floor (nobody on it) is still moved on
+  const g2 = mapRec(db, 'plot');
+  g2.monsters.push({ id: 'plot.m2', ref, x: 20, y: 10, hp: 5, last: now, facing: 'S', spawn: '' });
+  await db.ref('state/maps/plot').set(JSON.stringify(g2));
+  const was = now;
+  now += 4000; await referee.step(j.token, null, 0);
+  assert.ok(mapRec(db, 'plot').monsters.find(m => m.id === 'plot.m2').last > was, 'a heartbeat from upstairs moved the floor below');
+});
+
 (async () => {
   for (const t of queue) { await t.fn(); passed++; console.log('ok -', t.name); }
   console.log(`\n${passed} function tests passed`);

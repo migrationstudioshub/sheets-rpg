@@ -79,6 +79,11 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   `Content.build` turns them into `item.can`, `item.cooldownMs`, `item.props`; rules ask **`World.itemCan(it, what)`**, never
   the type's name (it falls back to the old names for content built without ticks). No tab = the built-in `Content.ITEM_TYPES`.
   Object kinds the owner adds live in Config `object_kinds` (edited from the Object Kinds card).
+- **Belt and what you hold:** the hotbar is `World.BELT_SIZE` (10) belt slots (keys 1-9, 0), which take consumables,
+  throwables, weapons and tools. One slot is in hand: `p.held` (-1 = nothing), set by `{type:'hold', slot}` → `World.holdSlot`,
+  which is the only thing that sets `equipment.weapon` (a non-weapon in hand = no weapon). Choosing never consumes; `use`/`throw` do.
+  **Skills are switched off for now** (owner, Nov 2026): Config `skills` = on brings back Q/E, the bag's abilities and the mana bar;
+  the skill rules themselves are untouched. Client: wheel or number keys choose, a click on nothing uses held food; a referee that sends no `held` gets the old belt (`holdMode()`).
 - **Turnable objects:** an object is authored facing south; `sprite_states` entries `north=` and `side=` (older `up`/`down`/`side`
   also read) make it turnable. A placement carries `data.facing` N|E|S|W (west = the side picture mirrored) and its `pass_*`
   sides turn with it. `Rules.facingOf / turnable / facingSprite / nextFacing / passOf` are the only readers. Editor: T or
@@ -92,7 +97,13 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   ground map by `Content.linkFloors`; never parse a floor out of a map id — use `map.z / floorOf / floors`, `World.groundId /
   floorId / floorsOf`. Stages 1–3 are built (stage 3: `World.seesAcross` + `sightRadius`, `view.floors` / per-floor pushes, upper floors drawn as a facade): data, editor floor switch, teleports between floors, simple raised drawing, and walkable
   stairs (kind `stairs`; `tryMove` may answer with `map`; monsters follow as guests via `ws.transfers` → `arrivals`).
-  Sight between floors and building floors are later stages.
+  Stage 4 too: floors talk through notices (`ws.transfers` → `World.applyNotice`), claims are shadowed onto every floor,
+  `places: tile` blueprints lay floor, stairs can be built (they open the floor above), and `shoot` takes `map` for another floor.
+- **Roofs (floors stage 5, see `docs/FLOORS.md`):** a roof over a storey IS the floor of the storey above. No separate roof blueprint: a FLOOR blueprint (`places: tile`)
+  is put up as a roof with `build … roof: true` (`World.asRoof`; menu buttons Floor / Roof, V switches), placed from below → `struct.roof` on that storey + a notice laying `struct.floor` upstairs; `Content.autoFloors` supplies the
+  empty storeys (Config `auto_floors`, game only — never the editors). Support = tiles from a wall (`World.roofSupport/roofSteps`,
+  Config `roof_support`), returned by `canBuild` as `risk` safe|edge|fall (the green/yellow/red ghost). `World.covered` is the one
+  "is this cell under cover" question (rain/fliers later). Nothing collapses yet.
 - **Planned, not built:** mines (shared in the overworld, private in bases), digging, and terrain elevation (height per tile,
   drawn raised with cut-away) are designed in `docs/UNDERGROUND_AND_ELEVATION.md`. No voxels. Decide elevation before floors stage 3.
 - Item id `gold` means money. Tall objects: one image taller than a tile (the part above the footprint draws over characters). Animation: `frames` + `frame_ms` (horizontal strip).

@@ -101,7 +101,7 @@ var Content = (function () {
       var id = str(r.id); if (!id) return;
       c.terrain[id] = { id: id, name: str(r.name) || id,
         sprite: str(r.sprite), autotile: str(r.autotile), layer: str(r.layer) === 'overlay' ? 'overlay' : (str(r.layer) === 'base' ? 'base' : ''),
-        frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200),
+        frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200), buildOver: bool(r.build_over),
         pass: { n: bool(r.pass_n), e: bool(r.pass_e), s: bool(r.pass_s), w: bool(r.pass_w) } };
     });
 
@@ -306,7 +306,7 @@ var Content = (function () {
     (tables.Blueprints || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
       c.blueprints[id] = { id: id, name: str(r.name) || id, category: str(r.category) || 'other',
-        places: str(r.places) === 'wall' ? 'wall' : 'object', wallStyle: str(r.wall_style), wallHeight: 2,   // every wall is one storey high (Rules.WALL_H); wall_height in old data is ignored
+        places: str(r.places) === 'wall' ? 'wall' : str(r.places) === 'tile' ? 'tile' : str(r.places) === 'roof' ? 'roof' : 'object', terrain: str(r.terrain), wallStyle: str(r.wall_style), wallHeight: 2,   // every wall is one storey high (Rules.WALL_H); wall_height in old data is ignored
        
         object: str(r.object), cost: str(r.cost), work: Math.max(0, num(r.work, 4)), tool: str(r.tool), station: str(r.station),
         needsWall: boolDef(r.needs_wall, true), upgradeOf: str(r.upgrade_of), unlock: str(r.unlock), icon: str(r.icon) };
@@ -356,6 +356,33 @@ var Content = (function () {
     return c;
   }
 
+  /**
+   * Gives every ground map the empty storeys above it that players may build on (roofs, a second storey): Config
+   * auto_floors levels (default 2; 0 = none), wherever the map has no such floor of its own. They are ordinary
+   * floors (docs/FLOORS.md) with nothing on them, marked auto, and exist only in the built content — never in the
+   * data, so the map editor does not see them. For the GAME only (referee, game page, LAN host): the editors do not
+   * call this. Safe to run again, and on content that already carries them.
+   */
+  function autoFloors(c) {
+    var cfg = c.config || {}, n = cfg.auto_floors === undefined || cfg.auto_floors === '' ? 2 : Math.round(Number(cfg.auto_floors));
+    if (!(n > 0) || String(cfg.build || 'on') === 'off') return c;
+    var maps = c.maps || {}, added = false;
+    Object.keys(maps).forEach(function (id) {
+      var g = maps[id]; if (g.floorOf || g.auto || !(g.width > 0 && g.height > 0)) return;
+      for (var z = 1; z <= n; z++) {
+        var fid = id + '_z' + z;
+        if ((g.floors && g.floors[z]) || maps[fid]) continue;
+        var rows = [];
+        for (var y = 0; y < g.height; y++) { var row = []; for (var x = 0; x < g.width; x++) row.push(''); rows.push(row); }
+        maps[fid] = { id: fid, name: g.name, width: g.width, height: g.height, terrain: rows, overlay: [], vWalls: [], hWalls: [], roof: [],
+          nobuild: g.nobuild || [], roof_color: g.roof_color || '', floorOf: id, z: z, spawn: null, shapes: {}, overlayShapes: {}, entities: [], auto: true };
+        added = true;
+      }
+    });
+    if (added) linkFloors(c);
+    return c;
+  }
+
   /** Rows of a sheet (first row = headers) -> list of records. */
   function recordsFromValues(values) {
     if (!values || !values.length) return [];
@@ -386,6 +413,6 @@ var Content = (function () {
     return hash({ row: row, ents: ents });
   }
 
-  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, linkFloors: linkFloors };
+  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, linkFloors: linkFloors, autoFloors: autoFloors };
 })();
 if (typeof module !== 'undefined') module.exports = Content;

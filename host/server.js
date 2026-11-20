@@ -30,7 +30,7 @@ const Rules = require(path.join(ROOT, 'shared', 'rules.js')); global.Rules = Rul
 const World = require(path.join(ROOT, 'shared', 'world.js'));
 
 const tables = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tables.json'), 'utf8'));
-const CONTENT = Content.build(tables);
+const CONTENT = Content.autoFloors(Content.build(tables));         // …with the empty storeys above every map, for roofs and upper floors
 
 // ---- the game state ----
 // Held in memory while running, and saved to a JSON file so a session survives a restart of THIS
@@ -74,7 +74,7 @@ function presentOn(all, mapId, now) {
 }
 
 /** One game step: catch the world up, run the player's action (if any), report back. */
-function step(token, action, since, structRev) {
+function step(token, action, since, structRev, floorRevs) {
   const now = Date.now();
   const p = PLAYERS[token];
   if (!p) throw new Error('unknown character');
@@ -95,13 +95,16 @@ function step(token, action, since, structRev) {
     if (!players.includes(p)) players.push(p);
     World.advance(CONTENT, ws, p.map, players, now, Math.random, ev);
   }
+  World.advanceFloors(CONTENT, ws, p.map, id => presentOn(PLAYERS, id, now), now, Math.random, ev);   // the rest of the building stays alive
+  World.deliver(CONTENT, ws);
   World.record(ws, ev);
   if (ws.log && ws.log.length > 50) ws.log = ws.log.slice(-50);
   scheduleSave();                                      // movement, combat, monster ticks — all persisted
 
   // The poll/act answer already carries everyone on the map (World.view), so on a LAN we just poll —
   // no Firebase, no separate pushed world view needed.
-  return { player: World.publicPlayer(CONTENT, p), world: World.view(CONTENT, ws, p.map, p, players, p.map !== startMap ? -1 : structRev),
+  return { player: World.publicPlayer(CONTENT, p), world: World.view(CONTENT, ws, p.map, p, players, p.map !== startMap ? -1 : structRev,
+      Object.keys(PLAYERS).map(tok => PLAYERS[tok]).filter(q => now - (q._seen || 0) < 60000), floorRevs),
     events: World.eventsFor(ws, since, p), seq: ws.seq };
 }
 
@@ -121,8 +124,8 @@ function handleGame(body) {
   switch (body.action) {
     case 'join': return join(body.name, body['class']);
     case 'load': return step(body.token, null, -1);
-    case 'poll': return step(body.token, null, body.since, body.structRev);
-    case 'act':  return step(body.token, body['do'], body.since, body.structRev);
+    case 'poll': return step(body.token, null, body.since, body.structRev, body.floorRevs);
+    case 'act':  return step(body.token, body['do'], body.since, body.structRev, body.floorRevs);
     case 'save': return { ok: true };                  // nothing to persist; state is already in memory
     default: return { error: 'unknown action' };
   }

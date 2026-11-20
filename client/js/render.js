@@ -336,32 +336,39 @@ var Render = (function () {
   /** How far (px) the N-S wall on the west edge of cell (x,y) is drawn off its grid line: a wall painted
    *  "cursor side" sits half its thickness to the left ('l') or right ('r'); a centred wall, or none, is 0.
    *  Anything standing on that wall shifts by the same amount so it stays on the wall. */
-  // A staircase (kind 'stairs'): drawn flat on the floor along its run, under everyone. Its picture is authored
-  // climbing NORTH (the main sprite, taller than a tile); sprite_states "side=" climbs east (mirrored for west)
-  // and "south=" climbs south. With no picture for its direction it is drawn as plain steps, so it works before
-  // there is art.
-  function drawStairs(g, c, o, e, ox, oy, T, now) {
+  // A staircase (kind 'stairs') runs along Rules.STAIR_LEN tiles and climbs a whole storey, so each tile of the
+  // run is one STEP TILE, drawn one tile higher on the screen than the one before. Its picture is a single step
+  // tile, repeated: the main sprite climbs NORTH; sprite_states "side=" climbs east (mirrored for west) and
+  // "south=" climbs south; a direction without its own picture uses the main sprite. With no picture at all it
+  // is drawn as plain steps, so it works before there is art.
+  function stairRise(i, T) { var R = Rules; return Math.round(i * (R.WALL_H / R.stairLen()) * T); }
+  /** Draw step tile i (0 = the foot) of a staircase. */
+  function drawStairStep(g, c, o, e, i, ox, oy, T, now) {
     var R = typeof Rules !== 'undefined' ? Rules : null; if (!R) return;
-    var dir = R.stairDir(e), d = R.DIRS[dir], n = Math.max(1, Math.round(Number((e.data && e.data.length) || (o.properties || {}).length) || 2));
-    var st = o.spriteStates || {}, path = dir === 'N' ? o.sprite : dir === 'S' ? (st.south || '') : (st.side || ''), img = path && Assets.get(path);
+    var dir = R.stairDir(e), d = R.DIRS[dir], n = R.stairLen();
+    var st = o.spriteStates || {}, path = (dir === 'N' ? '' : dir === 'S' ? st.south : st.side) || o.sprite, img = path && Assets.get(path);
+    var x = ox + (e.x + i * d.dx) * T, y = oy + (e.y + i * d.dy) * T - stairRise(i, T);
     if (img && img.width) {
-      var ax = e.x - (dir === 'W' ? n - 1 : 0), ay = e.y + (dir === 'S' ? n - 1 : 0);     // the sprite's bottom-left tile
-      drawObject(g, o, path, ox + ax * T, oy + ay * T, T, 'base', now, dir === 'W');
-      drawObject(g, o, path, ox + ax * T, oy + ay * T, T, 'top', now, dir === 'W');
+      drawObject(g, o, path, x, y, T, 'base', now, dir === 'W');
+      drawObject(g, o, path, x, y, T, 'top', now, dir === 'W');
       return;
     }
-    for (var i = 0; i < n; i++) {
-      var x = ox + (e.x + i * d.dx) * T, y = oy + (e.y + i * d.dy) * T, steps = 4;
-      g.fillStyle = '#4a3b2c'; g.fillRect(x, y, T, T);
-      for (var k = 0; k < steps; k++) {
-        var t = (i * steps + k) / (n * steps), lum = Math.round(92 + 70 * t), w = T / steps;      // lighter as it climbs
-        g.fillStyle = 'rgb(' + lum + ',' + Math.round(lum * 0.8) + ',' + Math.round(lum * 0.62) + ')';
-        if (dir === 'N') g.fillRect(x + 2, y + T - (k + 1) * w + 1, T - 4, w - 2);
-        else if (dir === 'S') g.fillRect(x + 2, y + k * w + 1, T - 4, w - 2);
-        else if (dir === 'E') g.fillRect(x + k * w + 1, y + 2, w - 2, T - 4);
-        else g.fillRect(x + T - (k + 1) * w + 1, y + 2, w - 2, T - 4);
-      }
+    var steps = 4;
+    g.fillStyle = '#4a3b2c'; g.fillRect(x, y, T, T);
+    for (var k = 0; k < steps; k++) {
+      var t = (i * steps + k) / (n * steps), lum = Math.round(92 + 70 * t), w = T / steps;      // lighter as it climbs
+      g.fillStyle = 'rgb(' + lum + ',' + Math.round(lum * 0.8) + ',' + Math.round(lum * 0.62) + ')';
+      if (dir === 'N') g.fillRect(x + 2, y + T - (k + 1) * w + 1, T - 4, w - 2);
+      else if (dir === 'S') g.fillRect(x + 2, y + k * w + 1, T - 4, w - 2);
+      else if (dir === 'E') g.fillRect(x + k * w + 1, y + 2, w - 2, T - 4);
+      else g.fillRect(x + T - (k + 1) * w + 1, y + 2, w - 2, T - 4);
     }
+  }
+  /** The whole staircase, far steps first (the editor, the build ghost, floors seen from above). */
+  function drawStairs(g, c, o, e, ox, oy, T, now) {
+    if (typeof Rules === 'undefined') return;
+    var n = Rules.stairLen(), north = Rules.stairDir(e) === 'N';
+    for (var k = 0; k < n; k++) drawStairStep(g, c, o, e, north ? n - 1 - k : k, ox, oy, T, now);
   }
   // A door in a N-S wall is seen edge-on, so it is shown as a doorstep lying on the floor across the wall line.
   // A door can carry its own doorstep pictures (sprite_states "step=" closed, "step_open=" open; the Content
@@ -403,6 +410,60 @@ var Render = (function () {
     }
     var vline = ox + ed.ex * S + vWallOff(map, ed.ex, ed.ey, S), vbase = oy + (ed.ey + 1) * S;    // foot of the vertical (N-S) wall, following an off-centre wall
     return { dx: vline - S / 2, dy: vbase - S - mount * S, sortY: vbase + 0.26, flip: side === 'E' };
+  }
+
+  /**
+   * The things on the walls of ANOTHER floor of the building (doors, windows, arches, shelves…), for the floors
+   * drawn below or above the one you stand on, shown as they are on their own floor: a door open or shut (states =
+   * that floor's {key: state}), a window as a see-through hole in its wall, an opening in a N-S wall as a gap, a
+   * slab or glass. Returns { list: [{ x, y, sortY (within that floor), draw(g, now) }], doorFaces, vDoor, winHoles }
+   * — the last three tell drawOtherPrim how to draw that floor's walls. (ox, fy) = where the floor's origin is drawn.
+   */
+  function otherFloorFixtures(c, fm, ox, fy, T, states) {
+    var out = { list: [], doorFaces: {}, vDoor: {}, winHoles: {} };
+    states = states || {};
+    (fm.entities || []).forEach(function (e) {
+      var o = c.objects[e.ref]; if (!o || layerOf(o) !== 'wall') return;
+      var opening = openingOf(o), edges = fixtureEdges(o, e), ed0 = edges[0], isH = ed0.orient === 'h', st = states[e.key];
+      var open = opening === 'arch' || st === 'open';
+      if (isH && (opening === 'door' || opening === 'arch')) {
+        edges.forEach(function (q) { out.doorFaces[q.x + ',' + q.y] = 1; });       // the door draws this stretch of wall face itself
+        out.list.push({ x: e.x, y: e.y, sortY: ed0.y * T + 0.6, draw: function (g) { drawDoor(g, c, fm, { o: o, e: e, ed: ed0, W: edges.length, open: open, cut: false }, ox, fy, T, 1); } });
+        return;
+      }
+      if (!isH && opening) {                                             // edge-on in a N-S wall: a gap, a slab or glass, and a door's doorstep on the floor
+        edges.forEach(function (q) { out.vDoor[q.x + ',' + q.y] = opening === 'window' ? 'glass' : open ? 'open' : 'shut'; });
+        return;                                                          // (its doorstep picture is an icon for those ON that floor: not drawn from another one)
+      }
+      var p = objPath(o, st, null), mp = wallMountPlace(fm, o, e, ox, fy, T); if (!p) return;
+      if (opening === 'window') {                                        // its panes are holes in the wall face
+        var wImg = Assets.get(p);
+        if (wImg && wImg.width) {
+          var wr = objRect(o, wImg, mp.dx, mp.dy, T), wMask = silhouette(wImg, wr.fw);
+          if (wMask) {
+            var hole = { mask: wMask, x: wr.x, y: wr.y, w: wr.w, h: wr.h };
+            for (var hx = Math.floor((wr.x - ox) / T); hx <= Math.floor((wr.x + wr.w - 1 - ox) / T); hx++)
+              (out.winHoles[hx + ',' + ed0.y] || (out.winHoles[hx + ',' + ed0.y] = [])).push(hole);
+          }
+        }
+      }
+      out.list.push({ x: e.x, y: e.y, sortY: mp.sortY - fy, draw: function (g, now) {
+        drawObject(g, o, p, mp.dx, mp.dy, T, 'base', now, mp.flip);
+        if (hasTop(o, p)) drawObject(g, o, p, mp.dx, mp.dy, T, 'top', now, mp.flip);
+      } });
+    });
+    return out;
+  }
+  /** One wall piece of another floor, with what otherFloorFixtures found on it (fx): door gaps, window holes, glass. */
+  function drawOtherPrim(g, c, p, ox, fy, T, fx) {
+    var isCap = p.kind === 'hcap' || p.kind === 'vcap', isV = p.kind === 'vface' || p.kind === 'vcap', k = p.x + ',' + p.y;
+    var vd = isV ? fx.vDoor[k] : null;
+    if (vd === 'open') return;                                           // an open door or an arch in a thin wall: a gap
+    if (p.kind === 'hface' && fx.doorFaces[k]) return;                   // the door draws it
+    var holes = p.kind === 'hface' ? fx.winHoles[k] : null;
+    if (!(holes && drawFaceWithHoles(g, c, p, ox, fy, T, 0, holes))) drawPrim25(g, c, p, ox, fy, T, false, 0);
+    if (vd === 'shut' && !isCap) primRectFill(g, p, ox, fy, T, 'rgba(46,30,16,.55)');
+    if (vd === 'glass' && !isCap) primRectFill(g, p, ox, fy, T, 'rgba(190,228,255,.55)');
   }
 
   /** The object layer: 'object' (y-sorted, default), 'wall' (hung on an edge face) or 'ground_decal' (flat). */
@@ -601,20 +662,26 @@ var Render = (function () {
     this.mapId = null;
   }
 
-  Renderer.prototype.setMap = function (map) {
+  Renderer.prototype.setMap = function (map, floorMaps) {   // floorMaps = { floorId: that floor's live map } (optional)
     this.map = map;
     this.mapId = map.id;
     this.ground = bakeGround(this.content, map);
     var content = this.content;
     this.wall25 = wall25(content, map);                                              // every wall as cap + face pieces
     // Floors (docs/FLOORS.md, stage 1): standing on an upper floor, the floors beneath are drawn first, each lower
-    // on the screen by its height, dimmed and without creatures. They are the maps as authored (what players built
-    // down there is not shown yet), baked once per floor.
+    // on the screen by its height and dimmed. Each is baked once, and again when its live map changes (something
+    // was built or broken there).
     var below = [], cache = this._floorBakes || (this._floorBakes = {});
+    function bakeOf(id) {
+      var fm = (floorMaps && floorMaps[id]) || content.maps[id]; if (!fm) return null;
+      if (fm.auto && !(fm._struct && (Object.keys(fm._struct.floor || {}).length || Object.keys(fm._struct.walls || {}).length || (fm._struct.ents || []).length))) return null;   // a storey the game supplied, still empty: nothing to draw
+      var b = cache[id];
+      if (!b || b.map !== fm) b = cache[id] = { map: fm, ground: bakeGround(content, fm), prims: wall25(content, fm) };
+      return b;
+    }
     if (map.z > 0 && map.floors) Object.keys(map.floors).forEach(function (k) {
-      var fz = Number(k), fm = content.maps[map.floors[k]];
+      var fz = Number(k), b = bakeOf(map.floors[k]), fm = b && b.map;
       if (!fm || fz < 0 || fz >= map.z) return;                                      // basements are never seen from above
-      var b = cache[fm.id] || (cache[fm.id] = { map: fm, ground: bakeGround(content, fm), prims: wall25(content, fm) });
       below.push({ dz: map.z - fz, map: fm, ground: b.ground, prims: b.prims });
     });
     below.sort(function (a, b) { return b.dz - a.dz; });                             // lowest floor first
@@ -623,9 +690,8 @@ var Render = (function () {
     // walls, and a roof over whatever is marked roofed up there (an unroofed part, a terrace, shows its floor).
     var above = [];
     if ((map.z || 0) >= 0 && map.floors) Object.keys(map.floors).forEach(function (k) {
-      var fz = Number(k), fm = content.maps[map.floors[k]];
+      var fz = Number(k), b = bakeOf(map.floors[k]), fm = b && b.map;
       if (!fm || fz <= (map.z || 0)) return;
-      var b = cache[fm.id] || (cache[fm.id] = { map: fm, ground: bakeGround(content, fm), prims: wall25(content, fm) });
       if (!b.sorted) b.sorted = b.prims.slice().sort(function (p, q) { return prim25SortY(p, 0, 32) - prim25SortY(q, 0, 32); });
       above.push({ dz: fz - (map.z || 0), map: fm, ground: b.ground, prims: b.sorted });
     });
@@ -652,7 +718,7 @@ var Render = (function () {
     var ox = Math.round(-cam.x), oy = Math.round(-cam.y);
     if (this.below && this.below.length) {
       var storey = WALL_H;                                                           // a floor is one wall-height above the one below
-      var nowB = performance.now();
+      var nowB = performance.now(), fStates = (opts && opts.floorStates) || {};
       this.below.forEach(function (f) {
         var yy = oy + Math.round(f.dz * storey * T), items = [];
         g.drawImage(f.ground, ox, yy);
@@ -664,19 +730,50 @@ var Render = (function () {
           items.push({ sortY: e.y * T + T, o: o, path: fs.path, flip: fs.flip, dx: ox + e.x * T, dy: yy + e.y * T });
         });
         f.prims.forEach(function (p) { items.push({ sortY: prim25SortY(p, 0, T) + 0.25, prim: p }); });
+        var bfx = otherFloorFixtures(c, f.map, ox, yy, T, fStates[f.map.id]);   // its doors, windows and the rest on its walls, as they are
+        bfx.list.forEach(function (fx) { items.push({ sortY: fx.sortY, fix: fx }); });
+        // whoever you can see on this floor is part of it: behind its walls where they stand behind them, and UNDER
+        // everything of the floors above, which are drawn after
+        ((opts && opts.floorActors) || []).forEach(function (fa) {
+          if (fa.dz !== -f.dz) return;
+          fa.actors.forEach(function (a) { items.push({ sortY: Math.round(a.y * T) + T, actor: a }); });
+        });
         items.sort(function (a, b) { return a.sortY - b.sortY; });
         items.forEach(function (it) {
-          if (it.prim) drawPrim25(g, c, it.prim, ox, yy, T, false, 0);
+          if (it.actor) paintActor(it.actor, Math.round(ox + it.actor.x * T), Math.round(yy + it.actor.y * T), false);
+          else if (it.fix) it.fix.draw(g, nowB);
+          else if (it.prim) drawOtherPrim(g, c, it.prim, ox, yy, T, bfx);
           else { drawObject(g, it.o, it.path, it.dx, it.dy, T, 'base', nowB, it.flip); drawObject(g, it.o, it.path, it.dx, it.dy, T, 'top', nowB, it.flip); }
         });
       });
-      g.fillStyle = 'rgba(6,8,14,0.5)'; g.fillRect(0, 0, this.canvas.width, this.canvas.height);   // what is below is dimmer than where you stand
-      // …except the creatures down there that you have a clear view of (opts.floorActors): they stand out
+      // What is below is dimmer than where you stand — except the ground you have a clear view of (opts.floorSight:
+      // over a balcony edge, out of a window you stand at), which is left clear: your cone of view down there.
+      var lit = {};
+      g.beginPath(); g.rect(0, 0, this.canvas.width, this.canvas.height);
+      ((opts && opts.floorSight) || []).forEach(function (f) {
+        if (f.dz >= 0) return;
+        Object.keys(f.cells).forEach(function (k) {
+          var q = k.split(','), sx = Number(q[0]), sy = Number(q[1]) - f.dz * storey, sk = sx + ',' + sy;
+          if (lit[sk]) return;                                                       // two floors may show through the same spot: one hole, not two
+          lit[sk] = 1; g.rect(ox + sx * T, oy + sy * T, T, T);
+        });
+      });
       ((opts && opts.floorActors) || []).forEach(function (f) {
         if (f.dz >= 0) return;
-        var fy = oy + Math.round(-f.dz * storey * T);
-        f.actors.forEach(function (a) { paintActor(a, Math.round(ox + a.x * T), Math.round(fy + a.y * T), false); });
+        f.actors.forEach(function (a) {
+          var ax = Math.round(a.x), ay = Math.round(a.y) - f.dz * storey;
+          [ay, ay - 1].forEach(function (sy) { var sk = ax + ',' + sy; if (lit[sk]) return; lit[sk] = 1; g.rect(ox + ax * T, oy + sy * T, T, T); });
+        });
       });
+      g.fillStyle = 'rgba(6,8,14,0.5)'; g.fill('evenodd');
+      // What is below is also a little out of focus (Config floor_blur, in pixels; 0 = off). Browsers without
+      // canvas filters simply skip it.
+      var blurPx = c.config.floor_blur === undefined || c.config.floor_blur === '' ? 0.6 : Number(c.config.floor_blur) || 0;
+      if (blurPx > 0 && typeof g.filter === 'string') {
+        g.filter = 'blur(' + blurPx + 'px)';
+        g.drawImage(this.canvas, 0, 0);
+        g.filter = 'none';
+      }
     }
     // On an upper floor a cell with no terrain is open air: nothing of this floor (fog, roof, indoor shade) is drawn there.
     var sparse = map.z > 0;
@@ -703,6 +800,7 @@ var Render = (function () {
     var fogA = cfg.fog_alpha === undefined || cfg.fog_alpha === '' ? 0.32 : Number(cfg.fog_alpha); if (!(fogA >= 0 && fogA <= 1)) fogA = 0.32;
     var roofCol = (map.roof_color) || cfg.roof_color || '#15121c';
     var sight = makeSight(map, meActor, o2, cutR);
+    if (o2.cutAll) sight.cutH = function () { return true; };   // the remove tool's "walls down" view: every E-W wall a stub
     var prims = this.wall25 || [];
 
     // layer 2c: the soft shadow each E-W wall drops on the floor south of it
@@ -833,7 +931,12 @@ var Render = (function () {
         return;
       }
       if (!sight.known(e.x, e.y)) return;                                 // inside a room never seen
-      if (o.kind === 'stairs') { dim(inDark(e.x, e.y)); drawStairs(g, c, o, e, ox, oy, T, now); dim(false); return; }
+      if (o.kind === 'stairs') {                                          // each step tile sorts with its own row: over the wall behind it, under whoever stands on it
+        var sdd = Rules.DIRS[Rules.stairDir(e)];
+        for (var si = 0; si < Rules.stairLen(); si++)
+          renderables.push({ sortY: Math.round(oy + (e.y + si * sdd.dy) * T) + T - 0.5, dark: inDark(e.x, e.y), step: { o: o, e: e, i: si } });
+        return;
+      }
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
       var path = objPath(o, st, facing), flip = facing === 'left' || (!!facing && Rules.facingOf(String(facing)) === 'W');
       if (!path && e.bp !== undefined) path = '#built';              // something a player built with no art yet: show a lettered box, never nothing
@@ -902,6 +1005,7 @@ var Render = (function () {
         if (r.frame) g.globalAlpha = 1;
         return;
       }
+      if (r.step) { dim(r.dark); drawStairStep(g, c, r.step.o, r.step.e, r.step.i, ox, oy, T, now); dim(false); return; }
       if (r.obj) {
         if (r.alpha < 1) g.globalAlpha = r.alpha;
         dim(r.dark);
@@ -998,10 +1102,16 @@ var Render = (function () {
           if (rf && rf !== '0') { g.fillStyle = (fm.roof_color) || roofCol; g.fillRect(ox + rx * T, fy + ry * T, T, T); }
           else g.drawImage(f.ground, rx * T, ry * T, T, T, ox + rx * T, fy + ry * T, T, T);
         }
+        var ufx = otherFloorFixtures(c, fm, ox, fy, T, (o2.floorStates || {})[fm.id]);
         f.prims.forEach(function (p) {
           if (p.x < ca - 1 || p.x > cb + 1 || p.y < ra - 1 || p.y > rb + 3) return;
           g.globalAlpha = faint(p.x, p.y) ? cutA * 0.5 : 1;
-          drawPrim25(g, c, p, ox, fy, T, false, 0);
+          drawOtherPrim(g, c, p, ox, fy, T, ufx);
+        });
+        ufx.list.sort(function (a, b) { return a.sortY - b.sortY; }).forEach(function (fx) {   // the windows and doors of the upper storeys
+          if (fx.x < ca - 2 || fx.x > cb + 2 || fx.y < ra - 2 || fx.y > rb + 3) return;
+          g.globalAlpha = faint(fx.x, fx.y) ? cutA * 0.5 : 1;
+          fx.draw(g, now);
         });
         g.globalAlpha = 1;
       });
@@ -1041,10 +1151,25 @@ var Render = (function () {
   Renderer.prototype.drawGhost = function (cam, gh) {
     if (!gh) return;
     var g = this.g, c = this.content, T = c.config.tile_size || 32, ox = -cam.x, oy = -cam.y, map = this.map;
-    var bp = gh.bp, col = gh.ok ? '#6fe08a' : '#ff6b5b', o = bp.places === 'object' ? c.objects[bp.object] : null;
+    // a roof (or a floor upstairs) says how safe the spot is: green = well held, yellow = as far from a wall as it can go, red = it would fall
+    var edgy = gh.ok && gh.risk === 'edge';
+    var bp = gh.bp, col = edgy ? '#ffd65a' : gh.ok ? '#6fe08a' : '#ff6b5b', o = bp.places === 'object' ? c.objects[bp.object] : null;
     g.save(); g.globalAlpha = 0.55;
     var x0, y0, x1, y1;                                                 // the outline: a line for an edge, a box for a tile
-    if (bp.places === 'wall') {
+    if (bp.places === 'tile' || bp.places === 'roof') {                 // a piece of floor or roof: the terrain's colour of intent, and a box
+      var tt = c.terrain[bp.terrain], ti = tt && tt.sprite && Assets.get(tt.sprite);
+      if (ti) g.drawImage(ti, 0, 0, Math.min(ti.width, NT), Math.min(ti.height, NT), ox + gh.x * T, oy + gh.y * T, T, T);
+      g.fillStyle = edgy ? 'rgba(255,214,90,.40)' : gh.ok ? 'rgba(111,224,138,.30)' : 'rgba(255,107,91,.30)'; g.fillRect(ox + gh.x * T, oy + gh.y * T, T, T);
+      g.globalAlpha = 1; g.strokeStyle = col; g.lineWidth = 2; g.strokeRect(ox + gh.x * T + 1, oy + gh.y * T + 1, T - 2, T - 2);
+      x0 = null;
+    } else if (o && o.kind === 'stairs') {                                 // stairs: the run, and a dashed box where they land upstairs
+      var sge = { x: gh.x, y: gh.y, data: { facing: gh.facing || 'N' } }, sgd = Rules.DIRS[Rules.stairDir(sge)], sgn = Rules.stairLen();
+      drawStairs(g, c, o, sge, ox, oy, T, 0);
+      g.globalAlpha = 1; g.strokeStyle = col; g.lineWidth = 2;
+      for (var sgi = 0; sgi < sgn; sgi++) g.strokeRect(ox + (gh.x + sgi * sgd.dx) * T + 1, oy + (gh.y + sgi * sgd.dy) * T + 1, T - 2, T - 2);
+      g.setLineDash([4, 3]); g.strokeRect(ox + (gh.x + sgn * sgd.dx) * T + 2, oy + (gh.y + sgn * sgd.dy) * T + 2, T - 4, T - 4); g.setLineDash([]);
+      x0 = null;
+    } else if (bp.places === 'wall') {
       var v = gh.side === 'W', h = WALL_H;
       (v ? ['vface', 'vcap'] : ['hface', 'hcap']).forEach(function (kind) { drawPrim25(g, c, { kind: kind, x: gh.x, y: gh.y, h: h, style: bp.wallStyle, side: gh.off || 'c' }, ox, oy, T, false, 0); });
       var gHd = Math.round(Math.max(4, Math.round(T * 0.32)) / 2), gOff = gh.off === 'r' ? gHd : gh.off === 'l' ? -gHd : 0;   // same nudge the wall is drawn with
@@ -1068,11 +1193,65 @@ var Render = (function () {
     }
     g.globalAlpha = 1;
     if (x0 != null) { g.strokeStyle = col; g.lineWidth = Math.max(3, Math.round(T * 0.14)); g.lineCap = 'round'; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); }
-    if (!gh.ok && gh.reason) {
+    var note = !gh.ok ? gh.reason : edgy ? 'As far from a wall as it can go' : '';
+    if (note) {
+      gh = { x: gh.x, y: gh.y, reason: note, warn: edgy };
       g.font = '11px sans-serif'; g.textAlign = 'center';
       var tx = ox + (gh.x + 0.5) * T, ty = oy + (gh.y + 1) * T + 12;
       g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(tx - g.measureText(gh.reason).width / 2 - 4, ty - 10, g.measureText(gh.reason).width + 8, 14);
-      g.fillStyle = '#ffb4a8'; g.fillText(gh.reason, tx, ty);
+      g.fillStyle = gh.warn ? '#ffe9a6' : '#ffb4a8'; g.fillText(gh.reason, tx, ty);
+    }
+    g.restore();
+  };
+  /** While laying roof or floor, or removing: the cells of this storey that already have a built roof over them, tinted. */
+  Renderer.prototype.drawRoofs = function (cam, map) {
+    var roof = map && map._struct && map._struct.roof; if (!roof) return;
+    var g = this.g, T = this.content.config.tile_size || 32, ox = -cam.x, oy = -cam.y;
+    g.save(); g.fillStyle = 'rgba(120,170,255,.22)'; g.strokeStyle = 'rgba(160,200,255,.55)'; g.lineWidth = 1;
+    Object.keys(roof).forEach(function (k) {
+      var q = k.split(','), px = ox + Number(q[0]) * T, py = oy + Number(q[1]) * T;
+      if (px < -T || py < -T || px > g.canvas.width || py > g.canvas.height) return;
+      g.fillRect(px, py, T, T);
+      g.beginPath(); g.moveTo(px, py + T); g.lineTo(px + T, py); g.stroke();                       // a diagonal: "something overhead"
+    });
+    g.restore();
+  };
+  /** The remove tool's outline (main.js removeTarget): red = a click takes it apart, grey = not now (with why). */
+  Renderer.prototype.drawRemove = function (cam, rt, low) {
+    var g = this.g, c = this.content, T = c.config.tile_size || 32, ox = -cam.x, oy = -cam.y;
+    var hint = 'Remove tool · H: walls ' + (low ? 'down' : 'up') + ' · Esc: stop';   // always on screen while the tool is
+    g.save(); g.font = '12px sans-serif'; g.textAlign = 'center';
+    var hw = g.measureText(hint).width, hx = this.canvas.width / 2;
+    g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(hx - hw / 2 - 8, 6, hw + 16, 20); g.fillStyle = '#ffb4a8'; g.fillText(hint, hx, 20); g.restore();
+    if (!rt || !rt.info) return;
+    var i = rt.info;
+    var col = rt.ok ? '#ff5a4a' : '#9aa0a8', fill = rt.ok ? 'rgba(255,90,74,.28)' : 'rgba(154,160,168,.22)';
+    g.save(); g.strokeStyle = col; g.fillStyle = fill; g.lineWidth = 2; g.lineCap = 'round';
+    function box(x, y, w, h) { g.fillRect(ox + x * T, oy + y * T, w * T, h * T); g.strokeRect(ox + x * T + 1, oy + y * T + 1, w * T - 2, h * T - 2); }
+    function edge(q) {                                      // the wall's face above its line, and the line itself
+      if (low) { /* walls are down: the line alone */ }
+      else if (q.orient === 'h') box(q.x, q.y - WALL_H, 1, WALL_H);
+      else { g.fillRect(ox + q.x * T - 4, oy + (q.y - WALL_H) * T, 8, (WALL_H + 1) * T); g.strokeRect(ox + q.x * T - 4, oy + (q.y - WALL_H) * T, 8, (WALL_H + 1) * T); }
+      g.lineWidth = Math.max(3, Math.round(T * 0.14)); g.beginPath(); g.moveTo(ox + q.x * T, oy + q.y * T);
+      g.lineTo(ox + (q.x + (q.orient === 'h' ? 1 : 0)) * T, oy + (q.y + (q.orient === 'h' ? 0 : 1)) * T); g.stroke(); g.lineWidth = 2;
+    }
+    var lx = i.x, ly = i.y;
+    if (i.t === 'tile' || i.t === 'roof') box(i.x, i.y, 1, 1);
+    else if (i.t === 'wall') edge(i);
+    else if (rt.edges) { rt.edges.forEach(edge); lx = rt.edges[0].x; ly = rt.edges[0].y; }
+    else if (i.obj && i.obj.kind === 'stairs') {
+      var d = Rules.DIRS[Rules.stairDir(i.e)], n = Rules.stairLen();
+      for (var k = 0; k < n; k++) box(i.x + k * d.dx, i.y + k * d.dy, 1, 1);
+    } else {
+      var fw = Math.max(1, (i.obj && i.obj.footprintW) || 1), fh = Math.max(1, (i.obj && i.obj.footprintH) || 1);
+      box(i.x, i.y - fh + 1, fw, fh);
+    }
+    var text = rt.ok ? 'Remove ' + i.name : rt.reason;
+    if (text) {
+      g.font = '11px sans-serif'; g.textAlign = 'center';
+      var tx = ox + (lx + (i.t === 'wall' && i.orient === 'v' ? 0 : 0.5)) * T, ty = oy + (ly + 1) * T + 12, tw = g.measureText(text).width;
+      g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(tx - tw / 2 - 4, ty - 10, tw + 8, 14);
+      g.fillStyle = rt.ok ? '#ffb4a8' : '#d5d8dc'; g.fillText(text, tx, ty);
     }
     g.restore();
   };

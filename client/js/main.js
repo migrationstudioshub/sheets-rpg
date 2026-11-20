@@ -177,7 +177,16 @@
   function mergeLiveWorld(w) {
     if (!me || !w || w.map !== me.map) return;                 // ignore a push for a map we've already left
     if (w.monsters) view.monsters = w.monsters;
-    if (w.players) view.players = w.players.filter(function (q) { return q.id !== me.id; });
+    if (w.players) {
+      // A push says where the others are; how they LOOK (class, gear, hair) may only have come with an answer.
+      // Keep what we know of each, or they flicker to the plain figure on every push.
+      var known = {}; (view.players || []).forEach(function (q) { known[q.id] = q; });
+      view.players = w.players.filter(function (q) { return q.id !== me.id; }).map(function (q) {
+        var out = Object.assign({}, known[q.id] || {}, q);
+        if (!out.equipment) out.equipment = {};               // (the database drops an empty one)
+        return out;
+      });
+    }
     if (w.now) clockOffset = w.now - Date.now();
   }
   // The other floors of the building you are in: what stands on each, so the ones you have a clear view of can be

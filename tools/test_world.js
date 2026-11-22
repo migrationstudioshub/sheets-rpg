@@ -1382,6 +1382,27 @@ test('a station recipe needs the station nearby and the tool in the bag', () => 
   assert.strictEqual(World.count(s.p, 'scrap'), 7);
 });
 
+test('harvesting: an object may list several tools, and any one of them will do', () => {
+  const s = camp();
+  s.c.objects.t_tree.properties.harvest_tool = 'axe, hammer';
+  assert.match(texts(act(s, { type: 'attack', x: 1, y: 0 }, 1000)), /You need an axe or a hammer for the pine/);
+  World.give(s.c, s.p, 'hammer', 1, []);
+  assert.match(texts(act(s, { type: 'attack', x: 1, y: 0 }, 3000)), /You hit the pine|The pine breaks/);
+});
+
+test('an item of a tool type is a tool by its own id; a tag, when given, is what counts; weapons are not tools by themselves', () => {
+  const t = JSON.parse(JSON.stringify(tables));
+  t.ItemTypes = (t.ItemTypes || []).concat([{ id: 'gear', name: 'Gear', tool: true }]);
+  t.Items.push({ id: 't_saw', name: 'Saw', type: 'tool' }, { id: 't_pick', name: 'Pick', type: 'gear' },
+    { id: 't_hatchet', name: 'Hatchet', type: 'tool', tool: 'axe' }, { id: 't_club', name: 'Club', type: 'weapon' });
+  const c = Content.build(t);
+  assert.deepStrictEqual([c.items.t_saw.tools, c.items.t_pick.tools, c.items.t_hatchet.tools, c.items.t_club.tools], [['t_saw'], ['t_pick'], ['axe'], []]);
+  const p = World.newPlayer(c, 'p1', 'Tester', 'warrior');
+  assert.strictEqual(World.hasTool(c, p, 't_saw'), false);
+  World.give(c, p, 't_saw', 1, []);
+  assert.strictEqual(World.hasTool(c, p, 't_saw, axe'), true);
+});
+
 test('using a crafting station tells the client to open the crafting panel', () => {
   const s = camp();
   put(s, 'camp', 4, 5, 'E');

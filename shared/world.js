@@ -980,7 +980,7 @@ var World = (function () {
     if (now < (p.nextAttack || 0)) return false;
     p.nextAttack = now + (Number(c.config.attack_ms) || 0);
     var tg0 = resolveTarget(c, ws, p.map, t), needTool = tg0 && tg0.obj && tg0.obj.properties && tg0.obj.properties.harvest_tool;
-    if (needTool && !hasTool(c, p, needTool)) { ev.push({ type: 'info', to: p.id, text: 'You need ' + aAn(needTool) + ' for the ' + tg0.name + '.' }); return true; }
+    if (needTool && !hasTool(c, p, needTool)) { ev.push({ type: 'info', to: p.id, text: 'You need ' + toolsText(needTool) + ' for the ' + tg0.name + '.' }); return true; }
     var res = damageStructure(c, ws, p.map, t, structureDamageOf(c, p, c.items[(p.equipment || {}).weapon]), { kind: 'melee', by: p.id, player: p, now: now }, ev);
     if (!res) ev.push({ type: 'info', to: p.id, text: 'You can\'t damage that.' });
     else if (!res.dealt) ev.push({ type: 'info', to: p.id, text: 'You can\'t even scratch the ' + res.tg.name + '.' });
@@ -2387,10 +2387,14 @@ var World = (function () {
   }
   // ------------------------------------------------------------ crafting
   /** Does the player carry something that counts as this tool (an item whose tool tags include it)? */
+  /** tag may list several tools ("axe, saw"): any one of them will do. */
+  function toolTags(tag) { return String(tag || '').split(/[;,]/).map(function (x) { return x.trim(); }).filter(Boolean); }
   function hasTool(c, p, tag) {
-    if (!tag) return true;
-    return (p.inventory || []).some(function (s) { var it = c.items[s.item]; return it && it.tools && it.tools.indexOf(tag) >= 0; });
+    var tags = toolTags(tag);
+    if (!tags.length) return true;
+    return (p.inventory || []).some(function (s) { var it = c.items[s.item]; return it && it.tools && tags.some(function (g) { return it.tools.indexOf(g) >= 0; }); });
   }
+  function toolsText(tag) { return toolTags(tag).map(aAn).join(' or '); }
   /** The crafting stations in reach: {stationId: object name}. A station is an object of kind craft with a station id. */
   function stationsNear(c, map, p, lk) {
     var out = {}, range = Number(c.config.station_range) || 2;

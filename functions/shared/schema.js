@@ -68,7 +68,7 @@ var Schema = (function () {
       f('armor', 'number', 0, 'Taken off every hit'),
       f('material', 'select', 'stone', 'What it is made of: decides how hard blows, bullets, blasts and fire land', { options: ['wood', 'metal', 'stone', 'glass'] }),
       f('breakable', 'bool', false, 'Walls of this style painted in the map editor can be damaged (needs hp above 0)'),
-      f('salvage', 'text', '', 'Items handed to whoever breaks it, e.g. wood:2, nails:1'),
+      f('salvage', 'items', '', 'Items handed to whoever breaks it'),
       f('notes', 'text', '')
     ] },
     kinds: { collection: 'kinds', id: null, label: 'Object Kinds', authored: 'studio', fields: [
@@ -99,7 +99,7 @@ var Schema = (function () {
       f('cooldown_s', 'number', 0, 'Seconds to wait before using another of the same item (0 = none). An item can set its own'),
       f('throw', 'bool', false, 'Can be thrown from the belt. Shows the throw fields'),
       f('ammo', 'bool', false, 'Is ammunition. Only shows the ammo fields (pierce, falloff) on the item'),
-      f('tool', 'bool', false, 'Often a tool. Only shows the tool fields (tool tags, structure damage) on the item'),
+      f('tool', 'bool', false, 'A tool. Shows the tool fields on the item; if the type is not equipped, its items count as tools by their own id with no tag needed'),
       f('properties', 'propdefs', '', 'Extra settings of your own for items of this type. The game stores them with the item; no rule reads them yet'),
       f('notes', 'text', '')
     ] },
@@ -124,7 +124,7 @@ var Schema = (function () {
       f('falloff', 'number', 0, 'Damage lost per extra hit (0–1)'),
       f('throw_range', 'number', 0), f('throw_area', 'number', 0), f('throw_power', 'number', 0),
       f('throw_status', 'ref', '', '', { ref: 'statuses' }), f('throw_status_ms', 'number', 0),
-      f('tool', 'text', '', 'Tool tags this item counts as, e.g. hammer or axe (recipes and harvesting can require one)'),
+      f('tool', 'text', '', 'Tool tags this item counts as, e.g. hammer or axe (recipes and harvesting can require one). Empty on an item of a tool type = it counts as a tool by its own id'),
       f('structure_dmg', 'number', 0, 'Damage per hit to walls and objects (0 = half its attack)'),
       f('burns', 'bool', false, 'Throwables: the blast also burns wooden walls and objects'),
       f('on_use', 'textarea', '', 'Data-driven action list'),

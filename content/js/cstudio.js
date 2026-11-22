@@ -429,7 +429,7 @@ var CStudio = (function () {
     var out = [], seen = {};
     function add(value, label) { if (value && !seen[value]) { seen[value] = out.length + 1; out.push({ value: value, names: [label] }); } else if (value) out[seen[value] - 1].names.push(label); }
     if (from === 'tools') (T.Items || []).forEach(function (it) {
-      String(it.tool || '').split(/[;,]/).forEach(function (tag) { add(tag.trim(), it.name || it.id); });
+      Content.toolTags(it, itemTypeRow(it.type)).forEach(function (tag) { add(tag, it.name || it.id); });   // its tags, or itself when its type is a tool type
     });
     if (from === 'stations') (T.Objects || []).forEach(function (o) { if (o.kind === 'craft') add(String(propsObj(o).station || '').trim(), o.name || o.id); });
     return out;
@@ -437,7 +437,7 @@ var CStudio = (function () {
   function choiceField(r, fl) {
     var val = r[fl.key] == null ? '' : String(r[fl.key]), opts = choicesFor(fl.from);
     var known = !val || opts.some(function (o) { return o.value === val; });
-    var none = !opts.length ? (fl.from === 'tools' ? 'No item has a tool tag yet: give an item one in Items → tool.' : 'No station yet: make an object of kind craft and give it a station id.') : '';
+    var none = !opts.length ? (fl.from === 'tools' ? 'No tool yet: make an item of a tool type (Item Types → tool tick), or give any item a tag in Items → tool.' : 'No station yet: make an object of kind craft and give it a station id.') : '';
     return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }),
       h('select', { style: known ? '' : 'border-color:var(--bad)', onchange: function (e) { r[fl.key] = e.target.value; persist(); renderForm(); } },
         h('option', { value: '', text: '— none —' }),
@@ -447,18 +447,44 @@ var CStudio = (function () {
       none ? h('div', { className: 'help', style: 'color:var(--bad)', text: none }) : null);
   }
 
+  /** Rows of tool dropdowns (the tool tags items carry) and "+ Add tool". text = "axe, saw"; onSave(text) on every change. */
+  function toolsBox(text, onSave) {
+    var list = String(text == null ? '' : text).split(/[,;]/).map(function (x) { return x.trim(); }).filter(Boolean);
+    var opts = choicesFor('tools'), box = h('div', {});
+    function save() { onSave(list.filter(function (g, i) { return g && list.indexOf(g) === i; }).join(', ')); }
+    function draw() {
+      box.innerHTML = '';
+      list.forEach(function (g, i) {
+        var known = !g || opts.some(function (o) { return o.value === g; });
+        box.appendChild(h('div', { className: 'row', style: 'margin-bottom:4px' },
+          h('select', { style: 'flex:1;min-width:0' + (known ? '' : ';border-color:var(--bad)'), title: known ? '' : 'No item carries this tool tag', onchange: function (e) { list[i] = e.target.value; save(); draw(); } },
+            h('option', { value: '', text: '— pick a tool —' }),
+            known ? null : h('option', { value: g, text: g + ' (missing)', selected: true }),
+            opts.filter(function (o) { return o.value === g || list.indexOf(o.value) < 0; }).map(function (o) { return h('option', { value: o.value, text: o.value + '  (' + o.names.join(', ') + ')', selected: o.value === g }); })),
+          h('button', { text: '✕', title: 'Remove', onclick: function () { list.splice(i, 1); save(); draw(); } })));
+      });
+      box.appendChild(h('button', { text: '+ Add tool', onclick: function () { list.push(''); draw(); } }));
+      if (!opts.length) box.appendChild(h('div', { className: 'help', style: 'color:var(--bad)', text: 'No tool yet: make an item of a tool type (Item Types → tool tick), or give any item a tag in Items → tool.' }));
+    }
+    draw();
+    return box;
+  }
+
   // A list of "item + amount" rows (blueprint cost, recipe inputs/outputs). Stored as the same text the rules
   // read ("wood:4, nails:2"), so nothing else changes; a row with no item picked yet is simply not saved.
   function itemsField(r, fl) {
-    var list = String(r[fl.key] == null ? '' : r[fl.key]).split(/[,;]/).map(function (part) {
+    return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }),
+      itemsBox(r[fl.key], function (text) { r[fl.key] = text; persist(); }),
+      fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+  }
+  /** The rows themselves: an item dropdown + an amount each, and "+ Add item". text = "wood:2, nails:1"; onSave(text) on every change. */
+  function itemsBox(text, onSave) {
+    var list = String(text == null ? '' : text).split(/[,;]/).map(function (part) {
       var bits = part.trim().split(':'), q = parseInt(bits[1], 10);
       return bits[0] ? { item: bits[0].trim(), qty: q > 0 ? q : 1 } : null;
     }).filter(Boolean);
     var items = (T.Items || []).filter(function (x) { return x.id; }), box = h('div', {});
-    function save() {
-      r[fl.key] = list.filter(function (g) { return g.item; }).map(function (g) { return g.item + ':' + g.qty; }).join(', ');
-      persist();
-    }
+    function save() { onSave(list.filter(function (g) { return g.item; }).map(function (g) { return g.item + ':' + g.qty; }).join(', ')); }
     function draw() {
       box.innerHTML = '';
       list.forEach(function (g, i) {
@@ -476,8 +502,7 @@ var CStudio = (function () {
       box.appendChild(h('button', { text: '+ Add item', onclick: function () { list.push({ item: '', qty: 1 }); draw(); } }));
     }
     draw();
-    return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }), box,
-      fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+    return box;
   }
 
   // Terrain is EITHER a plain sprite OR an autotile; a segmented toggle shows only the matching field and
@@ -679,14 +704,15 @@ var CStudio = (function () {
         h('input', { type: 'checkbox', checked: !!p.indestructible, onchange: function (e) { setProp(o, 'indestructible', e.target.checked ? true : undefined); } }),
         h('span', { text: '  never breaks' }), h('span', { className: 'help', text: '— even with health set (quest doors and the like)' })),
       h('label', { text: 'salvage' }),
-      h('input', { type: 'text', value: p.salvage || '', placeholder: 'wood:2; nails:1', oninput: function (e) { setProp(o, 'salvage', e.target.value.trim() || undefined); } }),
+      itemsBox(p.salvage, function (text) { setProp(o, 'salvage', text || undefined); }),
       h('label', { text: 'harvest' }),
-      h('div', { className: 'lootrow' },
-        h('input', { type: 'text', value: p.harvest || '', placeholder: 'wood:3', title: 'Items given to whoever breaks it; it then grows back', style: 'flex:1', oninput: function (e) { setProp(o, 'harvest', e.target.value.trim() || undefined); } }),
-        h('span', { className: 'lootlbl', text: 'needs tool' }),
-        h('input', { type: 'text', value: p.harvest_tool || '', placeholder: 'axe', style: 'width:80px', title: 'Tool tag needed to harvest it by hand', oninput: function (e) { setProp(o, 'harvest_tool', e.target.value.trim() || undefined); } }),
+      itemsBox(p.harvest, function (text) { setProp(o, 'harvest', text || undefined); }),
+      h('div', { className: 'lootrow', style: 'margin-top:4px' },
         h('span', { className: 'lootlbl', text: 'back after (s)' }),
         h('input', { type: 'number', min: 0, value: p.respawn_s == null ? '' : p.respawn_s, style: 'width:70px', title: 'Seconds until it grows back (empty = the Config default)', oninput: function (e) { setProp(o, 'respawn_s', e.target.value === '' ? undefined : Number(e.target.value)); } })),
+      h('label', { text: 'needs tool' }),
+      toolsBox(p.harvest_tool, function (text) { setProp(o, 'harvest_tool', text || undefined); }),
+      h('div', { className: 'help', text: 'Tools that can harvest it by hand: any ONE of them is enough (none = bare hands). Lists the tool tags your items carry.' }),
       h('div', { className: 'help', text: 'Harvest: set it (with health) on a tree, a wreck, a bush — breaking it gives these items, and it comes back after a while instead of being gone for good.' }),
       h('div', { className: 'help', text: 'Health 0 or empty = this object cannot be damaged. With health, players can break it by attacking, shooting or blasting it; whoever breaks it gets the salvage. Spawns, triggers, teleports, signs and NPCs never break.' })));
     if (o.kind === 'stairs') {

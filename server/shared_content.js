@@ -81,6 +81,19 @@ var Content = (function () {
         .map(function (d) { return { name: str(d.name), type: str(d.type) || 'text', def: d.def == null ? '' : d.def, notes: str(d.notes) }; }) };
   }
 
+  /**
+   * The tool tags an item counts as (what "needs tool" on a blueprint, a recipe or a harvestable object asks for).
+   * Its own `tool` field if it has one ("axe, blade"). With none, an item whose type is a tool type — the type's id
+   * is "tool", or it has the tool tick and is not something you equip (so not every weapon) — is a tool by its own id.
+   * r = the item's row, ty = its type (a row or a built type; may be missing). The Content Studio lists the same.
+   */
+  function toolTags(r, ty) {
+    var tags = str(r && r.tool).split(/[;,]/).map(function (x) { return x.trim(); }).filter(Boolean);
+    if (tags.length || !r || !str(r.id)) return tags;
+    var isTool = str(r.type) === 'tool' || !!(ty && bool(ty.tool) && !bool(ty.equip));
+    return isTool ? [str(r.id)] : tags;
+  }
+
   function build(tables) {
     var c = { config: {}, tilesets: {}, autotile: {}, terrain: {}, kinds: {}, objects: {}, maps: {} };
 
@@ -228,7 +241,7 @@ var Content = (function () {
         // damage to walls/objects per hit (0 = derived from attack); burns = a thrown blast also sets wood alight
         structureDmg: num(r.structure_dmg, 0), burns: bool(r.burns),
         // tool tags this item counts as (hammer, axe, ...): recipes and harvestable objects can ask for one
-        tools: str(r.tool).split(/[;,]/).map(function (x) { return x.trim(); }).filter(Boolean),
+        tools: toolTags(r, c.itemTypes[str(r.type)]),
         onUse: str(r.on_use) };
     });
     (tables.Monsters || []).forEach(function (r) {
@@ -439,6 +452,6 @@ var Content = (function () {
     return hash({ row: row, ents: ents });
   }
 
-  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, linkFloors: linkFloors, autoFloors: autoFloors, tidyMaps: tidyMaps };
+  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, toolTags: toolTags, linkFloors: linkFloors, autoFloors: autoFloors, tidyMaps: tidyMaps };
 })();
 if (typeof module !== 'undefined') module.exports = Content;

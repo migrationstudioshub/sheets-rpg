@@ -139,6 +139,11 @@ var Schema = (function () {
       f('attack_range', 'number', 0, '0 = melee; >1 = ranged'), f('ranged_cooldown_ms', 'number', 1500),
       f('ranged_projectile', 'bool', false), f('ranged_status', 'ref', '', '', { ref: 'statuses' }),
       f('infect_chance', 'number', 0, 'Chance a hit infects (0–1)'),
+      f('brain', 'select', '', 'How it thinks. Empty = plain: it goes for any player within aggro_range, even through walls, and forgets them when they step out. walker = it must SEE its target, remembers it, searches where it lost it, and breaks what stands in its way', { options: ['walker'] }),
+      f('sight_range', 'number', 0, 'Walker: how many tiles away it can spot a target, with a clear line of sight (0 = aggro_range). Once it is after someone, aggro_range is how close it still hears them through walls'),
+      f('aggro_s', 'number', 0, 'Walker: seconds it keeps looking after losing sight of its target (0 = 30). Time only runs while someone is on the map'),
+      f('structure_dmg', 'number', 0, 'Walker: damage per blow to doors, windows, walls and objects in its way (0 = its atk)'),
+      f('prey', 'bool', false, 'An animal: walkers hunt it like they hunt players'),
       f('appearance', 'looks', '', 'Paper-doll sets rolled per spawn — add more than one (e.g. male/female) and one is picked by weight (blank = use the flat sprite)', { ref: 'appearances' })
     ] },
     appearances: { collection: 'appearances', id: 'id', label: 'Appearances', singular: 'appearance set', authored: 'studio', fields: [

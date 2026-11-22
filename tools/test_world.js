@@ -1271,7 +1271,8 @@ test('swinging at a wall: the attack action hits what is in the way; a shut door
   assert.ok(!liveOf(s).entities.some(e => e.key === 'arena.e1'), 'the door is no longer on the map');
   assert.deepStrictEqual(Rules.entitiesAt(liveOf(s), 1, 3).map(e => e.key), [], 'nor can it be found on its tile any more');
   assert.match(texts(act(s, { type: 'interact' }, now + 3000)), /Nothing to use here|wall is in the way/, 'so there is nothing left to open');
-  assert.strictEqual(Rules.tryMove(s.c, liveOf(s), 1, 3, 'N', {}).ok, false, 'the wall it hung on still stands');
+  assert.strictEqual(Rules.tryMove(s.c, liveOf(s), 1, 3, 'N', {}).ok, true, 'and the doorway is open: the stretch of wall it hung in went with it');
+  assert.strictEqual(World.structInfo(s.c, liveOf(s), { t: 'wall', orient: 'h', x: 1, y: 3 }), null);
   put(s, 'arena', 5, 3, 'N');
   assert.match(texts(act(s, { type: 'attack', x: 5, y: 2 }, now + 5000)), /Nothing to attack there/, 'unbreakable brick is not a target');
   put(s, 'arena', 5, 2, 'N');
@@ -2642,6 +2643,166 @@ test('upstairs, floor laid or taken up is roof gained or lost below, and it obey
   assert.match(doAs(s2, s2.p, { type: 'build', bp: 'bp_steps', x: 8, y: 6, facing: 'E' }), /You build a stairs|Stairs|stairs/);
   assert.ok(!World.covered(s2.c, live(s2, 'yard'), 8, 6), 'the stairwell is open');
   assert.strictEqual(live(s2, 'yard_z1').terrain[6][8], '');
+});
+
+// ---------------------------------------------------------------- monster brains: the walker
+// A walker dropped into a test map. `over` = settings of its monster def (sight, aggroS, ...).
+function withWalker(s, mapId, x, y, over) {
+  s.c.monsters.walker = Object.assign({}, s.c.monsters.walker, { brain: 'walker', sight: 8, aggroS: 30, infectChance: 0 }, over || {});
+  const w = { ref: 'walker', id: 'walker#0', x, y, dead: false, hp: s.c.monsters.walker.hp, statuses: [], last: 0, facing: 'S' };
+  const ms = World.mapState(s.ws, mapId);
+  ms.monsters = [w]; ms.spawnSig = '';
+  s.at = 0; s.mapId = mapId;
+  return w;
+}
+// The world moves on one walker step at a time; returns everything that happened.
+function turns(s, n, rng) {
+  let ev = [];
+  for (let i = 0; i < n; i++) { s.at += s.c.monsters.walker.moveMs; const e = []; World.advance(s.c, s.ws, s.mapId, [s.p], s.at, rng || mid, e); ev = ev.concat(e); }
+  return ev;
+}
+const DOOR = { t: 'ent', key: 'arena.e1' };
+
+test('walker: it must see you to come after you; a wall in between and it does not know you are there', () => {
+  const s = arena();
+  put(s, 'arena', 3, 5, 'N');                                  // south of the wall that crosses the arena, door shut
+  const w = withWalker(s, 'arena', 3, 1);                      // north of it, 4 tiles away: well inside its range
+  turns(s, 6);
+  assert.strictEqual(w.ai, undefined, 'nothing to go after');
+  assert.strictEqual(s.p.hp, World.stats(s.c, s.p).maxHp);
+  // the plain brain, for contrast, is drawn through the wall
+  s.c.monsters.walker.brain = '';
+  w.x = 3; w.y = 1;
+  turns(s, 2);
+  assert.deepStrictEqual([w.x, w.y], [3, 2], 'pressed against the wall, as before');
+});
+
+test('walker: no player around and it is inert; one comes near and it wakes', () => {
+  const s = arena();
+  s.c.config.walker_wake_radius = 2;
+  put(s, 'arena', 6, 0, 'S');
+  const w = withWalker(s, 'arena', 0, 0);                      // in plain sight along the top row, but nobody is near it
+  turns(s, 8, dice([0.1]));                                    // (this die would have it wander every turn)
+  assert.deepStrictEqual([w.x, w.y, w.ai], [0, 0, undefined]);
+  put(s, 'arena', 2, 0, 'S');
+  turns(s, 1);
+  assert.strictEqual(w.ai.k, 'p', 'now somebody is there to set it off');
+});
+
+test('walker: it hunts what it sees, keeps looking after losing sight, and gives up when its aggro has run out', () => {
+  const s = arena();
+  put(s, 'arena', 6, 0, 'S');
+  const w = withWalker(s, 'arena', 0, 0, { aggroS: 5, aggro: 2 });
+  turns(s, 2);
+  assert.deepStrictEqual([w.ai.k, w.ai.id, w.ai.a, w.x], ['p', 'p1', 5000, 2], 'seen: full aggro, and on its way');
+  put(s, 'arena', 6, 6, 'S');                                  // gone behind the wall, too far to hear
+  turns(s, 1);
+  assert.ok(w.ai && w.ai.a < 5000, 'out of sight: the aggro starts to run down');
+  assert.deepStrictEqual([w.ai.x, w.ai.y], [6, 0], 'it still makes for where it last saw them');
+  // it survives being saved and loaded, and a night with nobody on the map costs it nothing
+  const left = w.ai.a;
+  s.ws = JSON.parse(JSON.stringify(s.ws));
+  const w2 = World.mapState(s.ws, 'arena').monsters[0];
+  s.at += 8 * 3600 * 1000;
+  const e = []; World.advance(s.c, s.ws, 'arena', [s.p], s.at, mid, e);
+  assert.ok(w2.ai && w2.ai.k === 'p' && w2.ai.a >= left - 2 * 1100, 'still hunting the next morning');
+  turns(s, 6);
+  assert.strictEqual(w2.ai, undefined, 'and after its few seconds of looking, it lets go');
+});
+
+test('walker: its target behind a shut door, it breaks the door down, comes through and attacks', () => {
+  const s = arena();
+  put(s, 'arena', 0, 0, 'S');
+  const w = withWalker(s, 'arena', 2, 2, { aggro: 6 });        // door hp 12, plank wall hp 20, its blows do 6
+  turns(s, 1);
+  assert.strictEqual(w.ai.k, 'p');
+  put(s, 'arena', 1, 5, 'N');                                  // the player slips to the far side; it hears them there
+  const ev = turns(s, 8);
+  const hits = ev.filter(e => e.type === 'hit' && e.struct);
+  assert.deepStrictEqual(hits.map(e => e.struct), ['arena.e1', 'arena.e1'], 'two blows, both on the door: the weakest way in');
+  assert.strictEqual(World.structInfo(s.c, liveOf(s), DOOR), null, 'the door is gone');
+  assert.strictEqual(World.structInfo(s.c, liveOf(s), WALL(2)).hp, 20, 'the wall beside it was never touched');
+  assert.ok(w.y >= 3, 'it came through the doorway');
+  assert.match(texts(ev), /The walker hits you for/);
+});
+
+test('walker: the way it works out counts blows as steps: a weak door before a wall, and never what it cannot break', () => {
+  const s = arena();
+  const w = withWalker(s, 'arena', 2, 2);
+  const to = (x, y) => (ax, ay) => ax === x && ay === y;
+  assert.strictEqual(World.findPath(s.c, s.ws, 'arena', liveOf(s), w, to(1, 4), 6, { obst: {} }), 'WSS', 'through the door');
+  assert.strictEqual(World.findPath(s.c, s.ws, 'arena', liveOf(s), w, to(3, 4), 6, { obst: {} }), 'ESS', 'through the planks when the door is the long way');
+  assert.strictEqual(World.findPath(s.c, s.ws, 'arena', liveOf(s), w, to(1, 4), 0, { obst: {} }), null, 'on foot alone there is no way');
+  w.x = 5; w.y = 2;
+  assert.strictEqual(World.findPath(s.c, s.ws, 'arena', liveOf(s), w, to(5, 3), 6, { obst: {} }), 'WWSEE', 'never through brick it cannot break: along to the planks');
+});
+
+function walkerYard(cfg) {
+  const s = yard();
+  Object.assign(s.c.config, cfg || {});
+  doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'N' });
+  const rec = World.structInfo(s.c, yardMap(s), N44).rec;
+  rec.prog = rec.need; rec.hp = rec.max;                       // a finished wall north of the builder: 40 health
+  return s;
+}
+
+test('walker: what players built draws it like a player would, and it tears it down to get at who is behind', () => {
+  const s = walkerYard();
+  const w = withWalker(s, 'yard', 4, 1);                       // the wall hides the builder from it
+  turns(s, 1);
+  assert.deepStrictEqual([w.ai.k, w.ai.t], ['s', N44]);
+  let ev = turns(s, 3);
+  assert.deepStrictEqual([w.x, w.y], [4, 3], 'it walks up to the wall');
+  assert.ok(ev.some(e => e.type === 'hit' && e.struct === 'h4,4'), 'and starts on it');
+  ev = ev.concat(turns(s, 8));
+  assert.strictEqual(World.structInfo(s.c, yardMap(s), N44), null, 'seven blows and the wall is down');
+  assert.strictEqual(w.ai.k, 'p', 'through the hole it had beaten in it, it saw the builder');
+  assert.match(texts(ev), /The walker hits you for/);
+});
+
+test('walker: Config walkers_attack_buildings = off leaves buildings alone', () => {
+  const s = walkerYard({ walkers_attack_buildings: 'off' });
+  const w = withWalker(s, 'yard', 4, 1);
+  turns(s, 6);
+  assert.strictEqual(w.ai, undefined);
+  assert.strictEqual(World.structInfo(s.c, yardMap(s), N44).hp, 40);
+});
+
+test('walker: a living target comes before a building, and a building is left when one shows up', () => {
+  const s = walkerYard();
+  const w = withWalker(s, 'yard', 4, 1);
+  turns(s, 2);
+  assert.strictEqual(w.ai.k, 's');
+  put(s, 'yard', 1, 1, 'S');                                   // the builder steps out into the open
+  turns(s, 1);
+  assert.deepStrictEqual([w.ai.k, w.ai.id], ['p', 'p1']);
+});
+
+test('walker: it hunts prey animals too, once a player is around to see it start, and stops when it has won', () => {
+  const s = arena();
+  s.c.config.walker_wake_radius = 3;
+  s.c.monsters.deer = Object.assign({}, s.c.monsters.rat, { id: 'deer', name: 'Deer', prey: true, hp: 10, aggro: 0, moveMs: 600000 });
+  put(s, 'arena', 6, 6, 'N');                                  // the player is south of the wall, out of sight and far away
+  const w = withWalker(s, 'arena', 0, 0);
+  const deer = { ref: 'deer', id: 'deer#0', x: 3, y: 0, dead: false, hp: 10, statuses: [], last: 0, respawnAt: 0 };
+  World.mapState(s.ws, 'arena').monsters.push(deer);
+  turns(s, 3);
+  assert.strictEqual(w.ai, undefined, 'nobody near: inert');
+  s.c.config.walker_wake_radius = 24;
+  turns(s, 1);
+  assert.deepStrictEqual([w.ai.k, w.ai.id], ['m', 'deer#0']);
+  turns(s, 6);
+  assert.strictEqual(deer.dead, true, 'it caught the deer');
+  assert.strictEqual(w.ai, undefined, 'and with that it is done');
+});
+
+test('walker: struck from out of sight, it turns on whoever struck it', () => {
+  const s = arena();
+  put(s, 'arena', 3, 5, 'N');
+  const w = withWalker(s, 'arena', 3, 1);
+  w.engaged = 'p1';                                            // what World.hitMonster leaves on a monster a player hurt
+  turns(s, 1);
+  assert.deepStrictEqual([w.ai.k, w.ai.id, w.engaged], ['p', 'p1', null]);
 });
 
 console.log(`\n${passed} world tests passed`);

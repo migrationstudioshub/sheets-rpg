@@ -279,6 +279,16 @@
    "key": "auto_floors",
    "value": 2,
    "notes": "How many empty storeys the game supplies above every map for players to build on (roofs, upper floors). 0 = only the floors made in the map editor."
+  },
+  {
+   "key": "walker_wake_radius",
+   "value": 24,
+   "notes": "Walker monsters with no player within this many tiles stand still and do not think"
+  },
+  {
+   "key": "walkers_attack_buildings",
+   "value": "on",
+   "notes": "on = a walker with nothing alive to chase attacks what players built, when it sees it"
   }
  ],
  "Tilesets": [
@@ -5276,7 +5286,12 @@
    "infect_chance": 0,
    "sprite": "art/sprites/slime.png",
    "notes": "",
-   "appearance": ""
+   "appearance": "",
+   "brain": "",
+   "sight_range": 0,
+   "aggro_s": 0,
+   "structure_dmg": 0,
+   "prey": false
   },
   {
    "id": "rat",
@@ -5298,7 +5313,12 @@
    "infect_chance": 0,
    "sprite": "art/sprites/rat.png",
    "notes": "",
-   "appearance": ""
+   "appearance": "",
+   "brain": "",
+   "sight_range": 0,
+   "aggro_s": 0,
+   "structure_dmg": 0,
+   "prey": false
   },
   {
    "id": "bat",
@@ -5320,7 +5340,12 @@
    "infect_chance": 0,
    "sprite": "art/sprites/bat.png",
    "notes": "",
-   "appearance": ""
+   "appearance": "",
+   "brain": "",
+   "sight_range": 0,
+   "aggro_s": 0,
+   "structure_dmg": 0,
+   "prey": false
   },
   {
    "id": "skeleton",
@@ -5342,7 +5367,12 @@
    "infect_chance": 0,
    "sprite": "art/sprites/skeleton.png",
    "notes": "",
-   "appearance": ""
+   "appearance": "",
+   "brain": "",
+   "sight_range": 0,
+   "aggro_s": 0,
+   "structure_dmg": 0,
+   "prey": false
   },
   {
    "id": "walker",
@@ -5364,7 +5394,12 @@
    "infect_chance": 0.5,
    "sprite": "art/sprites/walker.png",
    "notes": "",
-   "appearance": "zombie_plain"
+   "appearance": "zombie_plain",
+   "brain": "walker",
+   "sight_range": 9,
+   "aggro_s": 30,
+   "structure_dmg": 0,
+   "prey": false
   },
   {
    "id": "spitter",
@@ -5386,7 +5421,12 @@
    "infect_chance": 0,
    "sprite": "art/sprites/spitter.png",
    "notes": "",
-   "appearance": ""
+   "appearance": "",
+   "brain": "",
+   "sight_range": 0,
+   "aggro_s": 0,
+   "structure_dmg": 0,
+   "prey": false
   }
  ],
  "LootTables": [

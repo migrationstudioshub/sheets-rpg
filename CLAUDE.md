@@ -96,6 +96,14 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   also read) make it turnable. A placement carries `data.facing` N|E|S|W (west = the side picture mirrored) and its `pass_*`
   sides turn with it. `Rules.facingOf / turnable / facingSprite / nextFacing / passOf` are the only readers. Editor: T or
   Shift+wheel, and a Facing setting; game: same keys on the build ghost (`build` takes `facing`), `{type:'turn', target}` after.
+- **Monster brains** (Nov 2026): Monsters `brain` picks how one thinks; empty = the plain one inside `World.advance` (nearest player
+  within `aggro_range`, straight line, through walls). **`walker`** = `World.walkerStep`: inert with no player within Config
+  `walker_wake_radius` (24); it must SEE a target (`sight_range`, same LoS as players) to start; state is `m.ai` in the map record
+  (`k` p|m|s = player, prey monster, built structure; `a` aggro left; last-known `x,y`; a kept path `p`), so a hunt survives everyone
+  leaving. Aggro runs down by the walker's own turns, never by the clock. `findPath` counts blows as steps (bounded: `WALKER_NODES`,
+  `WALKER_PLANS` per map per turn) and the walker breaks what is in the way with `damageStructure` (kind `monster`). Monsters `prey` =
+  walkers hunt it. Config `walkers_attack_buildings` (on). A door or window that is destroyed now takes its stretch of wall along
+  (a hole, for everyone). Hearing (shots) is not built.
 - **Walking:** `Rules.DIRS` stays four-way (facing, walls, "next to"); `Rules.DIAG` (NE/SE/SW/NW) are move-only steps, allowed
   by `tryMove` only when BOTH straight ways round the corner are open, costing `Rules.stepCost` = 1.4. Facing stays four-way
   (`Rules.faceFor`). The referee enforces walking speed: a per-player budget (`p.mvB`/`p.mvT`) refills one step per `move_ms`

@@ -221,6 +221,13 @@ var World = (function () {
       if (st.walls[tg.key]) delete st.walls[tg.key]; else st.gone[tg.key] = 1;
       delete st.dmg[tg.key];
     } else {
+      // A door or a window broken out of its wall takes that stretch of wall with it: what is left is a hole to
+      // walk through, not a blank wall (which is what the fixture was standing in).
+      if (tg.obj && tg.e && openingOf(tg.obj)) fixtureEdges(tg.obj, tg.e).forEach(function (q) {
+        var wk = Rl().edgeKey(q.orient, q.x, q.y);
+        if (st.walls[wk]) delete st.walls[wk]; else if (Rl().wallAt(map, q.orient, q.x, q.y)) st.gone[wk] = 1;
+        delete st.dmg[wk];
+      });
       dropEnt(tg.key);
       var hv = !tg.built && tg.obj && tg.obj.properties && tg.obj.properties.harvest;
       if (hv) {                                              // a tree, a wreck...: it yields, then comes back later
@@ -1484,7 +1491,8 @@ var World = (function () {
     else goal = { way: 'down', x: x, y: y, dir: dir };            // from the landing they left, the way they stepped
     (ms.monsters || []).forEach(function (m) {
       var def = c.monsters[m.ref]; if (!def || m.dead) return;
-      if (m.engaged !== p.id && Math.abs(m.x - x) + Math.abs(m.y - y) > def.aggro) return;
+      var after = m.engaged === p.id || !!(m.ai && m.ai.k === 'p' && m.ai.id === p.id);
+      if (def.brain === 'walker' ? !after : (!after && Math.abs(m.x - x) + Math.abs(m.y - y) > def.aggro)) return;
       m.follow = { way: goal.way, x: goal.x, y: goal.y, dir: goal.dir, who: p.id, until: now + FOLLOW_MS };
       any = true;
     });
@@ -1546,6 +1554,308 @@ var World = (function () {
     });
   }
 
+  // ------------------------------------------------------------ monster brains
+  // Each monster def names a brain (Monsters → brain). '' is the plain one in advance(): go for whoever is within
+  // aggro range, in a straight line. 'walker' is walkerStep below.
+  /** A ranged monster's shot at a player `dist` tiles away, if it has one ready and a clear line. True = it fired. */
+  function monsterShot(c, ws, mapId, map, m, def, ms2, target, dist, now, rng, ev) {
+    if (!(def.attackRange > 1 && dist > 1 && dist <= def.attackRange && now >= (m.nextShot || 0) &&
+        canSee(c, map, m.x, m.y, target.x, target.y, function (e) { return stateOf(c, ws, mapId, e); }))) return false;
+    m.nextShot = now + def.rangedMs;
+    m.facing = Math.abs(target.x - m.x) >= Math.abs(target.y - m.y) ? (target.x > m.x ? 'E' : 'W') : (target.y > m.y ? 'S' : 'N');
+    var rdmg = damage(ms2.atk, stats(c, target).def, rng);
+    target.hp -= rdmg;
+    ev.push({ type: 'cast', map: mapId, skill: '_ranged', by: m.id, from: { x: m.x, y: m.y }, to: { x: target.x, y: target.y }, x: target.x, y: target.y, projectile: !!def.rangedProjectile, color: '#8fbf4f' });
+    ev.push({ type: 'hit', map: mapId, x: target.x, y: target.y, amount: rdmg, to: target.id, text: 'The ' + lower(def.name) + ' spits at you for ' + rdmg + '.' });
+    if (target.hp <= 0) die(c, ws, target, ev);
+    else {
+      if (def.rangedStatus && c.statuses && c.statuses[def.rangedStatus]) applyStatus(c, target, def.rangedStatus, Number(c.config.ranged_status_ms) || 3000, now, m.id);
+      if (def.infectChance && rng() < def.infectChance) applyInfection(c, ws, mapId, target, now, ev);
+    }
+    return true;
+  }
+  /** A monster's blow at the player beside it. True = that killed them. */
+  function monsterSwing(c, ws, mapId, m, def, ms2, target, now, rng, ev) {
+    var dmg = damage(ms2.atk, stats(c, target).def, rng);
+    target.hp -= dmg;
+    m.facing = target.x > m.x ? 'E' : target.x < m.x ? 'W' : target.y > m.y ? 'S' : 'N';
+    ev.push({ type: 'hit', map: mapId, x: target.x, y: target.y, amount: dmg, to: target.id, text: 'The ' + lower(def.name) + ' hits you for ' + dmg + '.' });
+    if (target.hp <= 0) { die(c, ws, target, ev); return true; }
+    if (def.infectChance && rng() < def.infectChance) applyInfection(c, ws, mapId, target, now, ev);
+    return false;
+  }
+  /** Idle wandering near its spawn point; away from home it drifts back. */
+  function roamStep(c, ws, mapId, map, m, here, rng) {
+    if (!(rng() < 0.5)) return;
+    var dir = 'NESW'.charAt(rint(rng, 0, 3));
+    var sp = entity(c, mapId, m.spawn), rad = sp ? (Number(props(c, sp).radius) || 0) + 2 : 3;
+    // Away from home (it chased someone and lost them): it does not freeze there. It mills about, and half
+    // its steps head back, so it drifts home.
+    var away = !!sp && (Math.abs(m.x - sp.x) > rad || Math.abs(m.y - sp.y) > rad);
+    if (away && rng() < 0.5) {
+      var hx = sp.x - m.x, hy = sp.y - m.y;
+      dir = Math.abs(hx) >= Math.abs(hy) ? (hx > 0 ? 'E' : 'W') : (hy > 0 ? 'S' : 'N');
+    }
+    var r2 = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
+    if (r2.ok && !r2.map && (!sp || away || (Math.abs(r2.x - sp.x) <= rad && Math.abs(r2.y - sp.y) <= rad))) { m.x = r2.x; m.y = r2.y; m.facing = dir; }
+  }
+  function millStep(c, ws, mapId, map, m, here, rng) {
+    var dir = 'NESW'.charAt(rint(rng, 0, 3)), r = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
+    if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = dir; }
+  }
+
+  // ---- the walker ----
+  // What a walker carries between turns, in the map's record (so it survives everyone leaving): m.ai =
+  //   {k: 'p' a player | 'm' a prey monster | 's' something players built, id / t: who or what,
+  //    a: aggro left in ms, x, y: where it last knew its target to be,
+  //    p: the way it worked out ("NNEES"), g: where that way leads, n: turns to wait before working one out again,
+  //    w: 1 = it is poking around where it lost them (walks only, breaks nothing)}
+  // No m.ai = it is not after anything.
+  //   INERT     no player within Config walker_wake_radius: it does not move or think at all.
+  //   ROAM      a player is around: it wanders, and looks. Seeing a player or a prey animal (line of sight, within
+  //             sight_range) or, failing those, something players built, starts the hunt.
+  //   HUNT      while it sees its target, aggro stays full. It walks straight at it, or along a way it works out;
+  //             what blocks that way and can be broken, it breaks (the cheapest way counts blows as steps, so a
+  //             door goes before a wall and a short way round before either).
+  //   SEARCH    target out of sight: aggro runs down, by the walker's OWN turns (so not while nobody is on the map
+  //             and the world stands still). It makes for where it last saw them (within aggro_range it still hears
+  //             them through walls), breaking in if it must, then pokes around. At zero it gives up.
+  // Once hunting it needs no player nearby. It ends by losing interest, by winning (target dead or destroyed), or dying.
+  var WALKER_PATH = 24, WALKER_NODES = 320, WALKER_REACH = 18, WALKER_MAXCOST = 160;
+  var WALKER_PLANS = 8;                                       // ways worked out per map per turn, whatever the size of the horde: the rest wait their turn
+  function walkerCtx(c, ws, mapId, map) {
+    var b = c.config.walkers_attack_buildings;
+    return { map: map, stale: false, built: null, prey: null, obst: {}, budget: WALKER_PLANS, stateFn: function (e) { return stateOf(c, ws, mapId, e); },
+      wake: cfgNum(c, 'walker_wake_radius', 24), buildings: b === undefined || b === '' || yes(b) };
+  }
+  /** Can something standing at (x, y) strike this wall or object (tg from resolveOn)? */
+  function structReach(c, map, x, y, tg) {
+    var cells = structCells(tg);
+    if (tg.t === 'wall' || (tg.obj && isWallFixture(tg.obj))) return cells.some(function (q) { return q.x === x && q.y === y; });
+    var d = cheb(x, y, tg.x, tg.y);
+    return d === 0 || (d === 1 && !moveBlockedEdge(c, map, x, y, tg.x, tg.y));
+  }
+  /** How many of a monster's blows (dmg each) a wall or object takes to break; 0 = it cannot be broken that way. */
+  function blowsToBreak(c, map, t, dmg) {
+    var tg = resolveOn(c, map, map._struct, t); if (!tg || !tg.can || tg.hp <= 0) return 0;
+    var mult = MULT.monster[tg.material]; if (mult === undefined) mult = 1;
+    var dealt = Math.max(0, Math.round(dmg * mult) - tg.armor);
+    return dealt > 0 ? Math.ceil(tg.hp / dealt) : 0;
+  }
+  /**
+   * A step from (x, y) towards dir failed with answer r: what would have to be broken to make it, as
+   * {t: target, hits} — the shut door or window on that edge, else the wall, else the object in the way — or null.
+   */
+  function obstacleFor(c, map, x, y, dir, r, dmg, ctx) {
+    var k = x + ',' + y + dir + dmg; if (ctx.obst[k] !== undefined) return ctx.obst[k];
+    var cands = [], R = Rl(), d = R.DIRS[dir];
+    if (r.reason === 'wall' || r.reason === 'door') {
+      var ed = R.wallEdge(x, y, dir), ov = map._edgeOv && map._edgeOv[R.edgeKey(ed.orient, ed.x, ed.y)];
+      var tt = R.terrainAt(c, map, x + d.dx, y + d.dy);
+      if (tt && (tt.pass.n || tt.pass.e || tt.pass.s || tt.pass.w)) {          // (nothing to gain with no ground behind it)
+        if (ov && ov.key) cands.push({ t: 'ent', key: ov.key });
+        cands.push({ t: 'wall', orient: ed.orient, x: ed.x, y: ed.y });
+      }
+    } else if (r.reason === 'object' && r.entity) cands.push({ t: 'ent', key: r.entity });
+    var best = null;
+    cands.forEach(function (t) { var n = blowsToBreak(c, map, t, dmg); if (n > 0 && (!best || n < best.hits)) best = { t: t, hits: n }; });
+    return (ctx.obst[k] = best);
+  }
+  /**
+   * The cheapest way from the monster to a cell where at(x, y) holds, as a string of steps ("NNE"), '' when it is
+   * there already, or null when there is none within reach. Four-way. With dmg > 0, a step blocked by something it
+   * can break is allowed and costs its blows; with dmg 0 it only walks. Other creatures are not in the way here:
+   * the walk itself deals with them. Bounded (WALKER_NODES cells, WALKER_REACH tiles out) so a horde stays cheap.
+   */
+  function findPath(c, ws, mapId, map, m, at, dmg, ctx) {
+    if (at(m.x, m.y)) return '';
+    var R = Rl(), W = map.width, start = m.y * W + m.x, cost = {}, prev = {}, how = {}, done = {}, buckets = [[start]], n = 0, DIRS4 = ['N', 'E', 'S', 'W'];
+    var opts = { mapOf: function (id) { return liveMap(c, ws, id); }, walkable: function (e) { return walkableEntity(c, ws, mapId, e); } };
+    cost[start] = 0;
+    for (var cc = 0; cc < buckets.length && cc <= WALKER_MAXCOST; cc++) {
+      var b = buckets[cc]; if (!b) continue;
+      for (var i = 0; i < b.length; i++) {
+        var id = b[i]; if (done[id] || cost[id] !== cc) continue;
+        done[id] = 1;
+        var x = id % W, y = (id - x) / W;
+        if (id !== start && at(x, y)) {
+          var out = '';
+          while (id !== start) { out = how[id] + out; id = prev[id]; }
+          return out.slice(0, WALKER_PATH);
+        }
+        if (++n > WALKER_NODES) return null;
+        for (var k = 0; k < 4; k++) {
+          var dir = DIRS4[k], d = R.DIRS[dir], nx = x + d.dx, ny = y + d.dy, nid = ny * W + nx, step = 1;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= map.height || done[nid] || cheb(nx, ny, m.x, m.y) > WALKER_REACH) continue;
+          var r = R.tryMove(c, map, x, y, dir, opts);
+          if (r.map) continue;                                  // (stairs to another floor: not a way it plans)
+          if (!r.ok) {
+            var ob = dmg > 0 ? obstacleFor(c, map, x, y, dir, r, dmg, ctx) : null;
+            if (!ob) continue;
+            step = 1 + Math.min(60, Math.ceil(ob.hits / 2));
+          } else if (r.x !== nx || r.y !== ny) continue;
+          var nc = cc + step;
+          if (cost[nid] === undefined || nc < cost[nid]) { cost[nid] = nc; prev[nid] = id; how[nid] = dir; (buckets[nc] = buckets[nc] || []).push(nid); }
+        }
+      }
+    }
+    return null;
+  }
+  /** The nearest thing players built that the walker can see from where it stands (a target for resolveOn), or null. */
+  function builtInSight(c, map, m, sight, ctx) {
+    if (!ctx.built) {
+      var list = [], st = map._struct;
+      if (st) {
+        Object.keys(st.walls || {}).forEach(function (k) { var ed = edgeOfKey(k); if (ed) list.push({ t: { t: 'wall', orient: ed.orient, x: ed.x, y: ed.y }, cells: edgeCells(ed) }); });
+        (st.ents || []).forEach(function (e) {
+          var o = objOf(c, e); if (!o || NO_HP_KINDS[o.kind] || !(Number(e.max) > 0) || !(Number(e.hp) > 0)) return;
+          var cells = [{ x: e.x, y: e.y }];
+          if (isWallFixture(o)) { cells = []; fixtureEdges(o, e).forEach(function (q) { edgeCells(q).forEach(function (cl) { cells.push(cl); }); }); }
+          list.push({ t: { t: 'ent', key: e.key }, cells: cells });
+        });
+      }
+      ctx.built = list;
+    }
+    var near = [];
+    ctx.built.forEach(function (b) {
+      var d = 1e9; b.cells.forEach(function (q) { d = Math.min(d, cheb(q.x, q.y, m.x, m.y)); });
+      if (d <= sight) near.push({ b: b, d: d });
+    });
+    near.sort(function (p, q) { return p.d - q.d; });
+    for (var i = 0; i < near.length && i < 4; i++) {
+      var b = near[i].b, tg = resolveOn(c, map, map._struct, b.t);
+      if (!tg || !tg.can || tg.hp <= 0) continue;
+      if (b.cells.some(function (q) { return (q.x === m.x && q.y === m.y) || canSee(c, map, m.x, m.y, q.x, q.y, ctx.stateFn); })) return b.t;
+    }
+    return null;
+  }
+  /** A blow at a wall or object. */
+  function walkerBash(c, ws, mapId, m, def, ms2, t, now, ev, ctx) {
+    var res = damageStructure(c, ws, mapId, t, def.structureDmg > 0 ? def.structureDmg : ms2.atk, { kind: 'monster', by: m.id, now: now }, ev);
+    ctx.stale = true;                                         // the map changed: everyone after this one looks again
+    if (t.t === 'wall') m.facing = t.orient === 'h' ? (m.y >= t.y ? 'N' : 'S') : (m.x >= t.x ? 'W' : 'E');
+    else if (res && res.tg) m.facing = Math.abs(res.tg.x - m.x) >= Math.abs(res.tg.y - m.y) ? (res.tg.x > m.x ? 'E' : res.tg.x < m.x ? 'W' : m.facing) : (res.tg.y > m.y ? 'S' : 'N');
+    return res;
+  }
+  /**
+   * One turn of a walker. Answers 'stop' (it struck: no more steps this turn), 'gone' (it left this floor), or nothing.
+   */
+  function walkerStep(c, ws, mapId, ms, m, def, ms2, here, now, rng, ev, stepMs, ctx) {
+    if (ctx.stale) { ctx.map = liveMap(c, ws, mapId); ctx.obst = {}; ctx.built = null; ctx.stale = false; }
+    var map = ctx.map, sight = def.sight > 0 ? def.sight : def.aggro, full = (def.aggroS > 0 ? def.aggroS : 30) * 1000;
+    function sees(x, y) { return cheb(m.x, m.y, x, y) <= sight && canSee(c, map, m.x, m.y, x, y, ctx.stateFn); }
+    function byId(list, id) { for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]; return null; }
+    var ai = m.ai || null, tgt = null, seen = false;
+    if (m.engaged) {                                          // struck by someone, or it came up the stairs after them
+      var who = byId(here, m.engaged);
+      if (who) ai = m.ai = { k: 'p', id: who.id, a: full, x: who.x, y: who.y };
+      m.engaged = null;
+    }
+    if (ai && ai.k === 'p') tgt = byId(here, ai.id);
+    else if (ai && ai.k === 'm') { tgt = byId(ms.monsters, ai.id); if (!tgt || tgt.dead) { delete m.ai; ai = tgt = null; } }      // it won
+    else if (ai && ai.k === 's') { tgt = resolveOn(c, map, map._struct, ai.t); if (!tgt || !tgt.can || tgt.hp <= 0) { delete m.ai; ai = tgt = null; } }
+    if (ai && ai.k === 'p' && !tgt && m.follow && now < m.follow.until) {                // they took the stairs: after them
+      return followStairs(c, ws, mapId, map, ms, m, here, now) ? 'gone' : undefined;
+    }
+    if (ai && ai.k !== 's') {
+      if (tgt && sees(tgt.x, tgt.y)) { seen = true; ai.a = full; ai.x = tgt.x; ai.y = tgt.y; delete ai.w; }
+      else {
+        ai.a -= stepMs;
+        if (tgt && cheb(m.x, m.y, tgt.x, tgt.y) <= def.aggro) { ai.x = tgt.x; ai.y = tgt.y; delete ai.w; }   // out of sight but close: it hears them
+        if (ai.a <= 0) { delete m.ai; ai = tgt = null; }
+      }
+    }
+    // Looking for something (new) to go after — only with a player around to set it off.
+    var awake = here.some(function (q) { return cheb(q.x, q.y, m.x, m.y) <= ctx.wake; });
+    if (awake && !seen) {
+      var found = null, fk = '', fd = 1e9;
+      here.forEach(function (q) { var d = cheb(q.x, q.y, m.x, m.y); if (d < fd && sees(q.x, q.y)) { fd = d; found = q; fk = 'p'; } });
+      if (!ctx.prey) ctx.prey = ms.monsters.filter(function (q) { var qd = c.monsters[q.ref]; return qd && qd.prey; });
+      if (!def.prey) ctx.prey.forEach(function (q) { if (q.dead || q === m) return; var d = cheb(q.x, q.y, m.x, m.y); if (d < fd && sees(q.x, q.y)) { fd = d; found = q; fk = 'm'; } });
+      if (found) { ai = m.ai = { k: fk, id: found.id, a: full, x: found.x, y: found.y }; tgt = found; seen = true; }
+      else if (!ai && ctx.buildings) {
+        var bt = builtInSight(c, map, m, sight, ctx);
+        if (bt) { ai = m.ai = { k: 's', t: bt, a: full }; tgt = resolveOn(c, map, map._struct, bt); }
+      }
+    }
+    if (!ai) { if (awake) roamStep(c, ws, mapId, map, m, here, rng); return; }
+    ws.dirty = true;
+    if (m.guest) m.idleUntil = now + GUEST_IDLE_MS;
+    var goal;
+    if (ai.k === 's') {
+      if (structReach(c, map, m.x, m.y, tgt)) { walkerBash(c, ws, mapId, m, def, ms2, ai.t, now, ev, ctx); return 'stop'; }
+      goal = { s: tgt };
+    } else {
+      if (tgt) {
+        if (ai.k === 'p' && monsterShot(c, ws, mapId, map, m, def, ms2, tgt, Math.abs(tgt.x - m.x) + Math.abs(tgt.y - m.y), now, rng, ev)) return 'stop';
+        if (cheb(m.x, m.y, tgt.x, tgt.y) === 1 && !moveBlockedEdge(c, map, m.x, m.y, tgt.x, tgt.y)) {
+          if (ai.k === 'p') { if (monsterSwing(c, ws, mapId, m, def, ms2, tgt, now, rng, ev)) delete m.ai; }
+          else {
+            m.facing = tgt.x > m.x ? 'E' : tgt.x < m.x ? 'W' : tgt.y > m.y ? 'S' : 'N';
+            hitMonster(c, ws, mapId, null, tgt, damage(ms2.atk, monStats(c, tgt).def, rng), now, rng, ev, '');
+            if (tgt.dead) delete m.ai;
+          }
+          return 'stop';
+        }
+      }
+      goal = { x: ai.x, y: ai.y, adj: !!(tgt && tgt.x === ai.x && tgt.y === ai.y) };
+    }
+    return walkerMove(c, ws, mapId, ms, m, def, ms2, here, now, rng, ev, stepMs, ctx, ai, goal, seen);
+  }
+  function walkerMove(c, ws, mapId, ms, m, def, ms2, here, now, rng, ev, stepMs, ctx, ai, goal, seen) {
+    var map = ctx.map, R = Rl(), opts = moveOpts(c, ws, mapId, here, m), dmg = def.structureDmg > 0 ? def.structureDmg : ms2.atk, r, i;
+    function at(x, y) {
+      if (goal.s) return structReach(c, map, x, y, goal.s);
+      // (goal.adj = its target stands there. The way still leads INTO that cell, so that a wall right beside the target
+      // is part of it; the walker never arrives, it strikes as soon as it is beside them with nothing between.)
+      return x === goal.x && y === goal.y;
+    }
+    if (!goal.s && !goal.adj && at(m.x, m.y)) {                 // it is where it last knew them to be, and they are not: poke around
+      ai.x = Math.max(0, Math.min(map.width - 1, m.x + rint(rng, -4, 4))); ai.y = Math.max(0, Math.min(map.height - 1, m.y + rint(rng, -4, 4)));
+      ai.w = 1; ai.p = ''; delete ai.n;
+      return;
+    }
+    // a way it worked out is kept between turns, and followed, while it still leads where it wants to go
+    var gk = goal.s ? goal.s.key : null, same = goal.s ? ai.g === gk : !!(ai.g && typeof ai.g === 'object' && cheb(ai.g[0], ai.g[1], goal.x, goal.y) <= (goal.adj ? 2 : 0));
+    if (seen && !goal.s && !(same && ai.p)) {                   // it sees them and is on no such way: straight at them, as far as that goes
+      // (the corner cut and the long way of the two only: a sidestep along something in the way is the worked-out way's job,
+      // or it would walk off from a wall it has nearly broken through)
+      var dirs = stepsToward(m, goal.x, goal.y); if (dirs.length > 2) dirs.length = 2; else if (dirs.length === 2 && !R.DIAG[dirs[0]]) dirs.length = 1;
+      for (i = 0; i < dirs.length; i++) {
+        r = R.tryMove(c, map, m.x, m.y, dirs[i], opts);
+        if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = R.faceFor(dirs[i], m.facing); m.last += (R.stepCost(dirs[i]) - 1) * stepMs; ai.p = ''; return; }
+      }
+    }
+    // …otherwise along a way it works out
+    if (!same || !ai.p) {
+      if (same && ai.n > 0) { ai.n--; millStep(c, ws, mapId, map, m, here, rng); return; }
+      if (ctx.budget <= 0) return;                              // enough thinking on this map for one turn: it stands a moment
+      ctx.budget--;
+      var path = findPath(c, ws, mapId, map, m, at, ai.w ? 0 : dmg, ctx);
+      ai.g = goal.s ? gk : [goal.x, goal.y];
+      if (!path) {                                              // no way there for now: mill about, look again in a few turns
+        ai.p = ''; ai.n = 5;
+        if (ai.w) { ai.x = m.x; ai.y = m.y; }                   // (a poke-around spot it cannot walk to: pick another)
+        if (ai.k === 's') { ai.a -= 4 * stepMs; if (ai.a <= 0) delete m.ai; }
+        millStep(c, ws, mapId, map, m, here, rng);
+        return;
+      }
+      ai.p = path; delete ai.n;
+    }
+    var d = ai.p.charAt(0);
+    r = R.tryMove(c, map, m.x, m.y, d, opts);
+    if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = d; ai.p = ai.p.slice(1); return; }
+    if (r.reason === 'occupied') {
+      var pl = r.who && r.who.player;
+      if (pl && !moveBlockedEdge(c, map, m.x, m.y, pl.x, pl.y)) { monsterSwing(c, ws, mapId, m, def, ms2, pl, now, rng, ev); return 'stop'; }   // someone in its way
+      if (rng() < 0.25) ai.p = '';                              // stuck behind another one: now and then, think again
+      return;
+    }
+    var ob = ai.w || r.map ? null : obstacleFor(c, map, m.x, m.y, d, r, dmg, ctx);
+    if (ob) { walkerBash(c, ws, mapId, m, def, ms2, ob.t, now, ev, ctx); return 'stop'; }
+    ai.p = '';
+  }
+
   /** Moves the world on to `now`: timers, respawns, monsters wandering, chasing and attacking. */
   function advance(c, ws, mapId, players, now, rng, ev) {
     if (!c.maps[mapId]) return;
@@ -1581,9 +1891,11 @@ var World = (function () {
         if (o && o.kind === 'trap' && isTimed(c, e, pr) && p.map === mapId) timedTrapHit(c, ws, p, e, o, pr, now, ev);
       });
     });
+    var wctx = null;                                            // what the walkers of this map share for this turn
     ms.monsters.forEach(function (m) {
       var def = c.monsters[m.ref]; if (!def) return;
       if (m.dead) {
+        if (m.ai) delete m.ai;
         if (now >= m.respawnAt) {
           var se = entity(c, mapId, m.spawn);
           if (se) place(c, ws, mapId, m, se, Number(props(c, se).radius) || 0, rint(rng, 0, 50));
@@ -1600,6 +1912,14 @@ var World = (function () {
       m.last = steps > 2 ? now : m.last + steps * stepMs;
       steps = Math.min(steps, 2);
       for (var s = 0; s < steps; s++) {
+        if (def.brain === 'walker') {                           // its own brain (see walkerStep)
+          wctx = wctx || walkerCtx(c, ws, mapId, map);
+          var wr = walkerStep(c, ws, mapId, ms, m, def, ms2, here, now, rng, ev, stepMs, wctx);
+          map = wctx.map;
+          if (wr === 'gone') return;
+          if (wr === 'stop') break;
+          continue;
+        }
         var target = null, best = 1e9;
         var eng = m.engaged ? here.filter(function (q) { return q.id === m.engaged; })[0] : null;   // chase whoever hit it
         if (eng) {
@@ -1613,29 +1933,10 @@ var World = (function () {
         });
         if (target && m.guest) m.idleUntil = now + GUEST_IDLE_MS;
         if (target) {
-          if (def.attackRange > 1 && best > 1 && best <= def.attackRange && now >= (m.nextShot || 0) &&
-              canSee(c, map, m.x, m.y, target.x, target.y, function (e) { return stateOf(c, ws, mapId, e); })) {
-            m.nextShot = now + def.rangedMs;
-            m.facing = Math.abs(target.x - m.x) >= Math.abs(target.y - m.y) ? (target.x > m.x ? 'E' : 'W') : (target.y > m.y ? 'S' : 'N');
-            var rdmg = damage(ms2.atk, stats(c, target).def, rng);
-            target.hp -= rdmg;
-            ev.push({ type: 'cast', map: mapId, skill: '_ranged', by: m.id, from: { x: m.x, y: m.y }, to: { x: target.x, y: target.y }, x: target.x, y: target.y, projectile: !!def.rangedProjectile, color: '#8fbf4f' });
-            ev.push({ type: 'hit', map: mapId, x: target.x, y: target.y, amount: rdmg, to: target.id, text: 'The ' + lower(def.name) + ' spits at you for ' + rdmg + '.' });
-            if (target.hp <= 0) die(c, ws, target, ev);
-            else {
-              if (def.rangedStatus && c.statuses && c.statuses[def.rangedStatus]) applyStatus(c, target, def.rangedStatus, Number(c.config.ranged_status_ms) || 3000, now, m.id);
-              if (def.infectChance && rng() < def.infectChance) applyInfection(c, ws, mapId, target, now, ev);
-            }
-            break;
-          }
+          if (monsterShot(c, ws, mapId, map, m, def, ms2, target, best, now, rng, ev)) break;
           if (cheb(m.x, m.y, target.x, target.y) === 1 && !moveBlockedEdge(c, map, m.x, m.y, target.x, target.y)) {
             // beside its target (diagonals count) with no wall between: swing. (A wall on the edge makes it try to move around instead.)
-            var dmg = damage(ms2.atk, stats(c, target).def, rng);
-            target.hp -= dmg;
-            m.facing = target.x > m.x ? 'E' : target.x < m.x ? 'W' : target.y > m.y ? 'S' : 'N';
-            ev.push({ type: 'hit', map: mapId, x: target.x, y: target.y, amount: dmg, to: target.id, text: 'The ' + lower(def.name) + ' hits you for ' + dmg + '.' });
-            if (target.hp <= 0) die(c, ws, target, ev);
-            else if (def.infectChance && rng() < def.infectChance) applyInfection(c, ws, mapId, target, now, ev);
+            monsterSwing(c, ws, mapId, m, def, ms2, target, now, rng, ev);
             break;
           }
           var dx = target.x - m.x, dy = target.y - m.y, dirs = [];
@@ -1652,19 +1953,7 @@ var World = (function () {
           }
         } else if (m.follow && now < m.follow.until) {
           if (followStairs(c, ws, mapId, map, ms, m, here, now)) return;      // gone to the other floor
-        } else if (rng() < 0.5) {
-          var dir = 'NESW'.charAt(rint(rng, 0, 3));
-          var sp = entity(c, mapId, m.spawn), rad = sp ? (Number(props(c, sp).radius) || 0) + 2 : 3;
-          // Away from home (it chased someone and lost them): it does not freeze there. It mills about, and half
-          // its steps head back, so it drifts home.
-          var away = !!sp && (Math.abs(m.x - sp.x) > rad || Math.abs(m.y - sp.y) > rad);
-          if (away && rng() < 0.5) {
-            var hx = sp.x - m.x, hy = sp.y - m.y;
-            dir = Math.abs(hx) >= Math.abs(hy) ? (hx > 0 ? 'E' : 'W') : (hy > 0 ? 'S' : 'N');
-          }
-          var r2 = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
-          if (r2.ok && !r2.map && (!sp || away || (Math.abs(r2.x - sp.x) <= rad && Math.abs(r2.y - sp.y) <= rad))) { m.x = r2.x; m.y = r2.y; m.facing = dir; }
-        }
+        } else roamStep(c, ws, mapId, map, m, here, rng);
       }
     });
     // guests that moved on, died, or lost interest are simply gone (they have no spawner to return to)
@@ -3008,7 +3297,7 @@ var World = (function () {
     canBuild: canBuild, blueprintsFor: blueprintsFor, noBuild: noBuild, buildSpot: buildSpot,
     claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, canRemove: canRemove, itemCan: itemCan, beltItems: beltItems, BELT_SIZE: BELT_SIZE, skillsOn: skillsOn, holdSlot: holdSlot,
     groundId: groundId, floorId: floorId, floorsOf: floorsOf, deliver: deliver,
-    sightRadius: sightRadius, seesAcross: seesAcross, peek: peek, advanceFloors: advanceFloors, fixtureStates: fixtureStates,
+    sightRadius: sightRadius, seesAcross: seesAcross, peek: peek, advanceFloors: advanceFloors, findPath: findPath, fixtureStates: fixtureStates,
     applyNotice: applyNotice, shotAcross: shotAcross, throwAcross: throwAcross, tileMine: tileMine };
 })();
 if (typeof module !== 'undefined') module.exports = World;

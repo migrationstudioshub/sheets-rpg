@@ -253,6 +253,11 @@ var Content = (function () {
         attackRange: num(r.attack_range, 0), rangedMs: Math.max(250, num(r.ranged_cooldown_ms, 1500)),
         rangedProjectile: bool(r.ranged_projectile), rangedStatus: str(r.ranged_status),
         infectChance: num(r.infect_chance, 0),
+        // brain: how it thinks ('' = the plain one: go for whoever is within aggro_range; 'walker' = World.walkerStep).
+        // Walker settings: sight = how far it spots a target (0 = aggro_range), aggroS = seconds it keeps looking after
+        // losing sight (0 = 30), structureDmg = damage per blow to walls and objects (0 = its attack).
+        // prey = walkers hunt this monster as they hunt players (animals).
+        brain: str(r.brain), sight: num(r.sight_range, 0), aggroS: num(r.aggro_s, 0), structureDmg: num(r.structure_dmg, 0), prey: bool(r.prey),
         // paper-doll monsters: one or more Appearance sets; the server picks one per spawn and rolls a look
         appearance: parseLooks(r.appearance) };
     });

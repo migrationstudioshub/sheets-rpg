@@ -226,6 +226,21 @@ var Panels = (function () {
           return h('button', { className: (E.brush.ramp || '') === r[0] ? 'on' : '', text: r[1], onclick: function () { E.brush.ramp = r[0]; all(); } });
         })));
       box.appendChild(h('p', { className: 'note', text: E.brush.ramp ? 'Painting: a ramp from level ' + (Number(E.brush.elev) || 0) + ' up to ' + ((Number(E.brush.elev) || 0) + 1) + '.' : 'Painting: flat ground at level ' + (Number(E.brush.elev) || 0) + '.' }));
+      // ---- random hills
+      var G = E.hills = E.hills || { min: 0, max: 3, size: 14, ramps: 1, flat: 0.5, keep: true };
+      var numIn = function (key) { return h('input', { type: 'number', className: 'num', min: 0, max: 9, value: G[key], onchange: function (ev) { G[key] = Math.max(0, Math.min(9, Math.round(Number(ev.target.value) || 0))); all(); } }); };
+      var pick = function (key, opts) { return opts.map(function (op) { return h('button', { className: G[key] === op[0] ? 'on' : '', text: op[1], onclick: function () { G[key] = op[0]; all(); } }); }); };
+      box.appendChild(h('h4', { text: 'Random hills' }));
+      box.appendChild(h('p', { className: 'note', text: 'Shapes the whole map into rolling ground between two levels: valleys, hills, the odd summit, never more than one step at a time. Tiles with objects, walls, roofs or water on them are left as they are. Press it again for a different land; Ctrl+Z takes it back.' }));
+      box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Lowest' }), numIn('min'), h('label', { text: 'Highest' }), numIn('max')));
+      box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Hills' }), pick('size', [[8, 'Small'], [14, 'Medium'], [24, 'Large'], [40, 'Huge']])));
+      box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Land' }), pick('flat', [[0, 'Hilly'], [0.5, 'Mixed'], [1.2, 'Mostly low']])));
+      box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Ramps' }), pick('ramps', [[0, 'None'], [1, 'Few'], [2, 'Many']])));
+      box.appendChild(h('div', { className: 'row' }, h('label', {}, h('input', { type: 'checkbox', checked: G.keep !== false, onchange: function (ev) { G.keep = ev.target.checked; } }), document.createTextNode(' Leave built and blocked tiles alone'))));
+      box.appendChild(h('div', { className: 'row' }, h('button', { text: 'Generate', onclick: function () {
+        if (G.max < G.min) { var sw = G.min; G.min = G.max; G.max = sw; }
+        E.generateHills(G); all();
+      } })));
       return;
     }
     if (paletteTab === 'nobuild') {                                   // no palette either: paint / erase the no-build mask

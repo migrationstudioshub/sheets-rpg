@@ -1,6 +1,6 @@
 # NPCs, quests, instances and the game server — plan
 
-Status: **server stages 1 and 2 built (the loop, the socket and record-by-record saving on the LAN host); everything else planned.** Agreed with the owner 22–23 Nov 2026. Modelled on how MMORPGs such as World of
+Status: **server stages 1–3 built on the LAN host (the loop, the socket, record-by-record saving, small messages, the bot load test); everything else planned.** Agreed with the owner 22–23 Nov 2026. Modelled on how MMORPGs such as World of
 Warcraft handle quests, adapted to this game's shared, buildable world.
 
 Where things stand in the code today (checked when this was written):
@@ -175,7 +175,24 @@ upload limit with many players. A switch that adds artificial delay covers testi
    Every map's state stays in memory (it is small, and an empty map is neither advanced nor written), which keeps
    the rules free of "is this map loaded yet". All characters are read at start-up; a database store will want to
    read a character when it logs in instead. The database version of the interface comes with stage 4.
-3. Slimmer messages (only nearby changes) and a load test with scripted bots (30 or more on one map), run locally.
+3. **Built (23 Nov 2026).** The socket's messages live in `client/js/wire.js`, both ends (`Wire.pack` on the host,
+   `Wire.unpack` on the page): every message — answers too, not only pushes — carries what changed since the last
+   one on that socket. Monsters and players go one by one (what stays, once; where they are, when it changes; who
+   is gone), the other floors of a building the same way, and a player's own record field by field. **Interest:**
+   monsters and players further than Config `interest_radius` (20 tiles) are left out. `tools/bots.js` is the load
+   test. Measured on this computer, live content, everyone on one map:
+
+   | Bots | Sent to each, per second | Host upload | Answers (95%) | A turn of the loop |
+   | --- | --- | --- | --- | --- |
+   | 30, before | 116 kB | 28 Mbit/s | 5 ms | 4 ms |
+   | 30 | 6 kB | 1.5 Mbit/s | 8 ms | 6 ms |
+   | 60 | 10 kB | 5 Mbit/s | 21 ms | 18 ms |
+   | 100 | 14 kB | 12 Mbit/s | 48 ms | 42 ms |
+
+   The turn grows with the square of the crowd (each player's view is built and compared every turn); at 100 it
+   uses under half of the 100 ms it has. Past that, the next step is to build what a map's players share once per
+   turn instead of once per player. Not sliced by area: `states` (doors, levers) and the structure layer still
+   cover the whole map, sent only when they change.
 4. **Deferred until a server is rented:** database saves, a secure address, a deploy script, the switch in `config.js`.
 
 ## Order

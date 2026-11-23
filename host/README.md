@@ -42,7 +42,13 @@ It prints something like:
   A page that cannot open the socket falls back to asking four times a second, as before.
 - **Try a bad connection.** `LAG_MS=150 node host/server.js` delays every socket message 150 ms each way, so you can
   feel how the game plays for a friend far away while testing alone.
-- **Check it.** `node tools/test_host.js` starts a throwaway host and tests the loop and the socket.
+- **Small messages.** A message only carries what changed since the last one on that socket, and only the monsters
+  and players within 20 tiles of you (Config `interest_radius`; 0 = the whole map). A player standing in a crowd of
+  30 is sent about 5 kB a second.
+- **Check it.** `node tools/test_host.js` starts a throwaway host and tests the loop, the socket and saving.
+- **Try a crowd.** `node tools/bots.js` puts 30 scripted players on a throwaway host for 20 seconds and prints how
+  fast answers came, how much was sent and how hard the loop worked (`--n 60`, `--secs 30`, `--live` for your live
+  content, `--lag 100`). It never touches your saved game unless you point it at a running host with `--url`.
 
 - **It plays your live content.** At start-up the host reads the live game's content from the Cloud Function (the
   same read the game page does; nothing is ever written there), so you host your real maps, monsters and blueprints.

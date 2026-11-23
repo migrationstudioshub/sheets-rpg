@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const Wire = require('../client/js/wire.js');
 
 const ROOT = path.join(__dirname, '..');
 const PORT = 3900 + Math.floor(Math.random() * 90);
@@ -18,22 +19,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 /** A page's side of the socket: call(body) → the answer; pushes pile up in .pushes, merged into .world like the page does. */
 function client() {
   const ws = new WebSocket('ws://127.0.0.1:' + PORT + '/');
-  const c = { ws, n: 0, waiting: {}, pushes: [], world: null, player: null, events: [] };
+  const c = { ws, n: 0, waiting: {}, pushes: [], raw: [], bytes: 0, world: null, player: null, events: [] };
+  const held = Wire.receiver();
   ws.onmessage = m => {
     const msg = JSON.parse(m.data);
-    if (msg.push) {
-      c.pushes.push(msg);
-      const w = Object.assign({}, c.world), d = msg.world || {};
-      Object.keys(d).forEach(k => { if (d[k] === null) delete w[k]; else w[k] = d[k]; });
-      c.world = w;
-      if (msg.player) c.player = msg.player;
-      (msg.events || []).forEach(e => c.events.push(e));
-      return;
-    }
+    c.raw.push(msg); c.bytes += m.data.length;
+    const whole = msg.now !== undefined && !msg.error ? Wire.unpack(held, msg) : null;
+    if (whole) { c.world = whole.world; c.player = whole.player; whole.events.forEach(e => c.events.push(e)); }
+    if (msg.push) { c.pushes.push(msg); return; }
     const wait = c.waiting[msg.re]; delete c.waiting[msg.re];
-    if (msg.world) { c.world = msg.world; c.player = msg.player; }
-    (msg.events || []).forEach(e => c.events.push(e));
-    if (wait) wait(msg);
+    if (wait) wait(whole ? Object.assign({ re: msg.re }, whole) : msg);
   };
   c.open = new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('socket would not open')); });
   c.call = body => new Promise(res => { const n = ++c.n; c.waiting[n] = res; ws.send(JSON.stringify(Object.assign({ n }, body))); });
@@ -110,7 +105,40 @@ async function saving() {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+/** The socket's messages (client/js/wire.js): whatever the host packs, the page unpacks to the same view. */
+function wire() {
+  const tx = Wire.sender(), rx = Wire.receiver();
+  const sorted = list => (list || []).slice().sort((a, b) => String(a.id) < String(b.id) ? -1 : 1);
+  const canon = v => Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.keys(v).sort().reduce((o, k) => { o[k] = canon(v[k]); return o; }, {}) : v;   // (the order of fields does not matter)
+  const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+  const mon = (id, x, hp) => ({ id: id, ref: 'rat', x: x, y: 3, hp: hp, maxHp: 9, facing: 'E', statuses: hp < 9 ? ['burn'] : [], alert: undefined, look: undefined });
+  const ply = (id, x) => ({ id: id, name: 'N' + id, 'class': 'warrior', equipment: { weapon: 'axe' }, hair: 'h', hairColor: '', body: '', skin: '', x: x, y: 1, facing: 'S', hp: 10, maxHp: 12, level: 2, act: '', wst: '' });
+  const steps = [
+    { player: { id: 'me', x: 1, y: 1, hp: 10, inventory: [{ item: 'a', qty: 1 }] }, world: { map: 'm', now: 1, states: { 'm.e1': 'open' }, structRev: 2, struct: { rev: 2, ents: [] }, monsters: [mon('a#0', 1, 9), mon('b#0', 2, 9)], players: [ply('p1', 4)] }, events: [{ seq: 1, type: 'info' }] },
+    { player: { id: 'me', x: 2, y: 1, hp: 10, inventory: [{ item: 'a', qty: 1 }] }, world: { map: 'm', now: 2, states: { 'm.e1': 'open' }, structRev: 2, monsters: [mon('a#0', 1, 4), mon('b#0', 2, 9)], players: [ply('p1', 5)] } },
+    { player: { id: 'me', x: 2, y: 1, hp: 8 }, world: { map: 'm', now: 3, states: {}, structRev: 2, monsters: [mon('b#0', 3, 9), mon('c#0', 7, 9)], players: [],
+      floors: { m_z1: { structRev: 1, struct: { rev: 1, ents: [] }, states: {}, players: [ply('p1', 5)], monsters: [mon('u#0', 1, 9)] } } } },
+    { player: { id: 'me', x: 2, y: 1, hp: 8 }, world: { map: 'n', now: 4, states: {}, structRev: 0, monsters: [], players: [ply('p2', 1)] } }
+  ];
+  let allSame = true, sizes = [], structs = [];
+  steps.forEach((st, i) => {
+    const text = Wire.pack(tx, { re: i + 1, player: st.player, world: st.world, events: st.events, seq: i });
+    const got = Wire.unpack(rx, JSON.parse(text));
+    sizes.push(text.length); structs.push(!!got.world.struct);
+    const want = JSON.parse(JSON.stringify(st.world)), have = JSON.parse(JSON.stringify(got.world));
+    [want, have].concat(Object.values(want.floors || {}), Object.values(have.floors || {})).forEach(w => { w.monsters = sorted(w.monsters); w.players = sorted(w.players); });
+    const keys = o => { const out = {}; Object.keys(o).sort().forEach(k => { out[k] = o[k]; }); return out; };
+    if (want.floors) Object.keys(want.floors).forEach(id => { want.floors[id] = keys(want.floors[id]); have.floors[id] = keys(have.floors[id]); });
+    if (!same(keys(want), keys(have)) || !same(st.player, got.player) || !same(st.events || [], got.events)) { allSame = false; console.log('     step ' + (i + 1) + ' differs: want ' + JSON.stringify(keys(want)) + ' have ' + JSON.stringify(keys(have)) + ' player ' + JSON.stringify(got.player)); }
+  });
+  ok(allSame, 'what the host packs, the page unpacks to the same view (monsters, players, floors, own character)');
+  ok(sizes[1] < sizes[0] / 3, 'the second message is a fraction of the first (' + sizes[0] + ' → ' + sizes[1] + ' bytes)');
+  ok(structs.join() === 'true,false,false,false', 'the structure layer is handed over once');
+  ok(Wire.pack(tx, { push: true, player: steps[3].player, world: Object.assign({}, steps[3].world, { now: 99 }), seq: 3 }) === '', 'a push with nothing new is not sent');
+}
+
 async function main() {
+  wire();
   await saving();
   const up = await start('off');
   const out = up.text;
@@ -159,8 +187,13 @@ async function main() {
   }
 
   // quiet world = quiet socket: a push only carries what changed
-  const small = a.pushes.filter(p => p.world && !p.world.states && !p.world.map);
-  ok(small.length > 0, 'pushes leave out the parts of the view that did not change');
+  ok(a.pushes.length > 0 && a.pushes.every(p => !p.world || (!p.world.states && !p.world.map && !p.world.monsters && !p.world.players)), 'pushes leave out the parts of the view that did not change');
+  const first = a.raw.filter(m => m.full)[0], moveMsg = a.pushes.filter(p => p.po && !p.pf)[0];
+  ok(first && first.re === 2 && a.raw.filter(m => m.full).length === 1, 'only the first answer (the load) carries everything');
+  ok(a.pushes.filter(p => p.pf).length === 1, 'how another player looks is sent once');
+  ok(moveMsg && JSON.stringify(moveMsg).length < 200, 'a player who moves costs the others a few bytes, not her whole description (' + (moveMsg ? JSON.stringify(moveMsg).length : '?') + ' bytes)');
+  const acts = b.raw.filter(m => m.re > 2 && m.now !== undefined);
+  ok(acts.length > 0 && acts.every(m => !m.full && JSON.stringify(m).length < 600), 'the answer to a move is small too (' + Math.max.apply(null, acts.map(m => JSON.stringify(m).length)) + ' bytes at most)');
   const seqs = a.events.map(e => e.seq);
   ok(seqs.every((s, i) => seqs.indexOf(s) === i), 'no event is told twice (' + seqs.length + ' told)');
 

@@ -179,7 +179,8 @@ var Schema = (function () {
     loot: { collection: 'loot', id: null, label: 'Loot tables', singular: 'drop', authored: 'studio', fields: [
       f('table', 'text', '', 'Table name a monster/chest references'),
       f('item', 'ref', '', '', { ref: 'items' }),
-      f('chance', 'number', 1, '0–1'), f('min', 'number', 1), f('max', 'number', 1)
+      f('chance', 'number', 1, '0–1'), f('min', 'number', 1), f('max', 'number', 1),
+      f('quest', 'ref', '', 'A quest drop: this row only rolls for a player who is on that quest and still needs the item (the quest must have a have: objective for it). Empty = for everyone', { ref: 'quests' })
     ] },
     classes: { collection: 'classes', id: 'id', label: 'Classes', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('body_sprite', 'image', '', 'Not used any more when Config body_male is set: every class shares the male / female bodies named in Config (body_male, body_female)'),
@@ -240,6 +241,24 @@ var Schema = (function () {
       f('notes', 'text', '')
     ] },
 
+    // ---- story ----
+    // A quest is given by an NPC (an object of kind npc), tracked in the player's quest log, and handed in to an NPC.
+    // World.questState / questAct are the rules; docs/QUESTS_INSTANCES_SERVER.md is the design.
+    quests: { collection: 'quests', id: 'id', label: 'Quests', singular: 'quest', authored: 'studio', fields: [
+      f('id', 'text', ''), f('name', 'text', ''),
+      f('giver', 'ref', '', 'The NPC who offers it: an object of kind npc. Every one of that object placed on a map offers it. Empty = it can only be started by an action (quest:<id> in an on_interact, on_use or trigger)', { ref: 'objects' }),
+      f('ender', 'ref', '', 'The NPC it is handed in to. Empty = the giver', { ref: 'objects' }),
+      f('text', 'textarea', '', 'What the giver says when offering it'),
+      f('progress_text', 'textarea', '', 'What the ender says while it is not done yet (optional)'),
+      f('done_text', 'textarea', '', 'What the ender says when it is handed in (optional)'),
+      f('objectives', 'goals', '', 'What must be done: one row each — what kind of thing, which one, how many. All of them must be done. None = just go and talk to the ender'),
+      f('requires', 'text', '', 'Condition to be offered it, e.g. level:3 or quest:first_steps (that quest handed in) or flag:met_mayor. Chains are made with quest:<the one before>'),
+      f('rewards', 'rewards', '', 'What the player gets when it is handed in: one row each. Stored as the action list the rules run (xp:100; gold:20; give:axe:1)'),
+      f('choice', 'items', '', 'Choose-one reward: the player picks ONE of these when handing in (optional)'),
+      f('repeat_h', 'number', 0, 'Repeatable: hours before it is offered again after being handed in. 0 = only once. For a mission that can be taken again at once use a small number such as 0.01'),
+      f('notes', 'text', '')
+    ] },
+
     // ---- edited by the map editor, not the Content Studio forms ----
     maps: { collection: 'maps', id: 'id', label: 'Maps', authored: 'map', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('width', 'number', 0), f('height', 'number', 0),
@@ -261,7 +280,7 @@ var Schema = (function () {
   var TAB = {
     config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', wallStyles: 'WallStyles', kinds: 'Kinds', itemTypes: 'ItemTypes',
     objects: 'Objects', items: 'Items', monsters: 'Monsters', loot: 'LootTables', classes: 'Classes',
-    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes', blueprints: 'Blueprints',
+    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes', blueprints: 'Blueprints', quests: 'Quests',
     maps: 'Maps', mapEntities: 'MapEntities'
   };
 

@@ -791,6 +791,18 @@ var Render = (function () {
         // a plain tile (no tileset): the same rule on its own picture, <name>.png -> <name>_face.png
         return t && t.sprite && !/^https?:/i.test(t.sprite) ? Assets.get(t.sprite.replace(/\.png$/i, '_face.png')) : null;
       };
+      // The outline of raised ground: a rough dark line, a few pixels thick, never the same twice along its length
+      // (but always the same for a given tile: it is worked out from where the tile is, not from chance).
+      var rough = function (x, y, side, i) { var n = (x * 73856093) ^ (y * 19349663) ^ (side * 83492791) ^ (i * 2654435761); n = (n ^ (n >>> 13)) * 1274126177; return ((n ^ (n >>> 16)) >>> 0) % 1000 / 1000; };
+      var edge = function (x, y, side, X0, Y0, len, horiz, inward) {      // inward: +1 = the line thickens right / down from (X0, Y0), -1 = left / up
+        var u = Math.max(1, Math.round(T / 16)), i = 0;
+        for (var a = 0; a < len; a += 2 * u, i++) {
+          var r = rough(x, y, side, i), th = u * (r < 0.2 ? 1 : r < 0.6 ? 2 : r < 0.9 ? 3 : 4), seg = Math.min(2 * u, len - a);
+          g.fillStyle = 'rgba(0,0,0,.42)';
+          if (horiz) g.fillRect(X0 + a, inward > 0 ? Y0 : Y0 - th, seg, th); else g.fillRect(inward > 0 ? X0 : X0 - th, Y0 + a, th, seg);
+          if (r > 0.75) { g.fillStyle = 'rgba(0,0,0,.2)'; if (horiz) g.fillRect(X0 + a, inward > 0 ? Y0 + th : Y0 - th - u, seg, u); else g.fillRect(inward > 0 ? X0 + th : X0 - th - u, Y0 + a, u, seg); }
+        }
+      };
       var drop = function (x, y) {                            // how far the ground falls at the south edge of a tile: [left, right, own left, own right]
         if (x < 0 || x >= map.width) return [0, 0, 0, 0];
         var oL = Rules.groundHeight(map, x + 0.001, y + 0.999), oR = Rules.groundHeight(map, x + 0.999, y + 0.999);
@@ -845,14 +857,13 @@ var Render = (function () {
           var shd = g.createLinearGradient(0, topY, 0, botY); shd.addColorStop(0, 'rgba(0,0,0,0)'); shd.addColorStop(1, 'rgba(0,0,0,.28)');
           g.fillStyle = shd; g.fillRect(X, topY, T, botY - topY);                      // darker toward its foot
           g.restore();
-          if (Math.abs(Yl - Yr) < 0.5) { g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(X, Math.round(Yl), T, 1); }   // the lip (level ground only: under a slanted tile a level line would cut across its foot)
+          if (Math.abs(Yl - Yr) < 0.5) edge(rx, ry, 0, X, Math.round(Yl), T, true, 1);   // the lip (level ground only: under a slanted tile a level line would cut across its foot)
         }
         // a dark edge where this tile stands above its west / east / north neighbour (no face to see there)
         if (!er && eh) {
-          g.fillStyle = 'rgba(0,0,0,.3)';
-          if (Rules.cliffBetween(map, rx, ry, 'W') && Rules.groundHeight(map, rx - 0.5, ry + 0.5) < eh) g.fillRect(X, pad + (ry - eh) * T, 1, T);
-          if (Rules.cliffBetween(map, rx, ry, 'E') && Rules.groundHeight(map, rx + 1.5, ry + 0.5) < eh) g.fillRect(X + T - 1, pad + (ry - eh) * T, 1, T);
-          if (ry > 0 && Rules.cliffBetween(map, rx, ry, 'N') && Rules.groundHeight(map, rx + 0.5, ry - 0.5) < eh) g.fillRect(X, pad + (ry - eh) * T, T, 1);
+          if (Rules.cliffBetween(map, rx, ry, 'W') && Rules.groundHeight(map, rx - 0.5, ry + 0.5) < eh) edge(rx, ry, 1, X, pad + (ry - eh) * T, T, false, 1);
+          if (Rules.cliffBetween(map, rx, ry, 'E') && Rules.groundHeight(map, rx + 1.5, ry + 0.5) < eh) edge(rx, ry, 2, X + T, pad + (ry - eh) * T, T, false, -1);
+          if (ry > 0 && Rules.cliffBetween(map, rx, ry, 'N') && Rules.groundHeight(map, rx + 0.5, ry - 0.5) < eh) edge(rx, ry, 3, X, pad + (ry - eh) * T, T, true, 1);
         }
       }
     }
@@ -1286,7 +1297,7 @@ var Render = (function () {
       }
       if (any) {
         g.clip();
-        g.globalAlpha = near ? 1 - cutA : 1;                                           // close to the player the rise goes see-through
+        g.globalAlpha = 1;                                                             // raised ground is solid: it hides what is behind it, the player too
         var sy = Math.max(0, pad + top - oy), sh = Math.min(ground.height - sy, bottom - top);
         var sx = Math.max(0, left - ox), sw = Math.min(ground.width - sx, wide + (left - ox < 0 ? left - ox : 0));
         if (sw > 0 && sh > 0) g.drawImage(ground, sx, sy, sw, sh, ox + sx, oy + sy - pad, sw, sh);

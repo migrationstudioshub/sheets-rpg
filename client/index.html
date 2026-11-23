@@ -102,6 +102,23 @@
   .mark.alert, .mark.search { text-align: center; font-weight: 800; font-size: clamp(17px, 2.5cqw, 28px); line-height: 1;
     text-shadow: -1px 0 #000, 1px 0 #000, 0 -1px #000, 0 1px #000, 0 2px 3px #000; animation: markpop .18s ease-out; }
   .mark.alert { color: #ffd65a; } .mark.search { color: #fff; }
+  .mark.quest, .mark.questdone, .mark.questgo { text-align: center; font-weight: 800; font-size: clamp(19px, 2.8cqw, 30px); line-height: 1;
+    text-shadow: -1px 0 #000, 1px 0 #000, 0 -1px #000, 0 1px #000, 0 2px 3px #000; }
+  .mark.quest, .mark.questdone { color: #ffd65a; } .mark.questgo { color: #a9a9a9; }
+  /* quests: the NPC's window, the log, the tracker in the corner */
+  #npcp .panel, #questp .panel { width: 440px; max-height: 80%; overflow: auto; }
+  .qsay { color: #d8d5cf; line-height: 1.45; white-space: pre-wrap; }
+  .qgoals { display: grid; gap: 2px; font-size: 13px; } .qgoals .done { color: #7fc77f; }
+  .qreward { color: #c9b26a; font-size: 13px; } .qreturn { color: #7fc77f; font-size: 13px; }
+  .qbtns { display: flex; gap: 6px; justify-content: flex-end; } .qbtns button { padding: 6px 12px; }
+  .qpicks { display: flex; gap: 6px; flex-wrap: wrap; } .qpicks button.on { background: #3d6fb6; border-color: #3d6fb6; color: #fff; }
+  .qrow { display: flex; gap: 10px; align-items: center; text-align: left; padding: 7px 10px; background: #262a33; border: 0; border-radius: 6px; }
+  .qrow:hover { background: #2f4f7a; }
+  .qrow .qmark { font-weight: 800; width: 14px; text-align: center; color: #ffd65a; } .qrow.active .qmark { color: #a9a9a9; }
+  .qcard { display: grid; gap: 5px; padding: 9px 11px; background: #262a33; border-radius: 6px; } .qcard.ready { outline: 1px solid #4f8a4f; }
+  #tracker { right: 14px; top: 10px; max-width: 32%; display: grid; gap: 7px; font-size: clamp(10px, 1.35cqw, 13px); text-align: right; }
+  #tracker .tq b { display: block; color: #ffd65a; font-weight: 600; } #tracker .tq.ready b, #tracker .tq.ready div { color: #8fd98f; }
+  #tracker .tq div { color: #e6e3dd; } #tracker .tq .done { color: #8fd98f; }
   @keyframes markpop { from { transform: translate(-50%, -60%) scale(.4); opacity: 0; } }
   .weapon { display: grid; justify-items: end; gap: 3px; }
   .weapon .wline { display: flex; gap: 8px; align-items: baseline; }
@@ -242,6 +259,7 @@
       <select id="map-pick" title="Jump to map (offline testing only)"></select>
       <button id="btn-use" title="Use what you face: doors, chests, levers, signs (F or Space)">Use (F)</button>
       <button id="btn-bag" title="Bag (I)">Bag (I)</button>
+      <button id="btn-quests" title="Quest log (L)">Quests (L)</button>
       <button id="btn-help" title="Controls">?</button>
       <button id="reset" title="Forget this browser's character">New character</button>
     </div>
@@ -271,6 +289,7 @@
     </div>
 
     <div id="marks"></div>
+    <div id="tracker" class="hudlayer shadow"></div>
     <div id="hud-br" class="hudlayer shadow">
       <div id="weapon-set" hidden><div id="weapon" class="weapon"></div></div>
     </div>
@@ -323,6 +342,18 @@
       <div class="panel">
         <div class="phead"><strong id="claim-title">Your base</strong><button id="claim-close">Close (Esc)</button></div>
         <div id="claim-body" style="display:grid; gap:6px"></div>
+      </div>
+    </div>
+    <div id="npcp" class="overlay" hidden>
+      <div class="panel">
+        <div class="phead"><strong id="npc-title"></strong><button id="npc-close">Close (Esc)</button></div>
+        <div id="npc-body" style="display:grid; gap:8px"></div>
+      </div>
+    </div>
+    <div id="questp" class="overlay" hidden>
+      <div class="panel">
+        <div class="phead"><strong>Quests</strong><button id="quest-close">Close (Esc)</button></div>
+        <div id="quest-body" style="display:grid; gap:8px"></div>
       </div>
     </div>
     <div id="craft" class="overlay" hidden>

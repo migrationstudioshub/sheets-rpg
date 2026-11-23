@@ -300,7 +300,7 @@ var Content = (function () {
     });
     (tables.LootTables || []).forEach(function (r) {
       var t = str(r.table), it = str(r.item); if (!t || !it) return;
-      (c.loot[t] = c.loot[t] || []).push({ item: it, chance: num(r.chance, 1), min: num(r.min, 1), max: num(r.max, num(r.min, 1)) });
+      (c.loot[t] = c.loot[t] || []).push({ item: it, chance: num(r.chance, 1), min: num(r.min, 1), max: num(r.max, num(r.min, 1)), quest: str(r.quest) || undefined });
     });
     (tables.Classes || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
@@ -353,8 +353,63 @@ var Content = (function () {
       c.recipes[id] = { id: id, name: str(r.name) || id, category: str(r.category), inputs: str(r.inputs), outputs: str(r.outputs),
         station: str(r.station), tool: str(r.tool), timeS: num(r.time_s, 0), unlock: str(r.unlock) };
     });
+    // Quests: given by an NPC object, handed in to one. `objectives` (see parseGoals) becomes goals
+    // [{type, ref, need, ...}] here, so the rules and the page read the same list (World.questState).
+    c.quests = {};
+    (tables.Quests || []).forEach(function (r, i) {
+      var id = str(r.id); if (!id) return;
+      var goals = parseGoals(r.objectives);
+      c.quests[id] = { id: id, name: str(r.name) || id, giver: str(r.giver), ender: str(r.ender) || str(r.giver), text: str(r.text),
+        progressText: str(r.progress_text), doneText: str(r.done_text), goals: goals, requires: str(r.requires), rewards: str(r.rewards),
+        choice: str(r.choice), repeatS: Math.max(0, num(r.repeat_h, 0)) * 3600, order: i };
+    });
     linkFloors(c);
     return c;
+  }
+  /**
+   * A quest's objectives. GOAL_TYPES is every kind there is — the Content Studio builds its dropdown from it, and
+   * World counts each one where it happens:
+   *   ref = which table the target comes from (npcs = objects of kind npc; place = a spot on a map;
+   *         none = it has no target: any water will do, any food)
+   *   count = it can be asked for several times ("kill 5")
+   * Stored as a JSON list — [{type, ref, need, label}], and for a place {type: 'goto', ref: mapId, x, y, r, label} —
+   * or, written by hand, as text: "kill:rat:5; have:hide:3; talk:npc_marta; goto:map_3:10:4:2".
+   * label (optional) = how the goal reads in the game, instead of the words made up from its target.
+   */
+  var GOAL_TYPES = [
+    { id: 'kill', name: 'Kill a monster', ref: 'monsters', count: true },
+    { id: 'have', name: 'Bring items (taken when handed in)', ref: 'items', count: true },
+    { id: 'talk', name: 'Talk to someone', ref: 'npcs', count: false },
+    { id: 'use', name: 'Use or consume an item', ref: 'items', count: true },
+    { id: 'drink', name: 'Drink (any water: a stream, a bottle…)', ref: 'none', count: true },
+    { id: 'eat', name: 'Eat (any food)', ref: 'none', count: true },
+    { id: 'goto', name: 'Go to a place', ref: 'place', count: false },
+    { id: 'interact', name: 'Use an object (a lever, a sign, a chest…)', ref: 'objects', count: true },
+    { id: 'craft', name: 'Craft an item', ref: 'items', count: true },
+    { id: 'build', name: 'Build something', ref: 'blueprints', count: true },
+    { id: 'tame', name: 'Tame an animal', ref: 'monsters', count: true }
+  ];
+  function goalType(id) { for (var i = 0; i < GOAL_TYPES.length; i++) if (GOAL_TYPES[i].id === id) return GOAL_TYPES[i]; return null; }
+  function parseGoals(v) {
+    var list = v;
+    if (typeof v === 'string') {
+      var text = v.trim();
+      if (text.charAt(0) === '[') list = json(text, []);
+      else list = text.split(';').map(function (part) {
+        var a = part.split(':').map(function (x) { return x.trim(); });
+        if (a[0] === 'goto') return { type: 'goto', ref: a[1], x: a[2], y: a[3], r: a[4] };
+        if (goalType(a[0]) && goalType(a[0]).ref === 'none') return { type: a[0], need: a[1] };      // "drink" or "drink:2"
+        return { type: a[0], ref: a[1], need: a[2] };
+      });
+    }
+    return (Array.isArray(list) ? list : []).map(function (g) {
+      var kind = g && goalType(str(g.type)), ref = !kind ? '' : kind.ref === 'none' ? '*' : str(g.ref);
+      if (!kind || !ref) return null;
+      var out = { type: kind.id, ref: ref, need: kind.count ? Math.max(1, Math.round(num(g.need, 1))) : 1 };
+      if (kind.id === 'goto') { out.x = Math.round(num(g.x, 0)); out.y = Math.round(num(g.y, 0)); out.r = Math.max(0, Math.round(num(g.r, 1))); }
+      if (str(g.label)) out.label = str(g.label);
+      return out;
+    }).filter(Boolean);
   }
   /**
    * Ties the floors of each multi-storey map together (docs/FLOORS.md). A floor is a map of its own whose row
@@ -474,6 +529,6 @@ var Content = (function () {
     return hash({ row: row, ents: ents });
   }
 
-  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, toolTags: toolTags, linkFloors: linkFloors, autoFloors: autoFloors, tidyMaps: tidyMaps };
+  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, toolTags: toolTags, linkFloors: linkFloors, GOAL_TYPES: GOAL_TYPES, parseGoals: parseGoals, autoFloors: autoFloors, tidyMaps: tidyMaps };
 })();
 if (typeof module !== 'undefined') module.exports = Content;

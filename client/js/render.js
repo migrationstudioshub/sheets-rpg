@@ -36,9 +36,12 @@ var Render = (function () {
   function liftAt(map, x, y, T) { return elevOn(map) ? Math.round(Rules.groundHeight(map, x + 0.5, y + 0.5) * T) : 0; }
   function liftIn(map, x, y, T) { return elevOn(map) ? liftAt(map, Math.max(0, Math.min(map.width - 1, x)), Math.max(0, Math.min(map.height - 1, y)), T) : 0; }
   /** Which tile is under a point of the raised picture (px, py in map pixels, before any lift): the one drawn there. */
-  function pickCell(map, px, py, T) {
-    var x = Math.floor(px / T), flat = { x: x, y: Math.floor(py / T) };
-    if (!elevOn(map) || x < 0 || x >= map.width) return flat;
+  function pickCell(map, px, py, T) { return pickCells(map, px, py, T)[0]; }
+  /** Every tile whose picture covers that point, the one drawn on top first. Raised ground is drawn over the ground
+   *  behind it, so one spot of the screen can belong to several tiles of different heights: a click may mean any of them. */
+  function pickCells(map, px, py, T) {
+    var x = Math.floor(px / T), flat = { x: x, y: Math.floor(py / T) }, out = [];
+    if (!elevOn(map) || x < 0 || x >= map.width) return [flat];
     var u = px / T - x, top = maxElev(map);
     for (var y = Math.min(map.height - 1, flat.y + top + 1); y >= Math.max(0, flat.y); y--) {      // the nearest one wins: it is drawn last
       var h = Rules.heightAt(map, x, y), r = Rules.rampAt(map, x, y);
@@ -47,9 +50,9 @@ var Render = (function () {
       var lo = r === 'N' ? h : hi;                                                                // …and its near one
       var below = Rules.groundHeight(map, x + u, y + 1.001);                                      // the ground just south: the face reaches down to it
       var y0 = (y - hi) * T, y1 = (y + 1 - Math.min(lo, below)) * T;
-      if (py >= y0 && py < y1) return { x: x, y: y };
+      if (py >= y0 && py < y1) out.push({ x: x, y: y });
     }
-    return flat;
+    return out.length ? out : [flat];
   }
 
   // ---- ground height, shown flat (the map editor) ----
@@ -1182,6 +1185,8 @@ var Render = (function () {
       }
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
       var path = objPath(o, st, facing), flip = facing === 'left' || (!!facing && Rules.facingOf(String(facing)) === 'W');
+      var lookP = !(st && o.spriteStates[st]) && !facing ? Rules.lookSprite(o, e) : '';
+      if (lookP) path = lookP;                                        // one of the object's other looks (a differently drawn tree)
       if (o.id === '_drop') { var lying = World.list((e.data || {}).pickup)[0], lit = lying && c.items[lying.item]; if (lit && lit.sprite) path = lit.sprite; }   // an item on the ground: its own picture
       if (!path && e.bp !== undefined) path = '#built';              // something a player built with no art yet: show a lettered box, never nothing
       var dx = ox + e.x * T, dy = oy + e.y * T - L(e.x, e.y), dz = o.draw || 'auto';
@@ -1604,7 +1609,7 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, drawAnimated: drawAnimated, drawRelief: drawRelief, pickCell: pickCell, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
+  return { Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, drawAnimated: drawAnimated, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

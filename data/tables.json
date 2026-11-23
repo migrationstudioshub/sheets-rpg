@@ -206,6 +206,16 @@
    "notes": "on | off: can players build (blueprints)?"
   },
   {
+   "key": "build_if",
+   "value": "",
+   "notes": "What a player must have done before they can build at all: a condition list such as quest:my_quest_id (that quest handed in), quest_active:my_quest_id, flag:can_build or level:2. Empty = everyone can build from the start"
+  },
+  {
+   "key": "build_locked_text",
+   "value": "",
+   "notes": "What a player is told when they press B before building is unlocked. Empty = \"You don't know how to build yet.\""
+  },
+  {
    "key": "build_reach",
    "value": 2,
    "notes": "How far (tiles) from yourself you can place a structure"
@@ -352,7 +362,7 @@
   },
   {
    "key": "start_quests",
-   "value": "welcome",
+   "value": "tut_move",
    "notes": "Quests every new character starts with, shown in a welcome window the first time they enter the game. One or more quest ids, separated by commas. Empty = none"
   }
  ],
@@ -7999,6 +8009,57 @@
  ],
  "Quests": [
   {
+   "id": "tut_move",
+   "name": "Getting around",
+   "giver": "",
+   "ender": "",
+   "text": "Walk with [W] [A] [S] [D] or the arrow keys. You can also click a spot on the ground to walk there.",
+   "image": "",
+   "tutorial": true,
+   "progress_text": "",
+   "done_text": "",
+   "objectives": "[{\"type\": \"walk\", \"need\": 6, \"label\": \"Take a few steps\"}]",
+   "requires": "",
+   "rewards": "quest:tut_bag",
+   "choice": "",
+   "repeat_h": 0,
+   "notes": "Sample tutorial step 1 (Config start_quests). Tick \"tutorial\": it finishes by itself and its rewards start the next step. Put a GIF of the game in \"image\""
+  },
+  {
+   "id": "tut_bag",
+   "name": "What you carry",
+   "giver": "",
+   "ender": "",
+   "text": "Everything you pick up goes into your bag. Press [I] to open it, and [I] again to close it.",
+   "image": "",
+   "tutorial": true,
+   "progress_text": "",
+   "done_text": "",
+   "objectives": "[{\"type\": \"ui\", \"ref\": \"bag\"}]",
+   "requires": "",
+   "rewards": "quest:tut_hit",
+   "choice": "",
+   "repeat_h": 0,
+   "notes": "Sample tutorial step 2: a step only the page can see (a window opened)"
+  },
+  {
+   "id": "tut_hit",
+   "name": "Hitting things",
+   "giver": "",
+   "ender": "",
+   "text": "Stand next to something and [Left click] it to hit it: a creature, or a tree to bring it down for wood.",
+   "image": "",
+   "tutorial": true,
+   "progress_text": "",
+   "done_text": "",
+   "objectives": "[{\"type\": \"hit\", \"need\": 2, \"label\": \"Land two blows\"}]",
+   "requires": "",
+   "rewards": "quest:welcome",
+   "choice": "",
+   "repeat_h": 0,
+   "notes": "Sample tutorial step 3: the last one starts the first real quest"
+  },
+  {
    "id": "welcome",
    "name": "You are finally awake",
    "giver": "",
@@ -8011,7 +8072,9 @@
    "rewards": "xp:5",
    "choice": "",
    "repeat_h": 0,
-   "notes": "Sample: the starting quest (Config start_quests). No giver and no ender: it opens in a window when the character first enters the game, and when its objective is met a window shows the done text with a Claim button"
+   "notes": "Sample: the starting quest (Config start_quests). No giver and no ender: it opens in a window when the character first enters the game, and when its objective is met a window shows the done text with a Claim button",
+   "image": "",
+   "tutorial": false
   },
   {
    "id": "rat_trouble",
@@ -8026,7 +8089,9 @@
    "rewards": "xp:20; gold:10",
    "choice": "",
    "repeat_h": 0,
-   "notes": "Sample: a kill quest"
+   "notes": "Sample: a kill quest",
+   "image": "",
+   "tutorial": false
   },
   {
    "id": "bone_charms",
@@ -8041,7 +8106,9 @@
    "rewards": "xp:30",
    "choice": "bandage:2, ration:2",
    "repeat_h": 0,
-   "notes": "Sample: a bring-me quest that follows the first, with a choice of reward"
+   "notes": "Sample: a bring-me quest that follows the first, with a choice of reward",
+   "image": "",
+   "tutorial": false
   }
  ]
 }

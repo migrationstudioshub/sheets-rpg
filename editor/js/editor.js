@@ -312,6 +312,7 @@ var E = {
     Object.keys(c.terrain).forEach(function (k) { if (c.terrain[k].sprite) paths.push(c.terrain[k].sprite); });
     Object.keys(c.tilesets).forEach(function (k) { paths.push(c.tilesets[k].image); });
     Object.keys(c.monsters || {}).forEach(function (k) { if (c.monsters[k].sprite) paths.push(c.monsters[k].sprite); });
+    Object.keys(c.items || {}).forEach(function (k) { if (c.items[k].sprite) paths.push(c.items[k].sprite); });   // (the Items tab lays them on the ground)
     Object.keys(c.objects).forEach(function (k) {
       var o = c.objects[k]; if (o.sprite) paths.push(o.sprite);
       Object.keys(o.spriteStates).forEach(function (s) { paths.push(o.spriteStates[s]); });
@@ -435,13 +436,17 @@ var E = {
     var m = E.map(), old = E.entityAt(x, y), def = E.content.objects[ref];
     var stairs = !!def && def.kind === 'stairs';             // a staircase always says which way it climbs
     var face = stairs ? E.brushFacing : (def && Rules.turnable(def) && E.brushFacing !== 'S' ? E.brushFacing : '');
-    if (old && old.ref === ref) {                           // painting the same thing again only turns it
-      if (!def || !(stairs || Rules.turnable(def)) || (stairs ? Rules.stairDir(old) === face : Rules.facingOf(old) === (face || 'S'))) return false;
-      if (face) old.data.facing = face; else delete old.data.facing;
+    var look = def && Rules.lookSprite(def, E.brushLook) ? E.brushLook : '';
+    if (old && old.ref === ref) {                           // painting the same thing again only turns it, or changes its look
+      var sameFace = !def || !(stairs || Rules.turnable(def)) || (stairs ? Rules.stairDir(old) === face : Rules.facingOf(old) === (face || 'S'));
+      if (sameFace && (old.data.look || '') === look) return false;
+      if (!sameFace) { if (face) old.data.facing = face; else delete old.data.facing; }
+      if (look) old.data.look = look; else delete old.data.look;
       return old;
     }
     if (old) m.entities.splice(m.entities.indexOf(old), 1);
     var e = { key: E.newKey(m), x: x, y: y, ref: ref, data: face ? { facing: face } : {} };
+    if (look) e.data.look = look;
     m.entities.push(e);
     return e;
   }
@@ -455,7 +460,7 @@ var E = {
   // ---- wall-mounted objects (object defs with properties.layer === 'wall') ----
   // The current object brush, if it is a wall-mount object; else null.
   E.wallMountBrush = function () {
-    if (E.layer !== 'objects' || E.paletteTab === 'monsters' || !E.brush.object) return null;
+    if (E.layer !== 'objects' || E.paletteTab === 'monsters' || E.paletteTab === 'items' || !E.brush.object) return null;
     var o = E.content.objects[E.brush.object];
     return o && o.properties && o.properties.layer === 'wall' ? o : null;
   };
@@ -518,11 +523,21 @@ var E = {
     e.data = { monster: monster, count: 1, radius: 2 };
     return e;
   }
+  /** The Items tab: an item lying on the ground (the built-in '_drop' object, which says what lies there). */
+  function placeItem(x, y, item) {
+    if (!E.inside(x, y) || !item || !E.content.objects._drop) return false;
+    var old = E.entityAt(x, y), want = item + ':1';
+    if (old && old.ref === '_drop' && String(old.data.pickup || '').split(':')[0] === item) return false;
+    var e = placeObject(x, y, '_drop');
+    if (!e && old) e = old;
+    e.data = { pickup: want };
+    return e;
+  }
   E.setPaletteTab = function (t) {
     // Terrain defaults to the rectangle tool; things placed one at a time (objects, monsters, walls) to the brush.
     if (t !== E.paletteTab) {
       if (t === 'terrain' && E.tool === 'brush') E.tool = 'rect';
-      else if (E.paletteTab === 'terrain' && E.tool === 'rect' && (t === 'objects' || t === 'monsters' || t === 'walls')) E.tool = 'brush';
+      else if (E.paletteTab === 'terrain' && E.tool === 'rect' && (t === 'objects' || t === 'monsters' || t === 'items' || t === 'walls')) E.tool = 'brush';
     }
     E.paletteTab = t;
     E.layer = t === 'terrain' ? 'terrain' : t === 'walls' ? 'walls' : t === 'roof' ? 'roof' : t === 'nobuild' ? 'nobuild' : t === 'height' ? 'height' : t === 'spawn' ? 'spawn' : 'objects';
@@ -580,6 +595,7 @@ var E = {
     if (E.layer === 'height') return setElev(x, y, elevToken());
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
     if (E.paletteTab === 'monsters') return placeMonster(x, y, E.brush.monster);
+    if (E.paletteTab === 'items') return placeItem(x, y, E.brush.item);
     return placeObject(x, y, E.brush.object);
   }
   function line(a, b, fn) {  // every cell between a and b, so fast strokes leave no gaps
@@ -649,6 +665,7 @@ var E = {
     var e = E.entityAt(x, y);
     var eo = e && E.content.objects[e.ref];
     if (E.layer === 'objects' && e && eo && eo.kind === 'spawn' && e.data.monster) { E.brush.monster = e.data.monster; E.setPaletteTab('monsters'); }
+    else if (E.layer === 'objects' && e && e.ref === '_drop' && e.data.pickup) { E.brush.item = String(e.data.pickup).split(':')[0]; E.setPaletteTab('items'); }
     else if (E.layer === 'objects' && e) { E.brush.object = e.ref; E.setPaletteTab('objects'); }
     else { var picked = E.cells()[y][x]; if (picked) E.brush.terrain = picked; E.setPaletteTab('terrain'); }
     E.setTool(E.paletteTab === 'terrain' ? 'rect' : 'brush'); Panels.palette();
@@ -914,6 +931,8 @@ var E = {
         var sde = Render.sideDoorEdges ? Render.sideDoorEdges(o, e) : [];
         if (sde.length && sde.every(function (q) { return Render.drawDoorstep(g, m, o, e.data && e.data.state === 'open', vx, vy, q.x, q.y, s); })) { g.globalAlpha = 1; return; }
         var path = (e.data && e.data.state && o.spriteStates[e.data.state]) || (it.face ? it.face.path : o.sprite);
+        if (!(e.data && e.data.state && o.spriteStates[e.data.state]) && !it.face) path = Rules.lookSprite(o, e) || path;   // one of its other looks
+        if (o.id === '_drop') { var lying = World.list((e.data || {}).pickup)[0], lit = lying && c.items[lying.item]; path = (lit && lit.sprite) || '#built'; }   // an item on the ground: its own picture
         var flp = it.flip || !!(it.face && it.face.flip);                    // turned objects show the way they face
         Render.drawObject(g, o, path, it.dx, it.dy, s, 'base', 0, flp);
         Render.drawObject(g, o, path, it.dx, it.dy, s, 'top', 0, flp);   // overflow (no-op when the sprite is one tile)
@@ -1038,10 +1057,13 @@ var E = {
         if (E.layer === 'objects' && E.paletteTab === 'monsters' && E.brush.monster) {
           var bm = c.monsters[E.brush.monster], bmi = bm && Assets.get(bm.sprite);
           if (bmi) g.drawImage(bmi, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
+        } else if (E.layer === 'objects' && E.paletteTab === 'items') {
+          var bit = c.items[E.brush.item], biti = bit && bit.sprite && Assets.get(bit.sprite);
+          if (biti) g.drawImage(biti, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
         } else if (E.layer === 'objects' && E.brush.object) {
           var bo = c.objects[E.brush.object], bfs = bo && Rules.turnable(bo) ? Rules.facingSprite(bo, E.brushFacing) : null;
           if (bo && bo.kind === 'stairs') { var ge = { x: E.hover.x, y: E.hover.y, data: { facing: E.brushFacing } }; Render.drawStairs(g, c, bo, ge, vx, vy, s, 0); g.globalAlpha = 1; stairArrow(ge, bo, vx, vy, s); bo = null; }
-          var bi = bo && Assets.get(bfs ? bfs.path : bo.sprite), bgx = vx + E.hover.x * s, bgy = vy + E.hover.y * s;
+          var bi = bo && Assets.get(bfs ? bfs.path : (Rules.lookSprite(bo, E.brushLook) || bo.sprite)), bgx = vx + E.hover.x * s, bgy = vy + E.hover.y * s;
           if (bi && bfs && bfs.flip) { g.save(); g.translate(bgx + s, bgy); g.scale(-1, 1); g.drawImage(bi, 0, 0, s, s); g.restore(); }
           else if (bi) g.drawImage(bi, bgx, bgy, s, s);
         } else if (E.layer === 'terrain') {
@@ -1153,8 +1175,8 @@ var E = {
       if (wok) E.markDirty('map'); else E.undo.pop();
       return;
     }
-    if (E.layer === 'objects' && E.tool !== 'erase' && !(E.paletteTab === 'monsters' ? E.brush.monster : E.brush.object)) {
-      Panels.status('pick ' + (E.paletteTab === 'monsters' ? 'a monster' : 'an object') + ' in the palette first', true); return;
+    if (E.layer === 'objects' && E.tool !== 'erase' && !(E.paletteTab === 'monsters' ? E.brush.monster : E.paletteTab === 'items' ? E.brush.item : E.brush.object)) {
+      Panels.status('pick ' + (E.paletteTab === 'monsters' ? 'a monster' : E.paletteTab === 'items' ? 'an item' : 'an object') + ' in the palette first', true); return;
     }
 
     E.checkpoint();
@@ -1228,16 +1250,34 @@ var E = {
       E.markDirty('map'); Panels.inspector(); E.redraw();
       return true;
     }
-    var bo = E.layer === 'objects' && E.paletteTab !== 'monsters' && E.brush.object && E.content.objects[E.brush.object];
+    var bo = E.layer === 'objects' && E.paletteTab !== 'monsters' && E.paletteTab !== 'items' && E.brush.object && E.content.objects[E.brush.object];
     if (!bo || !(bo.kind === 'stairs' || Rules.turnable(bo))) return false;
     E.brushFacing = Rules.nextFacing(E.brushFacing, dir);
     Panels.status((bo.kind === 'stairs' ? 'climbs ' : 'facing ') + ({ N: 'north', E: 'east', S: 'south', W: 'west' })[E.brushFacing] + ' (T or Shift+wheel turns)');
     E.redraw();
     return true;
   };
+  /** The next look of the selected object, else of the object about to be painted (N, or Shift+wheel on one that does not turn). */
+  E.nextLook = function (dir) {
+    var sel = E.selected && E.entityByKey(E.selected), so = sel && E.content.objects[sel.ref];
+    if (sel && so && Rules.looks(so).length) {
+      E.checkpoint();
+      var nl = Rules.nextLook(so, sel.data.look, dir);
+      if (nl) sel.data.look = nl; else delete sel.data.look;
+      E.markDirty('map'); Panels.inspector(); E.redraw();
+      return true;
+    }
+    var bo = E.layer === 'objects' && E.paletteTab !== 'monsters' && E.paletteTab !== 'items' && E.brush.object && E.content.objects[E.brush.object];
+    var all = bo ? Rules.looks(bo) : [];
+    if (!all.length) return false;
+    E.brushLook = Rules.nextLook(bo, Rules.lookSprite(bo, E.brushLook) ? E.brushLook : '', dir);
+    Panels.status('look ' + ((E.brushLook ? all.indexOf(E.brushLook) + 1 : 0) + 1) + ' of ' + (all.length + 1) + ' (N or Shift+wheel: the next one)');
+    E.redraw();
+    return true;
+  };
   canvas.addEventListener('wheel', function (ev) {
     ev.preventDefault();
-    if (ev.shiftKey) { E.turn((ev.deltaY || ev.deltaX) > 0 ? 1 : -1); return; }      // Shift+wheel turns; plain wheel zooms
+    if (ev.shiftKey) { var wd = (ev.deltaY || ev.deltaX) > 0 ? 1 : -1; if (!E.turn(wd)) E.nextLook(wd); return; }      // Shift+wheel turns (or, for something that does not turn, shows its next look); plain wheel zooms
     var r = canvas.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
     var z = E.view.zoom, nz = Math.max(0.25, Math.min(8, z * (ev.deltaY < 0 ? 1.25 : 0.8)));
     E.view.x = mx - (mx - E.view.x) * nz / z; E.view.y = my - (my - E.view.y) * nz / z; E.view.zoom = nz;
@@ -1254,6 +1294,7 @@ var E = {
     if ((ev.ctrlKey || ev.metaKey) && k === 's') { ev.preventDefault(); E.save(); return; }
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     if (k === ' ') { spaceDown = true; canvas.style.cursor = 'grab'; ev.preventDefault(); return; }
+    if (k === 'n') { if (!E.nextLook(ev.shiftKey ? -1 : 1)) Panels.status('this object has only one look: add more pictures to it in the Content Studio (Other looks)', true); return; }
     if (k === 't') { if (!E.turn(1)) Panels.status('nothing to turn: pick or select an object that has pictures for other directions', true); return; }
     if (KEYS[k]) { E.setTool(KEYS[k]); return; }
     if (k === 'g') { E.show.grid = !E.show.grid; Panels.toolbar(); E.redraw(); return; }

@@ -169,6 +169,12 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   when it turns ready the page opens a "Quest complete" window (`claimPanel`: `done_text`, rewards, a Claim button → the
   same `turnin`, which needs no NPC without an ender); closed unclaimed, it waits in the quest log. Nothing finishes by itself.
   `questSweep` (after every action and on the map's turn) checks places reached; `questFinish` is the one way a quest is completed.
+  **Tutorial steps** (Nov 2026) are quests with the `tutorial` tick: with no ender (and no choice) they are the ONE kind that
+  finishes by itself (`questSweep`), so each step's `rewards` (`quest:<next>`) open the next "New quest" window at once; quest op
+  `skip` (`questSkip`) closes the whole chain unrewarded and starts the first non-tutorial quest it leads to. Goal kinds for the
+  basics: `walk` (steps, quiet), `hit`, `shoot`, `hold` (no target) and `ui` (`ref` from `Content.UI_PARTS`: bag, quests, craft,
+  build — only the page knows, it sends quest op `did` + `what`; `didUi` in `main.js`). Quests `image` = a picture above the text
+  (`questPic`; a GIF plays); `[W]` in quest text or a goal label is drawn as a key (`qtext`).
 - **Who took part in a kill** (Nov 2026): a monster keeps `m.hits = {playerId: when}`; on death everyone who hit it within
   Config `kill_credit_s` (30) gets `World` `killShare`: the kill for their quests, **full XP**, their own gold and their own roll
   of the loot table. The last hitter gets it at once; the others' shares wait in the map record (`ms.credits`) and are given by

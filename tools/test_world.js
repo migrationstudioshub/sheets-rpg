@@ -1794,7 +1794,7 @@ test('any container a player builds is storage: no storage setting needed, its c
   assert.deepStrictEqual(rec.inv.map(st => st.item + '@' + st.s), ['wood@19']);
 });
 
-test('a storage crate keeps what you put in; smashed, it leaves the contents in rubble', () => {
+test('a storage crate keeps what you put in; smashed, it leaves the contents in a loot bag', () => {
   const s = yard();
   doAct(s, { type: 'build', bp: 'bp_crate', x: 5, y: 4 });
   const crate = yardMap(s).entities.filter(e => e.ref === 'obj_crate')[0];
@@ -1816,9 +1816,9 @@ test('a storage crate keeps what you put in; smashed, it leaves the contents in 
   assert.strictEqual(World.view(s.c, s.ws, 'yard', s.p, [s.p], -1).struct.ents[0].inv, undefined, 'contents are not broadcast with the map');
   World.damageStructure(s.c, s.ws, 'yard', { t: 'ent', key: crate.key }, 999, { kind: 'blast', now: clock }, []);
   const left = yardMap(s).entities.filter(e => e.x === 5 && e.y === 4);
-  assert.deepStrictEqual(left.map(e => e.ref), ['obj_rubble']);
+  assert.deepStrictEqual(left.map(e => e.ref), ['_bag']);
   assert.deepStrictEqual(boxOf(left[0].inv), { wood: 6, nails: 5 }, 'nothing was lost');
-  assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'E', {}).ok, true, 'rubble can be walked over');
+  assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'E', {}).ok, true, 'the bag can be walked over');
 });
 
 // ---- claims (base building Phase 4)
@@ -3657,7 +3657,7 @@ function onQuest(s, objectives) {
 }
 
 test('quests: objectives are a list of kinds — written as text or as the list the Content Studio saves, with their own wording', () => {
-  assert.deepStrictEqual(Content.GOAL_TYPES.map(k => k.id), ['kill', 'have', 'talk', 'use', 'drink', 'eat', 'goto', 'interact', 'craft', 'build', 'tame']);
+  assert.deepStrictEqual(Content.GOAL_TYPES.map(k => k.id), ['kill', 'have', 'talk', 'use', 'drink', 'eat', 'goto', 'interact', 'craft', 'build', 'tame', 'walk', 'hit', 'shoot', 'hold', 'ui']);
   assert.deepStrictEqual(Content.parseGoals('kill:rat:5; have:bone:2; talk:npc_tom; goto:field:8:7:2; nonsense:x:1; kill'),
     [{ type: 'kill', ref: 'rat', need: 5 }, { type: 'have', ref: 'bone', need: 2 }, { type: 'talk', ref: 'npc_tom', need: 1 }, { type: 'goto', ref: 'field', need: 1, x: 8, y: 7, r: 2 }],
     'text, as written by hand: what is not a kind, or names nothing, is dropped');
@@ -3779,4 +3779,191 @@ test('quests: drinking and eating count from any source; a quest with nobody to 
   u.as(u.p, { type: 'quest', op: 'turnin', id: 'pick', choice: 1 });
   assert.deepStrictEqual([u.log(u.p), World.count(u.p, 'bone') - bones], ['', 1]);
 });
+test('water does not block the view: you see across it even when see_through was never ticked', () => {
+  const tb = JSON.parse(JSON.stringify(tables));
+  tb.Terrain.forEach(r => { r.see_through = false; delete r.water; });
+  const c = Content.build(tb);
+  assert.strictEqual(c.terrain.l_water.seeThrough, true); assert.strictEqual(c.terrain.l_swamp.seeThrough, true);
+  assert.strictEqual(c.terrain.til_2.seeThrough, false, 'a stone wall still hides');
+});
+
+test('dropping: items leave the bag for a loot bag at your feet; more goes in the same one; emptied it is gone, left it rots', () => {
+  const s = meadow(), n = id => World.count(s.p, id), ents = () => s.ws.maps.field.struct.ents;
+  const A = a => World.act(s.c, s.ws, s.p, a, s.t, mid, [s.p]);
+  s.p.inventory = []; s.p.belt = s.p.belt.map(() => ''); s.p.held = -1;
+  World.give(s.c, s.p, 'wood', 10, []); World.give(s.c, s.p, 'ration', 2, []);
+  const woodCell = s.p.inventory.find(g => g.item === 'wood').s, foodCell = s.p.inventory.find(g => g.item === 'ration').s;
+  assert.match(texts(A({ type: 'inv', op: 'drop', s: woodCell, qty: 4 })), /drop 4/);
+  assert.strictEqual(n('wood'), 6);
+  assert.deepStrictEqual(ents().map(e => [e.ref, e.x, e.y, e.wild]), [['_bag', 1, 1, true]]);
+  A({ type: 'inv', op: 'drop', s: foodCell });                               // no number = the whole stack
+  assert.strictEqual(n('ration'), 0); assert.strictEqual(ents().length, 1, 'the same bag');
+  assert.ok(!s.p.belt.includes('ration'), 'its belt slot is free');
+  assert.match(texts(A({ type: 'inv', op: 'drop', s: 31 })), /nothing there/);
+  const bag = ents()[0];
+  assert.deepStrictEqual(bag.inv.map(g => g.item + ':' + g.qty).sort(), ['ration:2', 'wood:4']);
+  let ev = A({ type: 'interact', x: 1, y: 1 });                               // it opens like a carcass: take only
+  assert.ok(ev.some(e => e.type === 'storage' && e.key === bag.key && e.takeOnly));
+  assert.match(texts(A({ type: 'store', key: bag.key, op: 'put', item: 'wood', qty: 1 })), /can't put/);
+  A({ type: 'inv', op: 'takeall', key: bag.key });
+  assert.deepStrictEqual([n('wood'), n('ration'), ents().length], [10, 2, 0]);
+  A({ type: 'inv', op: 'drop', s: s.p.inventory.find(g => g.item === 'wood').s, qty: 1 });
+  assert.strictEqual(ents().length, 1);
+  s.run(901000);
+  assert.strictEqual(ents().length, 0, 'nobody came for it');
+});
+
+test('a chest of the map that is smashed spills what it held into a loot bag', () => {
+  const s = meadow(), map = s.c.maps.field;
+  const ref = Object.keys(s.c.objects).find(k => s.c.objects[k].kind === 'container' && k !== '_bag');
+  map.entities = (map.entities || []).concat([{ key: 'field.c1', x: 5, y: 5, ref, data: {} }]); delete map._at;
+  s.ws.maps.field.boxes = { 'field.c1': [{ item: 'wood', qty: 3, s: 0 }] };
+  s.c.objects[ref].properties.hp = 10; delete s.c.objects[ref].properties.indestructible;
+  const res = World.damageStructure(s.c, s.ws, 'field', { t: 'ent', key: 'field.c1' }, 999, { kind: 'blast', now: s.t }, []);
+  assert.ok(res && res.destroyed, 'it broke');
+  const left = s.ws.maps.field.struct.ents;
+  assert.deepStrictEqual(left.map(e => [e.ref, e.x, e.y]), [['_bag', 5, 5]]);
+  assert.deepStrictEqual(left[0].inv.map(g => g.item + ':' + g.qty), ['wood:3']);
+  assert.strictEqual(s.ws.maps.field.boxes['field.c1'], undefined);
+});
+
+test('an item laid on the ground in the map editor is picked up; with respawn_s it comes back', () => {
+  const s = meadow(), map = s.c.maps.field;
+  map.entities = (map.entities || []).concat([{ key: 'field.i1', x: 2, y: 1, ref: '_drop', data: { pickup: 'wood:2' } }, { key: 'field.i2', x: 1, y: 2, ref: '_drop', data: { pickup: 'ration:1', respawn_s: 60 } }]); delete map._at;
+  const n = id => World.count(s.p, id), w0 = n('wood'), r0 = n('ration'), live = () => World.liveMap(s.c, s.ws, 'field').entities.map(e => e.key);
+  const lk = World.viewLookup(s.c, map, World.view(s.c, s.ws, 'field', s.p, [s.p]), s.p);
+  assert.match(World.actionsAt(s.c, World.liveMap(s.c, s.ws, 'field'), lk, s.p, 2, 1)[0].label, /Pick up the wood/);
+  World.act(s.c, s.ws, s.p, { type: 'interact', x: 2, y: 1 }, s.t, mid, [s.p]);
+  World.act(s.c, s.ws, s.p, { type: 'interact', x: 1, y: 2 }, s.t, mid, [s.p]);
+  assert.deepStrictEqual([n('wood') - w0, n('ration') - r0], [2, 1]);
+  assert.ok(!live().includes('field.i1') && !live().includes('field.i2'));
+  s.p.x = 8; s.p.y = 8; s.run(61000);
+  assert.ok(!live().includes('field.i1'), 'no respawn set: gone for good');
+  assert.ok(live().includes('field.i2'), 'it is back');
+  assert.ok(s.c.kinds.pickup.props.respawn_s, 'the editor has its settings');
+});
+
+test('looks: an object may have several pictures (v1, v2…); a placement picks one, and they go round in order', () => {
+  const tb = JSON.parse(JSON.stringify(tables)), row = tb.Objects.find(r => r.sprite);
+  row.sprite_states = (row.sprite_states ? row.sprite_states + '; ' : '') + 'v2=b.png; v1=a.png; v10=c.png';
+  const o = Content.build(tb).objects[row.id];
+  assert.deepStrictEqual(Rules.looks(o), ['v1', 'v2', 'v10']);
+  assert.strictEqual(Rules.lookSprite(o, { data: { look: 'v2' } }), 'b.png');
+  assert.strictEqual(Rules.lookSprite(o, { data: {} }), ''); assert.strictEqual(Rules.lookSprite(o, { data: { look: 'v7' } }), '', 'a look it no longer has: the main sprite');
+  assert.deepStrictEqual(['', 'v1', 'v2', 'v10'].map(k => Rules.nextLook(o, k, 1)), ['v1', 'v2', 'v10', '']);
+  assert.strictEqual(Rules.nextLook(o, '', -1), 'v10');
+  assert.deepStrictEqual(Rules.looks(Content.build(tables).objects[row.id]), []);
+});
+
+test('building can be locked until something happens (Config build_if): refused with the text, then open once the condition holds', () => {
+  const s = yard();
+  const lk = () => World.viewLookup(s.c, yardMap(s), { states: {}, monsters: [], players: [] }, s.p);
+  const ghost = () => World.canBuild(s.c, yardMap(s), lk(), s.p, s.c.blueprints.bp_wood_wall, 4, 4, 'N');
+  assert.strictEqual(World.publicPlayer(s.c, s.p).buildLocked, undefined, 'no condition: open to all');
+  s.c.config.build_if = 'flag:can_build';
+  assert.deepStrictEqual(ghost(), { ok: false, reason: "You don't know how to build yet." });
+  assert.match(doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'N' }), /don't know how to build yet/);
+  s.c.config.build_locked_text = 'Talk to the mayor first.';
+  assert.strictEqual(World.publicPlayer(s.c, s.p).buildLocked, 'Talk to the mayor first.');
+  assert.strictEqual(ghost().reason, 'Talk to the mayor first.');
+  s.p.flags.can_build = 1;
+  assert.strictEqual(World.publicPlayer(s.c, s.p).buildLocked, undefined);
+  assert.strictEqual(ghost().ok, true);
+  s.c.config.build_if = 'quest:first_steps'; assert.strictEqual(World.buildUnlocked(s.c, s.p), false);
+  s.p.questsDone = { first_steps: 1 }; assert.strictEqual(World.buildUnlocked(s.c, s.p), true);
+});
+
+test('harvesting: with a bare-hands yield a tree is picked by hand without being hurt, and cut down with the axe in hand', () => {
+  const start = (withAxe) => {
+    const s = camp();
+    Object.assign(s.c.objects.t_tree.properties, { hp: 12, harvest: 'wood:6', harvest_bare: 'potion:2, ration:1', harvest_bare_hits: 4 });
+    s.c.items.axe.vsMaterial = {}; s.c.items.axe.structureDmg = 3;
+    s.p.inventory = []; s.p.belt = s.p.belt.map(() => ''); s.p.held = -1; s.p.equipment = {};
+    if (withAxe) World.give(s.c, s.p, 'axe', 1, []);
+    if (withAxe === true) { s.p.belt[0] = 'axe'; World.holdSlot(s.c, s.p, 0); }
+    s.live = () => World.liveMap(s.c, s.ws, 'camp');
+    s.hp = () => { const i = World.structInfo(s.c, s.live(), { t: 'ent', key: 'camp.e2' }); return i ? i.hp : 0; };
+    s.got = () => ['wood', 'potion', 'ration'].map(id => World.count(s.p, id));
+    s.now = 1000; s.hit = () => { s.now += 2000; return texts(act(s, { type: 'attack', x: 1, y: 0 }, s.now)); };
+    return s;
+  };
+  ['bag', false].forEach(axe => {                             // an axe in the bag is not an axe in hand
+    const s = start(axe);
+    assert.ok(World.harvestWith(s.c, s.live(), s.p, 1, 0), 'holding the button works');
+    let said = ''; for (let k = 0; k < 4; k++) said += s.hit();
+    assert.ok(!/You need/.test(said), said);
+    assert.deepStrictEqual(s.got(), [0, 2, 1]);
+    assert.strictEqual(s.hp(), 12, 'not a scratch');
+    for (let k = 0; k < 8; k++) s.hit();                        // and it never runs out
+    assert.deepStrictEqual(s.got(), [0, 6, 3]);
+    assert.strictEqual(s.hp(), 12);
+    assert.strictEqual(s.ws.maps.camp.bare, undefined, 'nothing kept per tree');
+  });
+  const s = start(true);                                      // the axe cuts it down, for the wood
+  let n = 0; while (s.hp() > 0 && n++ < 30) s.hit();
+  assert.deepStrictEqual(s.got(), [6, 0, 0]);
+  const o = camp();                                           // no bare-hands yield: as before, no tool, no harvest
+  o.p.inventory = []; o.p.equipment = {}; o.p.held = -1;
+  assert.strictEqual(World.harvestWith(o.c, World.liveMap(o.c, o.ws, 'camp'), o.p, 1, 0), null);
+  assert.match(texts(act(o, { type: 'attack', x: 1, y: 0 }, 5000)), /You need/);
+});
+
+test('tutorial: steps count the basics, finish by themselves, lead into the first real quest, and can be skipped', () => {
+  const STEPS = [
+    { id: 't_move', name: 'Getting around', tutorial: 'TRUE', image: 'art/tutorial/move.gif', text: 'Walk with [W] [A] [S] [D].', objectives: 'walk:3', rewards: 'xp:1; quest:t_bag' },
+    { id: 't_bag', name: 'Your bag', tutorial: true, objectives: 'ui:bag; hold', rewards: 'quest:t_hit' },
+    { id: 't_hit', name: 'Hitting', tutorial: true, objectives: JSON.stringify([{ type: 'hit', need: 2 }, { type: 'shoot', need: 1 }]), rewards: 'quest:real' },
+    { id: 'real', name: 'The real thing', objectives: 'drink', rewards: 'xp:5' }];
+  const cfg = tb => { tb.Config = tb.Config.filter(r => r.key !== 'start_quests'); tb.Config.push({ key: 'start_quests', value: 't_move' }); };
+  const s = village(STEPS, cfg);
+  assert.deepStrictEqual([s.c.quests.t_move.tutorial, s.c.quests.t_move.image, s.c.quests.real.tutorial, s.c.quests.real.image], [true, 'art/tutorial/move.gif', false, '']);
+  assert.deepStrictEqual(s.c.quests.t_bag.goals, [{ type: 'ui', ref: 'bag', need: 1 }, { type: 'hold', ref: '*', need: 1 }]);
+  assert.deepStrictEqual(s.c.quests.t_hit.goals.map(g => World.goalText(s.c, g)), ['Hit something', 'Fire a shot']);
+  assert.strictEqual(s.log(s.p), 't_move:active:0');
+  // walking: steps taken are counted (quietly), a step into a wall is not
+  Object.assign(s.p, { x: 0, y: 5 });
+  const ev0 = s.as(s.p, { type: 'move', dirs: ['W', 'E', 'E'] });
+  assert.strictEqual(s.log(s.p), 't_move:active:2', 'two steps taken, one refused');
+  assert.doesNotMatch(texts(ev0), /2\/3/, 'no line in the log for every step');
+  const xp = s.p.xp, ev1 = s.as(s.p, { type: 'move', dirs: ['E', 'E'] });
+  assert.ok(ev1.some(e => e.type === 'quest' && e.done === 't_move'), 'done: it finishes by itself, with no window to claim it in');
+  assert.deepStrictEqual([s.log(s.p), s.p.xp - xp, s.p.intro.join()], ['t_bag:active:0/0', 1, 't_bag'], 'its reward given and the next step started and announced');
+  // a window of the page: only the page can say it was opened; a made-up one counts for nothing
+  s.as(s.p, { type: 'quest', op: 'did', what: 'nonsense' }); s.as(s.p, { type: 'quest', op: 'did', what: 'craft' });
+  assert.strictEqual(s.log(s.p), 't_bag:active:0/0');
+  s.as(s.p, { type: 'quest', op: 'did', what: 'bag' });
+  assert.strictEqual(s.log(s.p), 't_bag:active:1/0');
+  // taking something in hand: an empty slot is nothing in hand
+  s.p.belt = []; s.as(s.p, { type: 'hold', slot: 3 });
+  assert.strictEqual(s.log(s.p), 't_bag:active:1/0');
+  World.give(s.c, s.p, 'bow', 1, []); World.give(s.c, s.p, 'arrow', 5, []); s.p.belt[0] = 'bow';
+  s.as(s.p, { type: 'hold', slot: 0 });
+  assert.strictEqual(s.log(s.p), 't_hit:active:0/0', 'both done: on to the next step');
+  // a shot fired counts as a shot; one that lands is also a blow
+  s.c.monsters.rat.moveMs = 99999; s.c.monsters.rat.hp = 9999;
+  const rat = s.put('rat', s.p.x + 3, s.p.y); rat.hp = 9999;
+  s.as(s.p, { type: 'shoot', x: rat.x, y: rat.y });
+  assert.strictEqual(s.log(s.p), 't_hit:active:1/1');
+  Object.assign(rat, { x: s.p.x + 1 }); s.p.cooldowns = {}; s.p.nextAttack = 0;
+  s.as(s.p, { type: 'hold', slot: -1 });
+  const ev2 = s.as(s.p, { type: 'attack', x: rat.x, y: rat.y });
+  assert.ok(ev2.some(e => e.done === 't_hit'));
+  assert.deepStrictEqual([s.log(s.p), !!s.p.questsDone.t_hit], ['real:active:0', true], 'the last step starts the first real quest');
+  // an ordinary quest still waits to be claimed
+  s.c.maps.field.terrain[s.p.y][s.p.x - 1] = 'l_water';
+  s.p.thirst = 20; s.as(s.p, { type: 'interact', x: s.p.x - 1, y: s.p.y, verb: 'drink' });
+  assert.strictEqual(s.log(s.p), 'real:ready:1');
+
+  // skipping: every step is closed with no reward, and the real quest at the end of the chain starts
+  const k = village(STEPS, cfg), xp2 = k.p.xp;
+  assert.match(texts(k.as(k.p, { type: 'quest', op: 'skip' })), /Tutorial skipped/);
+  assert.deepStrictEqual([k.log(k.p), k.p.xp - xp2, ['t_move', 't_bag', 't_hit'].every(id => k.p.questsDone[id]), k.p.intro.join()], ['real:active:0', 0, true, 'real']);
+  assert.strictEqual(texts(k.as(k.p, { type: 'quest', op: 'skip' })), '', 'nothing left to skip');
+  // a tutorial step with someone to return to is handed in like any other
+  const e = village([{ id: 't_talk', name: 'Say hello', tutorial: true, ender: 'npc_marta', objectives: 'walk:1' }]);
+  World.run(e.c, e.ws, e.p, 'quest:t_talk', e.t, []);
+  Object.assign(e.p, { x: 6, y: 6 }); e.as(e.p, { type: 'move', dirs: ['E'] });
+  assert.strictEqual(e.log(e.p), 't_talk:ready:1');
+});
+
 console.log(`\n${passed} world tests passed`);

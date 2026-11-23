@@ -35,6 +35,10 @@ var Panels = (function () {
         var full = (E.content.autotile[ts.layout] || {})[255], n = full ? full[0] : 1, i = n - 1;
         g.drawImage(img, (i % ts.columns) * ts.tileSize, Math.floor(i / ts.columns) * ts.tileSize, ts.tileSize, ts.tileSize, 0, 0, T(), T());
       } else if (t.sprite && (img = Assets.get(t.sprite))) g.drawImage(img, 0, 0, T(), T());
+    } else if (type === 'item') {
+      var itd = (E.content.items || {})[id], iti = itd && itd.sprite && Assets.get(itd.sprite);
+      g.fillStyle = '#2a2f3a'; g.fillRect(0, 0, T(), T());
+      if (iti) g.drawImage(iti, 0, 0, T(), T()); else g.drawImage(Assets.placeholder(itd ? itd.name : '?', '#5a6a3a', T()), 0, 0);
     } else if (type === 'monster') {
       var mo = E.content.monsters[id], mi = mo && mo.sprite && Assets.get(mo.sprite);
       g.fillStyle = '#3a2a2a'; g.fillRect(0, 0, T(), T());
@@ -113,7 +117,7 @@ var Panels = (function () {
       h('button', { className: 'eye', title: 'Show / hide', text: E.show[id] ? '◉' : '○',
         onclick: function () { E.show[id] = !E.show[id]; toolbar(); E.redraw(); } }),
       h('button', { title: 'Edit the ' + label.toLowerCase() + ' layer (' + key + ')', text: label,
-        onclick: function () { E.setPaletteTab(id === 'terrain' ? 'terrain' : (E.paletteTab === 'monsters' ? 'monsters' : 'objects')); all(); E.redraw(); } }));
+        onclick: function () { E.setPaletteTab(id === 'terrain' ? 'terrain' : (E.paletteTab === 'monsters' || E.paletteTab === 'items' ? E.paletteTab : 'objects')); all(); E.redraw(); } }));
   }
   function toggle(what, title) {
     return h('button', { className: E.show[what] ? 'on' : '', title: title, text: 'Grid',
@@ -192,7 +196,7 @@ var Panels = (function () {
 
   // ------------------------------------------------------------ palette
   var filter = '';
-  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', walls: 'Walls', roof: 'Roof', spawn: 'Start', nobuild: 'No-build', height: 'Height' };
+  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', items: 'Items', walls: 'Walls', roof: 'Roof', spawn: 'Start', nobuild: 'No-build', height: 'Height' };
   // N-S walls: 'center' straddles the grid line; 'cursor' snaps the wall fully onto whichever tile the cursor is
   // nearer, so you can keep objects in the other tile clear of the wall art. Visual only; collision stays on the line.
   function wallSideRow() {
@@ -207,7 +211,7 @@ var Panels = (function () {
     var box = $('palette'); box.innerHTML = '';
     var paletteTab = E.paletteTab;
     var tabs = h('div', { className: 'tabs' },
-      ['terrain', 'objects', 'monsters', 'walls', 'roof', 'spawn', 'nobuild', 'height'].map(function (t) {
+      ['terrain', 'objects', 'monsters', 'items', 'walls', 'roof', 'spawn', 'nobuild', 'height'].map(function (t) {
         return h('button', { className: paletteTab === t ? 'on' : '', text: TAB_NAMES[t],
           onclick: function () { E.setPaletteTab(t); all(); E.redraw(); } });
       }));
@@ -278,16 +282,18 @@ var Panels = (function () {
       }
       return;
     }
-    var defType = paletteTab === 'terrain' ? 'terrain' : paletteTab === 'monsters' ? 'monster' : paletteTab === 'walls' ? 'wallStyle' : 'object';
-    var current = paletteTab === 'terrain' ? E.brush.terrain : paletteTab === 'monsters' ? E.brush.monster : paletteTab === 'walls' ? E.brush.wall : E.brush.object;
+    var defType = paletteTab === 'terrain' ? 'terrain' : paletteTab === 'monsters' ? 'monster' : paletteTab === 'items' ? 'item' : paletteTab === 'walls' ? 'wallStyle' : 'object';
+    var current = paletteTab === 'terrain' ? E.brush.terrain : paletteTab === 'monsters' ? E.brush.monster : paletteTab === 'items' ? E.brush.item : paletteTab === 'walls' ? E.brush.wall : E.brush.object;
     var search = h('input', { placeholder: 'Search…', value: filter, oninput: function () { filter = search.value; list(); } });
     var listBox = h('div', { className: 'items' });
     box.appendChild(tabs); box.appendChild(search);
     if (paletteTab === 'walls') box.appendChild(wallSideRow());   // (walls are always 2 tiles high: no height to choose)
     box.appendChild(listBox);
-    box.appendChild(h('div', { className: 'row buttons' },
+    if (paletteTab !== 'items') box.appendChild(h('div', { className: 'row buttons' },
       h('button', { text: '✎ Edit selected', onclick: function () { editDef(defType, current); } }),
       h('button', { text: '+ New ' + defType, onclick: function () { newDef(defType); } })));
+    if (paletteTab === 'items') box.appendChild(h('p', { className: 'note',
+      text: 'Paint an item to lay it on the ground: a player picks it up by using it. Select it (V) to set how many lie there and whether it comes back (respawn_s). Items themselves are made in the Content Studio.' }));
     if (paletteTab === 'monsters') box.appendChild(h('p', { className: 'note',
       text: 'Paint a monster to place a spawn point. Select it (V) to set how many appear and how far they roam.' }));
     if (paletteTab === 'walls') box.appendChild(h('p', { className: 'note',
@@ -304,12 +310,13 @@ var Panels = (function () {
               E.terrainLayer = terrainDefaultLayer(d);   // walls + plain tiles → base, other autotiles → overlay
               if (E.clearStamp) E.clearStamp(); }
             else if (type === 'monster') { E.brush.monster = d.id; E.layer = 'objects'; }
+            else if (type === 'item') { E.brush.item = d.id; E.layer = 'objects'; }
             else if (type === 'wallStyle') { E.brush.wall = d.id; E.layer = 'walls'; }
-            else { E.brush.object = d.id; E.layer = 'objects'; if (E.content.objects[d.id] && E.content.objects[d.id].kind === 'stairs') E.brushFacing = 'N'; }   // stairs climb north unless turned (T)
+            else { if (E.brush.object !== d.id) E.brushLook = ''; E.brush.object = d.id; E.layer = 'objects'; if (E.content.objects[d.id] && E.content.objects[d.id].kind === 'stairs') E.brushFacing = 'N'; }   // stairs climb north unless turned (T)
             if (E.tool === 'select' || E.tool === 'pick' || E.tool === 'erase') E.tool = type === 'terrain' ? 'rect' : 'brush';
             toolbar(); list(); E.redraw();
           },
-          ondblclick: function () { editDef(type, d.id); } }, thumb(type, d.id), h('span', { text: d.name }));
+          ondblclick: function () { if (type !== 'item') editDef(type, d.id); } }, thumb(type, d.id), h('span', { text: d.name }));
       }
       if (paletteTab === 'terrain') {
         var terrains = Object.keys(E.content.terrain).map(function (k) { return E.content.terrain[k]; }).filter(match);
@@ -323,6 +330,14 @@ var Panels = (function () {
         Object.keys(E.content.monsters).map(function (k) { return E.content.monsters[k]; }).filter(match)
           .forEach(function (m) { listBox.appendChild(item('monster', m, E.brush.monster === m.id)); });
         if (!Object.keys(E.content.monsters).length) listBox.appendChild(h('div', { className: 'kind', text: 'No monsters yet: add one with + New monster' }));
+      } else if (paletteTab === 'items') {
+        var byType = {};
+        Object.keys(E.content.items || {}).map(function (k) { return E.content.items[k]; }).filter(function (d) { return !f || (d.name + ' ' + d.id + ' ' + (d.type || '')).toLowerCase().indexOf(f) >= 0; })
+          .forEach(function (d) { (byType[d.type || 'item'] = byType[d.type || 'item'] || []).push(d); });
+        Object.keys(byType).sort().forEach(function (k) {
+          listBox.appendChild(h('div', { className: 'kind', text: k }));
+          byType[k].forEach(function (d) { listBox.appendChild(item('item', d, E.brush.item === d.id)); });
+        });
       } else if (paletteTab === 'walls') {
         var styles = Object.keys(E.content.wallStyles || {}).map(function (k) { return E.content.wallStyles[k]; }).filter(match);
         styles.forEach(function (w) { listBox.appendChild(item('wallStyle', w, E.brush.wall === w.id)); });
@@ -513,6 +528,11 @@ var Panels = (function () {
       Object.keys(E.content.objects).map(function (id) { var d = E.content.objects[id];
         return h('option', { value: id, text: d.name + ' (' + d.kind + ')', selected: id === e.ref }); }));
     wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'object' }), objSel));
+    if (o && Rules.looks(o).length) {                                                     // drawn several ways: which one this is
+      var lNow = Rules.lookSprite(o, e) ? e.data.look : '', lSel = h('select', { title: 'N also shows the next one', onchange: function () { setProp(e.key, E.mapId, 'look', lSel.value || undefined); E.redraw(); } },
+        [''].concat(Rules.looks(o)).map(function (k, i) { return h('option', { value: k, text: 'Look ' + (i + 1) + (k ? '' : ' (main sprite)'), selected: k === lNow }); }));
+      wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'look' }), lSel));
+    }
     if (o && o.kind === 'stairs') {                                                       // a staircase: which way it climbs, and its stairwell
       var sNow = Rules.stairDir(e), sSel = h('select', { title: 'T or Shift+wheel also turns it', onchange: function () { setProp(e.key, E.mapId, 'facing', sSel.value); inspector(); E.redraw(); } },
         [['N', 'North (up the screen)'], ['E', 'East'], ['S', 'South'], ['W', 'West']].map(function (d) { return h('option', { value: d[0], text: d[1], selected: d[0] === sNow }); }));

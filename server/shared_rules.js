@@ -201,6 +201,23 @@ var Rules = (function () {
     if ((f === 'E' || f === 'W') && t.side) return { path: t.side, flip: f === 'W' };
     return { path: (f === 'S' && t.south) || o.sprite, flip: false };
   }
+  // ---- looks: one object, several pictures (a tree drawn five ways). They are the sprite_states entries v1, v2, …;
+  // a placement says which with data.look ('' = the main sprite). Only the picture changes, never what the object is.
+  /** The looks an object has besides its main sprite, in order: ['v1', 'v2', …]. */
+  function looks(o) {
+    return Object.keys((o && o.spriteStates) || {}).filter(function (k) { return /^v\d+$/.test(k) && o.spriteStates[k]; })
+      .sort(function (a, b) { return Number(a.slice(1)) - Number(b.slice(1)); });
+  }
+  /** The picture of the look a placement (or a look's name) asks for; '' = it has none, use the usual one. */
+  function lookSprite(o, e) {
+    var k = e && typeof e === 'object' ? (e.data && e.data.look) : e;
+    return k && /^v\d+$/.test(String(k)) && o && o.spriteStates && o.spriteStates[k] ? o.spriteStates[k] : '';
+  }
+  /** The look after this one (dir 1) or before it (dir -1), going round through the main sprite (''). */
+  function nextLook(o, cur, dir) {
+    var all = [''].concat(looks(o)), i = Math.max(0, all.indexOf(cur || ''));
+    return all[(i + (dir < 0 ? all.length - 1 : 1)) % all.length];
+  }
   /** The next facing, clockwise (dir 1) or anticlockwise (dir -1). */
   function nextFacing(f, dir) { return TURN[(TURN.indexOf(facingOf(f)) + (dir < 0 ? 3 : 1)) % 4]; }
   /** The sides of a placed object you may cross, turned with it: {n, e, s, w}. */
@@ -420,6 +437,6 @@ var Rules = (function () {
     wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight,
     edgeKey: edgeKey, edgeBlocked: edgeBlocked, sharedEdge: sharedEdge, blockedBetween: blockedBetween, reachBlocked: reachBlocked,
     STAIR_LEN: STAIR_LEN, stairLen: stairLen, stairDir: stairDir, stairsOn: stairsOn, stairAt: stairAt, stairHeight: stairHeight,
-    facingOf: facingOf, turnable: turnable, facingSprite: facingSprite, nextFacing: nextFacing, passOf: passOf };
+    facingOf: facingOf, turnable: turnable, facingSprite: facingSprite, nextFacing: nextFacing, looks: looks, lookSprite: lookSprite, nextLook: nextLook, passOf: passOf };
 })();
 if (typeof module !== 'undefined') module.exports = Rules;

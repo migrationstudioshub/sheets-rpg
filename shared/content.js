@@ -120,6 +120,8 @@ var Content = (function () {
         water: r.water === undefined || r.water === '' || r.water === null ? /water/i.test(str(r.name) || id) : bool(r.water),
         toxicity: r.toxicity === undefined || r.toxicity === '' || r.toxicity === null ? null : num(r.toxicity, 0),
         pass: { n: bool(r.pass_n), e: bool(r.pass_e), s: bool(r.pass_s), w: bool(r.pass_w) } };
+      // Water and lava lie flat: you see (and shoot) across them without anyone having to tick see_through.
+      if (c.terrain[id].water || /^(water|lava)/.test(c.terrain[id].tint)) c.terrain[id].seeThrough = true;
     });
 
     // Wall styles: materials for edge walls (walls painted on cell boundaries, not tiles). A style is art +
@@ -148,8 +150,14 @@ var Content = (function () {
       else if (p) kind.props[p] = { type: str(r.type), 'default': scalar(r['default']), notes: str(r.notes) };
     });
 
-    // '_drop' is built in: an item lying on the ground (what a tame animal lays). The entity says which (data.pickup).
-    (tables.Objects || []).concat([{ id: '_drop', name: 'Item', kind: 'pickup', walkable: true, properties: '{}' }]).forEach(function (r) {
+    // Built in: '_drop', an item lying on the ground (what a tame animal lays, what the map editor's Items tab places):
+    // the entity says which (data.pickup). '_bag', the loot bag: what a player drops, and what a smashed container held.
+    // The settings of a thing on the ground, for the map editor's form (unless the Kinds tab already has them).
+    if (!c.kinds.pickup) c.kinds.pickup = { kind: 'pickup', states: [], props: {
+      pickup: { type: 'item_list', 'default': '', notes: 'What lies here: item:how many (branch:1)' },
+      respawn_s: { type: 'number', 'default': '', notes: 'Seconds until it is back after someone took it. Empty = Config pickup_respawn_s (0 = it never comes back)' } } };
+    (tables.Objects || []).concat([{ id: '_drop', name: 'Item', kind: 'pickup', walkable: true, properties: '{}' },
+      { id: '_bag', name: 'Loot bag', kind: 'container', walkable: true, sprite: 'art/sprites/objects/loot_bag.png', properties: '{}' }]).forEach(function (r) {
       var id = str(r.id); if (!id || c.objects[id]) return;
       var pr = json(r.properties, {});
       c.objects[id] = { id: id, name: str(r.name) || id, kind: str(r.kind) || 'deco',
@@ -360,7 +368,8 @@ var Content = (function () {
       var goals = parseGoals(r.objectives);
       c.quests[id] = { id: id, name: str(r.name) || id, giver: str(r.giver), ender: str(r.ender) || str(r.giver), text: str(r.text),
         progressText: str(r.progress_text), doneText: str(r.done_text), goals: goals, requires: str(r.requires), rewards: str(r.rewards),
-        choice: str(r.choice), repeatS: Math.max(0, num(r.repeat_h, 0)) * 3600, order: i };
+        choice: str(r.choice), repeatS: Math.max(0, num(r.repeat_h, 0)) * 3600, order: i,
+        image: str(r.image), tutorial: bool(r.tutorial) };      // image = a picture (a GIF plays) shown with its text; tutorial = a teaching step (World.questSweep, questSkip)
     });
     linkFloors(c);
     return c;
@@ -370,7 +379,9 @@ var Content = (function () {
    * World counts each one where it happens:
    *   ref = which table the target comes from (npcs = objects of kind npc; place = a spot on a map;
    *         none = it has no target: any water will do, any food)
+   *         ui = a window of the game page, from UI_PARTS: only the page knows it was opened, and reports it)
    *   count = it can be asked for several times ("kill 5")
+   *   quiet = counted without a line in the log each time (steps walked)
    * Stored as a JSON list — [{type, ref, need, label}], and for a place {type: 'goto', ref: mapId, x, y, r, label} —
    * or, written by hand, as text: "kill:rat:5; have:hide:3; talk:npc_marta; goto:map_3:10:4:2".
    * label (optional) = how the goal reads in the game, instead of the words made up from its target.
@@ -386,7 +397,18 @@ var Content = (function () {
     { id: 'interact', name: 'Use an object (a lever, a sign, a chest…)', ref: 'objects', count: true },
     { id: 'craft', name: 'Craft an item', ref: 'items', count: true },
     { id: 'build', name: 'Build something', ref: 'blueprints', count: true },
-    { id: 'tame', name: 'Tame an animal', ref: 'monsters', count: true }
+    { id: 'tame', name: 'Tame an animal', ref: 'monsters', count: true },
+    // the basics, for tutorial steps
+    { id: 'walk', name: 'Walk (steps taken)', ref: 'none', count: true, quiet: true },
+    { id: 'hit', name: 'Land a blow (on a creature, or on something breakable)', ref: 'none', count: true },
+    { id: 'shoot', name: 'Fire a shot', ref: 'none', count: true },
+    { id: 'hold', name: 'Take something in hand (from the belt)', ref: 'none', count: false },
+    { id: 'ui', name: 'Open a window of the game', ref: 'ui', count: false }
+  ];
+  /** The windows a `ui` goal can ask for. The page reports one being opened: {type: 'quest', op: 'did', what: id}. */
+  var UI_PARTS = [
+    { id: 'bag', name: 'The bag (I)' }, { id: 'quests', name: 'The quest log (L)' },
+    { id: 'craft', name: 'The crafting window (C)' }, { id: 'build', name: 'The build bar (B)' }
   ];
   function goalType(id) { for (var i = 0; i < GOAL_TYPES.length; i++) if (GOAL_TYPES[i].id === id) return GOAL_TYPES[i]; return null; }
   function parseGoals(v) {
@@ -528,6 +550,6 @@ var Content = (function () {
     return hash({ row: row, ents: ents });
   }
 
-  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, toolTags: toolTags, linkFloors: linkFloors, GOAL_TYPES: GOAL_TYPES, parseGoals: parseGoals, autoFloors: autoFloors, tidyMaps: tidyMaps };
+  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, toolTags: toolTags, linkFloors: linkFloors, GOAL_TYPES: GOAL_TYPES, UI_PARTS: UI_PARTS, parseGoals: parseGoals, autoFloors: autoFloors, tidyMaps: tidyMaps };
 })();
 if (typeof module !== 'undefined') module.exports = Content;

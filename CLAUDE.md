@@ -63,6 +63,15 @@ A game action is sent as `do` (not `action`!): `{type: 'move', dirs} | {type: 'i
   of monsters on the map or of characters ever made.
 - **Online** (`API_URL` set, `FUNCTIONS_URL` empty): the Apps Script referee checks everything (~1.5 s). Same action
   protocol; also `GET ?action=content|tables|reload`. With `FIREBASE_URL` set it also writes the pushed live world.
+- **Host** (`host/server.js`, the page it serves sets `window.GAME_LAN` → `Lan` backend): one player's computer is the referee, in memory, saved to
+  `host/save.live.json`. It reads the LIVE content once at start-up (`GET FUNCTIONS_URL?action=content`, read-only; cache file, then
+  `data/tables.json` as fallbacks; `CONTENT=local` forces the latter). **It runs a loop** (Nov 2026, stage 1 of the game server in
+  `docs/QUESTS_INSTANCES_SERVER.md`): `tick()` advances every map with players `TICK_MS` (100) apart, and a hand-written WebSocket
+  carries requests up (same bodies as POST plus `n`; answer `{re: n, …}`) and each turn's changes down (`{push: 1, …}`, only the
+  parts of the view that differ from what that socket was last sent — `conn.sent`; the host counts events per socket). Page side:
+  `Lan.connect` + `api.onPush` → `takePush` in `main.js`; `api.pushed` slows asking to a 5 s "still here". No socket = POST and
+  the 250 ms poll, as before. `LAG_MS` fakes lag. Tests: `node tools/test_host.js`.
+  Friends elsewhere reach it over Tailscale.
 - **Offline** (`API_URL` empty): `client/js/api.js` runs `shared/world.js` in the browser against `data/tables.json`
   (or a newer map-editor draft in localStorage), saving in localStorage. Useful for testing without the server.
 
@@ -104,6 +113,15 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   `WALKER_PLANS` per map per turn) and the walker breaks what is in the way with `damageStructure` (kind `monster`). Monsters `prey` =
   walkers hunt it. Config `walkers_attack_buildings` (on). A door or window that is destroyed now takes its stretch of wall along
   (a hole, for everyone). Hearing (shots) is not built.
+- **Animals** (Nov 2026): two more brains. **`animal`** = `World.animalStep`: never attacks, wanders, runs from players and from
+  hunters/walkers within `flee_range`. **`hunter`** = `hunterStep` (a wolf): goes for prey animals and players within `aggro_range`,
+  rests after a kill (`m.fedUntil`). Monsters `carcass` = the object left where it dies (`leaveCarcass`: a struct entity marked
+  `wild`: a take-only container holding the monster's `loot`, gone once emptied or after Config `carcass_rot_s`). `tame_with` = the item that tames it: in hand the animal does
+  not flee, using the animal feeds it (`tame`: `m.tame/owner/free/home`; it leaves its spawner, which grows a new one). A tame one
+  lives within 3 tiles of its home — the nearest object of kind **`coop`** within Config `coop_range` — and leaves its `lays` items (an item list) on the ground there every `lay_s` seconds, up to Config `egg_cap`: an entity of the built-in
+  object `_drop` (kind **`pickup`**) whose `data.pickup` says what lies there. Monsters `loot` (an item list) = what it always gives: the
+  contents of its carcass, or, with no carcass, straight to the killer. `wild` struct entities are
+  nobody's: not repaired, not taken apart.
 - **Walking:** `Rules.DIRS` stays four-way (facing, walls, "next to"); `Rules.DIAG` (NE/SE/SW/NW) are move-only steps, allowed
   by `tryMove` only when BOTH straight ways round the corner are open, costing `Rules.stepCost` = 1.4. Facing stays four-way
   (`Rules.faceFor`). The referee enforces walking speed: a per-player budget (`p.mvB`/`p.mvT`) refills one step per `move_ms`
@@ -122,6 +140,8 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   "is this cell under cover" question (rain/fliers later). Nothing collapses yet.
 - **Planned, not built:** mines (shared in the overworld, private in bases), digging, and terrain elevation (height per tile,
   drawn raised with cut-away) are designed in `docs/UNDERGROUND_AND_ELEVATION.md`. No voxels. Decide elevation before floors stage 3.
+- **Planned, not built — NPCs, quests, dialogue, instances, and an in-memory game server with a loop:** agreed design
+  and order in `docs/QUESTS_INSTANCES_SERVER.md`. Read it before touching quests, kill credit/loot, or the referee.
 - Item id `gold` means money. Tall objects: one image taller than a tile (the part above the footprint draws over characters). Animation: `frames` + `frame_ms` (horizontal strip).
 - Skills: target `enemy|ally|self|tile|around`, `range`, `area`, `los`, `effect damage|heal|none`, amount = `power + scale × stat(atk|level)`, `status`, `dash`, `projectile`.
 

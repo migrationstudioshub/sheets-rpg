@@ -54,8 +54,8 @@ var Api = (function () {
     this.ws = saved.world || {};
     return this.step(null, -1);
   };
-  Offline.prototype.join = function (name, cls) {
-    this.p = World.newPlayer(this.content, 'me', name, cls);
+  Offline.prototype.join = function (name, cls, look) {
+    this.p = World.newPlayer(this.content, 'me', name, cls, look);
     this.ws = (store(OFFLINE_KEY) || {}).world || {};
     return this.step(null, -1);
   };
@@ -89,8 +89,8 @@ var Api = (function () {
     this.token = token;
     return this.call({ action: 'load', token: token }).catch(function () { return null; });
   };
-  Online.prototype.join = function (name, cls) {
-    return this.call({ action: 'join', name: name, 'class': cls }).then(function (r) {
+  Online.prototype.join = function (name, cls, look) {       // look = {hair, hairColor} from the character screen
+    return this.call({ action: 'join', name: name, 'class': cls, body: look && look.body, skin: look && look.skin, hair: look && look.hair, hairColor: look && look.hairColor }).then(function (r) {
       this.token = r.token; store(this.tokenKey, r.token);
       return this.call({ action: 'load', token: r.token });
     }.bind(this));
@@ -139,7 +139,7 @@ var Api = (function () {
         if (!f) return null;                                      // its fixed part has not arrived yet: next change
         var q = String(m[k]).split(',');
         return { id: f.id, ref: f.ref, x: Number(q[0]), y: Number(q[1]), hp: Number(q[2]), maxHp: f.maxHp, facing: q[3] || 'S',
-          statuses: q[4] ? q[4].split('|') : [], look: f.look || undefined };
+          statuses: q[4] ? q[4].split('|') : [], alert: Number(q[5]) || undefined, look: f.look || undefined };
       }).filter(Boolean);
       return w;
     }
@@ -207,12 +207,62 @@ var Api = (function () {
   function Lan() { Online.call(this, ''); this.mode = 'lan'; this.tokenKey = 'sheetsrpg.lanToken'; }
   Lan.prototype = Object.create(Online.prototype);
   Lan.prototype.constructor = Lan;
+  // The host runs a loop and keeps a socket open to each page (host/server.js, "the socket"): requests go up it
+  // (the same bodies a POST carries, plus a number n the answer comes back with) and the changes of every turn come
+  // down it unasked. this.pushed is true while it is open — the game then only asks now and then, to say it is
+  // still there. With no socket (an older host, a browser without one) everything goes by POST, as it always did.
   Lan.prototype.call = function (body) {
+    var s = this.sock, self = this;
+    if (s && s.readyState === 1) {
+      return new Promise(function (resolve, reject) {
+        var n = self.n = (self.n || 0) + 1;
+        self.waiting[n] = { resolve: resolve, reject: reject };
+        s.send(JSON.stringify(Object.assign({ n: n }, body)));
+      });
+    }
     return fetch('/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function (r) { return r.json(); })
       .then(function (res) { if (res.error) throw new Error(res.error); return res; });
   };
+  Lan.prototype.connect = function () {
+    if (typeof WebSocket === 'undefined' || typeof location === 'undefined') return;
+    var self = this, s;
+    self.waiting = self.waiting || {};
+    try { s = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/'); } catch (e) { return; }
+    self.sock = s;
+    function lost() {
+      if (self.sock !== s) return;
+      self.sock = null; self.pushed = false;
+      var w = self.waiting; self.waiting = {};
+      Object.keys(w).forEach(function (n) { w[n].reject(new Error('the connection to the host dropped')); });
+      setTimeout(function () { self.connect(); }, 2000);
+    }
+    s.onclose = lost;
+    s.onerror = function () { try { s.close(); } catch (e) { /* already closed */ } };
+    s.onmessage = function (m) {
+      var msg; try { msg = JSON.parse(m.data); } catch (e) { return; }
+      if (!msg) return;
+      if (msg.push) {
+        // Only what changed since the last message on this socket: put it over what we hold (null = gone).
+        if (!self.held || !self.heldPlayer) return;
+        var w = Object.assign({}, self.held), d = msg.world || {};
+        Object.keys(d).forEach(function (k) { if (d[k] === null) delete w[k]; else w[k] = d[k]; });
+        w.now = msg.now;
+        self.held = w;
+        if (msg.player) self.heldPlayer = msg.player;
+        if (self.onPush) self.onPush({ player: self.heldPlayer, world: Object.assign({}, w), events: msg.events || [], seq: msg.seq });
+        return;
+      }
+      var wait = self.waiting[msg.re];
+      if (!wait) return;
+      delete self.waiting[msg.re];
+      if (msg.error) { wait.reject(new Error(msg.error)); return; }
+      if (msg.world) { self.held = Object.assign({}, msg.world); self.heldPlayer = msg.player; self.pushed = true; }   // from here on the host sends changes unasked
+      wait.resolve(msg);
+    };
+  };
   Lan.prototype.loadContent = function () {
+    this.connect();
     return fetch('/?action=content').then(function (r) { return r.json(); })
       .then(function (res) { if (res.error) throw new Error(res.error); return (this.content = res.content); }.bind(this));
   };

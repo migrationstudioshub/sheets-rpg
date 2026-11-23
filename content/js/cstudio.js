@@ -309,9 +309,9 @@ var CStudio = (function () {
   // already holds a value shows whatever the type says, so nothing set is ever out of sight.
   var showAllItemFields = false;
   var ITEM_FIELD_NEEDS = {
-    slot: 'equip', worn_sprite: 'equip', default_tint: 'equip', atk: 'equip', def: 'equip', equip_if: 'equip',
-    range: 'shoot', ammo: 'shoot', ammo_cost: 'shoot', fire_ms: 'shoot', clip: 'shoot', fire_mode: 'shoot', aim: 'shoot',
-    heal: 'consume', mp: 'consume', hunger: 'consume', thirst: 'consume', on_use: 'consume', cooldown_s: 'consume',
+    slot: 'equip', worn_sprite: 'equip', worn_empty: 'shoot', worn_aim: 'shoot', worn_reload: 'shoot', default_tint: 'equip', atk: 'equip', def: 'equip', equip_if: 'equip',
+    range: 'shoot', ammo: 'shoot', ammo_cost: 'shoot', fire_ms: 'shoot', clip: 'shoot', reload_ms: 'shoot', fire_mode: 'shoot', aim: 'shoot',
+    heal: 'consume', mp: 'consume', hunger: 'consume', thirst: 'consume', toxicity: 'consume', leaves: 'consume', on_use: 'consume', cooldown_s: 'consume',
     throw_range: 'throw', throw_area: 'throw', throw_power: 'throw', throw_status: 'throw', throw_status_ms: 'throw', burns: 'throw',
     penetration: 'ammo', falloff: 'ammo', tool: 'tool', structure_dmg: 'tool'
   };
@@ -343,7 +343,9 @@ var CStudio = (function () {
     var control, val = r[fl.key];
     if (fl.type === 'looks') return looksField(r, fl);
     if (fl.type === 'aim') return aimField(r, fl);
-    if (fl.type === 'items') return itemsField(r, fl);
+    if (fl.type === 'items' || (fl.type === 'list' && fl.of === 'item:count')) return itemsField(r, fl);
+    if (fl.type === 'list' && fl.of === 'skill@level') return skillsField(r, fl);
+    if (fl.type === 'materials') return materialsField(r, fl);
     if (fl.type === 'choice') return choiceField(r, fl);
     function change(v) {
       var was = r[fl.key]; r[fl.key] = v;
@@ -374,10 +376,8 @@ var CStudio = (function () {
     } else if (fl.type === 'image') {
       control = imageControl(r, fl, val, change);
     } else if (fl.type === 'ref') {
-      var refType = fl.ref, lid = 'dl_' + fl.key, ids = (rows(refType) || []).map(function (x) { return x[idField(refType)]; }).filter(Boolean);
-      control = h('span', { className: 'row' },
-        h('input', { value: val == null ? '' : val, list: lid, placeholder: Schema.get(refType) ? Schema.get(refType).label : '', oninput: function (e) { change(e.target.value); } }),
-        h('datalist', { id: lid }, ids.map(function (o) { return h('option', { value: o }); })));
+      control = pickSelect(fl.ref === 'loot' ? lootTableNames()                                     // (a loot table is the name its rows share, not a record)
+        : (rows(fl.ref) || []).map(function (x) { return { id: x[idField(fl.ref)], name: x.name }; }), val, change);
     } else {
       control = h('input', { type: 'text', value: val == null ? '' : val, oninput: function (e) { change(e.target.value); } });
     }
@@ -431,13 +431,28 @@ var CStudio = (function () {
     if (from === 'tools') (T.Items || []).forEach(function (it) {
       Content.toolTags(it, itemTypeRow(it.type)).forEach(function (tag) { add(tag, it.name || it.id); });   // its tags, or itself when its type is a tool type
     });
-    if (from === 'stations') (T.Objects || []).forEach(function (o) { if (o.kind === 'craft') add(String(propsObj(o).station || '').trim(), o.name || o.id); });
+    if (from === 'stations') (T.Objects || []).forEach(function (o) { if (o.kind === 'craft') add(String(propsObj(o).station || '').trim() || String(o.id || ''), o.name || o.id); });   // its station id, or itself
     return out;
+  }
+  // Pick one of the records of another list: a real dropdown (it scrolls, however long the list — the type-ahead
+  // list this used to be could not be scrolled once it overflowed). Sorted by name, each with its id. A value
+  // that names nothing any more stays selectable and is marked, so it is seen and not silently dropped.
+  // list = [{id, name}] (or plain ids).
+  function pickSelect(list, value, onchange, style, blank) {
+    var cur = value == null ? '' : String(value);
+    var opts = (list || []).map(function (x) { return typeof x === 'object' ? { id: String(x.id == null ? '' : x.id), name: String(x.name || x.id || '') } : { id: String(x), name: String(x) }; })
+      .filter(function (x) { return x.id; })
+      .sort(function (p, q) { var a = p.name.toLowerCase(), b = q.name.toLowerCase(); return a < b ? -1 : a > b ? 1 : 0; });
+    var known = !cur || opts.some(function (x) { return x.id === cur; });
+    return h('select', { style: (style || '') + (known ? '' : ';border-color:var(--bad)'), title: known ? '' : 'Nothing has this id any more', onchange: function (e) { onchange(e.target.value); } },
+      h('option', { value: '', text: blank || '\u2014' }),
+      known ? null : h('option', { value: cur, text: cur + ' (missing)', selected: true }),
+      opts.map(function (x) { return h('option', { value: x.id, text: x.name === x.id ? x.id : x.name + '  (' + x.id + ')', selected: x.id === cur }); }));
   }
   function choiceField(r, fl) {
     var val = r[fl.key] == null ? '' : String(r[fl.key]), opts = choicesFor(fl.from);
     var known = !val || opts.some(function (o) { return o.value === val; });
-    var none = !opts.length ? (fl.from === 'tools' ? 'No tool yet: make an item of a tool type (Item Types → tool tick), or give any item a tag in Items → tool.' : 'No station yet: make an object of kind craft and give it a station id.') : '';
+    var none = !opts.length ? (fl.from === 'tools' ? 'No tool yet: make an item of a tool type (Item Types → tool tick), or give any item a tag in Items → tool.' : 'No station yet: make an object of kind craft.') : '';
     return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }),
       h('select', { style: known ? '' : 'border-color:var(--bad)', onchange: function (e) { r[fl.key] = e.target.value; persist(); renderForm(); } },
         h('option', { value: '', text: '— none —' }),
@@ -472,10 +487,68 @@ var CStudio = (function () {
 
   // A list of "item + amount" rows (blueprint cost, recipe inputs/outputs). Stored as the same text the rules
   // read ("wood:4, nails:2"), so nothing else changes; a row with no item picked yet is simply not saved.
+  // A multiplier per material: a material dropdown + a number, one row each ("wood:3, stone:0.5").
+  var MATERIALS = ['wood', 'metal', 'stone', 'glass'];
+  function materialsField(r, fl) {
+    var list = String(r[fl.key] == null ? '' : r[fl.key]).split(/[,;]/).map(function (part) {
+      var bits = part.trim().split(':'), v = Number(bits[1]);
+      return bits[0] ? { m: bits[0].trim(), v: v >= 0 ? v : 1 } : null;
+    }).filter(Boolean), box = h('div', {});
+    function save() { r[fl.key] = list.filter(function (g) { return g.m; }).map(function (g) { return g.m + ':' + g.v; }).join(', '); persist(); }
+    function draw() {
+      box.innerHTML = '';
+      list.forEach(function (g, i) {
+        box.appendChild(h('div', { className: 'row', style: 'margin-bottom:4px' },
+          h('select', { style: 'flex:1;min-width:0', onchange: function (e) { g.m = e.target.value; save(); } },
+            h('option', { value: '', text: '— pick a material —' }),
+            MATERIALS.concat(g.m && MATERIALS.indexOf(g.m) < 0 ? [g.m] : []).map(function (m) { return h('option', { value: m, text: m, selected: m === g.m }); })),
+          h('span', { text: '×' }),
+          h('input', { type: 'number', min: 0, step: 0.5, value: g.v, style: 'width:80px', title: 'Damage multiplier',
+            oninput: function (e) { var v = Number(e.target.value); g.v = v >= 0 ? v : 1; save(); } }),
+          h('button', { text: '✕', title: 'Remove', onclick: function () { list.splice(i, 1); save(); draw(); } })));
+      });
+      box.appendChild(h('button', { text: '+ Add material', onclick: function () { list.push({ m: '', v: 2 }); draw(); } }));
+    }
+    draw();
+    return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }), box,
+      fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+  }
   function itemsField(r, fl) {
     return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }),
       itemsBox(r[fl.key], function (text) { r[fl.key] = text; persist(); }),
       fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+  }
+  // A class's skills: a skill dropdown + the level it is learned at, one row each. Stored as the text the rules read
+  // ("charge@1, cleave@3"); a row with no skill picked yet is simply not saved.
+  function skillsField(r, fl) {
+    var list = String(r[fl.key] == null ? '' : r[fl.key]).split(/[,;]/).map(function (part) {
+      var bits = part.trim().split('@'), lv = parseInt(bits[1], 10);
+      return bits[0] ? { id: bits[0].trim(), lv: lv > 0 ? lv : 1 } : null;
+    }).filter(Boolean);
+    var skills = (T.Skills || []).filter(function (x) { return x.id; }), box = h('div', {});
+    function save() { r[fl.key] = list.filter(function (g) { return g.id; }).map(function (g) { return g.id + '@' + g.lv; }).join(', '); persist(); }
+    function draw() {
+      box.innerHTML = '';
+      list.forEach(function (g, i) {
+        var known = !g.id || skills.some(function (x) { return x.id === g.id; });
+        box.appendChild(h('div', { className: 'row', style: 'margin-bottom:4px' },
+          h('select', { style: 'flex:1;min-width:0' + (known ? '' : ';border-color:var(--bad)'), title: known ? '' : 'There is no skill with this id', onchange: function (e) { g.id = e.target.value; save(); draw(); } },
+            h('option', { value: '', text: '— pick a skill —' }),
+            known ? null : h('option', { value: g.id, text: g.id + ' (missing skill)', selected: true }),
+            skills.filter(function (x) { return x.id === g.id || !list.some(function (q) { return q.id === x.id; }); })
+              .map(function (x) { return h('option', { value: x.id, text: (x.name || x.id) + '  (' + x.id + ')', selected: x.id === g.id }); })),
+          h('span', { className: 'lootlbl', text: 'from level' }),
+          h('input', { type: 'number', min: 1, step: 1, value: g.lv, style: 'width:70px', title: 'The level at which the class learns it',
+            oninput: function (e) { var q = parseInt(e.target.value, 10); g.lv = q > 0 ? q : 1; save(); },
+            onchange: function (e) { e.target.value = g.lv; } }),
+          h('button', { text: '✕', title: 'Remove', onclick: function () { list.splice(i, 1); save(); draw(); } })));
+      });
+      box.appendChild(h('button', { text: '+ Add skill', onclick: function () { list.push({ id: '', lv: 1 }); draw(); } }));
+      if (!skills.length) box.appendChild(h('div', { className: 'help', style: 'color:var(--bad)', text: 'No skills yet: make one under Skills.' }));
+    }
+    draw();
+    return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }), box,
+      h('div', { className: 'help', text: 'The skills this class learns, and the level each comes at.' }));
   }
   /** The rows themselves: an item dropdown + an amount each, and "+ Add item". text = "wood:2, nails:1"; onSave(text) on every change. */
   function itemsBox(text, onSave) {
@@ -564,12 +637,9 @@ var CStudio = (function () {
         [h('option', { value: '', text: '—' })].concat(opts.map(function (o) { return h('option', { value: o, text: o, selected: o === value }); })));
     }
     if (type === 'item' || type === 'loot_table' || type === 'monster') {
-      var ids = type === 'item' ? (T.Items || []).map(function (x) { return x.id; })
-              : type === 'loot_table' ? lootTableNames() : (T.Monsters || []).map(function (x) { return x.id; });
-      var lid = 'dl_kp_' + k.property;
-      return h('span', { className: 'row', style: 'flex:1' },
-        h('input', { value: value == null ? '' : value, list: lid, oninput: function (e) { onchange(e.target.value); } }),
-        h('datalist', { id: lid }, ids.filter(Boolean).map(function (o) { return h('option', { value: o }); })));
+      var ids = type === 'item' ? (T.Items || []).map(function (x) { return { id: x.id, name: x.name }; })
+              : type === 'loot_table' ? lootTableNames() : (T.Monsters || []).map(function (x) { return { id: x.id, name: x.name }; });
+      return pickSelect(ids, value, onchange, 'flex:1');
     }
     return h('input', { value: value == null ? '' : value, oninput: function (e) { onchange(e.target.value); } });
   }
@@ -730,8 +800,26 @@ var CStudio = (function () {
       form.appendChild(h('div', { className: 'sub', text: 'Crafting station' }));
       form.appendChild(h('div', { className: 'field' },
         h('label', { text: 'station id' }),
-        h('input', { type: 'text', value: p.station || '', placeholder: 'workbench', oninput: function (e) { setProp(o, 'station', e.target.value.trim() || undefined); } }),
-        h('div', { className: 'help', text: 'Recipes whose station is this id can be made while standing near this object (e.g. workbench, campfire). Several objects can share one id.' })));
+        h('input', { type: 'text', value: p.station || '', placeholder: o.id || 'workbench', oninput: function (e) { setProp(o, 'station', e.target.value.trim() || undefined); } }),
+        h('div', { className: 'help', text: 'Optional. Empty = recipes name this object itself as their station. Give several objects the same id (e.g. workbench) when any of them should do for a recipe.' })));
+      // A cooker (campfire, furnace): its recipes are made in it over time, with fuel
+      form.appendChild(h('div', { className: 'field' },
+        h('label', {}, h('input', { type: 'checkbox', checked: !!p.cooks, onchange: function (e) { setProp(o, 'cooks', e.target.checked ? true : undefined); objForm(); } }), ' cooks over time (input, fuel, output)'),
+        h('div', { className: 'help', text: 'Ticked: using it opens three cells — what goes in, the fuel, what comes out. Lit, it burns fuel (Items → fuel_s) and turns what is in it into the result of the recipe that has this station and that item as its first input, one piece every time_s seconds. Those recipes are then no longer made by hand in the crafting panel.' })));
+      if (p.cooks) {
+        var ckPairs = function () { var out = []; String(o.sprite_states || '').split(';').forEach(function (q) { var i = q.indexOf('='); if (i > 0) out.push([q.slice(0, i).trim(), q.slice(i + 1).trim()]); }); return out; };
+        var ckPick = function (key, label, help) {
+          var now = (ckPairs().filter(function (q) { return q[0] === key; })[0] || [])[1] || '';
+          return h('div', { className: 'field' }, h('label', { text: label }),
+            imageControl(o, { key: 'sprite_states' }, now, function (v) {
+              var list = ckPairs().filter(function (q) { return q[0] !== key; }); if (v) list.push([key, v]);
+              o.sprite_states = list.map(function (q) { return q[0] + '=' + q[1]; }).join('; '); persist();
+            }),
+            h('div', { className: 'help', text: help }));
+        };
+        form.appendChild(ckPick('fueled', 'sprite-fueled', 'Shown when there is fuel in it but it is not burning. The main sprite above is the empty one.'));
+        form.appendChild(ckPick('burning', 'sprite-lit', 'Shown while it burns. For an animated fire use ONE picture with the frames side by side, and set frames and frame_ms above: the empty and fueled pictures, being a single tile wide, stay still.'));
+      }
     }
     form.appendChild(h('div', { className: 'sub', text: 'Placement layer' }));
     var layer = ['wall', 'ground_decal'].indexOf(p.layer) >= 0 ? p.layer : 'object';
@@ -1282,15 +1370,13 @@ var CStudio = (function () {
         curLoot = null; persist(); renderNav(); lootList(); lootForm();
       } })));
     form.appendChild(h('div', { className: 'note', style: 'margin-bottom:8px', text: 'Items that can drop from this table, each with a drop chance (0–100%) and a quantity range.' }));
-    var ids = rows('items').map(function (x) { return x.id; }).filter(Boolean);
-    form.appendChild(h('datalist', { id: 'dl_lootitem' }, ids.map(function (o) { return h('option', { value: o }); })));
     entries.forEach(function (r) { form.appendChild(lootEntry(r)); });
     form.appendChild(h('button', { className: 'primary', style: 'margin-top:8px', text: '+ Add item', onclick: function () {
       rows('loot').push({ table: curLoot, item: '', chance: 1, min: 1, max: 1 }); persist(); lootForm();
     } }));
   }
   function lootEntry(r) {
-    var item = h('input', { value: r.item || '', list: 'dl_lootitem', placeholder: 'item…', style: 'flex:2', oninput: function (e) { r.item = e.target.value; persist(); } });
+    var item = pickSelect(rows('items').map(function (x) { return { id: x.id, name: x.name }; }), r.item || '', function (v) { r.item = v; persist(); }, 'flex:2;min-width:0', '— pick an item —');
     var chance = h('input', { type: 'number', min: 0, max: 100, step: 1, value: Math.round((Number(r.chance) || 0) * 100), style: 'width:64px',
       title: 'Drop chance (%)', oninput: function (e) { r.chance = e.target.value === '' ? 0 : Number(e.target.value) / 100; persist(); } });
     var mn = h('input', { type: 'number', min: 1, value: r.min == null ? 1 : r.min, style: 'width:52px', title: 'Min quantity', oninput: function (e) { r.min = Number(e.target.value) || 1; persist(); } });

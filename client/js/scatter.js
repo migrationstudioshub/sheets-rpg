@@ -46,7 +46,7 @@ var Scatter = (function () {
   // Derive the sibling files from a tileset image path. Returns null for non-convention images
   // (e.g. the legacy fields_placeholder.png), which then render exactly as before.
   function tileInfo(image) {
-    var m = String(image || '').match(/^(.*\/)?([a-z0-9_]+)_auto\.png$/i);
+    var m = String(image || '').match(/^(.*\/)?([a-z0-9_]+?)_auto(?:_anim)?\.png$/i);   // …_auto_anim.png = an animated sheet of the same family
     if (!m) return null;
     var dir = m[1] || '', key = m[2];
     var wall = /_top$/.test(key);
@@ -54,7 +54,8 @@ var Scatter = (function () {
       var base = key.replace(/_top$/, '');
       return { dir: dir, key: key, isWall: true, baseTile: null, face: dir + base + '_face.png', scatterKey: null };
     }
-    return { dir: dir, key: key, isWall: false, baseTile: dir + key + '.png', face: null, scatterKey: key };
+    // cliff = the picture of this ground's cliff face (ground height), if the art has one: <key>_face.png
+    return { dir: dir, key: key, isWall: false, baseTile: dir + key + '.png', face: null, cliff: dir + key + '_face.png', scatterKey: key };
   }
 
   // Full asset path of a scatter sheet named in scatter.json, relative to the tileset's folder.

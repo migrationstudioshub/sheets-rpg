@@ -91,6 +91,25 @@ map already means "nothing to stand on"; digging gives solid cells a **material*
 - **Data:** one more grid on the map row, like `roof` and `nobuild` (compact-encoded), absent on maps that
   do not use it. Needs the function to store and serve it, as `floor_of` / `z` did.
 
+### 4.1 What is built (elevation stage 1, 22 Nov 2026)
+
+Decided with the owner: **one step = one tile on screen** (two = a storey); **ramps are painted on a tile**; **only the map editor** changes height; cliff faces will come **from the ground's own tileset** (`<key>_face.png` next to `<key>_auto.png`).
+
+- **Data:** a map's `elev` grid (like `nobuild`, compact-encoded, absent when unused). A token is the height (`2`), optionally followed by the way a ramp on that tile climbs (`1N` = from 1 up to 2 going north).
+- **Rules:** `Rules.heightAt / rampAt / cliffBetween / groundHeight`; `tryMove` answers `cliff` across a change of height with no ramp (players and monsters alike). Sight, shots and reach ignore height for now.
+- **Map editor:** the Height tab (key 8): a level and an optional ramp direction, painted with the usual tools.
+- **Drawing:** `Render.drawRelief` shows height on the FLAT map (lighter high ground, cliff lines, ramp arrows), in the game and the editor.
+
+### 4.2 Stage 2: drawn raised (22 Nov 2026)
+
+- **The game** bakes the ground raised (`Render.bakeGround(content, map, true)`; the canvas has a top margin, `canvas.pad`): each tile lifted by its height, a cliff face under every south drop (the ground tileset's `<key>_face.png`: 4 columns = single / left / middle / right, 5 = two middles; one tile high, repeated; a plain earth bank when there is no art), ramps stretched (north) or sheared (east / west). A ramp climbing south is edge-on: it takes no room on screen and cannot be clicked.
+- **Everything on the ground** is drawn with the same lift (`Render.liftAt`, `L()` inside `draw`): objects, walls, doors, fixtures, characters, fog and roof veils, bars, marks, floating numbers. Sorting still goes by where a thing stands on the map.
+- **Hiding:** `behindRise` repaints the nearer, higher ground over whatever was just drawn behind it — solid, or see-through within `wall_cut_radius` of the player.
+- **Clicking:** `Render.pickCell` finds the tile drawn under the cursor (tops and cliff faces).
+- **The map editor stays flat** (relief view): it is a grid to paint on.
+
+**Not built yet:** the aim, build-ghost, claim and remove overlays are still drawn at ground level on raised tiles; doorsteps and window light of buildings on raised ground; height in sight and combat (stage 3).
+
 ## 5. Suggested order
 
 1. **Mine shaft to a generated mine** — the least tangled with everything else, and it gives a reason to go

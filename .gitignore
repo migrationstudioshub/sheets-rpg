@@ -31,3 +31,7 @@ firebase-debug.log
 server/.clasp.json
 host/save.json
 host/save.json.tmp
+
+# the host's saved games and its copy of the live content
+host/save*.json
+host/content.cache.json

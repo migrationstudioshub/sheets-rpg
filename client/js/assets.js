@@ -37,11 +37,13 @@ var Assets = (function () {
         row.forEach(function (tid) {
           var t = content.terrain[tid]; if (!t) return;
           if (t.sprite) paths[t.sprite] = 1;
+          if (t.sprite && map.elev && map.elev.length && /\.png$/i.test(t.sprite) && !/^https?:/i.test(t.sprite)) paths[t.sprite.replace(/\.png$/i, '_face.png')] = 1;   // a plain tile's cliff picture, if there is one
           if (t.autotile && content.tilesets[t.autotile]) {
             var img = content.tilesets[t.autotile].image;
             paths[img] = 1;
+            if (t.tint) paths[img.replace(/\.png$/i, '.tint.png')] = 1;       // the mask a tinted sheet is recoloured through
             var info = (typeof Scatter !== 'undefined') && Scatter.tileInfo(img);  // base tile / wall face / scatter
-            if (info) { tiles.push(info); if (info.baseTile) paths[info.baseTile] = 1; if (info.face) paths[info.face] = 1; }
+            if (info) { tiles.push(info); if (info.baseTile) paths[info.baseTile] = 1; if (info.face) paths[info.face] = 1; if (info.cliff && map.elev && map.elev.length) paths[info.cliff] = 1; }
           }
         });
       });
@@ -63,13 +65,19 @@ var Assets = (function () {
       Object.keys(o.spriteStates || {}).forEach(function (st) { paths[o.spriteStates[st]] = 1; });
     });
     if (content.objects[content.config.rubble_object || 'obj_rubble'] && content.objects[content.config.rubble_object || 'obj_rubble'].sprite) paths[content.objects[content.config.rubble_object || 'obj_rubble'].sprite] = 1;
-    Object.keys(content.monsters || {}).forEach(function (k) { if (content.monsters[k].sprite) paths[content.monsters[k].sprite] = 1; });
+    Object.keys(content.monsters || {}).forEach(function (k) {
+      var md = content.monsters[k]; if (md.sprite) paths[md.sprite] = 1;
+      var co = md.carcass && content.objects[md.carcass];                // what it leaves when killed is on no map until then: its art is loaded up front
+      if (co) { if (co.sprite) paths[co.sprite] = 1; Object.keys(co.spriteStates || {}).forEach(function (st) { paths[co.spriteStates[st]] = 1; }); }
+    });
     Object.keys(content.items || {}).forEach(function (k) {
       var it = content.items[k]; if (it.sprite) paths[it.sprite] = 1;
+      [it.wornEmpty, it.wornReload, it.wornAim].forEach(function (wp) { if (wp) { paths[wp] = 1; if (it.defaultTint) paths[wp.replace(/\.png$/i, '.tint.png')] = 1; } });   // a weapon's other pictures
       if (it.wornSprite) { paths[it.wornSprite] = 1;                                              // worn paper-doll layer
         if (it.defaultTint) paths[it.wornSprite.replace(/\.png$/i, '.tint.png')] = 1; }           // + its grey tint mask
     });
     Object.keys(content.classes || {}).forEach(function (k) { if (content.classes[k].bodySprite) paths[content.classes[k].bodySprite] = 1; });   // player base bodies
+    if (typeof World !== 'undefined' && World.bodySprite) { paths[World.bodySprite(content, { body: '' })] = 1; paths[World.bodySprite(content, { body: 'female' })] = 1; }   // …the man's and the woman's
     Object.keys(content.wallStyles || {}).forEach(function (k) {                                     // edge-wall art: connector sheet, cap, face
       var w = content.wallStyles[k]; if (w.tiles) paths[w.tiles] = 1; if (w.cap) paths[w.cap] = 1; if (w.face) paths[w.face] = 1;
     });

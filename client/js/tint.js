@@ -28,7 +28,16 @@ var Tint = (function () {
     hair_ginger: ['#4a1f0e', '#7d3a15', '#b5601f', '#d98a3a'],
     hair_blonde: ['#5a4526', '#8a6d3b', '#b8975a', '#dcc28a'],
     hair_grey:   ['#3a3739', '#5f5b5c', '#8c8686', '#b9b2ad'],
-    hair_white:  ['#6e6865', '#a39c97', '#cfc8c0', '#ece6dc']
+    hair_white:  ['#6e6865', '#a39c97', '#cfc8c0', '#ece6dc'],
+    // liquids (a terrain's `tint`, on the animated water / lava sheets)
+    water_teal:  ['#141f21', '#1d3335', '#2a4a4a', '#3f6b66'],
+    water_blue:  ['#1c1b21', '#1e2532', '#333f58', '#536884'],
+    water_swamp: ['#1a1d14', '#272c1c', '#3a4229', '#58613d'],
+    water_toxic: ['#142016', '#1f3a1e', '#2f5a26', '#6b9a2e'],
+    water_blood: ['#1a0a0c', '#2d090c', '#5a1118', '#8e1c22'],
+    lava:        ['#5a1118', '#8e1c22', '#b0793b', '#c49b2a'],
+    lava_blue:   ['#1e2532', '#333f58', '#536884', '#a9c4d6'],
+    lava_toxic:  ['#1f3a1e', '#2f5a26', '#6b9a2e', '#c4d65a']
   };
 
   function hex(h) { return [1, 3, 5].map(function (i) { return parseInt(h.slice(i, i + 2), 16); }); }
@@ -41,7 +50,7 @@ var Tint = (function () {
     var key = (img.src || '') + '|' + ramp.join();
     if (cache[key]) return cache[key];
 
-    var c = document.createElement('canvas');
+    var c = document.createElement('canvas'); c._key = key;
     c.width = img.width; c.height = img.height;
     var ctx = c.getContext('2d');
 
@@ -60,6 +69,62 @@ var Tint = (function () {
     return (cache[key] = c);
   }
 
-  return { TINTS: TINTS, getTintedLayer: getTintedLayer };
+  /** Ground sheets (water, lava): the picture is complete as drawn, in its own colours, and the mask marks what a
+   *  tint may recolour. So here the recoloured mask goes ON TOP of the picture (the opposite of clothing); what the
+   *  mask leaves out — glints, the lava's crust — keeps its colour. No mask loaded = the picture as it is. */
+  function tintedOver(img, maskImg, ramp) {
+    if (!img || !maskImg || !ramp) return img;
+    var key = 'over|' + (img.src || '') + '|' + ramp.join();
+    if (cache[key]) return cache[key];
+    var m = document.createElement('canvas'); m.width = img.width; m.height = img.height;
+    var mg = m.getContext('2d');
+    mg.drawImage(maskImg, 0, 0);
+    var d = mg.getImageData(0, 0, m.width, m.height), cols = ramp.map(hex);
+    for (var i = 0; i < d.data.length; i += 4) {
+      if (d.data[i + 3] === 0) continue;
+      var col = cols[Math.min(3, Math.max(0, Math.round(d.data[i] / 64) - 1))];
+      d.data[i] = col[0]; d.data[i + 1] = col[1]; d.data[i + 2] = col[2]; d.data[i + 3] = 255;
+    }
+    mg.putImageData(d, 0, 0);
+    var c = document.createElement('canvas'); c._key = key; c.width = img.width; c.height = img.height;
+    var g = c.getContext('2d'); g.drawImage(img, 0, 0); g.drawImage(m, 0, 0);
+    return (cache[key] = c);
+  }
+
+  // ---- skin ----
+  // The bodies (and the hands drawn into weapon pictures) are painted in one light skin: three colours, SKIN_ART.
+  // A tone recolours them by the same factor per channel, so the shading keeps its steps. On a body every skin-like
+  // pixel counts too (warm, saturated: art drawn later in other shades of skin); on anything else only the three
+  // exact colours, so leather and wood are left alone.
+  var SKINS = { skin_pale: '#ecc9a8', skin_light: '#d6aa83', skin_tan: '#c4935f', skin_olive: '#aa8457',
+    skin_brown: '#8f5f3c', skin_dark: '#6b4329', skin_deep: '#4d2f1e' };
+  var SKIN_ART = { '214,170,131': 1, '139,90,65': 1, '95,59,44': 1 }, SKIN_BASE = [214, 170, 131];
+  function skinLike(r, g, b) {
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    if (mx < 60 || d / mx < 0.35 || mx !== r) return false;
+    var h = 60 * (((g - b) / d) % 6);
+    return h >= 10 && h <= 35;
+  }
+  /** `img` (an image, or a canvas from getTintedLayer) with its skin in the tone named; exactOnly = the three art colours only. */
+  function skinned(img, tone, exactOnly) {
+    var to = SKINS[tone];
+    if (!img || !to || tone === 'skin_light') return img;
+    var key = 'skin|' + (img._key || img.src || '') + '|' + tone + (exactOnly ? '|x' : '');
+    if (cache[key]) return cache[key];
+    var c = document.createElement('canvas'); c._key = key;
+    c.width = img.width; c.height = img.height;
+    var ctx = c.getContext('2d'), t = hex(to), f = [t[0] / SKIN_BASE[0], t[1] / SKIN_BASE[1], t[2] / SKIN_BASE[2]];
+    ctx.drawImage(img, 0, 0);
+    var d = ctx.getImageData(0, 0, c.width, c.height), px = d.data;
+    for (var i = 0; i < px.length; i += 4) {
+      if (px[i + 3] === 0) continue;
+      if (!(SKIN_ART[px[i] + ',' + px[i + 1] + ',' + px[i + 2]] || (!exactOnly && skinLike(px[i], px[i + 1], px[i + 2])))) continue;
+      px[i] = Math.min(255, Math.round(px[i] * f[0])); px[i + 1] = Math.min(255, Math.round(px[i + 1] * f[1])); px[i + 2] = Math.min(255, Math.round(px[i + 2] * f[2]));
+    }
+    ctx.putImageData(d, 0, 0);
+    return (cache[key] = c);
+  }
+
+  return { TINTS: TINTS, SKINS: SKINS, getTintedLayer: getTintedLayer, tintedOver: tintedOver, skinned: skinned };
 })();
 if (typeof module !== 'undefined') module.exports = Tint;

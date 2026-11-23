@@ -151,6 +151,7 @@ var Store = (function () {
             hWalls: m.hWalls == null ? '' : JSON.stringify(m.hWalls),
             roof: m.roof == null ? '' : JSON.stringify(m.roof), roof_color: m.roof_color || '',
             nobuild: m.nobuild == null ? '' : JSON.stringify(m.nobuild),
+            elev: m.elev == null ? '' : JSON.stringify(m.elev),
             spawn: m.spawn == null ? '' : JSON.stringify(m.spawn),
             shapes: m.shapes == null ? '' : JSON.stringify(m.shapes),
             overlayShapes: m.overlayShapes == null ? '' : JSON.stringify(m.overlayShapes),
@@ -189,7 +190,7 @@ var Store = (function () {
           id: mc.row.id, name: mc.row.name, width: mc.row.width, height: mc.row.height,
           terrain: encodeGrid(mc.row.terrain), overlay: encodeGrid(mc.row.overlay),
           vWalls: encodeGrid(mc.row.vWalls), hWalls: encodeGrid(mc.row.hWalls),
-          roof: encodeGrid(mc.row.roof), nobuild: encodeGrid(mc.row.nobuild), roof_color: mc.row.roof_color || '', spawn: parseObj(mc.row.spawn),
+          roof: encodeGrid(mc.row.roof), nobuild: encodeGrid(mc.row.nobuild), elev: encodeGrid(mc.row.elev), roof_color: mc.row.roof_color || '', spawn: parseObj(mc.row.spawn),
           shapes: parseObj(mc.row.shapes), overlayShapes: parseObj(mc.row.overlayShapes),
           floor_of: mc.row.floor_of || '', z: Number(mc.row.z) || 0,
           entities: (mc.entities || []).map(function (e) { return { key: e.key, x: e.x, y: e.y, ref: e.ref, data: e.data }; }) } });

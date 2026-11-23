@@ -30,6 +30,8 @@ var Schema = (function () {
     return o;
   }
 
+  // The tints a terrain may take (the colours themselves are the page's Tint.TINTS).
+  var TERRAIN_TINTS = ['water_teal', 'water_blue', 'water_swamp', 'water_toxic', 'water_blood', 'lava', 'lava_blue', 'lava_toxic'];
   var TYPES = {
     // ---- simple settings ----
     config: { collection: 'config', id: 'key', label: 'Config', singular: 'setting', authored: 'studio', fields: [
@@ -41,7 +43,10 @@ var Schema = (function () {
     tilesets: { collection: 'tilesets', id: 'id', label: 'Tilesets', authored: 'studio', fields: [
       f('id', 'text', ''), f('image', 'image', '', 'Path or URL of the tile sheet'),
       f('tile_size', 'number', 32), f('columns', 'number', 8),
-      f('layout', 'text', 'blob47_craftpix', 'Autotile layout name'), f('notes', 'text', '')
+      f('layout', 'text', 'blob47_craftpix', 'Autotile layout name'),
+      f('frames', 'number', 1, 'Animated sheet (water, lava…): how many frames the image holds — whole sheets side by side, left to right. 1 = a still sheet'),
+      f('frame_ms', 'number', 200, 'Animated sheet: milliseconds each frame stays'),
+      f('notes', 'text', '')
     ] },
     autotile: { collection: 'autotile', id: null, label: 'Autotile', authored: 'generated', fields: [
       f('layout', 'text', ''), f('mask', 'number', 0, '0–255 neighbour mask'),
@@ -52,10 +57,15 @@ var Schema = (function () {
       f('sprite', 'image', '', 'Non-autotiled sprite (optional)'),
       f('autotile', 'ref', '', 'Autotiled: which tileset', { ref: 'tilesets' }),
       f('layer', 'select', 'base', 'Layer this paints on by default: base (opaque ground) or overlay (transparent, sits on top of the ground)', { options: ['base', 'overlay'] }),
-      f('frames', 'number', 1), f('frame_ms', 'number', 200),
+      f('frames', 'number', 1, 'Animation: how many frames the picture holds, side by side. For an autotiled terrain this may be set here or on its tileset'), f('frame_ms', 'number', 200, 'Animation: milliseconds each frame stays'),
+      f('tint', 'select', '', 'Autotiled: recolours a sheet that has a .tint.png mask next to it (the water and lava sheets). Empty = the sheet as drawn', { options: TERRAIN_TINTS }),
       f('build_over', 'bool', false, 'Open ground (grass, dirt, sand…): players may lay a floor on top of it. Leave off for real floors and for anything that must not be covered (water, roads)'),
       f('pass_n', 'bool', true, 'Can leave northward'), f('pass_e', 'bool', true),
-      f('pass_s', 'bool', true), f('pass_w', 'bool', true), f('notes', 'text', '')
+      f('pass_s', 'bool', true), f('pass_w', 'bool', true),
+      f('see_through', 'bool', false, 'Ground nobody can walk on normally hides what is behind it, like a wall. Tick this for flat ground that only stops walking — water, lava, a pit: you see and shoot across it'),
+      f('water', 'bool', false, 'A water source: a player next to it can drink from it (Config water_thirst) and fill empty containers (items with fills_into). A terrain with "water" in its name counts as one until this is set'),
+      f('toxicity', 'number', '', 'Water source: toxicity one drink adds. Empty = Config water_toxicity (8). 0 = clean water'),
+      f('notes', 'text', '')
     ] },
     wallStyles: { collection: 'wallStyles', id: 'id', label: 'Wall styles', singular: 'wall style', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''),
@@ -66,7 +76,7 @@ var Schema = (function () {
       f('blocks_sight', 'bool', true, 'Blocks line of sight and shots across this edge'),
       f('hp', 'number', 0, 'Health of one wall segment. 0 = cannot be damaged'),
       f('armor', 'number', 0, 'Taken off every hit'),
-      f('material', 'select', 'stone', 'What it is made of: decides how hard blows, bullets, blasts and fire land', { options: ['wood', 'metal', 'stone', 'glass'] }),
+      f('material', 'select', 'stone', 'What it is made of: decides how hard blows, bullets, blasts and fire land', { options: ['wood', 'metal', 'stone', 'glass', 'flesh'] }),
       f('breakable', 'bool', false, 'Walls of this style painted in the map editor can be damaged (needs hp above 0)'),
       f('salvage', 'items', '', 'Items handed to whoever breaks it'),
       f('notes', 'text', '')
@@ -79,7 +89,7 @@ var Schema = (function () {
     ] },
     objects: { collection: 'objects', id: 'id', label: 'Objects', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''),
-      f('kind', 'select', 'deco', 'What it does', { options: ['deco', 'container', 'door', 'switch', 'trap', 'rest', 'sign', 'npc', 'spawn', 'teleport', 'trigger', 'craft', 'claim', 'stairs'] }),
+      f('kind', 'select', 'deco', 'What it does', { options: ['deco', 'container', 'door', 'switch', 'trap', 'rest', 'sign', 'npc', 'spawn', 'teleport', 'trigger', 'craft', 'claim', 'stairs', 'pickup', 'coop'] }),
       f('sprite', 'image', ''),
       f('sprite_states', 'text', '', 'state=sprite pairs, e.g. open=url; empty=url'),
       f('frames', 'number', 1), f('frame_ms', 'number', 200),
@@ -107,16 +117,23 @@ var Schema = (function () {
       f('id', 'text', ''), f('name', 'text', ''), f('sprite', 'image', ''),
       f('type', 'select', 'material', '', { options: ['material', 'weapon', 'armor', 'consumable', 'throwable', 'ammo', 'key'] }),
       f('slot', 'text', '', 'Equip slot (weapon, armor, helm…). Empty = the slot of its type'),
-      f('worn_sprite', 'image', '', 'Paper-doll layer when equipped'),
+      f('worn_sprite', 'image', '', 'Paper-doll layer when equipped. For a weapon that shoots: loaded and held at rest (a bow with an arrow on the string, not drawn)'),
+      f('worn_empty', 'image', '', 'A weapon with a magazine (clip), held with nothing loaded: a bow with no arrow on the string. Also shown while the next one is being loaded, unless there is a reloading picture. Empty = the worn sprite'),
+      f('worn_aim', 'image', '', 'The weapon loaded and being aimed (right mouse button held): a bow drawn back. Empty = the worn sprite. Draw them all on the same canvas, so the aim points fit every one'),
+      f('worn_reload', 'image', '', 'Optional: the weapon while it is being reloaded (reload_ms). Empty = the worn-empty picture'),
       f('default_tint', 'text', '', 'Tint preset for the worn layer'),
       f('stack_max', 'number', 99), f('value', 'number', 0, 'Gold value'),
       f('atk', 'number', 0), f('def', 'number', 0), f('heal', 'number', 0), f('mp', 'number', 0),
       f('hunger', 'number', 0), f('thirst', 'number', 0),
+      f('toxicity', 'number', 0, 'What using it adds to the toxicity gauge (0-100). Negative = it clears that much (a cure)'),
+      f('leaves', 'ref', '', 'The item left in the bag when this one is used up: an empty bottle, an empty can', { ref: 'items' }),
+      f('fills_into', 'ref', '', 'For an empty container: the item it becomes when filled at a water source (an empty bottle → a bottle of dirty water). Empty = cannot be filled', { ref: 'items' }),
       f('equip_if', 'text', '', 'Condition to equip, e.g. level:3'),
       f('range', 'number', 0, 'Ranged weapon range (0 = melee)'),
       f('ammo', 'ref', '', 'Item spent per shot', { ref: 'items' }),
       f('ammo_cost', 'number', 1), f('fire_ms', 'number', 0, 'Min time between shots'),
       f('clip', 'number', 0, 'Magazine size (R to reload)'),
+      f('reload_ms', 'number', 0, 'How long a reload takes, in milliseconds (0 = the Config reload_ms, 1500 if that is unset)'),
       f('fire_mode', 'select', '', 'single = one shot per click; semi/auto = hold to keep firing', { options: ['single', 'semi', 'auto'] }),
       f('aim', 'aim', '', 'Weapon aim setup: drag the pivot (rotation axis) and the barrel tip onto the sprite so it points at the cursor'),
       f('tint', 'text', ''),
@@ -126,6 +143,8 @@ var Schema = (function () {
       f('throw_status', 'ref', '', '', { ref: 'statuses' }), f('throw_status_ms', 'number', 0),
       f('tool', 'text', '', 'Tool tags this item counts as, e.g. hammer or axe (recipes and harvesting can require one). Empty on an item of a tool type = it counts as a tool by its own id'),
       f('structure_dmg', 'number', 0, 'Damage per hit to walls and objects (0 = half its attack)'),
+      f('fuel_s', 'number', 0, 'Fuel: seconds one piece burns in a campfire or other cooker (0 = it does not burn)'),
+      f('material_dmg', 'materials', '', 'What it is good against: its blows on walls and objects of a material are multiplied by this (axe: wood ×3, pickaxe: stone ×8). Under 1 = worse than bare hands on that material'),
       f('burns', 'bool', false, 'Throwables: the blast also burns wooden walls and objects'),
       f('on_use', 'textarea', '', 'Data-driven action list'),
       f('cooldown_s', 'number', '', 'Seconds to wait before using another one (empty = the cooldown of its type)'),
@@ -140,11 +159,17 @@ var Schema = (function () {
       f('attack_range', 'number', 0, '0 = melee; >1 = ranged'), f('ranged_cooldown_ms', 'number', 1500),
       f('ranged_projectile', 'bool', false), f('ranged_status', 'ref', '', '', { ref: 'statuses' }),
       f('infect_chance', 'number', 0, 'Chance a hit infects (0–1)'),
-      f('brain', 'select', '', 'How it thinks. Empty = plain: it goes for any player within aggro_range, even through walls, and forgets them when they step out. walker = it must SEE its target, remembers it, searches where it lost it, and breaks what stands in its way', { options: ['walker'] }),
+      f('brain', 'select', '', 'How it thinks. Empty = plain: it goes for any player within aggro_range, even through walls, and forgets them when they step out. walker = it must SEE its target, remembers it, searches where it lost it, and breaks what is in its way. animal = it never attacks: it wanders, and runs from players and hunters that come within flee_range. hunter = it goes after prey animals and players within aggro_range (a wolf)', { options: ['walker', 'animal', 'hunter'] }),
       f('sight_range', 'number', 0, 'Walker: how many tiles away it can spot a target, with a clear line of sight (0 = aggro_range). Once it is after someone, aggro_range is how close it still hears them through walls'),
       f('aggro_s', 'number', 0, 'Walker: seconds it keeps looking after losing sight of its target (0 = 30). Time only runs while someone is on the map'),
       f('structure_dmg', 'number', 0, 'Walker: damage per blow to doors, windows, walls and objects in its way (0 = its atk)'),
-      f('prey', 'bool', false, 'An animal: walkers hunt it like they hunt players'),
+      f('prey', 'bool', false, 'An animal: walkers and hunters go after it like they go after players'),
+      f('flee_range', 'number', 0, 'Animal: how many tiles away a player or a hunter makes it run (0 = aggro_range). Hurt, it runs from whoever hurt it'),
+      f('loot', 'items', '', 'What it gives when killed, always (the loot table above is the lucky extras). With a carcass set it is found inside the carcass, together with what the loot table rolled; with none both go straight into the bag of whoever killed it'),
+      f('carcass', 'ref', '', 'The object it leaves on the ground when killed: an object of kind container. Open it like any container to take the loot. It disappears once emptied, or after Config carcass_rot_s (5 minutes). Empty = no carcass: the loot is given at once', { ref: 'objects' }),
+      f('tame_with', 'ref', '', 'Animal: the item that tames it. Holding it, the animal does not run from you; use the animal to feed it one and make it yours', { ref: 'items' }),
+      f('lays', 'items', '', 'What a tame one living at a coop leaves on the ground now and then, to be picked up (eggs)'),
+      f('lay_s', 'number', 0, 'Seconds between two of those (only while someone is on the map)'),
       f('appearance', 'looks', '', 'Paper-doll sets rolled per spawn — add more than one (e.g. male/female) and one is picked by weight (blank = use the flat sprite)', { ref: 'appearances' })
     ] },
     appearances: { collection: 'appearances', id: 'id', label: 'Appearances', singular: 'appearance set', authored: 'studio', fields: [
@@ -158,11 +183,11 @@ var Schema = (function () {
       f('chance', 'number', 1, '0–1'), f('min', 'number', 1), f('max', 'number', 1)
     ] },
     classes: { collection: 'classes', id: 'id', label: 'Classes', authored: 'studio', fields: [
-      f('id', 'text', ''), f('name', 'text', ''), f('body_sprite', 'image', '', 'Paper-doll base body'),
+      f('id', 'text', ''), f('name', 'text', ''), f('body_sprite', 'image', '', 'Not used any more when Config body_male is set: every class shares the male / female bodies named in Config (body_male, body_female)'),
       f('hp', 'number', 100), f('atk', 'number', 5), f('def', 'number', 1),
       f('hp_per_level', 'number', 10), f('atk_per_level', 'number', 1), f('def_per_level', 'number', 1),
       f('mp', 'number', 0), f('mp_per_level', 'number', 0), f('mp_regen', 'number', 0),
-      f('start_items', 'list', '', 'item:count list', { of: 'item:count' }),
+      f('start_items', 'list', '', 'What a new character of this class starts with', { of: 'item:count' }),
       f('lockpicking', 'number', 0),
       f('skills', 'list', '', 'skill@level list', { of: 'skill@level' }), f('notes', 'text', '')
     ] },
@@ -198,7 +223,7 @@ var Schema = (function () {
       f('cost', 'items', '', 'Materials used up to build it'),
       f('work', 'number', 4, 'How many times you must work on the frame to finish it (0 = built at once)'),
       f('tool', 'choice', '', 'Tool needed to build, repair and take it apart (empty = bare hands). Lists the tool tags your items carry', { from: 'tools' }),
-      f('station', 'choice', '', 'Station that must be nearby to place it (empty = anywhere). Lists the objects of kind craft that have a station id', { from: 'stations' }),
+      f('station', 'choice', '', 'Station that must be nearby to place it (empty = anywhere). Lists the objects of kind craft, by their station id or, with none, their own id', { from: 'stations' }),
       f('needs_wall', 'bool', true, 'Wall-mounted objects (doors, windows): the spot must already have a wall'),
       f('upgrade_of', 'ref', '', 'This is an upgrade of that blueprint: it can be applied to one already built', { ref: 'blueprints' }),
       f('unlock', 'text', '', 'Condition to know it, e.g. level:3 or flag:found_plans'),
@@ -209,7 +234,7 @@ var Schema = (function () {
       f('id', 'text', ''), f('name', 'text', ''), f('category', 'text', '', 'Group shown in the crafting panel'),
       f('inputs', 'items', '', 'What it uses up'),
       f('outputs', 'items', '', 'What you get'),
-      f('station', 'choice', '', 'Station needed nearby (empty = made by hand anywhere). Lists the objects of kind craft that have a station id', { from: 'stations' }),
+      f('station', 'choice', '', 'Station needed nearby (empty = made by hand anywhere). Lists the objects of kind craft, by their station id or, with none, their own id', { from: 'stations' }),
       f('tool', 'choice', '', 'Tool needed in the bag, not used up (empty = none). Lists the tool tags your items carry', { from: 'tools' }),
       f('time_s', 'number', 0, 'Seconds before you can craft again (0 = instant)'),
       f('unlock', 'text', '', 'Condition to know it, e.g. level:3 or flag:found_blueprint'),

@@ -192,7 +192,7 @@ test('join creates a character at the start position and a sheet row', () => {
   const head = g.sheets.SV._sheets.Players.rows[0];
   ['class', 'gold', 'inventory', 'equipment', 'flags', 'respawn'].forEach(c => assert.ok(head.includes(c), 'column ' + c + ' added'));
   const row = g.sheets.SV._sheets.Players.rows[1];
-  assert.deepStrictEqual(JSON.parse(row[head.indexOf('inventory')]), [{ item: 'potion', qty: 3 }, { item: 'lockpick', qty: 3 }]);
+  assert.deepStrictEqual(JSON.parse(row[head.indexOf('inventory')]), [{ item: 'potion', qty: 3, s: 0 }, { item: 'lockpick', qty: 3, s: 1 }]);
   token = r.token;
 });
 
@@ -220,7 +220,7 @@ test('act: opening the hut door, walking in, emptying the chest; events come bac
   assert.deepStrictEqual([r.player.x, r.player.y, r.player.facing], [9, 7, 'E']);
   r = call({ action: 'act', token, do: { type: 'interact' }, since: r.seq });
   assert.ok(r.events.some(e => /You open the wooden chest/.test(e.text)), JSON.stringify(r.events));
-  assert.ok(r.player.inventory.some(i => i.item === 'wooden_sword'));
+  assert.ok(r.events.some(e => e.type === 'storage' && e.inv.some(i => i.item === 'wooden_sword')), 'the chest opens as a grid with its loot inside');
   assert.ok(r.world.monsters.length >= 5, 'monsters are in the view');
 });
 

@@ -1,6 +1,6 @@
 # NPCs, quests, instances and the game server — plan
 
-Status: **server stage 1 built (the loop and the socket on the LAN host); everything else planned.** Agreed with the owner 22–23 Nov 2026. Modelled on how MMORPGs such as World of
+Status: **server stages 1 and 2 built (the loop, the socket and record-by-record saving on the LAN host); everything else planned.** Agreed with the owner 22–23 Nov 2026. Modelled on how MMORPGs such as World of
 Warcraft handle quests, adapted to this game's shared, buildable world.
 
 Where things stand in the code today (checked when this was written):
@@ -168,8 +168,13 @@ upload limit with many players. A switch that adds artificial delay covers testi
    collides; it saves up to a turn of delay); the socket is hand-written (no dependency, no compression); pushes
    already leave out the parts of the view that did not change; the lag switch is `LAG_MS`. Saving is still the one
    local file, written at most once a second. Tests: `tools/test_host.js`.
-2. Saving behind one small interface: the local file first (as now), maps loading and unloading, a clean flush on
-   shutdown. The database version of the same interface comes with stage 4.
+2. **Built (23 Nov 2026).** Saving behind one small interface (`host/store.js`: `load()`, `put(kind, id, json)`):
+   a folder with one file per character, one per map and one for the world — the Cloud Function's records. Every
+   `SAVE_MS` (3 s) the host writes only the records whose text changed, and everything on Ctrl+C; a killed host
+   loses at most that. The older single-file save is imported once. **Deviation: maps are not loaded and unloaded.**
+   Every map's state stays in memory (it is small, and an empty map is neither advanced nor written), which keeps
+   the rules free of "is this map loaded yet". All characters are read at start-up; a database store will want to
+   read a character when it logs in instead. The database version of the interface comes with stage 4.
 3. Slimmer messages (only nearby changes) and a load test with scripted bots (30 or more on one map), run locally.
 4. **Deferred until a server is rented:** database saves, a secure address, a deploy script, the switch in `config.js`.
 

@@ -6,6 +6,8 @@
 'use strict';
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 const ROOT = path.join(__dirname, '..');
 const PORT = 3900 + Math.floor(Math.random() * 90);
@@ -42,13 +44,76 @@ async function post(body) {
   return r.json();
 }
 
-async function main() {
+/** Start a host; resolves with what it printed once it is up. saveFile = 'off' or the path of its save. */
+async function start(saveFile) {
   child = spawn(process.execPath, [path.join(ROOT, 'host', 'server.js')],
-    { env: Object.assign({}, process.env, { PORT: String(PORT), CONTENT: 'local', SAVE_FILE: 'off', TICK_MS: '50', LAG_MS: '' }), stdio: ['ignore', 'pipe', 'pipe'] });
-  let out = '';
-  child.stdout.on('data', d => { out += d; });
-  child.stderr.on('data', d => { out += d; });
-  for (let i = 0; i < 100 && out.indexOf('Press Ctrl+C') < 0; i++) await sleep(100);
+    { env: Object.assign({}, process.env, { PORT: String(PORT), CONTENT: 'local', SAVE_FILE: saveFile, SAVE_MS: '250', TICK_MS: '50', LAG_MS: '' }), stdio: ['ignore', 'pipe', 'pipe'] });
+  const got = { text: '' };
+  child.stdout.on('data', d => { got.text += d; });
+  child.stderr.on('data', d => { got.text += d; });
+  for (let i = 0; i < 100 && got.text.indexOf('Press Ctrl+C') < 0; i++) await sleep(100);
+  return got;
+}
+/** Kill the host outright, as a crash or a power cut would: it gets no chance to save. */
+async function crash() {
+  const gone = new Promise(r => child.once('exit', r));
+  child.kill('SIGKILL'); await gone; child = null;
+}
+
+/** Saving: only what changed is written, a crash loses next to nothing, and a save from an older host carries on. */
+async function saving() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-host-')), file = path.join(tmp, 'game.json'), dir = path.join(tmp, 'game');
+  let up = await start(file);
+  ok(/New game/.test(up.text), 'a host with no save starts a new game');
+  const j = await post({ action: 'join', name: 'Keeper', 'class': '' });
+  let at = (await post({ action: 'load', token: j.token })).player;
+  for (const d of ['N', 'E', 'S', 'W', 'N', 'E']) at = (await post({ action: 'act', token: j.token, 'do': { type: 'move', dirs: [d] } })).player;
+  await sleep(900);
+  const pf = path.join(dir, 'players'), mf = path.join(dir, 'maps');
+  ok(fs.existsSync(pf) && fs.readdirSync(pf).length === 1, 'the character has a file of its own');
+  ok(fs.existsSync(mf) && fs.readdirSync(mf).length >= 1 && fs.existsSync(path.join(dir, 'world.json')), 'each map has a file of its own, and the world one');
+  ok(!fs.existsSync(file), 'nothing is written to the old single file');
+  const s1 = await post({ action: 'stats' });
+  ok(s1.saved > 0, 'the host counts what it wrote (' + s1.saved + ' records)');
+  const pfile = path.join(pf, fs.readdirSync(pf)[0]), kept = fs.readFileSync(pfile, 'utf8');
+  ok(JSON.parse(kept).x === at.x && JSON.parse(kept).y === at.y, 'the file holds where the character stands');
+
+  await crash();
+  ok(fs.readdirSync(pf).concat(fs.readdirSync(mf)).every(n => /\.json$/.test(n)), 'a crash leaves no half-written record behind');
+  up = await start(file);
+  ok(/Resumed the game/.test(up.text) && /1 character/.test(up.text), 'after a crash the host resumes the game');
+  const back = await post({ action: 'load', token: j.token });
+  ok(back.player && back.player.name === 'Keeper' && back.player.x === at.x && back.player.y === at.y, 'the character is where it was');
+  await crash();
+
+  // a save written by an older host: one file holding everything
+  const old = path.join(tmp, 'old.json'), olddir = path.join(tmp, 'old');
+  const rec = JSON.parse(kept), maps = {};
+  fs.readdirSync(mf).forEach(n => { maps[decodeURIComponent(n.slice(0, -5))] = JSON.parse(fs.readFileSync(path.join(mf, n), 'utf8')); });
+  const away = Object.assign({}, rec, { id: 'away1', name: 'Away', token: 'away-token', _seen: 0 });   // someone who has not played for a long time
+  fs.writeFileSync(old, JSON.stringify({ players: { [j.token]: rec, 'away-token': away }, world: { seq: 7, log: [], maps: maps } }));
+  const oldText = fs.readFileSync(old, 'utf8');
+  up = await start(old);
+  ok(/Carried on from the older save/.test(up.text), 'a save from an older host is carried on from');
+  const again = await post({ action: 'load', token: j.token });
+  ok(again.player && again.player.x === at.x && again.player.y === at.y, 'its character is where it was');
+  await sleep(900);
+  ok(fs.existsSync(path.join(olddir, 'players')) && fs.readdirSync(path.join(olddir, 'players')).length === 2, 'it is written out in the new layout');
+  // while one character plays, the record of one who is away is not written again and again
+  const awayFile = path.join(olddir, 'players', 'away-token.json'), wrote = fs.statSync(awayFile).mtimeMs, n1 = (await post({ action: 'stats' })).saved;
+  await post({ action: 'poll', token: j.token });
+  await sleep(900);
+  ok((await post({ action: 'stats' })).saved > n1, 'records that change keep being written');
+  ok(fs.statSync(awayFile).mtimeMs === wrote, 'a record that did not change is not written again');
+  ok(fs.readFileSync(old, 'utf8') === oldText, 'the older save itself is left untouched');
+  await crash();
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+async function main() {
+  await saving();
+  const up = await start('off');
+  const out = up.text;
   ok(out.indexOf('Press Ctrl+C') >= 0, 'the host starts');
   ok(/turns a second/.test(out), 'it says how fast the world runs');
 

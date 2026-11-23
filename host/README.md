@@ -49,11 +49,14 @@ It prints something like:
   It is read ONCE: publish something in the Content Studio and you restart the host to get it. With no internet it
   uses the copy kept from the last good read (`host/content.cache.json`), and failing that the starting content in
   `data/tables.json`. `CONTENT=local node host/server.js` always plays the starting content.
-- **Saved between sessions.** The game is written to `host/save.live.json` (`host/save.json` when playing the starting content) (debounced, once a second, and
-  on Ctrl+C). Restart the host later and everyone's characters and the world come back. A returning
+- **Saved between sessions.** The game is kept in the folder `host/save.live/` (`host/save/` when playing the starting
+  content): one small file per character, one per map, and `world.json`. Every 3 seconds the host writes only the
+  records that changed, and once more on Ctrl+C, so if the computer dies mid-game at most 3 seconds are lost
+  (`SAVE_MS=10000` to write less often). A game from an older host (the single file `host/save.live.json`) is read
+  the first time and carried on from; that file is left as it was. Restart the host later and everyone's characters and the world come back. A returning
   player resumes automatically as long as they use the same browser (their character token is kept in
-  that browser, separate from their cloud token). Delete that file to start a clean world, or
-  run `SAVE_FILE=off node host/server.js` for a throwaway session that saves nothing. The save file is
+  that browser, separate from their cloud token). Delete that folder (and the older single file, if you have one) to start a clean world, or
+  run `SAVE_FILE=off node host/server.js` for a throwaway session that saves nothing. The save is
   gitignored, so it never ends up in the repo.
 - **Tied to this host + this machine.** The save lives on the host's computer. If someone else hosts
   (a different machine), that's a different, separate world. For one always-on world that doesn't

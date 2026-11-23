@@ -14,8 +14,9 @@
  * the copy kept from the last good read (host/content.cache.json), then to data/tables.json (the starting content).
  *   CONTENT=local node host/server.js     # always data/tables.json
  *   CONTENT_URL=<url> node host/server.js # another content server
- * The game is saved to host/save.live.json (host/save.json when playing the starting content), so stopping and restarting this host keeps everyone's
- * characters and the world (set SAVE_FILE=off for a throwaway in-memory session instead).
+ * The game is kept in the folder host/save.live/ (host/save/ when playing the starting content), one small file per
+ * character and per map, so stopping and restarting this host keeps everyone's characters and the world
+ * (set SAVE_FILE=off for a throwaway in-memory session instead). See "the game state" below and host/store.js.
  *
  * The world runs in a loop here ("the loop", below), and each page keeps a socket open ("the socket"): this is the
  * first stage of the game server planned in docs/QUESTS_INSTANCES_SERVER.md.
@@ -30,6 +31,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const zlib = require('zlib');
+const Store = require('./store.js');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -68,43 +70,64 @@ async function loadContent() {
 }
 
 // ---- the game state ----
-// Held in memory while running, and saved to a JSON file so a session survives a restart of THIS
-// host. The state is already plain JSON (the same shape the cloud stores), so saving is just writing
-// it out. Set SAVE_FILE=off to run a throwaway in-memory session that leaves nothing behind.
+// Held in memory while running, and kept between runs by a store (host/store.js): one record per character, one
+// per map and one for the whole world — the same records the Cloud Function keeps. Every SAVE_MS the host writes
+// the records that changed since they were last written, never the whole game, and once more on Ctrl+C. If the
+// host dies without warning, at most SAVE_MS of play is lost.
+//   SAVE_FILE=off node host/server.js           # a throwaway session that leaves nothing behind
+//   SAVE_FILE=<path>.json node host/server.js   # keep the game in the folder <path>/ instead
+//   SAVE_MS=10000 node host/server.js           # write every 10 s (default 3000)
 let PLAYERS = {};                                     // token -> player
 let WORLD = { seq: 0, log: [], maps: {} };            // monsters, object states, event log
+const SAVE_MS = Math.max(200, Number(process.env.SAVE_MS) || 3000);
+let STORE = Store.none(), SAVE_ON = false;
+const SAVED = {};                                     // 'kind/id' -> the text last written (or read): tells what changed
+let saving = Promise.resolve(), saveBusy = false, saveTrouble = '';
 
-// One save per kind of content: a world made on the live maps makes no sense on the starting ones, and the other way round.
-let SAVE_FILE = null;
-function pickSaveFile() {
-  SAVE_FILE = process.env.SAVE_FILE === 'off' ? null
-    : (process.env.SAVE_FILE || path.join(__dirname, CONTENT_FROM === 'local' ? 'save.json' : 'save.live.json'));
+// One game per kind of content: a world made on the live maps makes no sense on the starting ones, and the other way
+// round. The folder is named after the single file older hosts wrote (save.live.json → save.live/), which is read
+// once, the first time, so a game from before carries on.
+function pickStore() {
+  if (process.env.SAVE_FILE === 'off') return;
+  const old = process.env.SAVE_FILE || path.join(__dirname, CONTENT_FROM === 'local' ? 'save.json' : 'save.live.json');
+  STORE = Store.files(/\.json$/i.test(old) ? old.replace(/\.json$/i, '') : old + '.d', old);
+  SAVE_ON = true;
 }
-
-function loadSave() {
-  if (!SAVE_FILE) return;
-  try {
-    const raw = JSON.parse(fs.readFileSync(SAVE_FILE, 'utf8'));
-    if (raw.players) PLAYERS = raw.players;           // reassigning is fine: the handlers read these vars live
-    if (raw.world) WORLD = raw.world;
-    return Object.keys(PLAYERS).length;
-  } catch (e) { /* no save yet (first run), or unreadable — just start fresh */ }
+async function loadSave() {
+  const got = await STORE.load();
+  PLAYERS = got.players || {};
+  WORLD = Object.assign({ seq: 0, log: [] }, got.world || {}, { maps: got.maps || {} });
+  if (!got.importedFrom) {                            // what was read is what is on disk: nothing to write until it changes
+    Object.keys(PLAYERS).forEach(t => { SAVED['player/' + t] = JSON.stringify(PLAYERS[t]); });
+    Object.keys(WORLD.maps).forEach(id => { SAVED['map/' + id] = JSON.stringify(WORLD.maps[id]); });
+  }
+  return got;
 }
-
-function writeSave() {
-  if (!SAVE_FILE) return;
-  try {
-    const tmp = SAVE_FILE + '.tmp';                   // write-then-rename, so a crash never leaves a half-written file
-    fs.writeFileSync(tmp, JSON.stringify({ players: PLAYERS, world: WORLD }));
-    fs.renameSync(tmp, SAVE_FILE);
-  } catch (e) { console.error('  Could not save game:', e.message); }
-}
-
-// A burst of moves shouldn't be a burst of disk writes: coalesce changes into one write a second.
-let saveTimer = null;
-function scheduleSave() {
-  if (!SAVE_FILE || saveTimer) return;
-  saveTimer = setTimeout(() => { saveTimer = null; writeSave(); }, 1000);
+function worldRecord() { const r = {}; Object.keys(WORLD).forEach(k => { if (k !== 'maps') r[k] = WORLD[k]; }); return r; }
+/**
+ * Write every record that changed. Calls queue up, so two never write at once; the promise is done when this one is.
+ * Characters nobody has played for two minutes are not looked at (their record cannot have changed) unless
+ * everything = true, as on shutdown. A record that will not write is tried again next time.
+ */
+function save(everything) {
+  if (!SAVE_ON) return Promise.resolve();
+  saving = saving.then(async () => {
+    saveBusy = true;
+    const now = Date.now(), todo = [];
+    const look = (kind, id, obj) => { const j = JSON.stringify(obj), k = kind + '/' + id; if (SAVED[k] !== j) todo.push({ kind: kind, id: id, j: j, k: k }); };
+    Object.keys(PLAYERS).forEach(t => { if (everything || !(('player/' + t) in SAVED) || now - (PLAYERS[t]._seen || 0) < 120000) look('player', t, PLAYERS[t]); });
+    Object.keys(WORLD.maps || {}).forEach(id => look('map', id, WORLD.maps[id]));
+    look('world', 'world', worldRecord());
+    for (const r of todo) {                             // (everything above ran in one go: the records agree with each other)
+      try { await STORE.put(r.kind, r.id, r.j); SAVED[r.k] = r.j; STATS.saved++; saveTrouble = ''; }
+      catch (e) {
+        const why = String((e && e.message) || e);
+        if (why !== saveTrouble) { saveTrouble = why; console.error('  Could not save ' + r.k + ' (it will be tried again): ' + why); }
+      }
+    }
+    saveBusy = false;
+  });
+  return saving;
 }
 
 function presentOn(all, mapId, now) {
@@ -138,7 +161,6 @@ function step(token, action, since, structRev, floorRevs) {
   World.deliver(CONTENT, ws);
   World.record(ws, ev);
   if (ws.log && ws.log.length > 50) ws.log = ws.log.slice(-50);
-  scheduleSave();                                      // movement, combat, monster ticks — all persisted
 
   // The poll/act answer already carries everyone on the map (World.view), so on a LAN we just poll —
   // no Firebase, no separate pushed world view needed.
@@ -157,7 +179,7 @@ function step(token, action, since, structRev, floorRevs) {
 const TICK_MS = Math.max(20, Number(process.env.TICK_MS) || 100);
 const LAG_MS = Math.max(0, Number(process.env.LAG_MS) || 0);
 const CONNS = new Set();                                // live sockets (see "the socket")
-const STATS = { ticks: 0, pushes: 0, bytes: 0, slowest: 0 };
+const STATS = { ticks: 0, pushes: 0, bytes: 0, slowest: 0, saved: 0 };
 function livePlayers(now) { return Object.keys(PLAYERS).map(tok => PLAYERS[tok]).filter(q => now - (q._seen || 0) < 60000); }
 
 function tick() {
@@ -178,7 +200,6 @@ function tick() {
   World.deliver(CONTENT, WORLD);
   if (ev.length) World.record(WORLD, ev);
   if (WORLD.log && WORLD.log.length > 50) WORLD.log = WORLD.log.slice(-50);
-  scheduleSave();
   CONNS.forEach(conn => { try { push(conn, now, live); } catch (e) { console.error('  push failed:', (e && e.message) || e); } });
   STATS.ticks++;
   STATS.slowest = Math.max(STATS.slowest, Number(process.hrtime.bigint() - t0) / 1e6);
@@ -245,7 +266,7 @@ function join(name, cls, look) {
   p.created = new Date().toISOString();
   p._seen = Date.now();
   PLAYERS[p.token] = p;
-  scheduleSave();                                      // remember the new character
+  save();                                              // a new character is written at once
   return { token: p.token, player: World.publicPlayer(CONTENT, p) };
 }
 
@@ -394,21 +415,24 @@ const server = http.createServer((req, res) => {
 });
 server.on('upgrade', acceptSocket);
 
-// Flush the latest state and exit cleanly when the host presses Ctrl+C (or the process is told to stop).
+// Write what is not yet written and exit cleanly when the host presses Ctrl+C (or the process is told to stop).
+let stopping = false;
 function shutdown() {
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-  writeSave();
-  if (SAVE_FILE) console.log('\n  Game saved to ' + SAVE_FILE + '. Bye.\n');
-  process.exit(0);
+  if (stopping) return;
+  stopping = true;
+  save(true).then(() => {
+    if (SAVE_ON) console.log('\n  Game saved to ' + STORE.where + '. Bye.\n');
+    process.exit(0);
+  });
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 const PORT = Number(process.env.PORT) || 3000;
 const isTailscale = ip => { const q = ip.split('.').map(Number); return q[0] === 100 && q[1] >= 64 && q[1] <= 127; };
-loadContent().then(() => {
- pickSaveFile();
- const restored = loadSave();
+loadContent().then(async () => {
+ pickStore();
+ const got = await loadSave(), restored = Object.keys(PLAYERS).length;
  server.listen(PORT, () => {
   const ips = [].concat(...Object.values(os.networkInterfaces()))
     .filter(i => i && i.family === 'IPv4' && !i.internal).map(i => i.address);
@@ -420,9 +444,12 @@ loadContent().then(() => {
   console.log('\n  Everyone opens one of those addresses in a browser to play.');
   console.log('  The world runs ' + Math.round(1000 / TICK_MS) + ' turns a second' + (LAG_MS ? ', with ' + LAG_MS + ' ms of pretend lag each way' : '') + '.');
   setInterval(() => { try { tick(); } catch (e) { console.error('  A turn of the loop failed:', (e && e.stack) || e); } }, TICK_MS);
-  if (!SAVE_FILE) console.log('  (SAVE_FILE=off: this session is not being saved.)');
-  else if (restored) console.log('  Resumed a saved game with ' + restored + ' character(s).');
-  else console.log('  New game. It will be saved to ' + SAVE_FILE + '.');
+  setInterval(() => { if (!saveBusy) save(); }, SAVE_MS);
+  if (!SAVE_ON) console.log('  (SAVE_FILE=off: this session is not being saved.)');
+  else if (got.importedFrom) console.log('  Carried on from the older save ' + got.importedFrom + ' (' + restored + ' character(s)); from now on the game is kept in ' + STORE.where + '.');
+  else if (restored) console.log('  Resumed the game in ' + STORE.where + ' with ' + restored + ' character(s).');
+  else console.log('  New game. It will be kept in ' + STORE.where + '.');
+  (got.unread || []).forEach(f => console.log('  Could not read ' + f + ': left as it is, and not used.'));
   console.log('  Press Ctrl+C to stop (characters and the world are kept for next time).\n');
  });
 }).catch(e => { console.error('  The host could not start: ' + ((e && e.stack) || e)); process.exit(1); });

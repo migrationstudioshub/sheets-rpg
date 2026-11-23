@@ -72,6 +72,7 @@ var Assets = (function () {
     });
     Object.keys(content.items || {}).forEach(function (k) {
       var it = content.items[k]; if (it.sprite) paths[it.sprite] = 1;
+      if (it.sprite && it.defaultTint) paths[it.sprite.replace(/\.png$/i, '.tint.png')] = 1;       // its icon's tint mask (clothes: the cloth is in the mask)
       [it.wornEmpty, it.wornReload, it.wornAim].forEach(function (wp) { if (wp) { paths[wp] = 1; if (it.defaultTint) paths[wp.replace(/\.png$/i, '.tint.png')] = 1; } });   // a weapon's other pictures
       if (it.wornSprite) { paths[it.wornSprite] = 1;                                              // worn paper-doll layer
         if (it.defaultTint) paths[it.wornSprite.replace(/\.png$/i, '.tint.png')] = 1; }           // + its grey tint mask

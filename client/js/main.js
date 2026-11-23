@@ -27,7 +27,7 @@
   var throwing = null;                   // belt item id armed for a throw (click to throw, Esc to cancel)
   // mouse: right-button held = aiming; left = interact (tap) / action list (hold) / fire (while aiming)
   var aiming = false, leftHeld = false, holdFired = false, pendingCell = null, holdMenuEvt = null, holdTimer = 0;
-  var lastHoldShot = 0, aimAngle = 0, HOLD_CLICK_MS = 250;   // left-press longer than this opens the action list
+  var lastHoldShot = 0, aimAngle = 0, aimFar = null, HOLD_CLICK_MS = 250;   // left-press longer than this opens the action list
   var hover = null, lastCam = { x: 0, y: 0 };
   // Aim lean: while the right button is held the camera drifts toward the cursor so you see further that way.
   // lastPtr = where the cursor last was (client px), so the hovered cell and aim follow the moving camera.
@@ -509,7 +509,21 @@
   function cellAt(e) {
     var r = canvas.getBoundingClientRect(), T = content.config.tile_size || 32;
     var px = (e.clientX - r.left) * canvas.width / r.width + lastCam.x, py = (e.clientY - r.top) * canvas.height / r.height + lastCam.y;
-    return Render.pickCell ? Render.pickCell(mapOf(), px, py, T) : { x: Math.floor(px / T), y: Math.floor(py / T) };   // (raised ground: the tile drawn under the cursor)
+    if (!Render.pickCells) return { x: Math.floor(px / T), y: Math.floor(py / T) };
+    return sameLevelPick(Render.pickCells(mapOf(), px, py, T));                 // (raised ground: the tile drawn under the cursor)
+  }
+  /** Raised ground is drawn over the ground behind it, so the cursor may be on several tiles at once (the one on top
+   *  first). The one on top is meant, unless there is nothing to do there and a tile under it that is ON YOUR OWN LEVEL
+   *  has something (a creature, a chest): then that one — higher ground does not get in the way of what is beside you. */
+  function sameLevelPick(cells) {
+    if (cells.length < 2 || !me || !view) return cells[0];
+    var map = mapOf(), lk = lookup(), mine = Rules.groundHeight(map, me.x + 0.5, me.y + 0.5);
+    function busy(c) { return !!lk.monsterAt(c.x, c.y) || World.actionsAt(content, map, lk, me, c.x, c.y).length > 0; }   // a creature, or something to use
+    if (busy(cells[0])) return cells[0];
+    for (var i = 1; i < cells.length; i++) {
+      if (Math.abs(Rules.groundHeight(map, cells[i].x + 0.5, cells[i].y + 0.5) - mine) < 1 && busy(cells[i])) return cells[i];
+    }
+    return cells[0];
   }
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   canvas.addEventListener('pointermove', function (e) {
@@ -705,6 +719,7 @@
     if (World.rangedWeapon(content, me)) { shootAt(cell); return; }
     // melee swings at whichever of the eight tiles around you lies toward the cursor
     var ddx = cell.x - me.x, ddy = cell.y - me.y, oct = Math.round(Math.atan2(ddy, ddx) / (Math.PI / 4));
+    if (aiming && aimFar != null) { ddx = aimFar ? 1 : 0; ddy = 0; oct = Math.round(aimAngle / (Math.PI / 4)); }   // by the screen: raised ground under the cursor is not where it looks on the map
     var fd = Rules.DIRS[me.facing] || { dx: 0, dy: 0 };                                  // cursor on your own tile: swing the way you face
     var tx = me.x + (ddx || ddy ? Math.round(Math.cos(oct * Math.PI / 4)) : fd.dx), ty = me.y + (ddx || ddy ? Math.round(Math.sin(oct * Math.PI / 4)) : fd.dy);
     send({ type: 'attack', x: tx, y: ty }); attackFx(tx, ty);
@@ -716,7 +731,7 @@
     var cx = (e.clientX - r.left) * canvas.width / r.width;
     var cy = (e.clientY - r.top) * canvas.height / r.height;
     var dx = cx - ((shown.x + 0.5) * T - lastCam.x), dy = cy - ((shown.y + 0.5) * T - lastCam.y - (Render.liftAt ? Render.liftAt(mapOf(), shown.x, shown.y, T) : 0));   // (from where you are drawn: raised ground lifts you)
-    aimAngle = Math.atan2(dy, dx);
+    aimAngle = Math.atan2(dy, dx); aimFar = Math.abs(dx) > T / 2 || Math.abs(dy) > T / 2;   // aimFar = the cursor is off your own tile
     if (dx || dy) me.facing = dx < 0 ? 'W' : 'E';
   }
   // Throwing down from an upper floor. The floors below are DRAWN a wall-height lower on the screen per floor, so
@@ -986,8 +1001,8 @@
       var img = sk.icon && Assets.get(sk.icon);
       if (img) { el.textContent = ''; el.style.background = 'url(' + img.src + ') center/cover'; }
     } else if (entry.kind === 'item') {
-      var it = content.items[entry.id] || { name: entry.id }, im = it.sprite && Assets.get(it.sprite);
-      el.style.background = im ? 'url(' + im.src + ') center/contain no-repeat' : '#555';
+      var it = content.items[entry.id] || { name: entry.id }, im = itemImageUrl(it);
+      el.style.background = im ? 'url(' + im + ') center/contain no-repeat' : '#555';
       if (!im) el.textContent = it.name.slice(0, 2);
     }
     return el;
@@ -1104,6 +1119,7 @@
   // ---------------------------------------------------------------- HUD and bag
   function hud() {
     if (!me) return;
+    buildLockWatch();
     $('hud-map').textContent = mapOf().name;
     $('hp-fill').style.width = Math.max(0, 100 * me.hp / me.maxHp) + '%';
     $('hp-text').textContent = Math.max(0, me.hp) + ' / ' + me.maxHp;
@@ -1160,16 +1176,26 @@
     hotbar();
     updateCursor();                 // keep the canvas cursor (crosshair when a gun is ready) in step with gear changes
   }
-  function toggleBag() { bagOpen = !bagOpen; $('bag').hidden = !bagOpen; if (bagOpen) bag(); else { storage = null; invSel = -1; } bagHud(); }
+  function toggleBag() { bagOpen = !bagOpen; $('bag').hidden = !bagOpen; if (bagOpen) { bag(); didUi('bag'); } else { storage = null; invSel = -1; } bagHud(); }
   /** While the inventory window is open the belt on screen stays above it: things are dragged onto its slots. */
   function bagHud() { $('hud-bc').classList.toggle('above', bagOpen); hotbar(); }
   // ---- build mode (B): pick a blueprint, then click where it goes. Whether a spot is allowed is decided by
   // World.canBuild — the same check the referee runs — so a green ghost means the server will say yes.
-  function toggleBuild() {
+  var wasLocked = null;                                       // building locked last time we looked (null = not looked yet)
+  /** Building may be locked until something happens (Config build_if): shut the bar when it is, say so when it opens up. */
+  function buildLockWatch() {
+    if (!me) return;
+    var locked = !!me.buildLocked;
+    if (locked && buildOpen) toggleBuild(true);
+    if (wasLocked === true && !locked) log('You can build now: press B.', 'info');
+    wasLocked = locked;
+  }
+  function toggleBuild(quiet) {
+    if (!buildOpen && me && me.buildLocked) { if (quiet !== true) log(me.buildLocked, 'info'); return; }
     buildOpen = !buildOpen && !!me;
     $('buildbar').hidden = !buildOpen; $('frame').classList.toggle('building', buildOpen);
     bbSig = '';
-    if (buildOpen) buildPanel(); else stopBuilding();           // closing the bar puts away whatever was in hand
+    if (buildOpen) { buildPanel(); didUi('build'); } else stopBuilding();   // closing the bar puts away whatever was in hand
   }
   function stopBuilding() { building = null; removing = false; moveTool = null; buildHold = null; updateCursor(); if (buildOpen) buildPanel(); }
   function startRemoving() {
@@ -1274,11 +1300,32 @@
   var bbType = null, bbHot = 0, bbFocus = null, bbSig = '';   // open kind, the kind the wheel is on, the unfolded blueprint, what is drawn
   function bbEl(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function bbTitle(s) { s = String(s || 'other'); return s.charAt(0).toUpperCase() + s.slice(1); }
-  function itemPic(id, size) {
-    var it = content.items[id] || { name: id }, img = it.sprite && Assets.get(it.sprite);
-    var pic = img ? img.cloneNode() : Assets.placeholder(it.name || id, '#555', size || 24);
+  // ---- an item's picture. Clothes and armour are drawn in two parts: the picture itself holds what never changes
+  // colour, and a mask next to it (foo.tint.png) holds the cloth, coloured by the item's default_tint. An icon
+  // shows both, one over the other, exactly as the item looks when worn.
+  /** The item's picture with its tinted part: an image, or a canvas; null when it has none loaded. */
+  function itemImage(it) {
+    var img = it && it.sprite && Assets.get(it.sprite);
+    if (!img || !img.width) return null;
+    var ramp = it.defaultTint && typeof Tint !== 'undefined' ? Tint.TINTS[it.defaultTint] : null, mask = ramp && Assets.get(maskOf(it.sprite));
+    return ramp && mask && mask.complete && mask.width ? Tint.getTintedLayer(img, mask, ramp) : img;
+  }
+  /** That picture as an address (for a CSS background). */
+  function itemImageUrl(it) {
+    var im = itemImage(it); if (!im) return '';
+    if (im.src) return im.src;
+    if (!im._url) { try { im._url = im.toDataURL(); } catch (e) { im._url = Assets.get(it.sprite).src; } }
+    return im._url;
+  }
+  /** That picture as an element of its own to put on the page (a placeholder when there is none). */
+  function itemPicEl(it, size) {
+    var im = itemImage(it), pic;
+    if (!im) pic = Assets.placeholder((it && it.name) || '?', '#555', size || 24);
+    else if (im.src) pic = im.cloneNode();
+    else { pic = document.createElement('canvas'); pic.width = im.width; pic.height = im.height; pic.getContext('2d').drawImage(im, 0, 0); }
     pic.className = 'pic'; return pic;
   }
+  function itemPic(id, size) { return itemPicEl(content.items[id] || { name: id }, size); }
   /** A blueprint's picture: its own icon, else what it builds (the object, or one tile of the floor it lays). */
   function bpPic(b) {
     var o = b.places === 'object' ? content.objects[b.object] : null;
@@ -1504,6 +1551,31 @@
   // and the tracker in the corner; and a mark floats over every NPC who has something for you.
   var npcTalk = null, npcQuest = '', npcPick = -1, questOpen = false, abandonArmed = '';
   function qel(tag, cls, text) { var d = document.createElement(tag); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
+  /** Text with keys in it: "[W]" or "[Left click]" is drawn as a key cap. */
+  function qtext(cls, text) {
+    var d = qel('div', cls), parts = String(text == null ? '' : text).split(/\[([^\[\]\n]{1,16})\]/);
+    parts.forEach(function (part, i) { if (i % 2) d.appendChild(qel('kbd', '', part)); else if (part) d.appendChild(document.createTextNode(part)); });
+    return d;
+  }
+  /** A quest's picture (a GIF plays by itself), or nothing. */
+  function questPic(q) {
+    if (!q.image) return null;
+    var img = document.createElement('img');
+    img.className = 'qimg'; img.alt = ''; img.onerror = function () { img.remove(); };
+    img.src = Assets.resolve(q.image);
+    return img;
+  }
+  function isTutorial(id) { var q = (content.quests || {})[id]; return !!(q && q.tutorial); }
+  function skipTutorial() { introOpen = false; introAck = ''; $('npcp').hidden = true; send({ type: 'quest', op: 'skip' }); }
+  /** A window of the page was opened: a quest that asks for exactly that (a `ui` goal) is told, as only the page knows. */
+  function didUi(what) {
+    var qs = content.quests || {};
+    var wanted = myQuests().some(function (x) {
+      var q = qs[x.id];
+      return q && q.goals.some(function (g, i) { return g.type === 'ui' && g.ref === what && !(Number(x.n[i]) >= 1); });
+    });
+    if (wanted) send({ type: 'quest', op: 'did', what: what });
+  }
   function myQuests() { return (me && me.quests) || []; }
   function questEntry(id) { return myQuests().filter(function (x) { return x.id === id; })[0] || null; }
   function objName(id) { return (content.objects[id] || {}).name || 'someone'; }
@@ -1542,7 +1614,7 @@
     var box = qel('div', 'qgoals');
     q.goals.forEach(function (g, i) {
       var have = counts ? Number(counts[i]) || 0 : 0, done = !!counts && have >= g.need;
-      box.appendChild(qel('div', done ? 'done' : '', (done ? '✓ ' : '• ') + goalLabel(g, have)));
+      box.appendChild(qtext(done ? 'done' : '', (done ? '✓ ' : '• ') + goalLabel(g, have)));
     });
     return box;
   }
@@ -1568,7 +1640,7 @@
     var entry = q && questEntry(q.id), offered = q && ((me.questsOpen || []).indexOf(q.id) >= 0);
     if (q && !entry && !offered) { q = null; npcQuest = ''; }                // accepted, handed in or no longer on offer: back to the list
     if (!q) {
-      if (npcTalk.text) box.appendChild(qel('div', 'qsay', npcTalk.text));
+      if (npcTalk.text) box.appendChild(qtext('qsay', npcTalk.text));
       if (!has.ready.length && !has.open.length && !has.active.length) { box.appendChild(qel('div', 'empty', 'Nothing more for now.')); return; }
       [['ready', 'Ready to hand in', '?'], ['open', 'New', '!'], ['active', 'Under way', '…']].forEach(function (grp) {
         if (!has[grp[0]].length) return;
@@ -1584,7 +1656,8 @@
     }
     var ready = entry && entry.s === 'ready' && q.ender === npcTalk.ref;
     box.appendChild(qel('h4', '', q.name));
-    box.appendChild(qel('div', 'qsay', ready ? (q.doneText || 'Well done.') : entry ? (q.progressText || q.text || 'Not done yet.') : (q.text || '')));
+    if (!ready && questPic(q)) box.appendChild(questPic(q));
+    box.appendChild(qtext('qsay', ready ? (q.doneText || 'Well done.') : entry ? (q.progressText || q.text || 'Not done yet.') : (q.text || '')));
     if (q.goals.length) box.appendChild(goalLines(q, entry ? entry.n : null));
     var rw = rewardText(q), picks = choiceList(q);
     if (rw) box.appendChild(qel('div', 'qreward', 'Reward: ' + rw));
@@ -1612,15 +1685,16 @@
     }
     btns.appendChild(back); box.appendChild(btns);
   }
-  function toggleQuests() { questOpen = !questOpen; abandonArmed = ''; $('questp').hidden = !questOpen; if (questOpen) questPanel(); }
+  function toggleQuests() { questOpen = !questOpen; abandonArmed = ''; $('questp').hidden = !questOpen; if (questOpen) { questPanel(); didUi('quests'); } }
   function questPanel() {
     var box = $('quest-body'), qs = content.quests || {}, list = myQuests().filter(function (x) { return qs[x.id]; });
     box.innerHTML = '';
     if (!list.length) { box.appendChild(qel('div', 'empty', 'No quests yet. Talk to people: someone with work for you has a ! over their head.')); return; }
     list.forEach(function (x) {
       var q = qs[x.id], card = qel('div', 'qcard' + (x.s === 'ready' ? ' ready' : ''));
-      card.appendChild(qel('b', '', q.name));
-      if (q.text) card.appendChild(qel('div', 'qsay', q.text));
+      card.appendChild(qel('b', '', q.tutorial ? 'Tutorial: ' + q.name : q.name));
+      if (questPic(q)) card.appendChild(questPic(q));
+      if (q.text) card.appendChild(qtext('qsay', q.text));
       if (q.goals.length) card.appendChild(goalLines(q, x.n));
       if (x.s === 'ready') card.appendChild(qel('div', 'qreturn', q.ender ? (q.goals.length ? 'Done: return to ' : 'Find ') + objName(q.ender) + '.' : 'Done.'));
       var rw = rewardText(q), pk = choiceList(q);
@@ -1632,8 +1706,8 @@
         fin.onclick = function () { toggleQuests(); claimPanel(q.id); };
         btns.appendChild(fin);
       }
-      var drop = qel('button', '', abandonArmed === q.id ? 'Really give up?' : 'Give up');
-      drop.onclick = function () { if (abandonArmed === q.id) { abandonArmed = ''; send({ type: 'quest', op: 'abandon', id: q.id }); } else { abandonArmed = q.id; questPanel(); } };
+      var drop = qel('button', '', q.tutorial ? 'Skip tutorial' : abandonArmed === q.id ? 'Really give up?' : 'Give up');   // (a tutorial step is not given up: the whole tutorial is skipped)
+      drop.onclick = function () { if (q.tutorial) skipTutorial(); else if (abandonArmed === q.id) { abandonArmed = ''; send({ type: 'quest', op: 'abandon', id: q.id }); } else { abandonArmed = q.id; questPanel(); } };
       btns.appendChild(drop); card.appendChild(btns);
       box.appendChild(card);
     });
@@ -1651,7 +1725,7 @@
       if (x.s === 'ready') one.appendChild(qel('div', '', q.ender ? (q.goals.length ? 'Return to ' : 'Find ') + objName(q.ender) : 'Done: claim it (L)'));
       else q.goals.forEach(function (g, i) {
         var have = Number(x.n[i]) || 0;
-        one.appendChild(qel('div', have >= g.need ? 'done' : '', goalLabel(g, have)));
+        one.appendChild(qtext(have >= g.need ? 'done' : '', goalLabel(g, have)));
       });
       box.appendChild(one);
     });
@@ -1684,17 +1758,20 @@
     if (introOpen || !ids.length || ids.join() === introAck) return;
     introOpen = true; claimQuest = ''; npcTalk = null; npcQuest = '';
     var box = $('npc-body'); box.innerHTML = '';
-    $('npc-title').textContent = ids.length > 1 ? 'New quests' : 'New quest';
+    var teach = ids.some(isTutorial);
+    $('npc-title').textContent = ids.every(isTutorial) ? 'Tutorial' : ids.length > 1 ? 'New quests' : 'New quest';
     ids.forEach(function (id) {
       var q = content.quests[id], rw = rewardText(q);
       box.appendChild(qel('h4', '', q.name));
-      if (q.text) box.appendChild(qel('div', 'qsay', q.text));
+      if (questPic(q)) box.appendChild(questPic(q));
+      if (q.text) box.appendChild(qtext('qsay', q.text));
       if (q.goals.length) box.appendChild(goalLines(q, (questEntry(id) || {}).n || null));
       else if (q.ender) box.appendChild(qel('div', 'qgoals', '• Find ' + objName(q.ender)));
       if (rw) box.appendChild(qel('div', 'qreward', 'Reward: ' + rw));
     });
     var btns = qel('div', 'qbtns'), go = qel('button', 'primary', 'Begin');
     go.onclick = closeIntro;
+    if (teach) { var skip = qel('button', '', 'Skip tutorial'); skip.onclick = skipTutorial; btns.appendChild(skip); }
     btns.appendChild(go); box.appendChild(btns);
     $('npcp').hidden = false;
   }
@@ -1724,7 +1801,7 @@
     var q = qs[claimQuest], entry = questEntry(claimQuest), box = $('npc-body'), rw = rewardText(q), picks = choiceList(q);
     box.innerHTML = ''; $('npc-title').textContent = 'Quest complete';
     box.appendChild(qel('h4', '', q.name));
-    box.appendChild(qel('div', 'qsay', q.doneText || 'Done.'));
+    box.appendChild(qtext('qsay', q.doneText || 'Done.'));
     if (q.goals.length) box.appendChild(goalLines(q, entry.n));
     if (rw) box.appendChild(qel('div', 'qreward', 'Reward: ' + rw));
     if (picks.length) {
@@ -1757,7 +1834,7 @@
   // ---- crafting panel (C, or use a crafting station): every recipe you know, what it needs, and Make buttons.
   // What can be made here is decided by World.recipesFor — the same check the referee runs on the craft action.
   var craftQty = {};                                           // how many of each recipe was last picked (the panel is redrawn often)
-  function toggleCraft() { craftOpen = !craftOpen; $('craft').hidden = !craftOpen; if (craftOpen) craftPanel(); }
+  function toggleCraft() { craftOpen = !craftOpen; $('craft').hidden = !craftOpen; if (craftOpen) { craftPanel(); didUi('craft'); } }
   function craftPanel() {
     var box = $('craft-items'); box.innerHTML = '';
     var recs = World.recipesFor(content, mapOf(), me, lookup());
@@ -1792,8 +1869,7 @@
   function recipeRow(r, job) {
     var out = r.outputs[0] || { item: '', qty: 1 }, it = content.items[out.item] || { name: r.name, sprite: '' };
     var row = document.createElement('div'); row.className = 'slot rcp' + (r.can ? '' : ' cant');
-    var img = Assets.get(it.sprite), pic = img ? img.cloneNode() : Assets.placeholder(it.name, '#555', 32);
-    pic.className = 'pic';
+    var pic = itemPicEl(it, 32);
     var name = document.createElement('div'); name.className = 'name';
     var b = document.createElement('b'); b.textContent = r.name + (out.qty > 1 ? ' ×' + out.qty : ''); name.appendChild(b);
     r.inputs.forEach(function (g2, i) {
@@ -1854,6 +1930,16 @@
     el.ondragleave = function () { el.classList.remove('over'); };
     el.ondrop = function (e) { e.preventDefault(); el.classList.remove('over'); var g = invDrag; if (g && accepts(g)) onDrop(g, e); };
   }
+  // Dragged out of the window (let go on the darkened screen around it): it is dropped, into a loot bag at your feet.
+  (function () {
+    var ov = $('bag');
+    ov.addEventListener('dragover', function (e) { if (invDrag && invDrag.from === 'bag' && e.target === ov) e.preventDefault(); });
+    ov.addEventListener('drop', function (e) {
+      var g = invDrag; if (!g || g.from !== 'bag' || e.target !== ov) return;
+      e.preventDefault(); invSel = -1;
+      send({ type: 'inv', op: 'drop', s: g.slot, qty: g.qty });
+    });
+  })();
   /** Move a stack (or part of it) from one grid's cell to another's; no cell = wherever it fits. */
   function invMove(fromW, fromS, toW, toS, qty) {
     var a = { type: 'inv', from: { w: fromW, s: fromS }, to: { w: toW } };
@@ -1905,7 +1991,9 @@
     if (used > bagSize) mh.className = 'lack';
     function headBtn(h4, text, title, fn) { var hb = el('button', 'hbtn', text); hb.title = title; hb.onclick = fn; h4.appendChild(hb); return hb; }
     headBtn(mh, 'Sort', 'Put the bag in order: the same things joined into full stacks, kinds together', function () { invSel = -1; send({ type: 'inv', op: 'sort' }); }).disabled = !used;
-    mine.appendChild(mh); mine.appendChild(invGrid(me.inventory, 'bag', bagSize)); cols.appendChild(mine);
+    mine.appendChild(mh); mine.appendChild(invGrid(me.inventory, 'bag', bagSize));
+    mine.appendChild(el('div', 'empty', 'Drag something out of the window to drop it.'));
+    cols.appendChild(mine);
     // the open container
     if (storage) {
       var inv = Array.isArray(storage.inv) ? storage.inv : Object.keys(storage.inv || {}).map(function (id, i) { return { item: id, qty: storage.inv[id], s: i }; });   // (an older referee sends {item: qty})

@@ -222,9 +222,30 @@ var CStudio = (function () {
     for (var i = 0; i < imgs.length; i++) if (r[imgs[i].key]) return spritePath(r[imgs[i].key]);
     return '';
   }
+  // Clothes and armour are drawn in two parts: the picture holds what never changes colour, and the mask next to it
+  // (foo.tint.png) the cloth, coloured by the item's default_tint. showTinted puts both, one over the other, in an
+  // <img> once they have loaded (until then, and when there is no mask, the plain picture stays).
+  function showTinted(el, path, tint) {
+    var ramp = tint && typeof Tint !== 'undefined' && Tint.TINTS[tint];
+    if (!ramp || !path || !/\.png$/i.test(path)) return el;
+    var base = pvImg(path), mask = pvImg(maskPath(path)), want = spritePath(path);
+    el._tintOf = want;
+    function go() {
+      if (el._tintOf !== want || !base.complete || !base.width || !mask.complete || !mask.width) return;
+      try { var cv = Tint.getTintedLayer(base, mask, ramp); if (cv && cv.toDataURL) el.src = cv.toDataURL(); } catch (e) { /* keep the plain picture */ }
+    }
+    [base, mask].forEach(function (im) { if (!im.complete) im.addEventListener('load', go); });
+    go();
+    return el;
+  }
+  function rowThumbPath(t, r) {
+    var imgs = (Schema.get(t).fields || []).filter(function (f) { return f.type === 'image'; });
+    for (var i = 0; i < imgs.length; i++) if (r[imgs[i].key]) return String(r[imgs[i].key]);
+    return '';
+  }
   function recCard(t, r, i, idf) {
     var src = rowThumbSrc(t, r);
-    var thumb = src ? hoverZoom(h('img', { className: 'rthumb', src: src, alt: '', onerror: function () { this.style.visibility = 'hidden'; } }), src)
+    var thumb = src ? hoverZoom(showTinted(h('img', { className: 'rthumb', src: src, alt: '', onerror: function () { this.style.visibility = 'hidden'; } }), t === 'items' ? rowThumbPath(t, r) : '', r.default_tint), src)
       : h('span', { className: 'rthumb ph' });   // empty thumb = no art yet (stays visible)
     var body = h('div', { className: 'rbody' }, h('div', { text: rowLabel(t, r) }), r.name && idf && r[idf] !== r.name ? h('small', { text: r.name }) : null);
     return h('button', { className: 'rec' + (i === curIndex ? ' on' : ''), onclick: function () { curIndex = i; renderList(); renderForm(); } }, thumb, body);
@@ -376,6 +397,11 @@ var CStudio = (function () {
       var opts = optionsOf(type, fl); if (val && opts.indexOf(val) < 0) opts.unshift(val);
       control = h('select', { onchange: function (e) { change(e.target.value); } },
         h('option', { value: '', text: '—' }), opts.map(function (o) { return h('option', { value: o, text: o, selected: o === val }); }));
+    } else if (fl.type === 'tint') {                                        // one of the page's colour ramps (Tint.TINTS), shown as swatches (not the water and lava ones: those are for terrain)
+      var tints = [{ value: '', label: 'no tint', visual: function () { return h('span', { className: 'swatch none' }); } }]
+        .concat(tintNames().filter(function (t) { return !/^(water|lava)/.test(t); }).map(function (t) { return { value: t, label: t, visual: function () { return swatch(t); } }; }));
+      if (val && tintNames().indexOf(val) < 0) tints.push({ value: val, label: val + ' (unknown colour)', visual: function () { return h('span', { className: 'swatch none' }); } });
+      control = visualPicker(val || '', tints, function (v) { change(v); renderList(); renderForm(); }, 'colour…');
     } else if (fl.type === 'image') {
       control = imageControl(r, fl, val, change);
     } else if (fl.type === 'ref') {
@@ -529,6 +555,7 @@ var CStudio = (function () {
     var list = Content.parseGoals(r[fl.key]).map(function (g) { return Object.assign({}, g); }), box = h('div', {});
     function byName(a, b) { return String(a.name || a.id).localeCompare(String(b.name || b.id)); }
     function pool(ref) {
+      if (ref === 'ui') return Content.UI_PARTS.slice();        // (the game's own windows: a fixed list)
       var src = ref === 'monsters' ? T.Monsters : ref === 'items' ? T.Items : ref === 'blueprints' ? T.Blueprints : ref === 'place' ? T.Maps : T.Objects;
       src = (src || []).filter(function (x) { return x.id; });
       if (ref === 'npcs') src = src.filter(function (x) { return x.kind === 'npc'; });
@@ -556,9 +583,9 @@ var CStudio = (function () {
       list.forEach(function (g, i) {
         var kind = Content.GOAL_TYPES.filter(function (k) { return k.id === g.type; })[0] || Content.GOAL_TYPES[0];
         var opts = pool(kind.ref), known = !g.ref || opts.some(function (x) { return x.id === g.ref; });
-        var what = kind.ref === 'place' ? 'map' : kind.ref === 'npcs' ? 'person' : kind.ref.replace(/s$/, '');
+        var what = kind.ref === 'place' ? 'map' : kind.ref === 'npcs' ? 'person' : kind.ref === 'ui' ? 'window' : kind.ref.replace(/s$/, '');
         // with no list to pick from (the maps are kept by the map editor), the id is typed
-        var target = kind.ref === 'none' ? h('span', { className: 'lootlbl', style: 'flex:1', text: 'from any source' }) : opts.length || kind.ref !== 'place'
+        var target = kind.ref === 'none' ? h('span', { className: 'lootlbl', style: 'flex:1', text: kind.id === 'drink' || kind.id === 'eat' ? 'from any source' : 'anything will do' }) : opts.length || kind.ref !== 'place'
           ? h('select', { style: 'flex:1;min-width:0' + (known ? '' : ';border-color:var(--bad)'), title: known ? '' : 'Nothing has this id', onchange: function (e) { g.ref = e.target.value; save(); draw(); } },
               h('option', { value: '', text: '— pick a ' + what + ' —' }),
               known ? null : h('option', { value: g.ref, text: g.ref + ' (missing)', selected: true }),
@@ -837,6 +864,39 @@ var CStudio = (function () {
             }),
             h('div', { className: 'help', text: help }));
         };
+        // Other looks: the same object drawn differently (five trees, three rocks). Entries v1, v2, … of sprite_states;
+        // the map editor goes through them with N or Shift+wheel before painting.
+        // A row per look, each with its own Remove, and "+ Add look" for one more: as many as wanted. A look keeps its
+        // name (v3 stays v3 when v2 is removed), so the maps that already use it are not disturbed.
+        var lookBox = h('div', {}), lookOpen = [];                 // lookOpen: rows added just now, still without a picture
+        var lookKeys = function () {
+          var have = dirPairs().filter(function (q) { return /^v\d+$/.test(q[0]); }).map(function (q) { return q[0]; });
+          lookOpen.forEach(function (k) { if (have.indexOf(k) < 0) have.push(k); });
+          return have.sort(function (x, y) { return Number(x.slice(1)) - Number(y.slice(1)); });
+        };
+        var drawLooks = function () {
+          lookBox.innerHTML = '';
+          var keys = lookKeys();
+          keys.forEach(function (k, n) {
+            var row = dirPick(k, 'look ' + (n + 2), '');
+            row.appendChild(h('button', { text: 'Remove this look', onclick: function () {
+              var list = dirPairs().filter(function (q) { return q[0] !== k; });
+              o.sprite_states = list.map(function (q) { return q[0] + '=' + q[1]; }).join('; '); persist();
+              if (statesInput) statesInput.value = o.sprite_states;
+              lookOpen = lookOpen.filter(function (q) { return q !== k; });
+              drawLooks();
+            } }));
+            lookBox.appendChild(row);
+          });
+          lookBox.appendChild(h('div', { className: 'field' },
+            h('button', { text: '+ Add look', onclick: function () {
+              var top = Math.max.apply(null, [0].concat(lookKeys().map(function (q) { return Number(q.slice(1)); })));
+              lookOpen.push('v' + (top + 1)); drawLooks();
+            } }),
+            h('div', { className: 'help', text: 'The main sprite is look 1' + (keys.length ? '; this object has ' + (keys.length + 1) + ' looks.' : '.') + ' In the map editor, N or Shift+wheel goes through the looks before you paint. Nothing else about the object changes.' })));
+        };
+        form.appendChild(h('div', { className: 'sub', text: 'Other looks (optional) — the same object drawn differently' }));
+        drawLooks(); form.appendChild(lookBox);
         form.appendChild(h('div', { className: 'sub', text: 'Other directions (optional) — makes the object turnable' }));
         form.appendChild(dirPick('north', 'sprite facing north', 'The main sprite above is the object facing south (towards the camera). This one is its back.'));
         form.appendChild(dirPick('side', 'sprite facing side', 'Facing east. West is this picture mirrored, so three pictures cover all four directions. Turn with T or Shift+wheel in the map editor and in build mode.'));
@@ -915,6 +975,12 @@ var CStudio = (function () {
       h('label', { text: 'needs tool' }),
       toolsBox(p.harvest_tool, function (text) { setProp(o, 'harvest_tool', text || undefined); }),
       h('div', { className: 'help', text: 'Tools that can harvest it by hand: any ONE of them is enough (none = bare hands). Lists the tool tags your items carry.' }),
+      h('label', { text: 'without the tool' }),
+      itemsBox(p.harvest_bare, function (text) { setProp(o, 'harvest_bare', text || undefined); }),
+      h('div', { className: 'lootrow', style: 'margin-top:4px' },
+        h('span', { className: 'lootlbl', text: 'over (blows)' }),
+        h('input', { type: 'number', min: 1, value: p.harvest_bare_hits == null ? '' : p.harvest_bare_hits, style: 'width:70px', title: 'How many blows bring the whole list out, each time round (empty = 4; 1 = the whole list on every blow)', oninput: function (e) { setProp(o, 'harvest_bare_hits', e.target.value === '' ? undefined : Number(e.target.value)); } })),
+      h('div', { className: 'help', text: 'Optional: what someone gets by hitting it WITHOUT one of those tools in hand (a tree punched bare-handed: a few branches and fibres). This does not damage it and never runs out: the list comes out once every that many blows. The harvest above is what cutting it down with the tool gives. Empty = it cannot be harvested without the tool.' }),
       h('div', { className: 'help', text: 'Harvest: set it (with health) on a tree, a wreck, a bush — breaking it gives these items, and it comes back after a while instead of being gone for good.' }),
       h('div', { className: 'help', text: 'Health 0 or empty = this object cannot be damaged. With health, players can break it by attacking, shooting or blasting it; whoever breaks it gets the salvage. Spawns, triggers, teleports, signs and NPCs never break.' })));
     if (o.kind === 'stairs') {
@@ -1241,7 +1307,7 @@ var CStudio = (function () {
     img.addEventListener('mouseenter', function () {
       clearTimeout(hv.timer);
       hv.timer = setTimeout(function () {
-        hv.el.innerHTML = ''; hv.el.appendChild(h('img', { src: src, alt: '' })); hv.el.style.display = 'block'; hvPlace();
+        hv.el.innerHTML = ''; hv.el.appendChild(h('img', { src: img.src || src, alt: '' })); hv.el.style.display = 'block'; hvPlace();
       }, 1000);
     });
     img.addEventListener('mouseleave', function () { clearTimeout(hv.timer); if (hv.el) hv.el.style.display = 'none'; });
@@ -1344,7 +1410,7 @@ var CStudio = (function () {
   function imageControl(r, fl, val, change) {
     var cur = val == null ? '' : String(val);
     var prev = h('img', { className: 'imgprev', alt: '', onerror: function () { this.style.display = 'none'; } });
-    function showPrev(v) { if (v) { prev.src = spritePath(v); prev.style.display = ''; } else { prev.removeAttribute('src'); prev.style.display = 'none'; } }
+    function showPrev(v) { prev._tintOf = ''; if (v) { prev.src = spritePath(v); prev.style.display = ''; if (type === 'items') showTinted(prev, v, r.default_tint); } else { prev.removeAttribute('src'); prev.style.display = 'none'; } }
     var input = h('input', { type: 'text', value: cur, placeholder: 'art/… path or URL',
       oninput: function (e) { cur = e.target.value; change(cur); showPrev(cur); picker.setValue(cur); } });
     var picker = artPicker(cur, function (v) { cur = v; input.value = v; change(v); showPrev(v); });

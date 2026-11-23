@@ -3457,4 +3457,326 @@ test('water: a used bottle leaves an empty one, which is filled at water and dru
   assert.strictEqual(c2.items.water.leaves, ''); assert.strictEqual(c2.terrain.l_water.water, true); assert.strictEqual(c2.terrain.l_lava.water, false);
 });
 
+// ------------------------------------------------------------ quests, and who took part in a kill
+function village(quests, extra) {
+  const tb = JSON.parse(JSON.stringify(tables)), row = Array(12).fill('til_1');
+  tb.Maps.push({ id: 'field', name: 'Field', width: 12, height: 12, terrain: JSON.stringify(Array(12).fill(row)) });
+  tb.Objects.push({ id: 'npc_marta', name: 'Marta', kind: 'npc', properties: JSON.stringify({ text: 'Mind the rats.' }) }, { id: 'npc_tom', name: 'Tom', kind: 'npc' });
+  tb.MapEntities.push({ map: 'field', key: 'field.e1', x: 3, y: 1, ref: 'npc_marta', data: '' }, { map: 'field', key: 'field.e2', x: 9, y: 9, ref: 'npc_tom', data: '' });
+  tb.Quests = quests;
+  if (extra) extra(tb);
+  const c = Content.build(tb), ws = { maps: {} };
+  c.config.move_burst = 999;
+  const mk = (id, name, x, y) => Object.assign(World.newPlayer(c, id, name, 'warrior'), { map: 'field', x, y, facing: 'S' });
+  const s = { c, ws, p: mk('p1', 'Ana', 2, 1), q: mk('p2', 'Ben', 2, 2), r: mk('p3', 'Cy', 6, 6), t: 1000 };
+  World.advance(c, ws, 'field', [s.p, s.q, s.r], s.t, mid, []);
+  s.put = (ref, x, y) => { const m = { id: ref + '#' + ws.maps.field.monsters.length, ref, x, y, hp: c.monsters[ref].hp, dead: false, last: s.t, respawnAt: 0, facing: 'S', spawn: '' }; ws.maps.field.monsters.push(m); return m; };
+  s.as = (who, a) => World.act(c, ws, who, a, s.t += 1000, mid, [s.p, s.q, s.r]);
+  s.turn = () => { const ev = []; World.advance(c, ws, 'field', [s.p, s.q, s.r], s.t += 100, mid, ev); return ev; };
+  s.kill = (who, ref) => { const m = s.put(ref, 5, 5), ev = []; c.monsters[ref].moveMs = 99999; World.hitMonster(c, ws, 'field', who, m, 9999, s.t += 100, mid, ev); return ev; };
+  s.log = who => World.questLog(c, who, s.t).map(x => x.id + ':' + x.s + ':' + x.n.join('/')).join(' ');
+  s.open = who => World.questsOpen(c, who, s.t).join(' ');
+  return s;
+}
+const RATS = { id: 'rats', name: 'Rat trouble', giver: 'npc_marta', text: 'Kill two rats.', objectives: 'kill:rat:2', rewards: 'xp:7; gold:5; give:wood:2' };
+
+test('quests: offered by an NPC, accepted beside them, counted by kills, handed in for the rewards, and chained', () => {
+  const s = village([RATS, { id: 'more', name: 'More rats', giver: 'npc_marta', objectives: 'kill:rat:1', requires: 'quest:rats' }]);
+  s.c.monsters.rat.carcass = ''; s.c.monsters.rat.loot = ''; s.c.loot.rat = [];
+  assert.strictEqual(s.open(s.p), 'rats', 'the second one waits for the first');
+  const talk = s.as(s.p, { type: 'interact', x: 3, y: 1 }).find(e => e.type === 'npc');
+  assert.deepStrictEqual([talk.key, talk.ref, talk.name, talk.text], ['field.e1', 'npc_marta', 'Marta', 'Mind the rats.'], 'talking opens her window');
+  assert.match(texts(s.as(s.r, { type: 'quest', op: 'accept', id: 'rats' })), /need to be with Marta/, 'not from across the field');
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'accept', id: 'rats' })), /New quest: Rat trouble/);
+  assert.deepStrictEqual([s.log(s.p), s.open(s.p)], ['rats:active:0', ''], 'in the log, no longer offered');
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'accept', id: 'rats' })), /already on/);
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'turnin', id: 'rats' })), /not done yet/);
+  assert.match(texts(s.kill(s.p, 'rat')), /Rat: 1\/2/);
+  const last = texts(s.kill(s.p, 'rat'));
+  assert.match(last, /Rat: 2\/2/); assert.match(last, /Rat trouble: done\. Return to Marta/);
+  s.kill(s.p, 'rat');
+  assert.strictEqual(s.log(s.p), 'rats:ready:2', 'a third rat is not counted');
+  Object.assign(s.p, { x: 8, y: 8 });
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'turnin', id: 'rats' })), /need to be with Marta/);
+  Object.assign(s.p, { x: 2, y: 1 });
+  const xp = s.p.xp, gold = s.p.gold, wood = World.count(s.p, 'wood');
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'turnin', id: 'rats' })), /Quest complete: Rat trouble/);
+  assert.deepStrictEqual([s.p.xp - xp, s.p.gold - gold, World.count(s.p, 'wood') - wood, s.log(s.p)], [7, 5, 2, ''], 'the rewards');
+  assert.strictEqual(s.open(s.p), 'more', 'done once: not offered again, and the next in the chain is');
+  assert.ok(World.check(s.c, s.p, 'quest:rats, !quest_active:rats') && !World.check(s.c, s.q, 'quest:rats'), 'conditions can ask about quests');
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'accept', id: 'rats' })), /already done/);
+  assert.match(texts(s.as(s.q, { type: 'quest', op: 'accept', id: 'more' })), /can't take that on yet/, 'another player has their own log');
+});
+
+test('quests: things to bring are counted in the bag and taken at hand-in; quest drops only fall for those who need them; choose-one rewards', () => {
+  const s = village([{ id: 'tails', name: 'Tails', giver: 'npc_marta', ender: 'npc_tom', objectives: 'have:bone:2', choice: 'wood:3, scrap:1' }],
+    tb => { tb.LootTables = tb.LootTables.filter(r => r.table !== 'rat'); tb.LootTables.push({ table: 'rat', item: 'bone', chance: 1, min: 1, max: 1, quest: 'tails' }); });
+  s.c.monsters.rat.lootTable = 'rat'; s.c.monsters.rat.carcass = ''; s.c.monsters.rat.loot = '';
+  const had = { bone: World.count(s.p, 'bone'), scrap: World.count(s.p, 'scrap'), wood: World.count(s.p, 'wood') };
+  const n = id => World.count(s.p, id) - had[id];
+  s.kill(s.p, 'rat');
+  assert.strictEqual(n('bone'), 0, 'not on the quest: no quest drop');
+  s.as(s.p, { type: 'quest', op: 'accept', id: 'tails' });
+  s.kill(s.p, 'rat');
+  assert.deepStrictEqual([n('bone'), s.log(s.p)], [1, 'tails:active:1']);
+  s.kill(s.p, 'rat'); s.kill(s.p, 'rat');
+  assert.deepStrictEqual([n('bone'), s.log(s.p)], [2, 'tails:ready:2'], 'enough: no more fall');
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'turnin', id: 'tails' })), /need to be with Tom/, 'handed in to someone else');
+  Object.assign(s.p, { x: 8, y: 9 });
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'turnin', id: 'tails' })), /Choose your reward first/);
+  assert.strictEqual(n('bone'), 2, 'nothing taken yet');
+  s.as(s.p, { type: 'quest', op: 'turnin', id: 'tails', choice: 1 });
+  assert.deepStrictEqual([n('bone'), n('scrap'), n('wood'), s.log(s.p)], [0, 1, 0, ''], 'the bones are taken, the chosen reward given');
+});
+
+test('quests: a word with someone, giving up, repeatable missions, and quests started by an action', () => {
+  const s = village([{ id: 'word', name: 'A word', giver: 'npc_marta', ender: 'npc_marta', objectives: 'talk:npc_tom', repeat_h: 1 },
+    { id: 'found', name: 'A strange note', objectives: '', rewards: 'gold:1' }]);
+  assert.strictEqual(s.open(s.p), 'word found');
+  s.as(s.p, { type: 'quest', op: 'accept', id: 'word' });
+  s.as(s.p, { type: 'interact', x: 3, y: 1 });
+  assert.strictEqual(s.log(s.p), 'word:active:0', 'talking to the wrong one counts for nothing');
+  Object.assign(s.p, { x: 8, y: 9 });
+  assert.match(texts(s.as(s.p, { type: 'interact', x: 9, y: 9 })), /A word: done\. Return to Marta/);
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'abandon', id: 'word' })), /give up/);
+  assert.deepStrictEqual([s.log(s.p), s.open(s.p)], ['', 'word found'], 'given up: offered again, from the start');
+  Object.assign(s.p, { x: 2, y: 1 }); s.as(s.p, { type: 'quest', op: 'accept', id: 'word' });
+  Object.assign(s.p, { x: 8, y: 9 }); s.as(s.p, { type: 'interact', x: 9, y: 9 });
+  Object.assign(s.p, { x: 2, y: 1 }); s.as(s.p, { type: 'quest', op: 'turnin', id: 'word' });
+  assert.strictEqual(s.open(s.p), 'found', 'a repeatable one is not offered again at once');
+  assert.strictEqual(World.questState(s.c, s.p, s.c.quests.word, s.t + 3600 * 1000 + 1), 'open', 'but it is an hour later');
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'accept', id: 'found' })), /Nobody offers that/);
+  World.run(s.c, s.ws, s.p, 'quest:found', s.t, []);
+  assert.strictEqual(s.log(s.p), 'found:ready:', 'started by an action; with nothing to do it is ready at once');
+  const gold = s.p.gold;
+  s.as(s.p, { type: 'quest', op: 'turnin', id: 'found' });
+  assert.strictEqual(s.p.gold, gold + 1, 'with no ender it is handed in anywhere');
+  // content with no Quests tab at all
+  const old = JSON.parse(JSON.stringify(tables)); delete old.Quests;
+  const c2 = Content.build(old), p2 = World.newPlayer(c2, 'x', 'X', 'warrior');
+  assert.deepStrictEqual([World.publicPlayer(c2, p2).quests, World.publicPlayer(c2, p2).questsOpen], [[], []]);
+  delete p2.quests; delete p2.questsDone; World.normalize(c2, p2);
+  assert.deepStrictEqual([p2.quests, p2.questsDone], [{}, {}], 'a character from before quests gets an empty log');
+});
+
+test('who took part: everyone who hit it gets the kill, the full XP and their own loot; a stale blow and a bystander get nothing', () => {
+  const s = village([RATS]);
+  s.c.monsters.rat.carcass = ''; s.c.monsters.rat.loot = 'wood:1'; s.c.monsters.rat.lootTable = 'rat'; s.c.monsters.rat.moveMs = 99999;
+  s.c.loot.rat = [{ item: 'bone', chance: 1, min: 1, max: 1 }];
+  s.as(s.p, { type: 'quest', op: 'accept', id: 'rats' }); s.as(s.q, { type: 'quest', op: 'accept', id: 'rats' });
+  const rat = s.put('rat', 5, 5), rxp = s.c.monsters.rat.xp;
+  const base = who => ({ xp: who.xp, bone: World.count(who, 'bone'), wood: World.count(who, 'wood') });
+  const b = { p: base(s.p), q: base(s.q), r: base(s.r) };
+  const got = k => { const who = s[k], was = b[k]; return [who.xp - was.xp, World.count(who, 'bone') - was.bone, World.count(who, 'wood') - was.wood]; };
+  World.hitMonster(s.c, s.ws, 'field', s.q, rat, 1, s.t += 100, mid, []);
+  assert.deepStrictEqual(Object.keys(rat.hits), ['p2'], 'the monster remembers who hit it');
+  World.hitMonster(s.c, s.ws, 'field', s.p, rat, 9999, s.t += 100, mid, []);
+  assert.deepStrictEqual([got('p'), s.log(s.p)], [[rxp, 1, 1], 'rats:active:1'], 'the last blow: a share at once, and what it always gives');
+  assert.deepStrictEqual([got('q'), !!rat.hits], [[0, 0, 0], false], 'the other is not at hand yet');
+  const ev2 = s.turn();
+  assert.deepStrictEqual([got('q'), s.log(s.q)], [[rxp, 1, 0], 'rats:active:1'], 'on the next turn: full XP, their own roll, the kill for their quest — not a second helping of what it always gives');
+  assert.ok(ev2.some(e => e.type === 'kill' && e.to === 'p2'), 'and they are told (which also has the referee save them)');
+  assert.deepStrictEqual([got('r'), !!s.ws.maps.field.credits], [[0, 0, 0], false], 'a bystander gets nothing; nothing is left waiting');
+  s.turn();
+  assert.deepStrictEqual(got('q'), [rxp, 1, 0], 'a share is given once');
+  // a blow from long ago does not count
+  const rat2 = s.put('rat', 5, 5);
+  World.hitMonster(s.c, s.ws, 'field', s.q, rat2, 1, s.t += 100, mid, []);
+  s.t += 31000;
+  World.hitMonster(s.c, s.ws, 'field', s.p, rat2, 9999, s.t, mid, []);
+  s.turn();
+  assert.deepStrictEqual([got('q')[0], s.log(s.q), s.log(s.p)], [rxp, 'rats:active:1', 'rats:ready:2'], 'Ben hit it more than 30 s before it died');
+  // someone who took part but has left the map: their share waits a minute, then is dropped
+  const rat3 = s.put('rat', 5, 5);
+  World.hitMonster(s.c, s.ws, 'field', s.q, rat3, 1, s.t += 100, mid, []);
+  s.q.map = 'elsewhere';
+  World.hitMonster(s.c, s.ws, 'field', s.p, rat3, 9999, s.t += 100, mid, []);
+  s.turn();
+  assert.strictEqual(s.ws.maps.field.credits.length, 1, 'kept for now');
+  s.t += 61000; s.turn();
+  assert.ok(!s.ws.maps.field.credits, 'and then forgotten');
+});
+
+test('who took part: in a carcass each finds the shared part and their own roll, and it stays until the last of it is taken', () => {
+  const s = village([]);
+  s.c.loot.deer = [{ item: 'bone', chance: 1, min: 2, max: 2 }]; s.c.monsters.deer.lootTable = 'deer'; s.c.monsters.deer.moveMs = 99999;
+  const had = who => ({ bone: World.count(who, 'bone'), raw_meat: World.count(who, 'raw_meat'), leather: World.count(who, 'leather') });
+  const hp = had(s.p), hq = had(s.q);
+  const deer = s.put('deer', 3, 2);
+  World.hitMonster(s.c, s.ws, 'field', s.q, deer, 1, s.t += 100, mid, []);
+  World.hitMonster(s.c, s.ws, 'field', s.p, deer, 9999, s.t += 100, mid, []);
+  s.turn();
+  const body = () => s.ws.maps.field.struct.ents.find(e => e.ref === 'carcass_deer');
+  const look = who => s.as(who, { type: 'interact', x: 3, y: 2 });
+  const sees = who => { const box = look(who).find(e => e.type === 'storage'); return box && box.inv ? box.inv.map(st => st.item + ':' + st.qty).sort().join() : 'nothing'; };
+  assert.deepStrictEqual([World.count(s.p, 'bone') - hp.bone, World.count(s.q, 'bone') - hq.bone], [0, 0], 'nothing straight into a bag');
+  assert.strictEqual(sees(s.p), 'bone:2,leather:2,raw_meat:4', 'Ana: the shared meat and hide, and her bones');
+  assert.strictEqual(sees(s.q), 'bone:2,leather:2,raw_meat:4', 'Ben: the same shared part, and bones of his own');
+  Object.assign(s.r, { x: 4, y: 2 });
+  assert.strictEqual(sees(s.r), 'leather:2,raw_meat:4', 'Cy took no part: only the shared part');
+  assert.strictEqual(body().inv.filter(st => st.item === 'bone').length, 2, 'two lots of bones lie there');
+  const key = body().key;
+  const ev = s.as(s.p, { type: 'inv', op: 'takeall', key });
+  assert.deepStrictEqual([World.count(s.p, 'bone') - hp.bone, World.count(s.p, 'raw_meat') - hp.raw_meat, World.count(s.p, 'leather') - hp.leather], [2, 4, 2], 'Ana takes all she sees');
+  assert.ok(ev.some(e => e.type === 'storage' && e.gone) && body(), 'her window closes; the body stays, with the bones that are Ben’s');
+  assert.match(texts(look(s.p)), /nothing on the/, 'nothing more for her');
+  assert.strictEqual(sees(s.q), 'bone:2', 'the shared part went to who took it first; his own is untouched');
+  assert.match(texts(look(s.r)), /nothing on the/);
+  const cell = body().inv.find(st => st.own === 'p2').s;
+  s.as(s.q, { type: 'inv', key, from: { w: 'box', s: cell }, to: { w: 'bag' } });
+  assert.deepStrictEqual([World.count(s.q, 'bone') - hq.bone, !!body()], [2, false], 'the last of it taken: the body is gone');
+  // killed with no player in the fight (a wolf's kill): the body holds one roll of the table, for anyone
+  const d2 = s.put('deer', 7, 2);
+  World.hitMonster(s.c, s.ws, 'field', null, d2, 9999, s.t += 100, mid, []);
+  assert.deepStrictEqual(body().inv.map(st => st.item + ':' + st.qty + ':' + (st.own || '')).sort(), ['bone:2:', 'leather:2:', 'raw_meat:4:']);
+});
+
+test('quests: a new character starts with the quests named in Config start_quests, and is welcomed with them once', () => {
+  const s = village([{ id: 'hello', name: 'Hello', ender: 'npc_marta', text: 'Find Marta.', rewards: 'gold:3' }, RATS],
+    tb => { tb.Config = tb.Config.filter(r => r.key !== 'start_quests'); tb.Config.push({ key: 'start_quests', value: 'hello, nope, rats' }); });
+  assert.deepStrictEqual(Object.keys(s.p.quests), ['hello', 'rats'], 'both in the log from the start; an id that is no quest is skipped');
+  assert.strictEqual(s.log(s.p), 'hello:ready: rats:active:0', 'in the order they are listed');
+  assert.deepStrictEqual(World.publicPlayer(s.c, s.p).questIntro, ['hello', 'rats'], 'the page is told to welcome them');
+  s.as(s.p, { type: 'quest', op: 'seen' });
+  assert.strictEqual(World.publicPlayer(s.c, s.p).questIntro, undefined, 'read once, never shown again');
+  assert.strictEqual(s.log(s.p), 'hello:ready: rats:active:0', 'the quests stay');
+  const gold = s.p.gold;
+  s.as(s.p, { type: 'quest', op: 'turnin', id: 'hello' });
+  assert.strictEqual(s.p.gold, gold + 3, 'handed in to its ender like any other');
+  // a game with no start_quests, and a character from before: nothing
+  const t = village([RATS], tb => { tb.Config = tb.Config.filter(r => r.key !== 'start_quests'); });
+  assert.deepStrictEqual([Object.keys(t.p.quests), World.publicPlayer(t.c, t.p).questIntro], [[], undefined]);
+});
+
+// Put one quest with these objectives straight into a scenario's content and its player's log.
+function onQuest(s, objectives) {
+  const goals = Content.parseGoals(objectives);
+  s.c.quests = { q: { id: 'q', name: 'Q', giver: '', ender: 'someone', text: '', goals, requires: '', rewards: '', choice: '', repeatS: 0, order: 0 } };
+  s.p.quests = { q: { n: goals.map(() => 0), at: 1 } }; s.p.questsDone = {};
+  return () => World.questLog(s.c, s.p, 1e15)[0].s + ':' + World.questLog(s.c, s.p, 1e15)[0].n.join('/');
+}
+
+test('quests: objectives are a list of kinds — written as text or as the list the Content Studio saves, with their own wording', () => {
+  assert.deepStrictEqual(Content.GOAL_TYPES.map(k => k.id), ['kill', 'have', 'talk', 'use', 'drink', 'eat', 'goto', 'interact', 'craft', 'build', 'tame']);
+  assert.deepStrictEqual(Content.parseGoals('kill:rat:5; have:bone:2; talk:npc_tom; goto:field:8:7:2; nonsense:x:1; kill'),
+    [{ type: 'kill', ref: 'rat', need: 5 }, { type: 'have', ref: 'bone', need: 2 }, { type: 'talk', ref: 'npc_tom', need: 1 }, { type: 'goto', ref: 'field', need: 1, x: 8, y: 7, r: 2 }],
+    'text, as written by hand: what is not a kind, or names nothing, is dropped');
+  const saved = JSON.stringify([{ type: 'use', ref: 'potion', need: 2, label: 'Patch yourself up' }, { type: 'goto', ref: 'field', x: 8, y: 8, r: 1, label: 'Reach the far corner' }, { type: 'talk', ref: 'npc_tom', need: 9 }]);
+  assert.deepStrictEqual(Content.parseGoals(saved),
+    [{ type: 'use', ref: 'potion', need: 2, label: 'Patch yourself up' }, { type: 'goto', ref: 'field', need: 1, x: 8, y: 8, r: 1, label: 'Reach the far corner' }, { type: 'talk', ref: 'npc_tom', need: 1 }],
+    'the list the Content Studio saves: a kind that is not counted is always once');
+  assert.deepStrictEqual([Content.parseGoals(''), Content.parseGoals(undefined), Content.parseGoals('[oops')], [[], [], []]);
+  const s = village([{ id: 'both', name: 'Both', giver: 'npc_marta', objectives: saved }]);
+  assert.deepStrictEqual(s.c.quests.both.goals.map(g => World.goalText(s.c, g)), ['Patch yourself up', 'Reach the far corner', 'Talk to Tom'], 'a goal reads as its label, or is named after its target');
+});
+
+test('quests: using an item, reaching a place and using an object count', () => {
+  const s = village([{ id: 'trip', name: 'Trip', giver: 'npc_marta', objectives: 'use:potion:2; goto:field:8:8:1; interact:npc_tom' }]);
+  s.as(s.p, { type: 'quest', op: 'accept', id: 'trip' });
+  World.give(s.c, s.p, 'potion', 3, []);
+  assert.match(texts(s.as(s.p, { type: 'use', item: 'potion' })), /already at full health/);
+  assert.strictEqual(s.log(s.p), 'trip:active:0/0/0', 'a potion that was not used does not count');
+  s.p.hp -= 60;
+  assert.match(texts(s.as(s.p, { type: 'use', item: 'potion' })), /Potion: 1\/2/);
+  s.p.cooldowns = {}; s.as(s.p, { type: 'use', item: 'potion' });
+  s.p.cooldowns = {}; s.p.hp -= 30; s.as(s.p, { type: 'use', item: 'potion' });
+  assert.strictEqual(s.log(s.p), 'trip:active:2/0/0', 'two asked for: a third changes nothing');
+  Object.assign(s.p, { x: 5, y: 8 });
+  s.as(s.p, { type: 'move', dirs: ['E'] });
+  assert.strictEqual(s.log(s.p), 'trip:active:2/0/0', 'two tiles off: not there yet');
+  assert.match(texts(s.as(s.p, { type: 'move', dirs: ['E'] })), /Trip: Field reached/);
+  assert.strictEqual(s.log(s.p), 'trip:active:2/1/0', 'within one tile of the spot');
+  Object.assign(s.p, { x: 2, y: 1 }); s.as(s.p, { type: 'face', dir: 'N' });
+  assert.strictEqual(s.log(s.p), 'trip:active:2/1/0', 'having been there is enough: walking off does not undo it');
+  Object.assign(s.p, { x: 8, y: 9 });
+  assert.match(texts(s.as(s.p, { type: 'interact', x: 9, y: 9 })), /Trip: done/);
+  assert.strictEqual(s.log(s.p), 'trip:ready:2/1/1');
+  // a place on another map does not count here; arriving by a teleport does
+  const t = village([{ id: 'far', name: 'Far', giver: 'npc_marta', objectives: 'goto:elsewhere:2:1:0' }]);
+  t.as(t.p, { type: 'quest', op: 'accept', id: 'far' });
+  assert.strictEqual(t.log(t.p), 'far:active:0', 'the same spot, on the wrong map');
+  t.c.maps.elsewhere = Object.assign({}, t.c.maps.field, { id: 'elsewhere', name: 'Elsewhere', entities: [] });
+  World.run(t.c, t.ws, t.p, 'teleport:elsewhere:2:1', t.t, []);
+  t.as(t.p, { type: 'face', dir: 'N' });
+  assert.strictEqual(t.log(t.p), 'far:ready:1');
+});
+
+test('quests: crafting, building and taming count', () => {
+  const s = camp(), made = onQuest(s, 'craft:hammer:2');
+  [['wood', 9], ['scrap', 9]].forEach(g => World.give(s.c, s.p, g[0], g[1], []));
+  s.c.recipes.r_hammer.station = ''; s.c.recipes.r_hammer.timeS = 0;
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_hammer' })), /Hammer: 1\/2/);
+  act(s, { type: 'craft', recipe: 'r_hammer' }, 9000);
+  assert.strictEqual(made(), 'ready:2', 'made by hand, one at a time');
+  const s1 = camp(), slow = onQuest(s1, 'craft:hammer:1');
+  [['wood', 9], ['scrap', 9]].forEach(g => World.give(s1.c, s1.p, g[0], g[1], []));
+  s1.c.recipes.r_hammer.station = ''; s1.c.recipes.r_hammer.timeS = 2;
+  act(s1, { type: 'craft', recipe: 'r_hammer' }, 1000);
+  assert.strictEqual(slow(), 'active:0', 'one that takes time is not made yet');
+  World.advance(s1.c, s1.ws, 'camp', [s1.p], 2000, mid, []); World.advance(s1.c, s1.ws, 'camp', [s1.p], 3500, mid, []);
+  assert.strictEqual(slow(), 'ready:1', 'counted when it is finished');
+
+  const b = yard(), built = onQuest(b, 'build:bp_wood_wall:1');
+  assert.match(doAct(b, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'N' }), /set up the frame/);
+  assert.strictEqual(built(), 'active:0', 'a frame is not a wall yet');
+  for (let i = 0; i < 12 && built() !== 'ready:1'; i++) doAct(b, { type: 'work', target: { t: 'wall', orient: 'h', x: 4, y: 4 } });
+  assert.strictEqual(built(), 'ready:1', 'finished: built');
+
+  const m = meadow(), hen = m.put('chicken', 2, 1), tamed = onQuest(m, 'tame:chicken:1');
+  m.c.monsters.chicken.moveMs = 99999;
+  World.give(m.c, m.p, 'seeds', 2, []); m.p.belt[1] = 'seeds'; World.holdSlot(m.c, m.p, 1);
+  World.act(m.c, m.ws, m.p, { type: 'interact', x: hen.x, y: hen.y }, m.t += 1000, mid, [m.p]);
+  assert.deepStrictEqual([hen.tame, tamed()], [true, 'ready:1']);
+});
+
+test('quests: drinking and eating count from any source; a quest with nobody to hand it to waits to be claimed, and can start the next', () => {
+  const s = village([
+    { id: 'awake', name: 'You are finally awake', text: 'Your throat burns.', done_text: 'Better.', objectives: 'drink', rewards: 'xp:5; quest:clean' },
+    { id: 'clean', name: 'Not so fast', ender: 'npc_marta', text: 'That water is not safe.', objectives: 'eat:2' }],
+    tb => { tb.Config = tb.Config.filter(r => r.key !== 'start_quests' && r.key !== 'start_thirst' && r.key !== 'start_hunger');
+      tb.Config.push({ key: 'start_quests', value: 'awake' }, { key: 'start_thirst', value: 30 }, { key: 'start_hunger', value: 55 }); });
+  assert.deepStrictEqual(s.c.quests.awake.goals, [{ type: 'drink', ref: '*', need: 1 }], 'a goal with no target');
+  assert.deepStrictEqual([s.p.thirst, s.p.hunger, s.log(s.p)], [30, 55, 'awake:active:0'], 'a new character starts thirsty, with the quest');
+  s.c.maps.field.terrain[1][1] = 'l_water';                             // a stream right beside Ana (2,1)
+  const xp = s.p.xp;
+  const ev = s.as(s.p, { type: 'interact', x: 1, y: 1, verb: 'drink' });
+  assert.match(texts(ev), /drink from the/); assert.match(texts(ev), /You are finally awake: done\.$/m);
+  assert.ok(ev.some(e => e.type === 'quest' && e.ready === 'awake'), 'the page is told which quest is ready');
+  assert.deepStrictEqual([s.p.xp - xp, s.log(s.p), !!s.p.questsDone.awake], [0, 'awake:ready:1', false], 'done, but not finished by itself: it waits to be claimed');
+  s.turn();
+  assert.strictEqual(s.log(s.p), 'awake:ready:1', 'and goes on waiting');
+  Object.assign(s.p, { x: 7, y: 7 });
+  const ev2 = s.as(s.p, { type: 'quest', op: 'turnin', id: 'awake' });
+  assert.ok(ev2.some(e => e.type === 'quest' && e.done === 'awake'), 'claimed wherever the player stands: there is nobody to go back to');
+  assert.deepStrictEqual([s.p.xp - xp, s.log(s.p), !!s.p.questsDone.awake], [5, 'clean:active:0', true], 'its reward given, and the next one started by it');
+  assert.ok(s.p.intro.indexOf('clean') >= 0 && World.publicPlayer(s.c, s.p).questIntro.indexOf('clean') >= 0, 'the next one is announced');
+  // eating: any food, counted each time something is actually eaten
+  World.give(s.c, s.p, 'ration', 3, []);
+  s.p.hunger = 100;
+  s.as(s.p, { type: 'use', item: 'ration' });
+  assert.strictEqual(s.log(s.p), 'clean:active:0', 'not hungry: nothing eaten, nothing counted');
+  s.p.hunger = 10; s.p.cooldowns = {};
+  assert.match(texts(s.as(s.p, { type: 'use', item: 'ration' })), /Eat something: 1\/2/);
+  s.p.hunger = 10; s.p.cooldowns = {};
+  s.as(s.p, { type: 'use', item: 'ration' });
+  assert.strictEqual(s.log(s.p), 'clean:ready:2');
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'turnin', id: 'clean' })), /need to be with Marta/, 'this one has someone to return to');
+  // a drink from a bottle counts as well as one from a stream
+  const t = village([{ id: 'awake', name: 'Awake', objectives: 'drink:2' }]);
+  World.run(t.c, t.ws, t.p, 'quest:awake', t.t, []);
+  World.give(t.c, t.p, 'water', 2, []); t.p.thirst = 20;
+  t.as(t.p, { type: 'use', item: 'water' }); t.p.thirst = 20; t.p.cooldowns = {};
+  assert.strictEqual(t.log(t.p), 'awake:active:1');
+  t.as(t.p, { type: 'use', item: 'water' });
+  assert.strictEqual(t.log(t.p), 'awake:ready:2');
+  // claiming one with a reward to choose
+  const u = village([{ id: 'pick', name: 'Pick', objectives: 'drink', choice: 'wood:1, bone:1' }]);
+  World.run(u.c, u.ws, u.p, 'quest:pick', u.t, []);
+  World.give(u.c, u.p, 'water', 1, []); u.p.thirst = 20;
+  const bones = World.count(u.p, 'bone');
+  u.as(u.p, { type: 'use', item: 'water' });
+  assert.match(texts(u.as(u.p, { type: 'quest', op: 'turnin', id: 'pick' })), /Choose your reward first/);
+  u.as(u.p, { type: 'quest', op: 'turnin', id: 'pick', choice: 1 });
+  assert.deepStrictEqual([u.log(u.p), World.count(u.p, 'bone') - bones], ['', 1]);
+});
 console.log(`\n${passed} world tests passed`);

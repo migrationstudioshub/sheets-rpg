@@ -163,6 +163,7 @@
     if (!me || p.map !== me.map) {
       floorWait = 0;
       me = p; view = res.world; struct = null; takeStruct(res.world); takeFloorStructs(res.world); handleEvents(res.events);
+      questsChanged();
       return enterMap();
     }
     // keep our predicted position while moves are still on their way; otherwise trust the server
@@ -176,6 +177,7 @@
     if (craftOpen) craftPanel();
     if (buildOpen) buildPanel();
     if (storage) storePanel();
+    questsChanged();
     return Promise.resolve();
   }
 
@@ -364,6 +366,7 @@
   function handleEvents(events) {
     var now = performance.now();
     (events || []).forEach(function (e, i) {
+      if (e.type === 'npc') { openNpc(e); return; }            // you talked to someone: their window (or, with nothing to offer, a line)
       if (e.text) log(e.text, e.type);
       if (e.type === 'craft') { if (!craftOpen) toggleCraft(); return; }   // you used a workbench / campfire: show what can be made
       if (e.type === 'claim') { claim = e; $('claimp').hidden = false; claimPanel(); return; }       // your claim flag: who belongs to the base
@@ -488,11 +491,12 @@
     else if (e.code === 'KeyX') { if (removing) stopBuilding(); else startRemoving(); }
     else if (e.code === 'KeyH' && removing) { wallsDown = !wallsDown; log(wallsDown ? 'Walls shown low: point at the base of a wall to pick it.' : 'Walls shown whole: point at the face of a wall to pick it.', 'info'); }
     else if (e.code === 'KeyC') toggleCraft();
+    else if (e.code === 'KeyL') toggleQuests();
     else if (e.code === 'KeyT') turnBuild(1);
     else if (e.code === 'KeyV' && building && content.blueprints[building] && content.blueprints[building].places === 'tile') {
       buildRoof = !buildRoof; if (buildOpen) buildPanel(); log(buildRoof ? 'Roof: click cells of this storey to cover them (V: back to floor).' : 'Floor: click where it should be laid (V: as a roof).', 'info');
     }
-    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) { if (holdMode()) selectSlot(-1); else cancelThrow(); } else if (claim) closeClaim(); else if (storage) closeStore(); else if (buildOpen) toggleBuild(); else if (building || removing || moveTool) stopBuilding(); else if (craftOpen) toggleCraft(); else if (bagOpen) toggleBag(); }
+    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) { if (holdMode()) selectSlot(-1); else cancelThrow(); } else if (introOpen) closeIntro(); else if (claimQuest) closeClaimQuest(); else if (npcTalk) closeNpc(); else if (questOpen) toggleQuests(); else if (claim) closeClaim(); else if (storage) closeStore(); else if (buildOpen) toggleBuild(); else if (building || removing || moveTool) stopBuilding(); else if (craftOpen) toggleCraft(); else if (bagOpen) toggleBag(); }
     else if (e.code === 'KeyQ' && skillsOn()) ability(0);
     else if (e.code === 'KeyE' && skillsOn()) ability(1);
     else if (e.code === 'KeyR') startReload();
@@ -623,7 +627,8 @@
       '<path class="round" d="M20 10.500c2.300 2.700 3 5.300 3 8v7.500h-6V18.500c0-2.700.7-5.300 3-8zM17 27.500h6v2h-6z"/></svg>',
     craft: '<svg viewBox="0 0 40 40"><circle class="track" cx="20" cy="20" r="16"/><circle class="arc" cx="20" cy="20" r="16" transform="rotate(-90 20 20)"/>' +
       '<path class="round" d="M13 14h11v5h-4v10h-3V19h-4z"/></svg>',   // the same ring, with a hammer
-    alert: '!', search: '?'
+    alert: '!', search: '?',
+    quest: '!', questdone: '?', questgo: '?'      // over an NPC: has a quest for you / one to hand in / one of theirs under way
   };
   var markEls = {};
   function setMarks(list) {
@@ -1492,6 +1497,263 @@
     box.appendChild(el('div', 'empty', 'They have to be in this area with you when you add them.'));
   }
   function storePanel() { if (!bagOpen) { bagOpen = true; $('bag').hidden = false; bagHud(); } bag(); }   // a container: the inventory window, with its grid beside the bag
+  // ---- quests ----
+  // The rules are the referee's (World.questState / questAct). The page only shows what it is told with every
+  // answer: me.quests = [{id, s: 'active' | 'ready', n: [count per goal]}] and me.questsOpen = [ids that could be
+  // accepted now]. Three places show it: the window of the NPC you talk to (accept, hand in), the quest log (L)
+  // and the tracker in the corner; and a mark floats over every NPC who has something for you.
+  var npcTalk = null, npcQuest = '', npcPick = -1, questOpen = false, abandonArmed = '';
+  function qel(tag, cls, text) { var d = document.createElement(tag); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
+  function myQuests() { return (me && me.quests) || []; }
+  function questEntry(id) { return myQuests().filter(function (x) { return x.id === id; })[0] || null; }
+  function objName(id) { return (content.objects[id] || {}).name || 'someone'; }
+  /** What one NPC (an object id) has for you: quests to hand in, quests on offer, quests of theirs still under way. */
+  function npcQuests(ref) {
+    var qs = content.quests || {}, out = { ready: [], open: [], active: [] };
+    myQuests().forEach(function (x) {
+      var q = qs[x.id]; if (!q) return;
+      if (x.s === 'ready' && q.ender === ref) out.ready.push(q);
+      else if (x.s !== 'ready' && (q.ender === ref || q.giver === ref)) out.active.push(q);
+    });
+    ((me && me.questsOpen) || []).forEach(function (id) { var q = qs[id]; if (q && q.giver === ref) out.open.push(q); });
+    return out;
+  }
+  /** "100 XP · 20 gold · 2 Wood", from a quest's reward actions (what is not a gift is left out). */
+  function rewardText(q) {
+    var out = [];
+    String(q.rewards || '').split(';').forEach(function (cmd) {
+      var a = cmd.trim().split(':');
+      if (a[0] === 'xp' && Number(a[1]) > 0) out.push(a[1] + ' XP');
+      else if (a[0] === 'gold' && Number(a[1]) > 0) out.push(a[1] + ' gold');
+      else if (a[0] === 'give' && a[1]) out.push((Number(a[2]) || 1) + ' ' + itemName(a[1]));
+    });
+    return out.join(' · ');
+  }
+  function itemName(id) { return id === 'gold' ? 'gold' : (content.items[id] || {}).name || id; }
+  function choiceList(q) { return World.list(q.choice).filter(function (g) { return g.item === 'gold' || content.items[g.item]; }); }
+  /** One goal in words: "Kill Rat 1/3", "Bring Bone 0/2", "Talk to Tom", "Go to Old Mill" — or its own label, with the count. */
+  var GOAL_VERB = { kill: 'Kill ', have: 'Bring ', use: 'Use ', craft: 'Make ', build: 'Build ', tame: 'Tame ', interact: 'Use ', goto: 'Go to ', talk: '', drink: '', eat: '' };
+  function goalLabel(g, have) {
+    var text = (g.label ? '' : GOAL_VERB[g.type] || '') + World.goalText(content, g);
+    return g.need > 1 || g.type === 'have' ? text + ' ' + have + '/' + g.need : text;
+  }
+  /** A quest's goals as lines, ticked when met. counts = the entry's n (none = not started). */
+  function goalLines(q, counts) {
+    var box = qel('div', 'qgoals');
+    q.goals.forEach(function (g, i) {
+      var have = counts ? Number(counts[i]) || 0 : 0, done = !!counts && have >= g.need;
+      box.appendChild(qel('div', done ? 'done' : '', (done ? '✓ ' : '• ') + goalLabel(g, have)));
+    });
+    return box;
+  }
+  function openNpc(e) {
+    var has = npcQuests(e.ref);
+    if (!has.ready.length && !has.open.length && !has.active.length) {      // nothing between you: just what they say
+      log(e.text ? e.name + ': ' + e.text : e.name + ' has nothing to say yet.', 'info');
+      return;
+    }
+    if (introOpen) closeIntro();
+    closeClaimQuest();
+    npcTalk = e; npcQuest = ''; npcPick = -1;
+    $('npcp').hidden = false; npcPanel();
+  }
+  function closeNpc() { npcTalk = null; npcQuest = ''; $('npcp').hidden = true; claimPanel(); }   // (a finished quest may have been waiting for this window)
+  function npcPanel() {
+    if (!npcTalk) return;
+    // walked away (or they are gone): the window closes
+    var ent = (mapOf().entities || []).filter(function (en) { return en.key === npcTalk.key; })[0];
+    if (!ent || Math.abs(ent.x - me.x) > 1 || Math.abs(ent.y - me.y) > 1) { closeNpc(); return; }
+    var box = $('npc-body'), has = npcQuests(npcTalk.ref), q = npcQuest && (content.quests || {})[npcQuest];
+    box.innerHTML = ''; $('npc-title').textContent = npcTalk.name;
+    var entry = q && questEntry(q.id), offered = q && ((me.questsOpen || []).indexOf(q.id) >= 0);
+    if (q && !entry && !offered) { q = null; npcQuest = ''; }                // accepted, handed in or no longer on offer: back to the list
+    if (!q) {
+      if (npcTalk.text) box.appendChild(qel('div', 'qsay', npcTalk.text));
+      if (!has.ready.length && !has.open.length && !has.active.length) { box.appendChild(qel('div', 'empty', 'Nothing more for now.')); return; }
+      [['ready', 'Ready to hand in', '?'], ['open', 'New', '!'], ['active', 'Under way', '…']].forEach(function (grp) {
+        if (!has[grp[0]].length) return;
+        box.appendChild(qel('h4', '', grp[1]));
+        has[grp[0]].forEach(function (one) {
+          var b = qel('button', 'qrow ' + grp[0]);
+          b.appendChild(qel('span', 'qmark', grp[2])); b.appendChild(qel('span', '', one.name));
+          b.onclick = function () { npcQuest = one.id; npcPick = -1; npcPanel(); };
+          box.appendChild(b);
+        });
+      });
+      return;
+    }
+    var ready = entry && entry.s === 'ready' && q.ender === npcTalk.ref;
+    box.appendChild(qel('h4', '', q.name));
+    box.appendChild(qel('div', 'qsay', ready ? (q.doneText || 'Well done.') : entry ? (q.progressText || q.text || 'Not done yet.') : (q.text || '')));
+    if (q.goals.length) box.appendChild(goalLines(q, entry ? entry.n : null));
+    var rw = rewardText(q), picks = choiceList(q);
+    if (rw) box.appendChild(qel('div', 'qreward', 'Reward: ' + rw));
+    if (picks.length) {
+      box.appendChild(qel('div', 'qreward', ready ? 'Choose one:' : 'And one of:'));
+      var row = qel('div', 'qpicks');
+      picks.forEach(function (g, i) {
+        var b = qel('button', ready && npcPick === i ? 'on' : '', g.qty + ' ' + itemName(g.item));
+        if (ready) b.onclick = function () { npcPick = i; npcPanel(); }; else b.disabled = true;
+        row.appendChild(b);
+      });
+      box.appendChild(row);
+    }
+    var btns = qel('div', 'qbtns'), back = qel('button', '', 'Back');
+    back.onclick = function () { npcQuest = ''; npcPanel(); };
+    if (ready) {
+      var done = qel('button', 'primary', 'Hand in');
+      done.disabled = picks.length > 0 && npcPick < 0;
+      done.onclick = function () { send({ type: 'quest', op: 'turnin', id: q.id, choice: picks.length ? npcPick : undefined }); };
+      btns.appendChild(done);
+    } else if (!entry) {
+      var take = qel('button', 'primary', 'Accept');
+      take.onclick = function () { send({ type: 'quest', op: 'accept', id: q.id }); };
+      btns.appendChild(take);
+    }
+    btns.appendChild(back); box.appendChild(btns);
+  }
+  function toggleQuests() { questOpen = !questOpen; abandonArmed = ''; $('questp').hidden = !questOpen; if (questOpen) questPanel(); }
+  function questPanel() {
+    var box = $('quest-body'), qs = content.quests || {}, list = myQuests().filter(function (x) { return qs[x.id]; });
+    box.innerHTML = '';
+    if (!list.length) { box.appendChild(qel('div', 'empty', 'No quests yet. Talk to people: someone with work for you has a ! over their head.')); return; }
+    list.forEach(function (x) {
+      var q = qs[x.id], card = qel('div', 'qcard' + (x.s === 'ready' ? ' ready' : ''));
+      card.appendChild(qel('b', '', q.name));
+      if (q.text) card.appendChild(qel('div', 'qsay', q.text));
+      if (q.goals.length) card.appendChild(goalLines(q, x.n));
+      if (x.s === 'ready') card.appendChild(qel('div', 'qreturn', q.ender ? (q.goals.length ? 'Done: return to ' : 'Find ') + objName(q.ender) + '.' : 'Done.'));
+      var rw = rewardText(q), pk = choiceList(q);
+      if (pk.length) rw += (rw ? ' · ' : '') + 'one of: ' + pk.map(function (g) { return g.qty + ' ' + itemName(g.item); }).join(' / ');
+      if (rw) card.appendChild(qel('div', 'qreward', 'Reward: ' + rw));
+      var btns = qel('div', 'qbtns');
+      if (x.s === 'ready' && !q.ender) {                           // nobody to hand it to: it is claimed right here
+        var fin = qel('button', 'primary', 'Claim');
+        fin.onclick = function () { toggleQuests(); claimPanel(q.id); };
+        btns.appendChild(fin);
+      }
+      var drop = qel('button', '', abandonArmed === q.id ? 'Really give up?' : 'Give up');
+      drop.onclick = function () { if (abandonArmed === q.id) { abandonArmed = ''; send({ type: 'quest', op: 'abandon', id: q.id }); } else { abandonArmed = q.id; questPanel(); } };
+      btns.appendChild(drop); card.appendChild(btns);
+      box.appendChild(card);
+    });
+  }
+  /** The corner tracker: what you are on and how far along, without opening anything. */
+  var trackerSig = '';
+  function tracker() {
+    var box = $('tracker'), qs = content.quests || {}, list = myQuests().filter(function (x) { return qs[x.id]; });
+    var sig = JSON.stringify(list);
+    if (sig === trackerSig) return;
+    trackerSig = sig; box.innerHTML = '';
+    list.slice(0, 5).forEach(function (x) {
+      var q = qs[x.id], one = qel('div', 'tq' + (x.s === 'ready' ? ' ready' : ''));
+      one.appendChild(qel('b', '', q.name));
+      if (x.s === 'ready') one.appendChild(qel('div', '', q.ender ? (q.goals.length ? 'Return to ' : 'Find ') + objName(q.ender) : 'Done: claim it (L)'));
+      else q.goals.forEach(function (g, i) {
+        var have = Number(x.n[i]) || 0;
+        one.appendChild(qel('div', have >= g.need ? 'done' : '', goalLabel(g, have)));
+      });
+      box.appendChild(one);
+    });
+    if (list.length > 5) box.appendChild(qel('div', 'tq', '+' + (list.length - 5) + ' more (L)'));
+  }
+  /** Which NPCs on this map have something for you, worked out when your quests change (not every frame). */
+  var questMarkList = [], questMarkSig = '';
+  function questMarksUpdate() {
+    var sig = me.map + '|' + JSON.stringify(myQuests().map(function (x) { return x.id + x.s; })) + '|' + (me.questsOpen || []).join() + '|' + (struct ? struct.rev : 0);
+    if (sig === questMarkSig) return;
+    questMarkSig = sig; questMarkList = [];
+    if (!content.quests || !Object.keys(content.quests).length) return;
+    (mapOf().entities || []).forEach(function (e) {
+      var o = content.objects[e.ref]; if (!o || o.kind !== 'npc') return;
+      var has = npcQuests(e.ref), kind = has.ready.length ? 'questdone' : has.open.length ? 'quest' : has.active.length ? 'questgo' : '';
+      if (kind) questMarkList.push({ id: 'q:' + e.key, kind: kind, x: e.x, y: e.y });
+    });
+  }
+  function questMarks(marks, T) {
+    questMarkList.forEach(function (mk) {
+      if (sight.vis && !sight.vis[mk.x + ',' + mk.y]) return;        // only over someone you can see
+      marks.push({ id: mk.id, kind: mk.kind, x: mk.x, y: mk.y, up: T * 0.5 + 4 });
+    });
+  }
+  // The welcome: quests a new character starts with (Config start_quests) are shown once, in a window, the first
+  // time they enter the game. me.questIntro lists them until the referee hears the window was read.
+  var introOpen = false, introAck = '';                     // introAck = the list last read (a new one may come later: a quest started by an action)
+  function introPanel() {
+    var ids = ((me && me.questIntro) || []).filter(function (id) { return (content.quests || {})[id]; });
+    if (introOpen || !ids.length || ids.join() === introAck) return;
+    introOpen = true; claimQuest = ''; npcTalk = null; npcQuest = '';
+    var box = $('npc-body'); box.innerHTML = '';
+    $('npc-title').textContent = ids.length > 1 ? 'New quests' : 'New quest';
+    ids.forEach(function (id) {
+      var q = content.quests[id], rw = rewardText(q);
+      box.appendChild(qel('h4', '', q.name));
+      if (q.text) box.appendChild(qel('div', 'qsay', q.text));
+      if (q.goals.length) box.appendChild(goalLines(q, (questEntry(id) || {}).n || null));
+      else if (q.ender) box.appendChild(qel('div', 'qgoals', '• Find ' + objName(q.ender)));
+      if (rw) box.appendChild(qel('div', 'qreward', 'Reward: ' + rw));
+    });
+    var btns = qel('div', 'qbtns'), go = qel('button', 'primary', 'Begin');
+    go.onclick = closeIntro;
+    btns.appendChild(go); box.appendChild(btns);
+    $('npcp').hidden = false;
+  }
+  function closeIntro() {
+    if (!introOpen) return;
+    introOpen = false; introAck = ((me && me.questIntro) || []).join(); $('npcp').hidden = true;
+    send({ type: 'quest', op: 'seen' });
+    claimPanel();
+  }
+  // Quest complete: a quest with nobody to hand it to (no giver, no ender) is finished right where you stand. When
+  // its last objective is met this window opens by itself with its done text and a Claim button; closed without
+  // claiming, it stays ready in the quest log (L), from where it can be opened again.
+  var claimQuest = '', claimPick = -1, claimSkipped = {};
+  function claimPanel(openId) {
+    var qs = content.quests || {};
+    if (openId) { delete claimSkipped[openId]; claimQuest = openId; claimPick = -1; }
+    if (introOpen || npcTalk) return;                          // one window at a time: this one waits its turn
+    if (claimQuest) {
+      var cur = questEntry(claimQuest);
+      if (!cur || cur.s !== 'ready' || !qs[claimQuest]) { claimQuest = ''; $('npcp').hidden = true; }   // claimed (or no longer done)
+    }
+    if (!claimQuest) {
+      var next = myQuests().filter(function (x) { var q0 = qs[x.id]; return x.s === 'ready' && q0 && !q0.ender && q0.goals.length && !claimSkipped[x.id]; })[0];
+      if (!next) return;
+      claimQuest = next.id; claimPick = -1;
+    }
+    var q = qs[claimQuest], entry = questEntry(claimQuest), box = $('npc-body'), rw = rewardText(q), picks = choiceList(q);
+    box.innerHTML = ''; $('npc-title').textContent = 'Quest complete';
+    box.appendChild(qel('h4', '', q.name));
+    box.appendChild(qel('div', 'qsay', q.doneText || 'Done.'));
+    if (q.goals.length) box.appendChild(goalLines(q, entry.n));
+    if (rw) box.appendChild(qel('div', 'qreward', 'Reward: ' + rw));
+    if (picks.length) {
+      box.appendChild(qel('div', 'qreward', 'Choose one:'));
+      var row = qel('div', 'qpicks');
+      picks.forEach(function (g, i) {
+        var b = qel('button', claimPick === i ? 'on' : '', g.qty + ' ' + itemName(g.item));
+        b.onclick = function () { claimPick = i; claimPanel(); };
+        row.appendChild(b);
+      });
+      box.appendChild(row);
+    }
+    var btns = qel('div', 'qbtns'), go = qel('button', 'primary', rw || picks.length ? 'Claim' : 'Done');
+    go.disabled = picks.length > 0 && claimPick < 0;
+    go.onclick = function () { send({ type: 'quest', op: 'turnin', id: q.id, choice: picks.length ? claimPick : undefined }); };
+    btns.appendChild(go); box.appendChild(btns);
+    $('npcp').hidden = false;
+  }
+  function closeClaimQuest() { if (!claimQuest) return; claimSkipped[claimQuest] = 1; claimQuest = ''; $('npcp').hidden = true; }
+  /** After every answer: the tracker, the marks, and whichever quest window is open. */
+  function questsChanged() {
+    if (!me) return;
+    introPanel();
+    claimPanel();
+    tracker(); questMarksUpdate();
+    if (npcTalk) npcPanel();
+    if (questOpen) questPanel();
+  }
+
   // ---- crafting panel (C, or use a crafting station): every recipe you know, what it needs, and Make buttons.
   // What can be made here is decided by World.recipesFor — the same check the referee runs on the craft action.
   var craftQty = {};                                           // how many of each recipe was last picked (the panel is redrawn often)
@@ -1737,6 +1999,9 @@
   }
   $('bag-close').onclick = toggleBag;
   $('craft-close').onclick = toggleCraft;
+  $('npc-close').onclick = function () { if (introOpen) closeIntro(); else if (claimQuest) closeClaimQuest(); else closeNpc(); };
+  $('quest-close').onclick = toggleQuests;
+  $('btn-quests').onclick = toggleQuests;
   $('store-close').onclick = closeStore;
   $('claim-close').onclick = closeClaim;
 
@@ -1815,7 +2080,7 @@
     var myFacing = aiming ? (Math.cos(aimAngle) < 0 ? 'W' : 'E') : me.facing;
     var actors = [{ x: shown.x, y: shown.y, facing: myFacing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, aim: aiming ? aimAngle : null, swing: (performance.now() - swingT0) / SWING_MS, statusColor: myst ? myst.color : '' }];
     var seen = {}, marks = [], tMark = performance.now(), TM = content.config.tile_size || 32;
-    reloadMark(marks, TM); craftMark(marks, TM);
+    reloadMark(marks, TM); craftMark(marks, TM); questMarks(marks, TM);
     view.monsters.forEach(function (m) {
       var d = content.monsters[m.ref] || { name: m.ref, sprite: '' }, s = shownOthers[m.id] || (shownOthers[m.id] = { x: m.x, y: m.y });
       ease(s, m, dt / 250); seen[m.id] = 1;

@@ -47,7 +47,7 @@ browser (client/ editor/ content/)  --POST (join|load|poll|act)-->  Firebase Clo
 ### Backends (all in `client/js/api.js`, same methods, same `{player, world, events, seq}` answers)
 `create()` picks one: `FUNCTIONS_URL` set → **Functions**; else `API_URL` set → **Online**; else **Offline**.
 A game action is sent as `do` (not `action`!): `{type: 'move', dirs} | {type: 'interact', x, y, verb} |
-{type: 'attack', x, y} | {type: 'cast', skill, x, y} | {type: 'use', item} | {type: 'loadout', slot, entry}`.
+{type: 'attack', x, y} | {type: 'cast', skill, x, y} | {type: 'use', item} | {type: 'loadout', slot, entry} | {type: 'quest', op, id}`.
 `POST {action: join|load|poll|act|save, ...}`.
 - **Functions** (`FUNCTIONS_URL` set — the live default): play goes to the Cloud Function (~220 ms); content still
   loads from `API_URL`; the live world is **pushed** over Firebase (`FIREBASE_URL`), so polling is a slow heartbeat.
@@ -146,8 +146,36 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   "is this cell under cover" question (rain/fliers later). Nothing collapses yet.
 - **Planned, not built:** mines (shared in the overworld, private in bases), digging, and terrain elevation (height per tile,
   drawn raised with cut-away) are designed in `docs/UNDERGROUND_AND_ELEVATION.md`. No voxels. Decide elevation before floors stage 3.
-- **Planned, not built — NPCs, quests, dialogue, instances, and an in-memory game server with a loop:** agreed design
-  and order in `docs/QUESTS_INSTANCES_SERVER.md`. Read it before touching quests, kill credit/loot, or the referee.
+- **Quests** (Nov 2026; design and what is still planned in `docs/QUESTS_INSTANCES_SERVER.md`): the `Quests` tab (Content
+  Studio → Story → Quests): `giver` / `ender` = NPC **object ids** (kind `npc`; every placement of that object offers it),
+  `objectives` = a list of goals, one kind each from **`Content.GOAL_TYPES`** (kill, have, talk, use, drink, eat, goto, interact, craft,
+  build, tame; drink / eat have no target: `ref` is `*`) — stored as JSON `[{type, ref, need, label}]` (goto: `ref` = map, `x, y, r`) by the Studio's objectives editor
+  (`goalsField`), or hand-written text `kill:rat:5; goto:map_3:10:4:2`; `Content.parseGoals` reads both. A new kind = a row in
+  `GOAL_TYPES` + one `questCount(c, p, type, ref, now, ev)` call where it happens (`questPlaces` does goto, after every action).
+  `requires` (an `if` list — chains use `quest:<id>`), `rewards` (an action list; the Studio's `rewardsField` edits it as rows —
+  XP, gold, any item, or start another quest — and keeps other verbs in an "Other actions" box),
+  `rewards` (an action list), `choice` (choose-one items), `repeat_h`. `Content.build` parses objectives into `q.goals`.
+  The log is `p.quests[id] = {n: [count per goal], at}` and `p.questsDone[id] = when`; **`World.questState` is the one question**
+  (closed | open | active | ready | done | wait). `have` goals are never counted: they are what is in the bag, taken at hand-in.
+  The page never works a state out: `publicPlayer` carries `quests` (`[{id, s, n}]`) and `questsOpen` (ids). Action
+  `{type: 'quest', op: 'accept' | 'turnin' | 'abandon', id, choice?}`; conditions `quest:x` (handed in), `quest_active:x`; action
+  verb `quest:<id>` starts one with no giver. Talking to an NPC sends the page an `npc` event (`key, ref, name, text` — the
+  object's `text` property). LootTables `quest` = a row that only rolls for a player on that quest who still needs the item.
+  Client: `openNpc` / `npcPanel` / `questPanel` (L) / `tracker` / `questMarks` in `main.js`.
+  **Starting quests:** Config `start_quests` (ids) go into every NEW character's log (`World.newPlayer`); `p.intro` lists them
+  until the page has shown its "New quest" window (`publicPlayer.questIntro` → `introPanel`, then quest op `seen`); a quest started
+  by the action verb `quest:<id>` (e.g. in another quest's `rewards`) is announced the same way. Config `start_thirst` /
+  `start_hunger` (0-100) = how a new character begins. **A quest with no giver and no ender is claimed where the player stands:**
+  when it turns ready the page opens a "Quest complete" window (`claimPanel`: `done_text`, rewards, a Claim button → the
+  same `turnin`, which needs no NPC without an ender); closed unclaimed, it waits in the quest log. Nothing finishes by itself.
+  `questSweep` (after every action and on the map's turn) checks places reached; `questFinish` is the one way a quest is completed.
+- **Who took part in a kill** (Nov 2026): a monster keeps `m.hits = {playerId: when}`; on death everyone who hit it within
+  Config `kill_credit_s` (30) gets `World` `killShare`: the kill for their quests, **full XP**, their own gold and their own roll
+  of the loot table. The last hitter gets it at once; the others' shares wait in the map record (`ms.credits`) and are given by
+  `advance` (with a `kill` event addressed to them, which is also what makes the function save their record). What a monster
+  always gives (`loot`) is not multiplied: it lies in the carcass, shared. A player's own roll lies in the same carcass as
+  stacks marked `own: <playerId>`; **`boxInv(c, e, p)`** is what that player finds there, and the body stays until all is taken.
+- **Planned, not built — dialogue, light phasing, instances, parties, bosses, raids:** `docs/QUESTS_INSTANCES_SERVER.md`.
 - Item id `gold` means money. Tall objects: one image taller than a tile (the part above the footprint draws over characters). Animation: `frames` + `frame_ms` (horizontal strip).
 - Skills: target `enemy|ally|self|tile|around`, `range`, `area`, `los`, `effect damage|heal|none`, amount = `power + scale × stat(atk|level)`, `status`, `dash`, `projectile`.
 

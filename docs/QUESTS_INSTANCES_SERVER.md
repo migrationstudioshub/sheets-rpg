@@ -1,6 +1,6 @@
 # NPCs, quests, instances and the game server — plan
 
-Status: **server stages 1–3 built on the LAN host (the loop, the socket, record-by-record saving, small messages, the bot load test); everything else planned.** Agreed with the owner 22–23 Nov 2026. Modelled on how MMORPGs such as World of
+Status: **built: server stages 1–3 on the LAN host, and the quest core (Part 1: quests, shared kill credit, per-player loot). Planned: dialogue, phasing, instances, parties, bosses, raids.** Agreed with the owner 22–23 Nov 2026. Modelled on how MMORPGs such as World of
 Warcraft handle quests, adapted to this game's shared, buildable world.
 
 Where things stand in the code today (checked when this was written):
@@ -28,6 +28,34 @@ Where things stand in the code today (checked when this was written):
 | Server | Plan for a server that holds the map in memory and runs a loop. To be adjusted later. |
 
 ## Part 1 — Quests
+
+**Built 23 Nov 2026** (rules in `shared/world.js`, the "quests" and "WHO TOOK PART" sections; tests in
+`tools/test_world.js`; a sample NPC and two chained quests in `data/tables.json`). How it came out, where it differs
+from the plan below:
+- **Objectives built:** kill, have (bring), talk, use (consume an item), drink and eat (from any source), goto
+  (reach a place), interact (use an object), craft, build, tame — the list is `Content.GOAL_TYPES`. In the Content Studio they are rows of dropdowns
+  (kind, target, how many, optional wording). Not yet: harvest, escort, survive-for-a-time.
+- **Giver and ender are NPC object ids**, not placements: every one of that object placed on a map offers the quest.
+  A quest with no giver is started by the action verb `quest:<id>` (from an object, an item, a trigger); one with no
+  ender is finished from the quest log.
+- **The page is told, it does not work things out:** every answer carries the player's log (`quests`) and the ids of
+  what could be accepted now (`questsOpen`); the markers, the NPC window, the log and the tracker are drawn from those.
+- **Per-player loot is not a separate compartment:** a player's own roll lies in the carcass as stacks marked with
+  their id, and each player is shown the unmarked (shared) stacks plus their own. With no carcass it goes straight
+  into the bag. The shared part still goes to whoever takes it first.
+- **Shares for those who did not strike the last blow** wait in the map's record and are given on the map's next
+  turn; one nobody came for within a minute is dropped (they left the map).
+- **Quests with nobody to hand them to** (no giver, no ender): when the last goal is met the page opens a "Quest
+  complete" window with the quest's done text, its rewards and a Claim button. Closed without claiming, it stays
+  ready in the quest log. Its `rewards` may start the next (`quest:<id>`), which the page announces in a "New quest"
+  window — a story can run with no NPC in it. Config `start_thirst` / `start_hunger` set how a new
+  character begins (thirsty, for a first quest that sends them to water).
+- **Starting quests:** Config `start_quests` names quests every new character begins with; the page shows them once
+  in a welcome window the first time the character enters the game (it comes back after a reload until it is read).
+- **Not done here:** the "which authored map is this a copy of" lookup — it belongs with instances (Part 4).
+- **To go live:** quests are rules in `shared/`, so the Cloud Function must be redeployed; until then the live game
+  and a host playing live content (it gets its content already built by the function) have no quests. A host started
+  with `CONTENT=local` plays the sample quests today.
 
 ### Data
 - **Quests** card in the Content Studio (a `shared/schema.js` entry): id, name, text, `giver` and `ender` (NPC object

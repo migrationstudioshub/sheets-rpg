@@ -205,7 +205,8 @@ var CStudio = (function () {
     ['Setup', ['config', 'kinds', 'itemTypes', 'levels']],
     ['World', ['tilesets', 'terrain', 'wallStyles', 'objects']],
     ['Things', ['items', 'loot', 'blueprints', 'recipes']],
-    ['Characters', ['classes', 'skills', 'statuses', 'monsters', 'appearances']]
+    ['Characters', ['classes', 'skills', 'statuses', 'monsters', 'appearances']],
+    ['Story', ['quests']]
   ];
   // object_kinds is kept in Config but edited from the Object Kinds card, so the Config list leaves it out.
   function shownConfig(r) { return r.key !== 'object_kinds'; }
@@ -342,6 +343,8 @@ var CStudio = (function () {
   function fieldEl(r, fl) {
     var control, val = r[fl.key];
     if (fl.type === 'looks') return looksField(r, fl);
+    if (fl.type === 'goals') return goalsField(r, fl);
+    if (fl.type === 'rewards') return rewardsField(r, fl);
     if (fl.type === 'aim') return aimField(r, fl);
     if (fl.type === 'items' || (fl.type === 'list' && fl.of === 'item:count')) return itemsField(r, fl);
     if (fl.type === 'list' && fl.of === 'skill@level') return skillsField(r, fl);
@@ -516,6 +519,135 @@ var CStudio = (function () {
   function itemsField(r, fl) {
     return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }),
       itemsBox(r[fl.key], function (text) { r[fl.key] = text; persist(); }),
+      fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+  }
+  // A quest's objectives: one row each — what kind (a dropdown of every kind there is, Content.GOAL_TYPES), which
+  // one (a dropdown of the monsters / items / NPCs / objects / blueprints, or a map and a spot for a place), how
+  // many, and optionally how it should read in the game. Stored as the JSON list Content.parseGoals reads; a quest
+  // written by hand as text ("kill:rat:5; have:hide:3") is read the same way and saved as the list.
+  function goalsField(r, fl) {
+    var list = Content.parseGoals(r[fl.key]).map(function (g) { return Object.assign({}, g); }), box = h('div', {});
+    function byName(a, b) { return String(a.name || a.id).localeCompare(String(b.name || b.id)); }
+    function pool(ref) {
+      var src = ref === 'monsters' ? T.Monsters : ref === 'items' ? T.Items : ref === 'blueprints' ? T.Blueprints : ref === 'place' ? T.Maps : T.Objects;
+      src = (src || []).filter(function (x) { return x.id; });
+      if (ref === 'npcs') src = src.filter(function (x) { return x.kind === 'npc'; });
+      return src.slice().sort(byName);
+    }
+    function save() {
+      var noTarget = function (g) { return (Content.GOAL_TYPES.filter(function (k) { return k.id === g.type; })[0] || {}).ref === 'none'; };
+      var out = list.filter(function (g) { return g.ref || noTarget(g); }).map(function (g) {
+        var kind = Content.GOAL_TYPES.filter(function (k) { return k.id === g.type; })[0], o = noTarget(g) ? { type: g.type } : { type: g.type, ref: g.ref };
+        if (kind && kind.count) o.need = Math.max(1, parseInt(g.need, 10) || 1);
+        if (g.type === 'goto') { o.x = parseInt(g.x, 10) || 0; o.y = parseInt(g.y, 10) || 0; o.r = Math.max(0, parseInt(g.r, 10) || 0); }
+        if (g.label) o.label = g.label;
+        return o;
+      });
+      r[fl.key] = out.length ? JSON.stringify(out) : '';
+      persist();
+    }
+    function num(g, key, title, min, label) {
+      return [h('span', { className: 'lootlbl', text: label }),
+        h('input', { type: 'number', min: min, step: 1, value: g[key] == null ? min : g[key], style: 'width:62px', title: title,
+          oninput: function (e) { var q = parseInt(e.target.value, 10); g[key] = q >= min ? q : min; save(); } })];
+    }
+    function draw() {
+      box.innerHTML = '';
+      list.forEach(function (g, i) {
+        var kind = Content.GOAL_TYPES.filter(function (k) { return k.id === g.type; })[0] || Content.GOAL_TYPES[0];
+        var opts = pool(kind.ref), known = !g.ref || opts.some(function (x) { return x.id === g.ref; });
+        var what = kind.ref === 'place' ? 'map' : kind.ref === 'npcs' ? 'person' : kind.ref.replace(/s$/, '');
+        // with no list to pick from (the maps are kept by the map editor), the id is typed
+        var target = kind.ref === 'none' ? h('span', { className: 'lootlbl', style: 'flex:1', text: 'from any source' }) : opts.length || kind.ref !== 'place'
+          ? h('select', { style: 'flex:1;min-width:0' + (known ? '' : ';border-color:var(--bad)'), title: known ? '' : 'Nothing has this id', onchange: function (e) { g.ref = e.target.value; save(); draw(); } },
+              h('option', { value: '', text: '— pick a ' + what + ' —' }),
+              known ? null : h('option', { value: g.ref, text: g.ref + ' (missing)', selected: true }),
+              opts.map(function (x) { return h('option', { value: x.id, text: (x.name || x.id) + '  (' + x.id + ')', selected: x.id === g.ref }); }))
+          : h('input', { type: 'text', value: g.ref || '', placeholder: 'map id, e.g. map_3', style: 'flex:1;min-width:0', title: 'The id of the map, as the map editor shows it',
+              oninput: function (e) { g.ref = e.target.value.trim(); save(); } });
+        var top = h('div', { className: 'row', style: 'margin-bottom:3px' },
+          h('select', { style: 'width:210px', title: 'What kind of thing must be done', onchange: function (e) { g.type = e.target.value; g.ref = ''; save(); draw(); } },
+            Content.GOAL_TYPES.map(function (k) { return h('option', { value: k.id, text: k.name, selected: k.id === kind.id }); })),
+          target,
+          kind.count ? num(g, 'need', 'How many', 1, '×') : null,
+          h('button', { text: '✕', title: 'Remove', onclick: function () { list.splice(i, 1); save(); draw(); } }));
+        box.appendChild(top);
+        var more = h('div', { className: 'row', style: 'margin:0 0 8px 0' },
+          kind.id === 'goto' ? num(g, 'x', 'The spot: its column on the map (the map editor shows it under the cursor)', 0, 'x') : null,
+          kind.id === 'goto' ? num(g, 'y', 'The spot: its row', 0, 'y') : null,
+          kind.id === 'goto' ? num(g, 'r', 'How close counts, in tiles (0 = that very tile)', 0, 'within') : null,
+          h('input', { type: 'text', value: g.label || '', placeholder: kind.id === 'goto' ? 'Shown as, e.g. Reach the old mill' : 'Shown as (optional), e.g. Clear the cellar', style: 'flex:1;min-width:0',
+            title: 'How this objective reads in the game. Empty = made up from its target',
+            oninput: function (e) { g.label = e.target.value; save(); } }));
+        box.appendChild(more);
+        if (!opts.length && kind.ref !== 'place' && kind.ref !== 'none') box.appendChild(h('div', { className: 'help', style: 'color:var(--bad);margin:-4px 0 8px', text: kind.ref === 'npcs'
+          ? 'Nobody to pick yet: make an object of kind npc under Objects, and place it with the map editor.' : 'Nothing to pick yet: make one under ' + (kind.ref.charAt(0).toUpperCase() + kind.ref.slice(1)) + '.' }));
+      });
+      box.appendChild(h('button', { text: '+ Add objective', onclick: function () { list.push({ type: 'kill', ref: '', need: 1 }); draw(); } }));
+    }
+    draw();
+    return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }), box,
+      fl.help ? h('div', { className: 'help', text: fl.help }) : null);
+  }
+  // A quest's rewards: one row each — what (a dropdown: XP, gold, every item, or "start another quest") and how
+  // much. Stored as the action list the rules run when the quest is handed in ("xp:100; gold:20; give:axe:1;
+  // quest:next_one"). Any other action written there by hand (flag:x, message:…) is kept, in the box underneath.
+  function rewardsField(r, fl) {
+    var list = [], other = [];
+    String(r[fl.key] == null ? '' : r[fl.key]).split(';').forEach(function (cmd) {
+      cmd = cmd.trim(); if (!cmd) return;
+      var a = cmd.split(':'), n = parseInt(a[a.length - 1], 10);
+      if (a[0] === 'xp' && a.length === 2) list.push({ what: 'xp', qty: n > 0 ? n : 1 });
+      else if (a[0] === 'gold' && a.length === 2 && n > 0) list.push({ what: 'gold', qty: n });
+      else if (a[0] === 'give' && a[1]) list.push({ what: 'item:' + a[1], qty: parseInt(a[2], 10) > 0 ? parseInt(a[2], 10) : 1 });
+      else if (a[0] === 'quest' && a[1] && a.length === 2) list.push({ what: 'quest', id: a[1] });
+      else other.push(cmd);
+    });
+    var items = (T.Items || []).filter(function (x) { return x.id; }).slice().sort(function (a, b) { return String(a.name || a.id).localeCompare(String(b.name || b.id)); });
+    var quests = (T.Quests || []).filter(function (x) { return x.id && x.id !== r.id; }), box = h('div', {});
+    function save() {
+      var out = list.map(function (g) {
+        if (g.what === 'xp') return 'xp:' + g.qty;
+        if (g.what === 'gold') return 'gold:' + g.qty;
+        if (g.what === 'quest') return g.id ? 'quest:' + g.id : '';
+        return g.what.slice(0, 5) === 'item:' && g.what.length > 5 ? 'give:' + g.what.slice(5) + ':' + g.qty : '';
+      }).filter(Boolean).concat(other);
+      r[fl.key] = out.join('; ');
+      persist();
+    }
+    function draw() {
+      box.innerHTML = '';
+      list.forEach(function (g, i) {
+        var itemId = g.what.slice(0, 5) === 'item:' ? g.what.slice(5) : '', known = !itemId || items.some(function (x) { return x.id === itemId; });
+        var second = g.what === 'quest'
+          ? h('select', { style: 'flex:1;min-width:0', title: 'The quest that starts when this one is handed in. It is shown to the player in a "New quest" window', onchange: function (e) { g.id = e.target.value; save(); } },
+              h('option', { value: '', text: '— pick a quest —' }),
+              g.id && !quests.some(function (x) { return x.id === g.id; }) ? h('option', { value: g.id, text: g.id + ' (missing quest)', selected: true }) : null,
+              quests.map(function (x) { return h('option', { value: x.id, text: (x.name || x.id) + '  (' + x.id + ')', selected: x.id === g.id }); }))
+          : [h('span', { className: 'lootlbl', text: '×' }),
+             h('input', { type: 'number', min: 1, step: 1, value: g.qty, style: 'width:80px', title: 'How much',
+               oninput: function (e) { var q = parseInt(e.target.value, 10); g.qty = q > 0 ? q : 1; save(); },
+               onchange: function (e) { e.target.value = g.qty; } })];
+        box.appendChild(h('div', { className: 'row', style: 'margin-bottom:4px' },
+          h('select', { style: (g.what === 'quest' ? 'width:210px' : 'flex:1;min-width:0') + (known ? '' : ';border-color:var(--bad)'), title: known ? 'What is given' : 'There is no item with this id',
+            onchange: function (e) { g.what = e.target.value; if (g.what !== 'quest' && !(g.qty > 0)) g.qty = 1; save(); draw(); } },
+            h('option', { value: 'xp', text: 'XP', selected: g.what === 'xp' }),
+            h('option', { value: 'gold', text: 'Gold', selected: g.what === 'gold' }),
+            h('option', { value: 'quest', text: 'Start another quest', selected: g.what === 'quest' }),
+            known ? null : h('option', { value: g.what, text: itemId + ' (missing item)', selected: true }),
+            h('optgroup', { label: 'Items' }, items.map(function (x) { return h('option', { value: 'item:' + x.id, text: (x.name || x.id) + '  (' + x.id + ')', selected: 'item:' + x.id === g.what }); }))),
+          second,
+          h('button', { text: '✕', title: 'Remove', onclick: function () { list.splice(i, 1); save(); draw(); } })));
+      });
+      box.appendChild(h('button', { text: '+ Add reward', onclick: function () { list.push({ what: list.some(function (g) { return g.what === 'xp'; }) ? 'gold' : 'xp', qty: 10 }); save(); draw(); } }));
+      box.appendChild(h('div', { className: 'row', style: 'margin-top:6px' },
+        h('span', { className: 'lootlbl', text: 'Other actions' }),
+        h('input', { type: 'text', value: other.join('; '), placeholder: 'optional, e.g. flag:met_mayor; message:Well done', style: 'flex:1;min-width:0',
+          title: 'Anything else to run when the quest is handed in, as an action list: flag:x; unflag:x; heal:n; teleport:map:x:y; set_state:key:state; message:text',
+          oninput: function (e) { other = e.target.value.split(';').map(function (x) { return x.trim(); }).filter(Boolean); save(); } })));
+    }
+    draw();
+    return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }), box,
       fl.help ? h('div', { className: 'help', text: fl.help }) : null);
   }
   // A class's skills: a skill dropdown + the level it is learned at, one row each. Stored as the text the rules read

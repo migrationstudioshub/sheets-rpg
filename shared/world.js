@@ -734,6 +734,7 @@ var World = (function () {
     touchStruct(st); ws.dirty = true;
     ev.push({ type: 'struct', map: p.map, op: 'place', x: x, y: y, by: p.id });
     say(need > 0 ? 'You set up the frame of ' + aAn(lower(bp.name)) + '. Work on it to finish.' : 'You build ' + aAn(lower(bp.name)) + '.');
+    if (!(need > 0)) questCount(c, p, 'build', bp.id, now, ev);
   }
   // Stairs built here open the floor above: the cells over the run become a stairwell, and the landing gets a
   // piece of floor if it has none. That is the other floor's record, so it goes as a notice.
@@ -849,6 +850,7 @@ var World = (function () {
       rec.hp = rec.prog >= rec.need ? rec.max : Math.min(rec.max, rec.hp + Math.ceil(rec.max * (1 - cfgNum(c, 'frame_hp_pct', 0.2)) / rec.need));
       touchStruct(st); ws.dirty = true;
       ev.push({ type: 'struct', map: p.map, op: rec.prog >= rec.need ? 'done' : 'work', key: tg.key, x: tg.x, y: tg.y, by: p.id });
+      if (rec.prog >= rec.need && rec.bp) questCount(c, p, 'build', rec.bp, now, ev);   // whoever finishes it built it
       return say(rec.prog >= rec.need ? 'The ' + tg.name + ' is finished.' : 'You work on the ' + tg.name + ' (' + rec.prog + '/' + rec.need + ').');
     }
     var steps = (rec && rec.need) || 4, share = cfgNum(c, 'repair_cost_pct', 0.5);
@@ -999,8 +1001,12 @@ var World = (function () {
   }
   /** Storage containers players built: look inside, put things in, take things out. */
   /** What a container holds, as stacks (one made before stacks had cells held {item: qty}: turned into stacks here). */
-  function boxInv(c, e) {
+  // A carcass (e.wild) may hold stacks marked `own` = a player id: that player's own roll of the loot (killShare).
+  // Asked with a player, the answer is what THAT player finds there — the unmarked stacks and their own — as a list
+  // of the same stack objects (taking from one takes from the carcass; emptiedWild clears the used-up ones away).
+  function boxInv(c, e, p) {
     if (!Array.isArray(e.inv)) { var old = e.inv || {}; e.inv = []; Object.keys(old).forEach(function (id) { addStacks(c, e.inv, id, Number(old[id]) || 0, 0); }); }
+    if (p && e.wild && e.inv.some(function (st) { return st.own; })) return e.inv.filter(function (st) { return !st.own || st.own === p.id; });
     return e.inv;
   }
   // How many cells: the object's `storage`, else its `capacity` (the container kind's own setting), else MAP_BOX_SLOTS.
@@ -1025,7 +1031,7 @@ var World = (function () {
     return { key: key, x: ent.x, y: ent.y, ref: ent.ref, inv: hold[hk], _slots: Number(pr.storage) || Number(pr.capacity) || MAP_BOX_SLOTS, _ent: ent };
   }
   function storageEvent(c, p, e, ev) {
-    var o = objOf(c, e), out = { type: 'storage', to: p.id, key: e.key, name: o.name, slots: boxSlots(c, e), inv: boxInv(c, e) };
+    var o = objOf(c, e), out = { type: 'storage', to: p.id, key: e.key, name: o.name, slots: boxSlots(c, e), inv: boxInv(c, e, p) };
     if (e.wild) out.takeOnly = true;                          // a carcass: things come out of it, nothing goes in
     if (e._cook) {                                           // a cooker: how the fire stands, for the page to show and count on from
       var k = e._cook, inp = stackAt(k.inv, 0), r = inp && cookRecipe(c, e._station, inp.item);
@@ -1106,7 +1112,13 @@ var World = (function () {
   }
   /** A container the world left (a carcass) that has just been emptied: it is gone, and the page is told to close it. */
   function emptiedWild(c, ws, p, e, ev) {
-    if (!e || !e.wild || (e.inv && e.inv.length)) return false;
+    if (!e || !e.wild) return false;
+    if (Array.isArray(e.inv)) e.inv = e.inv.filter(function (s0) { return s0.qty > 0; });   // (stacks taken through a player's own view of it)
+    if (e.inv && e.inv.length) {
+      if (boxInv(c, e, p).length) return false;
+      ev.push({ type: 'storage', to: p.id, key: e.key, gone: true });   // nothing left for THIS player: their window closes, the body stays for the others
+      return true;
+    }
     var st = structOf(ws, p.map), i = st.ents.indexOf(e);
     if (i >= 0) st.ents.splice(i, 1);
     delete mapState(ws, p.map).timers[e.key];
@@ -1126,7 +1138,7 @@ var World = (function () {
       cookTick(c, ws, p.map, e.key, now); storageEvent(c, p, e, ev); return;
     }
     if (e._cook && a.op !== 'look') return;                     // (things go in and out of a cooker by its cells: the 'inv' action)
-    var id = String(a.item || ''), qty = Math.max(1, Math.round(Number(a.qty)) || 1), inv = boxInv(c, e), slots = boxSlots(c, e);
+    var id = String(a.item || ''), qty = Math.max(1, Math.round(Number(a.qty)) || 1), inv = boxInv(c, e, p), slots = boxSlots(c, e);
     if (a.op === 'put') {
       if (e.wild) return say('You can\'t put things in that.');
       if (id === 'gold' || !c.items[id]) return say('You can\'t store that.');
@@ -1160,7 +1172,7 @@ var World = (function () {
     if (a.op === 'takeall') {                                 // everything in the open container, into the bag, as far as it fits
       e = openBox(c, ws, p, a.key, say, now); if (!e) return;
       if (e._cook) return;                                    // (a cooker's cells are taken one by one)
-      var tb = tidyStacks(c, p.inventory), fb = boxInv(c, e), size = bagSlots(c), moved = 0, stuck = 0;
+      var tb = tidyStacks(c, p.inventory), fb = boxInv(c, e, p), size = bagSlots(c), moved = 0, stuck = 0;
       fb.slice().sort(function (x, y) { return x.s - y.s; }).forEach(function (st) {
         var left = addStacks(c, tb, st.item, st.qty, size);
         moved += st.qty - left; stuck += left; st.qty = left;
@@ -1175,7 +1187,7 @@ var World = (function () {
     }
     if (from.w === 'box' || to.w === 'box') { e = openBox(c, ws, p, a.key, say, now); if (!e) return; }
     if (e && e.wild && to.w === 'box') return say('You can\'t put things in that.');
-    var bag = tidyStacks(c, p.inventory), box = e ? boxInv(c, e) : null;
+    var bag = tidyStacks(c, p.inventory), box = e ? boxInv(c, e, p) : null;
     var fromL = from.w === 'box' ? box : bag, toL = to.w === 'box' ? box : bag;
     var toSize = to.w === 'box' ? boxSlots(c, e) : bagSlots(c), fromSize = from.w === 'box' ? boxSlots(c, e) : bagSlots(c);
     var src = stackAt(fromL, Math.floor(Number(from.s)));
@@ -1408,9 +1420,16 @@ var World = (function () {
   /** look (optional) = {body, skin, hair, hairColor} chosen on the character screen; anything not on offer is ignored. */
   function newPlayer(c, id, name, cls, look) {
     var p = { id: id, name: name, 'class': c.classes[cls] ? cls : (c.config.start_class || Object.keys(c.classes)[0] || ''),
-      map: '', x: 0, y: 0, facing: 'S', level: 1, xp: 0, gold: 0, inventory: [], equipment: {}, flags: {}, explored: {}, respawn: '',
+      map: '', x: 0, y: 0, facing: 'S', level: 1, xp: 0, gold: 0, inventory: [], equipment: {}, flags: {}, quests: {}, questsDone: {}, explored: {}, respawn: '',
       // cosmetic paper-doll choices (character creation will let players pick these)
       hair: c.config.start_hair || '', hairColor: c.config.start_hair_color || 'hair_brown' };
+    // Config start_quests: quests every new character begins with ("welcome" or "welcome, find_water"). They go
+    // straight into the log; p.intro lists them until the page has shown its welcome window (quest op 'seen').
+    String(c.config.start_quests || '').split(/[;,\s]+/).forEach(function (qid, i) {
+      var q = (c.quests || {})[qid]; if (!q || p.quests[qid]) return;
+      p.quests[qid] = { n: q.goals.map(function () { return 0; }), at: Date.now() + i };
+      (p.intro = p.intro || []).push(qid);
+    });
     if (look) {
       if (look.body === 'female') p.body = 'female';
       if (SKIN_TONES.indexOf(look.skin) >= 0 && look.skin !== 'skin_light') p.skin = look.skin;
@@ -1423,7 +1442,9 @@ var World = (function () {
     var at = Rl().nearestStandable(c, map, sx, sy);
     p.map = map.id; p.x = at.x; p.y = at.y; p.facing = (sp && sp.facing) || 'S';
     p.hp = stats(c, p).maxHp; p.mp = stats(c, p).maxMp;
-    p.hunger = 100; p.thirst = 100; p.tox = 0;
+    // Config start_hunger / start_thirst (0-100; 100 = full): how a NEW character begins — thirsty, for a first quest
+    // that sends them to water. (Coming back from death is another matter: see die.)
+    p.hunger = Math.max(0, Math.min(100, cfgNum(c, 'start_hunger', 100))); p.thirst = Math.max(0, Math.min(100, cfgNum(c, 'start_thirst', 100))); p.tox = 0;
     p.cooldowns = {}; p.statuses = []; p.mags = {}; p.abilities = ['', '']; p.belt = emptyBelt();
     list(classOf(c, p).startItems).forEach(function (s) { give(c, p, s.item, s.qty, [], true); });
     // equip the first weapon/armor they start with, so e.g. a survivor spawns with the pistol in hand
@@ -1483,6 +1504,7 @@ var World = (function () {
     p.inventory = obj(p.inventory, []); if (!Array.isArray(p.inventory)) p.inventory = [];
     tidyStacks(c, p.inventory);                                // every stack in a cell of its own, none over its limit
     p.equipment = obj(p.equipment, {}); p.flags = obj(p.flags, {}); p.explored = obj(p.explored, {});
+    p.quests = obj(p.quests, {}); p.questsDone = obj(p.questsDone, {});   // the quest log, and when each finished quest was handed in
     p.cooldowns = obj(p.cooldowns, {}); p.statuses = obj(p.statuses, []); if (!Array.isArray(p.statuses)) p.statuses = [];
     p.mags = obj(p.mags, {}); if (!p.mags || typeof p.mags !== 'object' || Array.isArray(p.mags)) p.mags = {};   // rounds loaded per gun
     p.abilities = obj(p.abilities, null); p.belt = obj(p.belt, null);
@@ -1652,10 +1674,19 @@ var World = (function () {
     goneFromBag(p, id);
     return true;
   }
-  function roll(c, table, rng) {
+  /** One roll of a loot table. A row marked with a quest only rolls for a player (p) who is on that quest and still needs the item. */
+  function roll(c, table, rng, p) {
     var out = [];
-    (c.loot[table] || []).forEach(function (r) { if (rng() < r.chance) out.push({ item: r.item, qty: rint(rng, r.min, r.max) }); });
+    (c.loot[table] || []).forEach(function (r) {
+      if (r.quest && !questNeeds(c, p, r.quest, r.item)) return;
+      if (rng() < r.chance) out.push({ item: r.item, qty: rint(rng, r.min, r.max) });
+    });
     return out;
+  }
+  function questNeeds(c, p, questId, item) {
+    var q = (c.quests || {})[questId];
+    if (!q || !p || !(p.quests || {})[questId]) return false;
+    return q.goals.some(function (g) { return g.type === 'have' && g.ref === item && count(p, item) < g.need; });
   }
   // Weighted pick: returns the index of one item by its weight, or -1 when the weights sum to <= 0.
   // `extra` is an optional extra weight for a "none" outcome that maps to index -1.
@@ -2023,9 +2054,9 @@ var World = (function () {
   //   (harvest, harvest_tool), gone after Config carcass_rot_s.
   var TAME_LEASH = 3, HUNTER_FED_MS = 40000;
   function leaveCarcass(c, ws, mapId, m, def, now, drops) {   // drops = what its loot table rolled this time
-    var o = def && def.carcass && c.objects[def.carcass]; if (!o) return false;
+    var o = def && def.carcass && c.objects[def.carcass]; if (!o) return '';
     var st = structOf(ws, mapId), map = liveMap(c, ws, mapId);
-    if (!map || (map.entities || []).some(function (e) { return e.x === m.x && e.y === m.y && !isWallFixture(objOf(c, e)); })) return false;   // no room where it fell
+    if (!map || (map.entities || []).some(function (e) { return e.x === m.x && e.y === m.y && !isWallFixture(objOf(c, e)); })) return '';   // no room where it fell
     // Inside: what it always gives (loot) and what its loot table rolled. A body is left even with nothing on it
     // (it is gone the moment someone looks, or when it rots).
     var inv = []; list(def.loot).concat(drops || []).forEach(function (g) { if (c.items[g.item] && g.qty > 0) addStacks(c, inv, g.item, g.qty, 0); });
@@ -2033,7 +2064,7 @@ var World = (function () {
     st.ents.push({ key: key, x: m.x, y: m.y, ref: o.id, data: {}, hp: max, max: max, bp: '', by: null, built: now, prog: 0, need: 0, wild: true, inv: inv });
     mapState(ws, mapId).timers[key] = { at: now + Math.max(10, cfgNum(c, 'carcass_rot_s', 300)) * 1000, rot: true };
     touchStruct(st); ws.dirty = true;
-    return true;
+    return key;
   }
   /** One step toward (tx, ty), the way the plain brain walks: the long axis first, cutting a corner when it may. */
   function stepToward(c, ws, mapId, map, m, here, tx, ty, stepMs) {
@@ -2446,6 +2477,7 @@ var World = (function () {
     });
     if (ms.cookers) Object.keys(ms.cookers).forEach(function (k) { if (ms.cookers[k].lit) cookTick(c, ws, mapId, k, now); });
     var here = players.filter(function (p) { return p.map === mapId && p.hp > 0; });
+    giveCredits(c, ws, mapId, ms, players.filter(function (p) { return p.map === mapId; }), now, rng, ev);   // kills others finished while these players had a hand in them
     var engageRange = Number(c.config.engage_range) || 24;       // how far a hit monster will chase before giving up
     var hDecay = Number(c.config.hunger_decay_per_min) || 0, tDecay = Number(c.config.thirst_decay_per_min) || 0;
     var starveDmg = Number(c.config.starve_damage) || 0, starveMs = Math.max(1000, (Number(c.config.starve_tick_s) || 5) * 1000);
@@ -2456,6 +2488,7 @@ var World = (function () {
       finishReload(c, p, now, ev);
       craftTick(c, ws, p, now, ev);
       survivalTick(c, ws, p, now, hDecay, tDecay, starveDmg, starveMs, ev);
+      if (p.craft) questSweep(c, ws, p, now, ev);                    // (something being made may just have been finished)
       tickStatuses(c, ws, mapId, p, false, now, rng, ev, players);
     });
     ms.monsters.forEach(function (m) { if (!m.dead && m.statuses && m.statuses.length) tickStatuses(c, ws, mapId, m, true, now, rng, ev, players); });
@@ -2594,6 +2627,7 @@ var World = (function () {
     p.thirst = Math.min(100, thi + cfgNum(c, 'water_thirst', 25));
     var tox = wt.toxicity == null ? cfgNum(c, 'water_toxicity', 8) : wt.toxicity;
     say('You drink from the ' + name + '.' + (tox > 0 ? ' It is not clean.' : ''));
+    questCount(c, p, 'drink', '*', Date.now(), ev);
     addTox(c, p, tox, ev);
   }
 
@@ -2661,30 +2695,78 @@ var World = (function () {
     hitMonster(c, ws, mapId, p, m, dmg, now, rng, ev, 'You hit the ' + lower(def.name) + ' for ' + dmg + '.');
     return true;
   }
-  /** Damages a monster; if it dies, p (if any) gets the XP, gold and loot. */
+  // WHO TOOK PART. A monster remembers who has hit it (m.hits = {playerId: when}, the last HIT_MAX of them); a blow
+  // older than Config kill_credit_s (30) no longer counts. When it dies, EVERYONE who took part gets the kill for
+  // their quests, the full XP, their own gold and their own roll of its loot table (killShare). What it always
+  // gives (Monsters `loot`: meat, hide) is not multiplied: it lies in the carcass for whoever takes it, or with no
+  // carcass goes to the one who struck the last blow.
+  // The one who struck that blow is at hand and gets their share at once. The others are not handed to this
+  // function, so their share waits in the map's record (ms.credits) and is given on the map's next turn (advance),
+  // which is at most a moment later while they are there; a share nobody came for within a minute is dropped.
+  var HIT_MAX = 12, CREDIT_KEEP_MS = 60000;
+  function noteHit(c, m, p, now) {
+    var h = m.hits = m.hits || {};
+    h[p.id] = now;
+    var ids = Object.keys(h);
+    if (ids.length > HIT_MAX) { ids.sort(function (a, b) { return h[a] - h[b]; }); delete h[ids[0]]; }
+  }
+  /** One participant's share of a kill. share = { ref, key: the carcass left ('' = none), x, y }. */
+  function killShare(c, ws, mapId, p, share, now, rng, ev) {
+    var def = c.monsters[share.ref]; if (!def) return;
+    ev.push({ type: 'kill', map: mapId, x: share.x, y: share.y, to: p.id, text: 'The ' + lower(def.name) + ' is defeated. +' + def.xp + ' XP' });
+    var gold = rint(rng, def.goldMin, def.goldMax);
+    if (gold > 0) give(c, p, 'gold', gold, ev);
+    // their own roll of the loot table (quest drops included): into their part of the carcass, or straight to them
+    var drops = roll(c, def.lootTable, rng, p).filter(function (g) { return g.qty > 0 && (g.item === 'gold' || c.items[g.item]); });
+    var body = share.key ? structOf(ws, mapId).ents.filter(function (b) { return b.key === share.key && b.wild; })[0] : null;
+    drops.forEach(function (g) {
+      if (g.item === 'gold' || !body) { give(c, p, g.item, g.qty, ev); return; }
+      var mine = body.inv.filter(function (st) { return st.own === p.id; }), cell = body.inv.filter(function (st) { return !st.own; }).length;
+      var same = mine.filter(function (st) { return st.item === g.item; })[0];
+      if (same) same.qty += g.qty; else body.inv.push({ item: g.item, qty: g.qty, s: cell + mine.length, own: p.id });   // (own = only this player finds it there)
+    });
+    gainXp(c, p, def.xp, ev);
+    questCount(c, p, 'kill', share.ref, now, ev);
+  }
+  /** Shares waiting for players on this map (see WHO TOOK PART): given to whoever is here now, dropped when stale. */
+  function giveCredits(c, ws, mapId, ms, here, now, rng, ev) {
+    if (!ms.credits || !ms.credits.length) return;
+    ms.credits = ms.credits.filter(function (cr) {
+      var p = here.filter(function (q) { return q.id === cr.to; })[0];
+      if (p) { killShare(c, ws, mapId, p, cr, now, rng, ev); questSweep(c, ws, p, now, ev); ws.dirty = true; return false; }
+      return now - cr.at < CREDIT_KEEP_MS;
+    });
+    if (!ms.credits.length) delete ms.credits;
+  }
+  /** Damages a monster; if it dies, everyone who took part gets their share (see WHO TOOK PART above). */
   function hitMonster(c, ws, mapId, p, m, dmg, now, rng, ev, text) {
     var def = c.monsters[m.ref];
     m.hp -= dmg; ws.dirty = true;
+    if (p) noteHit(c, m, p, now);
     if (p && m.hp > 0) m.engaged = p.id;                        // being hit (even from range) makes it come after you
     ev.push({ type: 'hit', map: mapId, x: m.x, y: m.y, amount: dmg, to: p ? p.id : undefined, text: p ? text : '' });
     if (m.hp > 0) return;
     m.dead = true; m.statuses = [];
-    // What it had on it. With a carcass, everything is found inside it (whoever did the killing); with none, a
-    // player who killed it is handed it. (Gold is not a thing in a bag: it always goes to the player.)
-    var hasBody = !!(def.carcass && c.objects[def.carcass]);
-    var gold = p ? rint(rng, def.goldMin, def.goldMax) : 0, drops = p || hasBody ? roll(c, def.lootTable, rng) : [];
-    var lay = leaveCarcass(c, ws, mapId, m, def, now, drops);
-    if (!lay && p) list(def.loot).concat(drops).forEach(function (g) { give(c, p, g.item, g.qty, ev); });
+    var keep = cfgNum(c, 'kill_credit_s', 30) * 1000, hits = m.hits || {};
+    var part = Object.keys(hits).filter(function (id) { return now - hits[id] <= keep && !(p && id === p.id); });
+    delete m.hits;
+    // What it always gives lies in its carcass, for whoever takes it. Killed with no player in the fight (a wolf's
+    // kill), the body also holds one roll of its loot table; with no carcass and a player's last blow, that player
+    // is handed what it always gives.
+    var alone = !p && !part.length, key = leaveCarcass(c, ws, mapId, m, def, now, alone ? roll(c, def.lootTable, rng) : []);
+    if (!key && p) list(def.loot).forEach(function (g) { give(c, p, g.item, g.qty, ev); });
+    var share = { ref: m.ref, key: key || '', x: m.x, y: m.y };
+    if (part.length) {
+      var ms0 = mapState(ws, mapId); ms0.credits = ms0.credits || [];
+      part.forEach(function (id) { ms0.credits.push({ to: id, ref: share.ref, key: share.key, x: share.x, y: share.y, at: now }); });
+    }
     if (m.free) m.gone = true;                                 // a tamed animal has no spawner to come back at
     // Respawn delay: the spawn point's own respawn_after_s wins (set per spawner); 0/blank falls back
     // to the monster's respawn_s. The monster reappears that many seconds after it's killed.
     var se = m.spawn && entity(c, mapId, m.spawn);
     var rs = se ? (Number(props(c, se).respawn_after_s) || 0) : 0;
     m.respawnAt = now + (rs > 0 ? rs : def.respawnS) * 1000;
-    if (!p) return;
-    ev.push({ type: 'kill', map: mapId, x: m.x, y: m.y, to: p.id, text: 'The ' + lower(def.name) + ' is defeated. +' + def.xp + ' XP' });
-    if (gold > 0) give(c, p, 'gold', gold, ev);
-    gainXp(c, p, def.xp, ev);
+    if (p) killShare(c, ws, mapId, p, share, now, rng, ev);
   }
 
   // ------------------------------------------------------------ statuses
@@ -3317,7 +3399,7 @@ var World = (function () {
   }
 
   // ------------------------------------------------------------ data-driven actions
-  /** "flag:met_mayor, has:iron_key, !flag:done, level:3" -> all must hold */
+  /** "flag:met_mayor, has:iron_key, !flag:done, level:3, quest:first_steps, quest_active:rats" -> all must hold */
   function check(c, p, cond) {
     return String(cond || '').split(',').every(function (part) {
       part = part.trim(); if (!part) return true;
@@ -3326,6 +3408,8 @@ var World = (function () {
       if (a[0] === 'flag') ok = !!(p.flags || {})[a[1]];
       else if (a[0] === 'has') ok = count(p, a[1]) >= (Number(a[2]) || 1);
       else if (a[0] === 'level') ok = p.level >= Number(a[1]);
+      else if (a[0] === 'quest') ok = !!(p.questsDone || {})[a[1]];              // that quest has been handed in
+      else if (a[0] === 'quest_active') ok = !!(p.quests || {})[a[1]];         // that quest is in the log
       else ok = true;
       return not ? !ok : ok;
     });
@@ -3402,7 +3486,7 @@ var World = (function () {
     var need = Math.max(1, r.timeS * 1000), made = list(r.outputs), n = 0;
     while (j.made < j.qty && j.ms >= need) { j.ms -= need; j.made++; n++; }
     if (n) {
-      made.forEach(function (g) { give(c, p, g.item, g.qty * n, ev, true); });
+      made.forEach(function (g) { give(c, p, g.item, g.qty * n, ev, true); questCount(c, p, 'craft', g.item, now, ev, g.qty * n); });
       ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y,
         text: 'You make ' + made.map(function (g) { return g.qty * n + ' ' + lower(itemName(c, g.item)); }).join(', ') + '.' });
     }
@@ -3431,7 +3515,7 @@ var World = (function () {
       p.craft = { id: r.id, qty: qty, made: 0, ms: 0, at: now, on: true };
       return say('You start on ' + (qty > 1 ? qty + ' × ' : '') + lower(r.name || itemName(c, (made[0] || {}).item)) + '.');
     }
-    made.forEach(function (g) { give(c, p, g.item, g.qty * qty, ev, true); });
+    made.forEach(function (g) { give(c, p, g.item, g.qty * qty, ev, true); questCount(c, p, 'craft', g.item, now, ev, g.qty * qty); });
     ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y,
       text: 'You make ' + made.map(function (g) { return g.qty * qty + ' ' + lower(itemName(c, g.item)); }).join(', ') + '.' });
   }
@@ -3456,8 +3540,166 @@ var World = (function () {
         p.statuses = (p.statuses || []).filter(function (s) { return s.id !== which; });
         if (p.statuses.length < before) ev.push({ type: 'info', to: p.id, text: which === 'infection' ? 'The infection fades.' : 'You feel better.' });
       }
+      else if (verb === 'quest') { if (questStart(c, p, a[0], now, ev)) (p.intro = p.intro || []).push(a[0]); }   // start a quest (from an object, an item, a trigger, another quest's rewards): the page shows it in its "New quest" window
       else if (verb === 'message') ev.push({ type: 'info', to: p.id, text: arg });
     });
+  }
+
+  // ------------------------------------------------------------ quests
+  // A quest (Content: c.quests[id], with goals [{type: kill|have|talk, ref, need}]) is offered by its giver, lives in
+  // the player's log while it is being done, and is handed in to its ender. The log is p.quests[id] = { n: [count per
+  // goal], at }; p.questsDone[id] = when it was handed in. `have` goals are never counted: they are whatever is in
+  // the bag right now (and are taken at hand-in). questState is the one question, for the referee and for what the
+  // page is told (publicPlayer: quests + questsOpen); the page never works a state out itself.
+  //   closed  not offered (requires not met)        open    could be accepted now
+  //   active  in the log, not finished              ready   in the log, every goal met: hand it in
+  //   done    handed in, not repeatable             wait    handed in, repeatable, not yet again
+  var QUEST_LOG_MAX = 25;
+  function goalCount(p, q, i) {
+    var g = q.goals[i], st = (p.quests || {})[q.id];
+    return Math.min(g.need, g.type === 'have' ? count(p, g.ref) : Number(((st && st.n) || [])[i]) || 0);
+  }
+  function questState(c, p, q, now) {
+    if ((p.quests || {})[q.id]) return q.goals.every(function (g, i) { return goalCount(p, q, i) >= g.need; }) ? 'ready' : 'active';
+    var done = (p.questsDone || {})[q.id];
+    if (done) { if (!(q.repeatS > 0)) return 'done'; if (now < done + q.repeatS * 1000) return 'wait'; }
+    return check(c, p, q.requires) ? 'open' : 'closed';
+  }
+  /** The log as the page shows it: [{id, s: 'active'|'ready', n: [count per goal]}], oldest first. */
+  function questLog(c, p, now) {
+    var qs = c.quests || {};
+    return Object.keys(p.quests || {}).filter(function (id) { return qs[id]; }).sort(function (a, b) { return (p.quests[a].at || 0) - (p.quests[b].at || 0); }).map(function (id) {
+      var q = qs[id];
+      return { id: id, s: questState(c, p, q, now), n: q.goals.map(function (g, i) { return goalCount(p, q, i); }) };
+    });
+  }
+  /** The quests this player could accept right now (ids, in the order they were written). */
+  function questsOpen(c, p, now) {
+    var qs = c.quests || {};
+    return Object.keys(qs).filter(function (id) { return questState(c, p, qs[id], now) === 'open'; }).sort(function (a, b) { return qs[a].order - qs[b].order; });
+  }
+  /** What a goal is about, in words: its own label if it was given one, else the name of its target. */
+  function goalText(c, g) {
+    if (g.label) return g.label;
+    if (g.type === 'kill' || g.type === 'tame') return (c.monsters[g.ref] ? c.monsters[g.ref].name : g.ref);
+    if (g.type === 'have' || g.type === 'use' || g.type === 'craft') return itemName(c, g.ref);
+    if (g.type === 'build') return ((c.blueprints || {})[g.ref] ? c.blueprints[g.ref].name : g.ref);
+    if (g.type === 'goto') return (c.maps[g.ref] ? c.maps[g.ref].name : g.ref);
+    if (g.type === 'drink') return 'Drink some water';
+    if (g.type === 'eat') return 'Eat something';
+    if (g.type === 'interact') return (c.objects[g.ref] ? c.objects[g.ref].name : g.ref);
+    return 'Talk to ' + (c.objects[g.ref] ? c.objects[g.ref].name : g.ref);
+  }
+  function npcName(c, id) { return c.objects[id] ? c.objects[id].name : 'someone'; }
+  /** Tell the player once when the last goal of a quest is met. */
+  function questReady(c, p, q, was, now, ev) {
+    if (was !== 'ready' && questState(c, p, q, now) === 'ready')
+      ev.push({ type: 'quest', to: p.id, ready: q.id, text: q.name + ': done.' + (q.ender ? ' Return to ' + npcName(c, q.ender) + '.' : '') });
+  }
+  /**
+   * Something a quest may ask for happened — a kill of `ref`, a talk with npc object `ref`, an item used, crafted,
+   * a blueprint built, an animal tamed, an object used: every quest in the log that asks for it moves on (by
+   * `amount`, 1 unless said). The kinds are Content.GOAL_TYPES; `have` and `goto` are not counted here.
+   */
+  function questCount(c, p, type, ref, now, ev, amount) {
+    var qs = c.quests || {};
+    if (!p || !p.quests) return;
+    Object.keys(p.quests).forEach(function (id) {
+      var q = qs[id], st = p.quests[id]; if (!q) return;
+      q.goals.forEach(function (g, i) {
+        if (g.type !== type || g.ref !== ref) return;
+        st.n = Array.isArray(st.n) ? st.n : [];
+        var have = Number(st.n[i]) || 0; if (have >= g.need) return;
+        var was = questState(c, p, q, now);
+        st.n[i] = Math.min(g.need, have + Math.max(1, Math.round(Number(amount) || 1)));
+        if (g.need > 1) ev.push({ type: 'quest', to: p.id, text: goalText(c, g) + ': ' + st.n[i] + '/' + g.need });
+        questReady(c, p, q, was, now, ev);
+      });
+    });
+  }
+  /** Places to reach: after anything the player did, are they standing within reach of one a quest asks for? */
+  function questPlaces(c, p, now, ev) {
+    var qs = c.quests || {};
+    if (!p || !p.quests) return;
+    Object.keys(p.quests).forEach(function (id) {
+      var q = qs[id], st = p.quests[id]; if (!q) return;
+      q.goals.forEach(function (g, i) {
+        if (g.type !== 'goto' || g.ref !== p.map || cheb(p.x, p.y, g.x, g.y) > g.r) return;
+        st.n = Array.isArray(st.n) ? st.n : [];
+        if (Number(st.n[i]) >= 1) return;
+        var was = questState(c, p, q, now);
+        st.n[i] = 1;
+        if (questState(c, p, q, now) !== 'ready') ev.push({ type: 'quest', to: p.id, text: q.name + ': ' + goalText(c, g) + ' reached.' });
+        questReady(c, p, q, was, now, ev);
+      });
+    });
+  }
+  function questStart(c, p, id, now, ev) {
+    var q = (c.quests || {})[id]; if (!q) return false;
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    var s = questState(c, p, q, now);
+    if (s === 'active' || s === 'ready') { say('You are already on "' + q.name + '".'); return false; }
+    if (s === 'done') { say('You have already done that.'); return false; }
+    if (s === 'wait') { say('Not yet: come back later.'); return false; }
+    if (s !== 'open') { say('You can\'t take that on yet.'); return false; }
+    if (Object.keys(p.quests).length >= cfgNum(c, 'quest_log_max', QUEST_LOG_MAX)) { say('Your quest log is full.'); return false; }
+    p.quests[id] = { n: q.goals.map(function () { return 0; }), at: now };
+    ev.push({ type: 'quest', to: p.id, text: 'New quest: ' + q.name });
+    return true;
+  }
+  /** Is one of that NPC object standing next to the player (any of the eight tiles, or the same one)? */
+  function npcNear(c, ws, p, objId) {
+    var map = liveMap(c, ws, p.map);
+    return !!objId && !!map && (map.entities || []).some(function (e) { return e.ref === objId && near(p, e.x, e.y); });
+  }
+  /** {type: 'quest', op: 'accept' | 'turnin' | 'abandon' | 'seen', id, choice?} — choice = which of the choose-one rewards (its place in the list). */
+  function questAct(c, ws, p, a, now, ev) {
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    if (a.op === 'seen') { delete p.intro; return; }           // the welcome window has been read
+    var q = (c.quests || {})[String(a.id || '')];
+    if (!q) return say('There is no such quest.');
+    if (a.op === 'abandon') {
+      if (!p.quests[q.id]) return;
+      delete p.quests[q.id];
+      return say('You give up on "' + q.name + '".');
+    }
+    if (a.op === 'accept') {
+      if (!q.giver) return say('Nobody offers that.');
+      if (!npcNear(c, ws, p, q.giver)) return say('You need to be with ' + npcName(c, q.giver) + '.');
+      questStart(c, p, q.id, now, ev);
+      return;
+    }
+    if (a.op !== 'turnin') return;
+    if (!p.quests[q.id]) return say('You are not on that quest.');
+    if (q.ender && !npcNear(c, ws, p, q.ender)) return say('You need to be with ' + npcName(c, q.ender) + '.');
+    if (questState(c, p, q, now) !== 'ready') return say('That is not done yet.');
+    var picks = list(q.choice).filter(function (g) { return g.item === 'gold' || c.items[g.item]; }), pick = null;
+    if (picks.length) { pick = picks[Math.floor(Number(a.choice))]; if (!pick || a.choice === undefined || a.choice === null || a.choice === '') return say('Choose your reward first.'); }
+    questFinish(c, ws, p, q, pick, now, ev);
+  }
+  /** Hand a ready quest in: what was asked for is taken, it is marked done, the rewards are given. */
+  function questFinish(c, ws, p, q, pick, now, ev) {
+    q.goals.forEach(function (g) { if (g.type === 'have') take(p, g.ref, g.need); });
+    delete p.quests[q.id];
+    p.questsDone[q.id] = now;
+    ev.push({ type: 'quest', to: p.id, done: q.id, text: 'Quest complete: ' + q.name });
+    run(c, ws, p, q.rewards, now, ev);
+    if (pick) give(c, p, pick.item, pick.qty, ev);
+    if (typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);   // (what was in hand may have been handed over)
+  }
+  /**
+   * After anything that may have moved a quest on (every action, every turn of the map): places reached. A quest
+   * with nobody to hand it to (no giver, no ender) does NOT finish by itself: it waits, ready, and the page shows
+   * its done text with a Claim button (the same `turnin`, which needs no NPC when there is no ender).
+   */
+  function questSweep(c, ws, p, now, ev) {
+    if (!p || !p.quests) return;
+    questPlaces(c, p, now, ev);
+  }
+  /** Talking to an NPC: quests that ask for a word with them move on, and the page is told to open their window. */
+  function talkTo(c, ws, p, e, o, pr, now, ev) {
+    questCount(c, p, 'talk', o.id, now, ev);
+    ev.push({ type: 'npc', to: p.id, key: e.key, ref: o.id, name: o.name, text: String(pr.text || '') });
   }
   function teleport(c, p, target, ev) {
     var t = String(target || '').split(':'), map = c.maps[t[0]];
@@ -3566,7 +3808,7 @@ var World = (function () {
       if (mine) {
         if (!(when && (!refill || now < when + refill * 1000))) {
           p.flags[flag] = now;
-          (pr.contents ? list(pr.contents) : roll(c, pickLootTable(pr, rng), rng)).forEach(function (g) {
+          (pr.contents ? list(pr.contents) : roll(c, pickLootTable(pr, rng), rng, p)).forEach(function (g) {
             if (g.item === 'gold') give(c, p, 'gold', g.qty, ev); else if (c.items[g.item]) addStacks(c, mine.inv, g.item, g.qty, 0);
           });
         }
@@ -3584,7 +3826,7 @@ var World = (function () {
         if (!(st === 'empty' || st === 'open')) {
           setState(ws, p.map, e.key, 'empty');
           if (refill) mapState(ws, p.map).timers[e.key] = { at: now + refill * 1000, state: null };
-          (pr.contents ? list(pr.contents) : roll(c, pickLootTable(pr, rng), rng)).forEach(function (g) {
+          (pr.contents ? list(pr.contents) : roll(c, pickLootTable(pr, rng), rng, p)).forEach(function (g) {
             if (g.item === 'gold') give(c, p, 'gold', g.qty, ev); else if (c.items[g.item]) addStacks(c, bx.inv, g.item, g.qty, 0);
           });
         }
@@ -3597,7 +3839,7 @@ var World = (function () {
       setState(ws, p.map, e.key, 'empty');
       if (refill) mapState(ws, p.map).timers[e.key] = { at: now + refill * 1000, state: null };
     }
-    var got = pr.contents ? list(pr.contents) : roll(c, pickLootTable(pr, rng), rng);
+    var got = pr.contents ? list(pr.contents) : roll(c, pickLootTable(pr, rng), rng, p);
     ev.push({ type: 'info', to: p.id, text: 'You open the ' + name + '.' + (got.length ? '' : ' Nothing inside.') });
     got.forEach(function (g) { give(c, p, g.item, g.qty, ev); });
   }
@@ -3698,6 +3940,7 @@ var World = (function () {
       if (count(p, md.tameWith) < 1) { ev.push({ type: 'info', to: p.id, text: 'It would take ' + lower(itemName(c, md.tameWith)) + ' to tame the ' + mname + '.' }); return; }
       take(p, md.tameWith, 1);
       var housed = tame(c, ws, p.map, map, ms, m, md, p, now);
+      questCount(c, p, 'tame', m.ref, now, ev);
       ev.push({ type: 'info', to: p.id, text: 'The ' + mname + ' is yours now.' + (housed ? ' It settles at the coop.' : ' Build a coop nearby for it to live at.') });
       return;
     }
@@ -3728,6 +3971,7 @@ var World = (function () {
       if (icl) { ev.push({ type: 'info', to: p.id, text: o.kind === 'door' ? 'It is barred. This is ' + claimOwner(icl) + '\'s base.' : 'That belongs to ' + claimOwner(icl) + '\'s base.' }); return; }
     }
     if (o.onInteract && (!pr['if'] || check(c, p, pr['if']))) run(c, ws, p, o.onInteract, now, ev);
+    questCount(c, p, 'interact', o.id, now, ev);
     switch (o.kind) {
       case 'claim':
         if (!isBuiltEnt(map, e)) ev.push({ type: 'info', to: p.id, text: o.name + '.' });
@@ -3738,7 +3982,7 @@ var World = (function () {
         if (isBuiltEnt(map, e)) {                                          // a storage container someone built: never loot, always a grid
           var brec = structOf(ws, p.map).ents.filter(function (b) { return b.key === e.key; })[0] || e;
           if (!brec.inv) brec.inv = [];
-          if (brec.wild && !brec.inv.length) { ev.push({ type: 'info', to: p.id, text: 'There is nothing on the ' + lower(o.name) + '.' }); emptiedWild(c, ws, p, brec, ev); break; }
+          if (brec.wild && !boxInv(c, brec, p).length) { ev.push({ type: 'info', to: p.id, text: 'There is nothing on the ' + lower(o.name) + '.' }); emptiedWild(c, ws, p, brec, ev); break; }
           storageEvent(c, p, brec, ev);
         }
         else openContainer(c, ws, p, e, o, pr, now, rng, ev);
@@ -3765,7 +4009,7 @@ var World = (function () {
         else ev.push({ type: 'craft', to: p.id, key: e.key, station: pr.station || o.id || '' });   // the client opens its crafting panel
         break;
       }
-      case 'npc': ev.push({ type: 'info', to: p.id, text: o.name + ' has nothing to say yet.' }); break;
+      case 'npc': talkTo(c, ws, p, e, o, pr, now, ev); break;
       case 'pickup': {                                         // something lying on the ground (an egg): into the bag, and it is gone
         list(pr.pickup || (o.properties || {}).pickup).forEach(function (g) { give(c, p, g.item, g.qty, ev); });
         var pst = structOf(ws, p.map), pi = -1; pst.ents.forEach(function (b, i) { if (b.key === e.key) pi = i; });
@@ -3800,6 +4044,7 @@ var World = (function () {
           it.mp && !it.heal ? 'Your mana is already full.' : 'You are already at full health.' }); return;
       }
       take(p, id, 1);
+      questCount(c, p, 'use', id, now, ev);
       if (it.leaves && c.items[it.leaves]) give(c, p, it.leaves, 1, ev, true);        // the empty bottle stays in the bag
       if (it.cooldownMs > 0) { p.cooldowns = p.cooldowns || {}; p.cooldowns['use:' + id] = now + it.cooldownMs; }
       if (it.heal) {
@@ -3811,10 +4056,10 @@ var World = (function () {
         ev.push({ type: 'mana', to: p.id, map: p.map, x: p.x, y: p.y, amount: Math.round(g), text: 'You use the ' + lower(it.name) + '. +' + Math.round(g) + ' MP' });
       }
       if (it.hunger) {
-        var fe = Math.min(it.hunger, 100 - hun); if (fe > 0) { p.hunger = hun + fe; ev.push({ type: 'info', to: p.id, text: 'You eat the ' + lower(it.name) + '.' }); }
+        var fe = Math.min(it.hunger, 100 - hun); if (fe > 0) { p.hunger = hun + fe; ev.push({ type: 'info', to: p.id, text: 'You eat the ' + lower(it.name) + '.' }); questCount(c, p, 'eat', '*', now, ev); }
       }
       if (it.thirst) {
-        var dr = Math.min(it.thirst, 100 - thi); if (dr > 0) { p.thirst = thi + dr; ev.push({ type: 'info', to: p.id, text: 'You drink the ' + lower(it.name) + '.' }); }
+        var dr = Math.min(it.thirst, 100 - thi); if (dr > 0) { p.thirst = thi + dr; ev.push({ type: 'info', to: p.id, text: 'You drink the ' + lower(it.name) + '.' }); questCount(c, p, 'drink', '*', now, ev); }
       }
       if (it.toxicity) { if (cures && !it.heal && !it.mp && !it.hunger && !it.thirst) ev.push({ type: 'info', to: p.id, text: 'You use the ' + lower(it.name) + '.' }); addTox(c, p, it.toxicity, ev); }
       if (it.onUse) run(c, ws, p, it.onUse, now, ev);
@@ -3905,6 +4150,8 @@ var World = (function () {
     else if (action.type === 'claim') claimAct(c, ws, p, action, now, ev, players);
     else if (action.type === 'loadout') setLoadout(c, p, action.bar, action.slot, action.entry, ev);
     else if (action.type === 'hold') holdSlot(c, p, action.slot, ev);
+    else if (action.type === 'quest') questAct(c, ws, p, action, now, ev);
+    questSweep(c, ws, p, now, ev);                             // wherever that left them: a place a quest sends them to? a quest that is simply done?
     return ev;
   }
 
@@ -4061,6 +4308,8 @@ var World = (function () {
       // rooms this player has entered (per map) — the client needs it so `roof_reveal: permanent` keeps
       // explored rooms revealed across reloads, not just within one session's live accumulation.
       explored: p.explored || {}, claims: p.claims || [],
+      quests: questLog(c, p, Date.now()), questsOpen: questsOpen(c, p, Date.now()), questIntro: p.intro && p.intro.length ? p.intro : undefined,   // questIntro = starting quests the page has yet to welcome the player with
+        // the quest log as the page shows it, and what could be accepted now
       inventory: p.inventory, equipment: p.equipment, respawn: p.respawn };
   }
 
@@ -4081,6 +4330,7 @@ var World = (function () {
     claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, canRemove: canRemove, canMove: canMove, waterAt: waterAt, fillables: fillables, itemCan: itemCan, beltItems: beltItems, BELT_SIZE: BELT_SIZE, skillsOn: skillsOn, holdSlot: holdSlot,
     groundId: groundId, floorId: floorId, floorsOf: floorsOf, deliver: deliver,
     sightRadius: sightRadius, seesAcross: seesAcross, peek: peek, advanceFloors: advanceFloors, findPath: findPath, reloadMsOf: reloadMsOf, alertOf: alertOf, hairChoices: hairChoices, blocksSight: blocksSight, bodySprite: bodySprite, fixtureStates: fixtureStates,
-    applyNotice: applyNotice, shotAcross: shotAcross, throwAcross: throwAcross, tileMine: tileMine };
+    applyNotice: applyNotice, shotAcross: shotAcross, throwAcross: throwAcross, tileMine: tileMine,
+    questState: questState, questLog: questLog, questsOpen: questsOpen, goalText: goalText };
 })();
 if (typeof module !== 'undefined') module.exports = World;

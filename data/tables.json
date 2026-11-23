@@ -349,6 +349,11 @@
    "key": "toxicity_damage",
    "value": 2,
    "notes": "HP lost per starve_tick_s while that sick (0 = off)"
+  },
+  {
+   "key": "start_quests",
+   "value": "welcome",
+   "notes": "Quests every new character starts with, shown in a welcome window the first time they enter the game. One or more quest ids, separated by commas. Empty = none"
   }
  ],
  "Tilesets": [
@@ -1608,6 +1613,13 @@
    "type": "number",
    "default": 8,
    "notes": "Base claims: tiles around the claim that belong to its builder"
+  },
+  {
+   "kind": "npc",
+   "property": "text",
+   "type": "text",
+   "default": "",
+   "notes": "What they say when you talk to them"
   }
  ],
  "Objects": [
@@ -2660,6 +2672,20 @@
    "properties": "{\"hp\":30,\"material\":\"wood\"}",
    "on_interact": "",
    "notes": "Tame chickens nearby live here and lay eggs around it"
+  },
+  {
+   "id": "npc_survivor",
+   "name": "Old Survivor",
+   "kind": "npc",
+   "sprite": "",
+   "sprite_states": "",
+   "frames": 1,
+   "frame_ms": 200,
+   "walkable": false,
+   "blocks_sight": false,
+   "properties": "{\"text\":\"Still alive? Good. Stay that way.\"}",
+   "on_interact": "",
+   "notes": "Sample quest giver (see the Quests tab)"
   }
  ],
  "Maps": [
@@ -4360,6 +4386,14 @@
    "y": 4,
    "ref": "blood",
    "data": "{\"cell\": 2}"
+  },
+  {
+   "map": "map_3",
+   "key": "map_3.e27",
+   "x": 11,
+   "y": 15,
+   "ref": "npc_survivor",
+   "data": ""
   }
  ],
  "ItemTypes": [
@@ -6770,182 +6804,216 @@
    "item": "slime_gel",
    "chance": 0.6,
    "min": 1,
-   "max": 2
+   "max": 2,
+   "quest": ""
   },
   {
    "table": "slime",
    "item": "potion",
    "chance": 0.1,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "rat",
    "item": "potion",
    "chance": 0.08,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "bat",
    "item": "big_potion",
    "chance": 0.05,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "bat",
    "item": "mana_potion",
    "chance": 0.2,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "skeleton",
    "item": "mana_potion",
    "chance": 0.25,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "chest_common",
    "item": "mana_potion",
    "chance": 0.4,
    "min": 1,
-   "max": 2
+   "max": 2,
+   "quest": ""
   },
   {
    "table": "chest_common",
    "item": "lockpick",
    "chance": 0.3,
    "min": 1,
-   "max": 2
+   "max": 2,
+   "quest": ""
   },
   {
    "table": "barrel",
    "item": "lockpick",
    "chance": 0.1,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "skeleton",
    "item": "bone",
    "chance": 0.7,
    "min": 1,
-   "max": 3
+   "max": 3,
+   "quest": ""
   },
   {
    "table": "skeleton",
    "item": "potion",
    "chance": 0.3,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "skeleton",
    "item": "iron_key",
    "chance": 0.3,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "skeleton",
    "item": "iron_sword",
    "chance": 0.08,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "chest_common",
    "item": "gold",
    "chance": 1,
    "min": 5,
-   "max": 20
+   "max": 20,
+   "quest": ""
   },
   {
    "table": "chest_common",
    "item": "potion",
    "chance": 0.9,
    "min": 1,
-   "max": 2
+   "max": 2,
+   "quest": ""
   },
   {
    "table": "chest_common",
    "item": "wooden_sword",
    "chance": 0.3,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "chest_common",
    "item": "leather_armor",
    "chance": 0.25,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "barrel",
    "item": "gold",
    "chance": 0.6,
    "min": 1,
-   "max": 6
+   "max": 6,
+   "quest": ""
   },
   {
    "table": "barrel",
    "item": "potion",
    "chance": 0.15,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "walker",
    "item": "ration",
    "chance": 0.3,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "walker",
    "item": "ammo_pistol",
    "chance": 0.3,
    "min": 1,
-   "max": 3
+   "max": 3,
+   "quest": ""
   },
   {
    "table": "walker",
    "item": "bone",
    "chance": 0.5,
    "min": 1,
-   "max": 2
+   "max": 2,
+   "quest": ""
   },
   {
    "table": "spitter",
    "item": "ammo_rifle",
    "chance": 0.5,
    "min": 1,
-   "max": 3
+   "max": 3,
+   "quest": ""
   },
   {
    "table": "spitter",
    "item": "ammo_pistol",
    "chance": 0.3,
    "min": 1,
-   "max": 2
+   "max": 2,
+   "quest": ""
   },
   {
    "table": "spitter",
    "item": "antidote",
    "chance": 0.15,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
   },
   {
    "table": "spitter",
    "item": "water",
    "chance": 0.3,
    "min": 1,
-   "max": 1
+   "max": 1,
+   "quest": ""
+  },
+  {
+   "table": "rat",
+   "item": "bone",
+   "chance": 0.6,
+   "min": 1,
+   "max": 1,
+   "quest": "bone_charms"
   }
  ],
  "Classes": [
@@ -7927,6 +7995,53 @@
    "notes": "",
    "id": "bp_coop",
    "name": "Chicken coop"
+  }
+ ],
+ "Quests": [
+  {
+   "id": "welcome",
+   "name": "You are finally awake",
+   "giver": "",
+   "ender": "",
+   "text": "You open your eyes and take a deep breath. Nowhere around you seems familiar, and it is so quiet that it feels eerie. Your throat burns. You should have something to drink.",
+   "progress_text": "",
+   "done_text": "That is better. The burning eases, and you can think again. Somebody is standing a little way to the east.",
+   "objectives": "[{\"type\": \"drink\", \"need\": 1}]",
+   "requires": "",
+   "rewards": "xp:5",
+   "choice": "",
+   "repeat_h": 0,
+   "notes": "Sample: the starting quest (Config start_quests). No giver and no ender: it opens in a window when the character first enters the game, and when its objective is met a window shows the done text with a Claim button"
+  },
+  {
+   "id": "rat_trouble",
+   "name": "Rat trouble",
+   "giver": "npc_survivor",
+   "ender": "",
+   "text": "The rats are into everything. Kill three of them and I will make it worth your while.",
+   "progress_text": "Three rats. They are not hard to find.",
+   "done_text": "That is three fewer. Here, as promised.",
+   "objectives": "kill:rat:3",
+   "requires": "quest:welcome",
+   "rewards": "xp:20; gold:10",
+   "choice": "",
+   "repeat_h": 0,
+   "notes": "Sample: a kill quest"
+  },
+  {
+   "id": "bone_charms",
+   "name": "Bone charms",
+   "giver": "npc_survivor",
+   "ender": "",
+   "text": "One more thing. Bring me two bones. Do not ask what for.",
+   "progress_text": "Two bones. Rats have them, like everything else.",
+   "done_text": "Perfect. Take your pick.",
+   "objectives": "have:bone:2",
+   "requires": "quest:rat_trouble",
+   "rewards": "xp:30",
+   "choice": "bandage:2, ration:2",
+   "repeat_h": 0,
+   "notes": "Sample: a bring-me quest that follows the first, with a choice of reward"
   }
  ]
 }

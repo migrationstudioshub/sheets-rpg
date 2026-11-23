@@ -1,6 +1,6 @@
-# LAN host (prototype)
+# Host (one player's computer is the referee)
 
-Play together on the same WiFi, with no internet needed. One person runs this little server; it is
+Play together on the same WiFi, or with friends elsewhere over a private network such as Tailscale. One person runs this little server; it is
 the referee **and** it serves the game page, so everyone else just opens a link in their browser.
 
 It reuses the exact same rules as the cloud game (`shared/world.js`) and the normal game page
@@ -27,19 +27,32 @@ It prints something like:
 ```
 
 - The host plays at `http://localhost:3000`.
+- A friend somewhere else, with **Tailscale** running on both computers, opens the line marked
+  "Friends on Tailscale" (an address starting with `100.`). `tailscale ping <their device>` tells you whether the
+  connection is direct (fast) or relayed (slower).
 - Everyone else on the same WiFi opens the `192.168.x.x` address (whatever it printed).
 - Create a character and play — moves should feel near-instant (a LAN round trip is a few ms vs ~220 ms
   to the cloud).
 
 ## Good to know
 
-- **Fully offline.** Content comes from `data/tables.json` (the starting-content snapshot), so this
-  does not need the internet or the Game Data sheet. It will not reflect later edits the owner makes
-  in the live sheet.
-- **Saved between sessions.** The game is written to `host/save.json` (debounced, once a second, and
+- **The world runs on its own.** The host turns the world ten times a second for as long as somebody is playing
+  (monsters move without anyone asking), and keeps a socket open to every page: your actions go up it and each
+  turn's changes come down it, only the parts that changed. `TICK_MS=50 node host/server.js` runs it faster.
+  A page that cannot open the socket falls back to asking four times a second, as before.
+- **Try a bad connection.** `LAG_MS=150 node host/server.js` delays every socket message 150 ms each way, so you can
+  feel how the game plays for a friend far away while testing alone.
+- **Check it.** `node tools/test_host.js` starts a throwaway host and tests the loop and the socket.
+
+- **It plays your live content.** At start-up the host reads the live game's content from the Cloud Function (the
+  same read the game page does; nothing is ever written there), so you host your real maps, monsters and blueprints.
+  It is read ONCE: publish something in the Content Studio and you restart the host to get it. With no internet it
+  uses the copy kept from the last good read (`host/content.cache.json`), and failing that the starting content in
+  `data/tables.json`. `CONTENT=local node host/server.js` always plays the starting content.
+- **Saved between sessions.** The game is written to `host/save.live.json` (`host/save.json` when playing the starting content) (debounced, once a second, and
   on Ctrl+C). Restart the host later and everyone's characters and the world come back. A returning
   player resumes automatically as long as they use the same browser (their character token is kept in
-  that browser, separate from their cloud token). Delete `host/save.json` to start a clean world, or
+  that browser, separate from their cloud token). Delete that file to start a clean world, or
   run `SAVE_FILE=off node host/server.js` for a throwaway session that saves nothing. The save file is
   gitignored, so it never ends up in the repo.
 - **Tied to this host + this machine.** The save lives on the host's computer. If someone else hosts

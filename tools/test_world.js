@@ -38,7 +38,7 @@ test('a new warrior starts at the start point with class stats and items', () =>
   const st = World.stats(c, p);
   // the warrior auto-equips the weapon/armor/helm in its start kit (wooden_sword +3 atk, leather_armor +2 def, army_helmet +2 def)
   assert.deepStrictEqual([p.hp, st.maxHp, st.atk, st.def], [120, 120, 9, 6]);
-  assert.deepStrictEqual(p.inventory, [{ item: 'potion', qty: 2 }, { item: 'wooden_sword', qty: 1 }, { item: 'leather_armor', qty: 1 }, { item: 'army_helmet', qty: 1 }]);
+  assert.deepStrictEqual(p.inventory, [{ item: 'potion', qty: 2, s: 0 }, { item: 'wooden_sword', qty: 1, s: 1 }, { item: 'leather_armor', qty: 1, s: 2 }, { item: 'army_helmet', qty: 1, s: 3 }]);
   assert.deepStrictEqual(p.equipment, { weapon: 'wooden_sword', armor: 'leather_armor', helm: 'army_helmet' });
 });
 
@@ -53,21 +53,26 @@ test('the hut door is closed, opens on interact, and can then be walked through'
   assert.strictEqual(v.states['map_3.e9'], 'open');
 });
 
-test('the hut chest gives its contents once per player, then is empty', () => {
+test('the hut chest holds its contents once for each player, in a grid of their own', () => {
   const s = fresh();
+  const held = inv => inv.reduce((o, st) => { o[st.item] = (o[st.item] || 0) + st.qty; return o; }, {});
   put(s, 'map_3', 9, 7, 'E');
   let ev = act(s, { type: 'interact' });
   assert.match(texts(ev), /You open the wooden chest/);
+  assert.deepStrictEqual(held(ev.find(e => e.type === 'storage').inv), { potion: 2, wooden_sword: 1 }, 'it opens as a grid with the loot inside');
+  assert.deepStrictEqual([World.count(s.p, 'potion'), World.count(s.p, 'wooden_sword')], [2, 1], 'nothing jumps into the bag (these are the start kit)');
+  act(s, { type: 'inv', key: 'map_3.e14', from: { w: 'box', s: 0 }, to: { w: 'bag' } });
   assert.strictEqual(World.count(s.p, 'potion'), 4);
-  assert.strictEqual(World.count(s.p, 'wooden_sword'), 2);          // one from the warrior's start kit + one from the chest
   ev = act(s, { type: 'interact' });
-  assert.match(texts(ev), /It is empty/);
+  assert.deepStrictEqual(held(ev.find(e => e.type === 'storage').inv), { wooden_sword: 1 }, 'opened again: what was left, and no second helping');
   const v = World.view(s.c, s.ws, 'map_3', s.p, [s.p]);
-  assert.strictEqual(v.states['map_3.e14'], 'empty');               // the chest shows as empty to this player
-  // another player still finds it full
+  assert.strictEqual(v.states['map_3.e14'], 'empty');               // the chest shows as opened to this player
+  // another player still finds it full, and cannot reach into the first one's
   const q = World.newPlayer(s.c, 'p2', 'Other', 'rogue'); q.map = 'map_3'; q.x = 9; q.y = 7; q.facing = 'E';
-  World.act(s.c, s.ws, q, { type: 'interact' }, 1000, mid, [q]);
-  assert.strictEqual(World.count(q, 'wooden_sword'), 1);
+  const ev2 = World.act(s.c, s.ws, q, { type: 'interact' }, 1000, mid, [q]);
+  assert.deepStrictEqual(held(ev2.find(e => e.type === 'storage').inv), { potion: 2, wooden_sword: 1 });
+  World.act(s.c, s.ws, q, { type: 'inv', key: 'map_3.e14', from: { w: 'box', s: 1 }, to: { w: 'bag' } }, 2000, mid, [q]);
+  assert.deepStrictEqual(held(s.p.boxes['map_3:map_3.e14']), { wooden_sword: 1 }, 'the first player\'s is untouched');
 });
 
 test('a container with several weighted loot tables picks one per open, by weight', () => {
@@ -253,7 +258,7 @@ test('the arena chest is locked until you carry the iron key', () => {
   World.give(s.c, s.p, 'iron_key', 1, []);
   ev = act(s, { type: 'interact' });
   assert.match(texts(ev), /You unlock the chest with the iron key/);
-  assert.strictEqual(World.count(s.p, 'iron_armor'), 1);
+  assert.ok(ev.find(e => e.type === 'storage').inv.some(st => st.item === 'iron_armor' && st.qty === 1), 'the armour is inside, for you to take');
   assert.strictEqual(s.p.gold, 50);
 });
 
@@ -617,6 +622,26 @@ test('basic attacks have a delay: spamming does not attack faster', () => {
   assert.match(texts(act(s, { type: 'attack', x: 11, y: 13 }, 3000)), /Too far away/);
 });
 
+test('a swing leaves a mark on the player that the others can see: a new number each time, where and how much', () => {
+  const s = hero('warrior');
+  const m = monster(s, 'skeleton', 10, 13);
+  s.p.x = 9; s.p.y = 13;
+  assert.ok(!s.p.act);
+  const hp = m.hp;
+  act(s, { type: 'attack', x: 10, y: 13 }, 1000);
+  assert.deepStrictEqual(s.p.act.split(','), ['1', 'm', '10', '13', String(hp - m.hp)]);
+  act(s, { type: 'attack', x: 10, y: 13 }, 1100);                      // too soon: no swing, no new mark
+  assert.strictEqual(s.p.act.split(',')[0], '1');
+  act(s, { type: 'attack', x: 10, y: 13 }, 2000);
+  assert.strictEqual(s.p.act.split(',')[0], '2');
+  act(s, { type: 'attack', x: 12, y: 13 }, 3000);                      // nothing there: nothing to show
+  assert.strictEqual(s.p.act.split(',')[0], '2');
+  // someone else on the map is told with the list of players
+  const other = World.newPlayer(s.c, 'o', 'Other', 'warrior'); other.map = s.p.map;
+  const seen = World.view(s.c, s.ws, other.map, other, [s.p, other]).players.find(q => q.id === s.p.id);
+  assert.strictEqual(seen.act, s.p.act);
+});
+
 test('clicking a chest next to you opens it, wherever you face; far away it does nothing', () => {
   const s = fresh();
   put(s, 'map_3', 10, 6, 'N');                                         // chest is at (10, 7): south
@@ -730,15 +755,39 @@ test('a survivor spawns gun-in-hand with a loaded magazine; firing draws from th
   assert.match(texts(act(w, { type: 'shoot', x: 0, y: 0 })), /no ranged weapon/i);
 });
 
-test('an empty clip must be reloaded with R, drawing from the reserve ammo', () => {
+test('reloading takes the gun its time; a click on an empty clip starts it; the rounds go in at the end', () => {
   const s = hero('survivor');                                                     // pistol: clip 12, reserve 28
   s.p.x = 9; s.p.y = 13; monster(s, 'skeleton', 12, 13);
+  s.c.items.pistol.reloadMs = 2000;
   s.p.mags.pistol = 0;                                                            // empty the magazine
-  assert.match(texts(act(s, { type: 'shoot', x: 12, y: 13 }, 1000)), /press R to reload/);
-  act(s, { type: 'reload' });
+  const ev = act(s, { type: 'shoot', x: 12, y: 13 }, 1000);                        // the click that finds it empty reloads
+  assert.ok(ev.some(e => e.type === 'reload' && e.ms === 2000));
+  assert.deepStrictEqual(s.p.reload, { id: 'pistol', at: 1000, until: 3000 });
+  assert.deepStrictEqual(World.publicPlayer(s.c, s.p).reload, s.p.reload, 'the page is told, to draw the circle');
+  assert.deepStrictEqual([s.p.mags.pistol, World.count(s.p, 'ammo_pistol')], [0, 28], 'nothing is in yet');
+  assert.strictEqual(texts(act(s, { type: 'shoot', x: 12, y: 13 }, 2000)), '', 'no shooting while reloading');
+  assert.strictEqual(s.p.mags.pistol, 0);
+  const done = []; World.advance(s.c, s.ws, s.p.map, [s.p], 3000, mid, done);     // the world turning is enough to finish it
+  assert.match(texts(done), /You reload the pistol\. 12\/12/);
+  assert.strictEqual(s.p.reload, undefined);
   assert.strictEqual(s.p.mags.pistol, 12);                                        // refilled to the clip
   assert.strictEqual(World.count(s.p, 'ammo_pistol'), 16);                        // 28 - 12
-  assert.match(texts(act(s, { type: 'reload' })), /already loaded/);              // a full clip can't reload
+  assert.match(texts(act(s, { type: 'reload' }, 4000)), /already loaded/);         // a full clip can't reload
+  // R works the same; changing what is in hand drops it and costs nothing; an emptied gun is not refilled by drawing it again
+  s.p.mags.pistol = 3;
+  act(s, { type: 'reload' }, 5000);
+  assert.strictEqual(s.p.reload.until, 7000);
+  const slot = s.p.held;
+  act(s, { type: 'hold', slot: -1 }, 5500); act(s, { type: 'hold', slot: slot }, 5600);
+  act(s, { type: 'poll' }, 9000);
+  assert.deepStrictEqual([s.p.reload, s.p.mags.pistol, World.count(s.p, 'ammo_pistol')], [undefined, 3, 16]);
+  // with no time of its own a gun takes the Config's (1500 when unset), and 0 there means at once
+  s.c.items.pistol.reloadMs = 0;
+  assert.strictEqual(World.reloadMsOf(s.c, s.c.items.pistol), 1500);
+  s.c.config.reload_ms = 0;
+  act(s, { type: 'reload' }, 10000);
+  assert.strictEqual(s.p.mags.pistol, 12);
+  delete s.c.config.reload_ms;
   s.p.inventory = s.p.inventory.filter(x => x.item !== 'ammo_pistol');            // no reserve left
   s.p.mags.pistol = 0;
   assert.match(texts(act(s, { type: 'reload' })), /Out of pistol ammo/);          // nothing to load
@@ -1271,7 +1320,8 @@ test('swinging at a wall: the attack action hits what is in the way; a shut door
   assert.ok(!liveOf(s).entities.some(e => e.key === 'arena.e1'), 'the door is no longer on the map');
   assert.deepStrictEqual(Rules.entitiesAt(liveOf(s), 1, 3).map(e => e.key), [], 'nor can it be found on its tile any more');
   assert.match(texts(act(s, { type: 'interact' }, now + 3000)), /Nothing to use here|wall is in the way/, 'so there is nothing left to open');
-  assert.strictEqual(Rules.tryMove(s.c, liveOf(s), 1, 3, 'N', {}).ok, false, 'the wall it hung on still stands');
+  assert.strictEqual(Rules.tryMove(s.c, liveOf(s), 1, 3, 'N', {}).ok, true, 'and the doorway is open: the stretch of wall it hung in went with it');
+  assert.strictEqual(World.structInfo(s.c, liveOf(s), { t: 'wall', orient: 'h', x: 1, y: 3 }), null);
   put(s, 'arena', 5, 3, 'N');
   assert.match(texts(act(s, { type: 'attack', x: 5, y: 2 }, now + 5000)), /Nothing to attack there/, 'unbreakable brick is not a target');
   put(s, 'arena', 5, 2, 'N');
@@ -1382,6 +1432,87 @@ test('a station recipe needs the station nearby and the tool in the bag', () => 
   assert.strictEqual(World.count(s.p, 'scrap'), 7);
 });
 
+test('a craft object with no station id is a station by its own id', () => {
+  const s = camp();
+  delete s.c.objects.t_bench.properties.station;
+  s.c.recipes.r_nails.station = 't_bench';
+  World.give(s.c, s.p, 'scrap', 10, []); World.give(s.c, s.p, 'hammer', 1, []);
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails' })), /Needs a workbench nearby/, 'named after the object');
+  put(s, 'camp', 4, 5, 'E');
+  assert.strictEqual(recipe(s, 'r_nails').here, true);
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails' })), /You make 4 nails/);
+});
+
+test('crafting takes time: work counts only at the station, waits while you are away, and can be stopped', () => {
+  const s = camp();
+  s.c.recipes.r_nails.timeS = 4;
+  World.give(s.c, s.p, 'scrap', 10, []); World.give(s.c, s.p, 'hammer', 1, []);
+  put(s, 'camp', 4, 5, 'E');
+  const tick = (t) => texts(act(s, { type: 'face', dir: 'E' }, t));
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails', qty: 2 }, 1000)), /You start on 2 × nails/);
+  assert.deepStrictEqual([World.count(s.p, 'nails'), World.count(s.p, 'scrap')], [0, 8], 'the materials go in at the start');
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_hammer' }, 1500)), /already making something/);
+  tick(4000);
+  assert.strictEqual(World.count(s.p, 'nails'), 0, 'not yet');
+  assert.match(tick(5100), /You make 4 nails/);
+  assert.deepStrictEqual([s.p.craft.made, World.publicPlayer(s.c, s.p).craft.need], [1, 4000]);
+  put(s, 'camp', 1, 1, 'N'); tick(6000); tick(30000);                 // away from the bench: nothing happens, however long
+  assert.strictEqual(World.count(s.p, 'nails'), 4);
+  assert.strictEqual(s.p.craft.on, false);
+  put(s, 'camp', 4, 5, 'E'); tick(31000); tick(34000);
+  assert.strictEqual(World.count(s.p, 'nails'), 4, 'the time away did not count');
+  assert.match(tick(35000), /You make 4 nails/);
+  assert.ok(!s.p.craft, 'done');
+  // stopping gives back what was not used
+  act(s, { type: 'craft', recipe: 'r_nails', qty: 3 }, 40000);
+  tick(44100);
+  assert.deepStrictEqual([World.count(s.p, 'nails'), World.count(s.p, 'scrap')], [12, 5]);
+  assert.match(texts(act(s, { type: 'craft', cancel: true }, 45000)), /You stop/);
+  assert.deepStrictEqual([World.count(s.p, 'scrap'), !!s.p.craft], [7, false]);
+  // a page that stopped asking does not keep working: one gap counts for half a minute at most
+  s.c.recipes.r_nails.timeS = 100;
+  act(s, { type: 'craft', recipe: 'r_nails' }, 50000);
+  tick(50000 + 3600000);
+  assert.strictEqual(s.p.craft.ms, 30000);
+});
+
+test('what is in hand may be good against a material: an axe on wood', () => {
+  const s = camp();
+  s.c.objects.t_tree.properties.hp = 200;
+  World.give(s.c, s.p, 'axe', 1, []);
+  s.p.belt[0] = 'axe'; World.holdSlot(s.c, s.p, 0);
+  assert.strictEqual(World.heldItem(s.c, s.p).id, 'axe');
+  const blow = (t) => act(s, { type: 'attack', x: 1, y: 0 }, t).filter(e => e.type === 'hit')[0].amount;
+  s.c.items.axe.vsMaterial = {}; s.c.items.axe.structureDmg = 3;
+  const plain = blow(1000);
+  s.c.items.axe.vsMaterial = { wood: 3 };
+  assert.strictEqual(blow(5000), plain * 3);
+  s.c.items.axe.vsMaterial = { stone: 8 };
+  assert.strictEqual(blow(9000), plain, 'only against the material named');
+  assert.deepStrictEqual(Content.build(Object.assign({}, tables, { Items: tables.Items.map(i => i.id === 'axe' ? Object.assign({}, i, { material_dmg: 'wood:3, stone:0.5' }) : i) })).items.axe.vsMaterial, { wood: 3, stone: 0.5 });
+});
+
+test('harvesting: an object may list several tools, and any one of them will do', () => {
+  const s = camp();
+  s.c.objects.t_tree.properties.harvest_tool = 'axe, hammer';
+  assert.match(texts(act(s, { type: 'attack', x: 1, y: 0 }, 1000)), /You need an axe or a hammer for the pine/);
+  World.give(s.c, s.p, 'hammer', 1, []);
+  assert.match(texts(act(s, { type: 'attack', x: 1, y: 0 }, 3000)), /You hit the pine|The pine breaks/);
+});
+
+test('an item of a tool type is a tool by its own id; a tag, when given, is what counts; weapons are not tools by themselves', () => {
+  const t = JSON.parse(JSON.stringify(tables));
+  t.ItemTypes = (t.ItemTypes || []).concat([{ id: 'gear', name: 'Gear', tool: true }]);
+  t.Items.push({ id: 't_saw', name: 'Saw', type: 'tool' }, { id: 't_pick', name: 'Pick', type: 'gear' },
+    { id: 't_hatchet', name: 'Hatchet', type: 'tool', tool: 'axe' }, { id: 't_club', name: 'Club', type: 'weapon' });
+  const c = Content.build(t);
+  assert.deepStrictEqual([c.items.t_saw.tools, c.items.t_pick.tools, c.items.t_hatchet.tools, c.items.t_club.tools], [['t_saw'], ['t_pick'], ['axe'], []]);
+  const p = World.newPlayer(c, 'p1', 'Tester', 'warrior');
+  assert.strictEqual(World.hasTool(c, p, 't_saw'), false);
+  World.give(c, p, 't_saw', 1, []);
+  assert.strictEqual(World.hasTool(c, p, 't_saw, axe'), true);
+});
+
 test('using a crafting station tells the client to open the crafting panel', () => {
   const s = camp();
   put(s, 'camp', 4, 5, 'E');
@@ -1404,6 +1535,28 @@ test('harvesting: the right tool, the yield, and the tree grows back', () => {
   World.advance(s.c, s.ws, 'camp', [s.p], now + 61000, mid, []);
   assert.ok(World.liveMap(s.c, s.ws, 'camp').entities.some(e => e.key === 'camp.e2'), 'a minute later it has grown back');
   assert.strictEqual(World.structInfo(s.c, World.liveMap(s.c, s.ws, 'camp'), tree).hp, 10, 'at full health');
+});
+
+test('harvesting: the yield comes out as the resource is worked, and holding the button needs its tool in hand', () => {
+  const s = camp();
+  Object.assign(s.c.objects.t_tree.properties, { hp: 12, harvest: 'wood:6' });
+  s.c.items.axe.vsMaterial = {}; s.c.items.axe.structureDmg = 3;
+  World.give(s.c, s.p, 'axe', 1, []);
+  const live = () => World.liveMap(s.c, s.ws, 'camp');
+  assert.strictEqual(World.harvestWith(s.c, live(), s.p, 1, 0), null, 'the axe is in the bag, not in hand');
+  s.p.belt[0] = 'axe'; World.holdSlot(s.c, s.p, 0);
+  assert.strictEqual(World.harvestWith(s.c, live(), s.p, 1, 0).key, 'camp.e2');
+  assert.strictEqual(World.harvestWith(s.c, live(), s.p, 5, 5), null, 'not a resource, and not next to you');
+  let now = 1000, got = [];
+  while (World.structInfo(s.c, live(), { t: 'ent', key: 'camp.e2' }) && got.length < 20) { now += 2000; act(s, { type: 'attack', x: 1, y: 0 }, now); got.push(World.count(s.p, 'wood')); }
+  assert.ok(got.length >= 3, 'it takes several blows');
+  assert.ok(got[0] < 6 && got[got.length - 2] < 6 && got[got.length - 2] > 0, 'some of it before the end: ' + got.join(','));
+  assert.strictEqual(got[got.length - 1], 6, 'and all of it, no more, when it falls');
+  assert.strictEqual(World.harvestWith(s.c, live(), s.p, 1, 0), null, 'nothing left to work');
+  s.c.objects.t_tree.properties.harvest_tool = '';
+  World.advance(s.c, s.ws, 'camp', [s.p], now + 61000, mid, []);
+  World.holdSlot(s.c, s.p, -1);
+  assert.ok(World.harvestWith(s.c, live(), s.p, 1, 0), 'a resource that asks for no tool can be worked with anything');
 });
 
 // ---------------------------------------------------------------- building
@@ -1439,6 +1592,21 @@ test('building a wall: the frame blocks at once, work finishes it, and it costs 
   assert.deepStrictEqual([info.hp, info.rec.prog], [40, 4]);
   assert.match(doAct(s, { type: 'work', target: N44 }), /Nothing to work on/);
   assert.ok(!World.canSee(s.c, yardMap(s), 4, 4, 4, 3, (e) => World.stateOf(s.c, s.ws, 'yard', e)), 'and it blocks sight like any wall');
+});
+
+test('nothing is built on ground nobody can walk on (water), whichever layer it is painted on; a wall may follow the shore', () => {
+  const s = yard(), m = s.c.maps.yard;
+  assert.ok(s.c.terrain.l_water, 'the yard knows water');
+  m.overlay = m.terrain.map(r => r.map(() => ''));
+  m.overlay[4][5] = 'l_water'; m.overlay[4][6] = 'l_water';
+  const lk = () => World.viewLookup(s.c, yardMap(s), { states: {}, monsters: [], players: [] }, s.p);
+  const ghost = (bp, x, y, side) => World.canBuild(s.c, yardMap(s), lk(), s.p, s.c.blueprints[bp], x, y, side);
+  assert.strictEqual(ghost('bp_crate', 5, 4).reason, "You can't build on water.");
+  assert.match(doAct(s, { type: 'build', bp: 'bp_crate', x: 5, y: 4 }), /can't build on water/);
+  assert.strictEqual(ghost('bp_wood_wall', 6, 4, 'W').reason, "You can't build on water.", 'water on both sides of the wall');
+  assert.strictEqual(ghost('bp_wood_wall', 5, 4, 'N').ok, true, 'along the shore is fine');
+  m.overlay = null;
+  assert.strictEqual(ghost('bp_crate', 5, 4).ok, true);
 });
 
 test('building is refused, with the reason, when a rule says no — and the ghost gets the same answer', () => {
@@ -1512,6 +1680,120 @@ test('a door needs a wall; once built it opens, closes and gates the wall like a
   assert.ok(!World.canSee(s.c, yardMap(s), 4, 4, 4, 3, stf), 'shut: it blocks sight again');
 });
 
+const boxOf = inv => inv.reduce((o, st) => { o[st.item] = (o[st.item] || 0) + st.qty; return o; }, {});   // what a container holds, per item
+test('a container placed on the map opens as a grid: its loot is inside, and what you leave stays for the next visitor', () => {
+  const c = Content.build(tables), ws = { maps: {} }, m = c.maps[c.config.start_map];
+  const e = m.entities.find(en => c.objects[en.ref] && c.objects[en.ref].kind === 'container' && !World.props(c, en).per_player && !World.props(c, en).locked);
+  assert.ok(e, 'the start map has an open container');
+  e.data = Object.assign({}, e.data, { contents: 'wood:3, potion:1' });
+  const p = World.newPlayer(c, 'p1', 'Ana', c.config.start_class), q = World.newPlayer(c, 'p2', 'Ben', c.config.start_class);
+  [p, q].forEach(x => Object.assign(x, { map: m.id, x: e.x, y: e.y + 1, facing: 'N', inventory: [] }));
+  let now = 1000;
+  const go = (who, act1) => World.act(c, ws, who, act1, now += 3000, mid, [p, q]);
+  let ev = go(p, { type: 'interact', x: e.x, y: e.y });
+  const box = ev.find(x => x.type === 'storage');
+  assert.ok(box && box.key === e.key && box.slots === 8, 'it opens as storage, with its capacity as cells');
+  assert.deepStrictEqual(boxOf(box.inv), { wood: 3, potion: 1 });
+  assert.strictEqual(World.count(p, 'wood'), 0, 'nothing went straight into the bag');
+  go(p, { type: 'inv', key: e.key, from: { w: 'box', s: 0 }, to: { w: 'bag' } });
+  assert.strictEqual(World.count(p, 'wood'), 3);
+  World.give(c, p, 'nails', 4, []);
+  go(p, { type: 'inv', key: e.key, from: { w: 'bag', s: p.inventory.find(st => st.item === 'nails').s }, to: { w: 'box', s: 5 } });
+  ev = go(q, { type: 'interact', x: e.x, y: e.y });
+  assert.deepStrictEqual(boxOf(ev.find(x => x.type === 'storage').inv), { potion: 1, nails: 4 }, 'the next one finds what is left, and no second helping of loot');
+  Object.assign(q, { x: e.x + 5 });
+  assert.match(texts(go(q, { type: 'inv', key: e.key, from: { w: 'box', s: 5 }, to: { w: 'bag' } })), /Too far away/);
+});
+
+test('stacks sit in cells: an item fills its stack and starts another; things given are never lost', () => {
+  const s = yard();
+  s.p.inventory = [];
+  s.c.items.wood.stackMax = 20; s.c.config.bag_slots = 4;
+  World.give(s.c, s.p, 'wood', 45, []);
+  assert.deepStrictEqual(s.p.inventory, [{ item: 'wood', qty: 20, s: 0 }, { item: 'wood', qty: 20, s: 1 }, { item: 'wood', qty: 5, s: 2 }]);
+  assert.strictEqual(World.count(s.p, 'wood'), 45);
+  assert.ok(World.take(s.p, 'wood', 30));
+  assert.deepStrictEqual(s.p.inventory, [{ item: 'wood', qty: 15, s: 0 }], 'taken from the last stacks first');
+  World.give(s.c, s.p, 'nails', 1, []); World.give(s.c, s.p, 'hammer', 1, []); World.give(s.c, s.p, 'axe', 1, []);
+  const ev = [];
+  World.give(s.c, s.p, 'scrap', 2, ev);
+  assert.match(texts(ev), /Your bag is overfull/);
+  assert.strictEqual(s.p.inventory.find(st => st.item === 'scrap').s, 4, 'past the last cell, but not lost');
+  // a save from before cells: every stack gets one, and one over its limit is split
+  const old = { inventory: [{ item: 'wood', qty: 50 }, { item: 'nails', qty: 3 }] };
+  World.normalize(s.c, Object.assign(s.p, old));
+  assert.deepStrictEqual(s.p.inventory.map(st => st.item + st.qty + '@' + st.s).sort(), ['nails3@3', 'wood10@0', 'wood20@1', 'wood20@2']);
+});
+
+test('moving stacks: to a cell, onto the same item, swapping, splitting, and in and out of a crate', () => {
+  const s = yard();
+  doAct(s, { type: 'build', bp: 'bp_crate', x: 5, y: 4 });
+  const crate = yardMap(s).entities.filter(e => e.ref === 'obj_crate')[0];
+  for (let i = 0; i < 3; i++) doAct(s, { type: 'work', target: { t: 'ent', key: crate.key } });
+  s.c.items.wood.stackMax = 20; s.c.items.nails.stackMax = 50;
+  s.p.inventory = []; s.p.equipment = {};
+  World.give(s.c, s.p, 'wood', 30, []); World.give(s.c, s.p, 'nails', 8, []);          // wood 20 @0, wood 10 @1, nails 8 @2
+  const bag = () => s.p.inventory.map(st => st.item + st.qty + '@' + st.s).sort().join(' ');
+  const box = () => crate.inv.map(st => st.item + st.qty + '@' + st.s).sort().join(' ');
+  const mv = (from, to, qty) => doAct(s, { type: 'inv', key: crate.key, from, to, qty });
+  mv({ w: 'bag', s: 2 }, { w: 'bag', s: 7 });
+  assert.strictEqual(bag(), 'nails8@7 wood10@1 wood20@0', 'to an empty cell');
+  mv({ w: 'bag', s: 1 }, { w: 'bag', s: 5 }, 4);
+  assert.strictEqual(bag(), 'nails8@7 wood20@0 wood4@5 wood6@1', 'part of a stack: split');
+  mv({ w: 'bag', s: 5 }, { w: 'bag', s: 1 });
+  assert.strictEqual(bag(), 'nails8@7 wood10@1 wood20@0', 'onto the same item: joined');
+  mv({ w: 'bag', s: 1 }, { w: 'bag', s: 0 });
+  assert.strictEqual(bag(), 'nails8@7 wood10@0 wood20@1', 'onto a full stack of the same: they change places');
+  mv({ w: 'bag', s: 7 }, { w: 'bag', s: 0 });
+  assert.strictEqual(bag(), 'nails8@0 wood10@7 wood20@1', 'onto something else: they change places');
+  assert.match(mv({ w: 'bag', s: 0 }, { w: 'bag', s: 1 }, 3), /That cell is taken/);
+  assert.match(mv({ w: 'bag', s: 0 }, { w: 'bag', s: 99 }), /no room there/);
+  // the crate (12 cells)
+  mv({ w: 'bag', s: 1 }, { w: 'box', s: 3 });
+  assert.deepStrictEqual([bag(), box()], ['nails8@0 wood10@7', 'wood20@3']);
+  mv({ w: 'bag', s: 7 }, { w: 'box' }, 5);
+  assert.deepStrictEqual([bag(), box()], ['nails8@0 wood5@7', 'wood20@3 wood5@0'], 'no cell named: wherever it fits');
+  mv({ w: 'bag', s: 0 }, { w: 'box', s: 3 });
+  assert.deepStrictEqual([bag(), box()], ['wood20@0 wood5@7', 'nails8@3 wood5@0'], 'a swap across the two');
+  mv({ w: 'box', s: 3 }, { w: 'bag', s: 2 }, 3);
+  assert.deepStrictEqual([bag(), box()], ['nails3@2 wood20@0 wood5@7', 'nails5@3 wood5@0']);
+  assert.match(mv({ w: 'box', s: 9 }, { w: 'bag' }), /nothing there/);
+  assert.match(mv({ w: 'bag', s: 0 }, { w: 'box', s: 12 }), /no room there/);
+  s.c.config.bag_slots = 3;
+  World.give(s.c, s.p, 'hammer', 1, []);                                                 // cells 0,1,2 taken (7 is past the end)
+  crate.inv.push({ item: 'scrap', qty: 2, s: 6 });
+  assert.match(mv({ w: 'box', s: 6 }, { w: 'bag' }), /Your bag is full/);
+  assert.strictEqual(World.count(s.p, 'scrap'), 0, 'a full bag takes nothing more…');
+  mv({ w: 'box', s: 0 }, { w: 'bag' });
+  assert.strictEqual(World.count(s.p, 'wood'), 30, '…unless it fits on a stack already there');
+  // what you hold goes away with its last stack
+  s.c.config.bag_slots = 32;
+  World.give(s.c, s.p, 'wooden_sword', 1, []); s.p.belt[0] = 'wooden_sword'; World.holdSlot(s.c, s.p, 0);
+  assert.strictEqual(s.p.equipment.weapon, 'wooden_sword');
+  mv({ w: 'bag', s: s.p.inventory.find(st => st.item === 'wooden_sword').s }, { w: 'box' });
+  assert.strictEqual(s.p.equipment.weapon, undefined);
+  put(s, 'yard', 1, 1, 'N');
+  assert.match(mv({ w: 'bag', s: 0 }, { w: 'box' }), /Too far away/);
+});
+
+test('any container a player builds is storage: no storage setting needed, its capacity is its cells, and it never comes with loot', () => {
+  const s = yard();
+  s.c.objects.obj_crate.properties = { loot_table: 'barrel', capacity: 20 };            // a container object as the map editor makes them
+  doAct(s, { type: 'build', bp: 'bp_crate', x: 5, y: 4 });
+  const crate = yardMap(s).entities.filter(e => e.ref === 'obj_crate')[0];
+  for (let i = 0; i < 3; i++) doAct(s, { type: 'work', target: { t: 'ent', key: crate.key } });
+  const rec = s.ws.maps.yard.struct.ents.find(b => b.key === crate.key);
+  delete rec.inv;                                                                       // …and one built before this rule had no list of its own
+  const bag0 = JSON.stringify(s.p.inventory), gold0 = s.p.gold;
+  const ev = World.act(s.c, s.ws, s.p, { type: 'interact', x: 5, y: 4 }, clock += 5000, dice([0.0]), [s.p]);
+  const box = ev.find(e => e.type === 'storage');
+  assert.ok(box && box.slots === 20 && box.inv.length === 0, 'an empty grid of 20 cells');
+  assert.deepStrictEqual([JSON.stringify(s.p.inventory), s.p.gold], [bag0, gold0], 'no loot from a crate you built yourself');
+  const cell = s.p.inventory.find(st => st.item === 'wood').s;
+  doAct(s, { type: 'inv', key: crate.key, from: { w: 'bag', s: cell }, to: { w: 'box', s: 19 } });
+  assert.deepStrictEqual(rec.inv.map(st => st.item + '@' + st.s), ['wood@19']);
+});
+
 test('a storage crate keeps what you put in; smashed, it leaves the contents in rubble', () => {
   const s = yard();
   doAct(s, { type: 'build', bp: 'bp_crate', x: 5, y: 4 });
@@ -1522,20 +1804,20 @@ test('a storage crate keeps what you put in; smashed, it leaves the contents in 
   const wood0 = World.count(s.p, 'wood');
   doAct(s, { type: 'store', key: crate.key, op: 'put', item: 'wood', qty: 10 });
   doAct(s, { type: 'store', key: crate.key, op: 'put', item: 'nails', qty: 5 });
-  assert.deepStrictEqual(crate.inv, { wood: 10, nails: 5 });
+  assert.deepStrictEqual(boxOf(crate.inv), { wood: 10, nails: 5 });
   assert.strictEqual(World.count(s.p, 'wood'), wood0 - 10);
   put(s, 'yard', 4, 4, 'E');
   ev = World.act(s.c, s.ws, s.p, { type: 'interact' }, clock += 5000, mid, [s.p]);
-  assert.ok(ev.some(e => e.type === 'storage' && e.inv.wood === 10), 'the use key opens the crate you face');
+  assert.ok(ev.some(e => e.type === 'storage' && boxOf(e.inv).wood === 10), 'the use key opens the crate you face');
   doAct(s, { type: 'store', key: crate.key, op: 'take', item: 'wood', qty: 4 });
-  assert.deepStrictEqual([crate.inv.wood, World.count(s.p, 'wood')], [6, wood0 - 6]);
+  assert.deepStrictEqual([boxOf(crate.inv).wood, World.count(s.p, 'wood')], [6, wood0 - 6]);
   assert.match(doAct(s, { type: 'store', key: crate.key, op: 'take', item: 'scrap', qty: 1 }), /none in there/);
   assert.match(doAct(s, { type: 'dismantle', target: { t: 'ent', key: crate.key } }), /Empty it first/);
   assert.strictEqual(World.view(s.c, s.ws, 'yard', s.p, [s.p], -1).struct.ents[0].inv, undefined, 'contents are not broadcast with the map');
   World.damageStructure(s.c, s.ws, 'yard', { t: 'ent', key: crate.key }, 999, { kind: 'blast', now: clock }, []);
   const left = yardMap(s).entities.filter(e => e.x === 5 && e.y === 4);
   assert.deepStrictEqual(left.map(e => e.ref), ['obj_rubble']);
-  assert.deepStrictEqual(left[0].inv, { wood: 6, nails: 5 }, 'nothing was lost');
+  assert.deepStrictEqual(boxOf(left[0].inv), { wood: 6, nails: 5 }, 'nothing was lost');
   assert.strictEqual(Rules.tryMove(s.c, yardMap(s), 4, 4, 'E', {}).ok, true, 'rubble can be walked over');
 });
 
@@ -1600,7 +1882,7 @@ test('inside a base only its people open what was built, take it apart or damage
   Object.assign(s.q, { x: 9, y: 5, facing: 'W' });
   assert.match(actAs(s, s.q, { type: 'interact', x: 8, y: 5 }), /belongs to Builder's base/);
   assert.match(actAs(s, s.q, { type: 'store', key: crate.key, op: 'take', item: 'wood', qty: 5 }), /belongs to Builder's base/);
-  assert.strictEqual(crate.inv.wood, 5);
+  assert.strictEqual(boxOf(crate.inv).wood, 5);
   assert.match(actAs(s, s.q, { type: 'dismantle', target: cT }), /not yours to take apart/);
   actAs(s, s.q, { type: 'attack', x: 8, y: 5 });
   assert.strictEqual(World.structInfo(s.c, landMap(s), cT).hp, 30, 'a raider\'s blows do nothing');
@@ -2621,6 +2903,558 @@ test('upstairs, floor laid or taken up is roof gained or lost below, and it obey
   assert.match(doAs(s2, s2.p, { type: 'build', bp: 'bp_steps', x: 8, y: 6, facing: 'E' }), /You build a stairs|Stairs|stairs/);
   assert.ok(!World.covered(s2.c, live(s2, 'yard'), 8, 6), 'the stairwell is open');
   assert.strictEqual(live(s2, 'yard_z1').terrain[6][8], '');
+});
+
+// ---------------------------------------------------------------- monster brains: the walker
+// A walker dropped into a test map. `over` = settings of its monster def (sight, aggroS, ...).
+function withWalker(s, mapId, x, y, over) {
+  s.c.monsters.walker = Object.assign({}, s.c.monsters.walker, { brain: 'walker', sight: 8, aggroS: 30, infectChance: 0 }, over || {});
+  const w = { ref: 'walker', id: 'walker#0', x, y, dead: false, hp: s.c.monsters.walker.hp, statuses: [], last: 0, facing: 'S' };
+  const ms = World.mapState(s.ws, mapId);
+  ms.monsters = [w]; ms.spawnSig = '';
+  s.at = 0; s.mapId = mapId;
+  return w;
+}
+// The world moves on one walker step at a time; returns everything that happened.
+function turns(s, n, rng) {
+  let ev = [];
+  for (let i = 0; i < n; i++) { s.at += s.c.monsters.walker.moveMs; const e = []; World.advance(s.c, s.ws, s.mapId, [s.p], s.at, rng || mid, e); ev = ev.concat(e); }
+  return ev;
+}
+const DOOR = { t: 'ent', key: 'arena.e1' };
+
+test('walker: it must see you to come after you; a wall in between and it does not know you are there', () => {
+  const s = arena();
+  put(s, 'arena', 3, 5, 'N');                                  // south of the wall that crosses the arena, door shut
+  const w = withWalker(s, 'arena', 3, 1);                      // north of it, 4 tiles away: well inside its range
+  turns(s, 6);
+  assert.strictEqual(w.ai, undefined, 'nothing to go after');
+  assert.strictEqual(s.p.hp, World.stats(s.c, s.p).maxHp);
+  // the plain brain, for contrast, is drawn through the wall
+  s.c.monsters.walker.brain = '';
+  w.x = 3; w.y = 1;
+  turns(s, 2);
+  assert.deepStrictEqual([w.x, w.y], [3, 2], 'pressed against the wall, as before');
+});
+
+test('walker: no player around and it is inert; one comes near and it wakes', () => {
+  const s = arena();
+  s.c.config.walker_wake_radius = 2;
+  put(s, 'arena', 6, 0, 'S');
+  const w = withWalker(s, 'arena', 0, 0);                      // in plain sight along the top row, but nobody is near it
+  turns(s, 8, dice([0.1]));                                    // (this die would have it wander every turn)
+  assert.deepStrictEqual([w.x, w.y, w.ai], [0, 0, undefined]);
+  put(s, 'arena', 2, 0, 'S');
+  turns(s, 1);
+  assert.strictEqual(w.ai.k, 'p', 'now somebody is there to set it off');
+});
+
+test('walker: it hunts what it sees, keeps looking after losing sight, and gives up when its aggro has run out', () => {
+  const s = arena();
+  put(s, 'arena', 6, 0, 'S');
+  const w = withWalker(s, 'arena', 0, 0, { aggroS: 5, aggro: 2 });
+  turns(s, 2);
+  assert.deepStrictEqual([w.ai.k, w.ai.id, w.ai.a, w.x], ['p', 'p1', 5000, 2], 'seen: full aggro, and on its way');
+  const shownAs = () => (World.view(s.c, s.ws, 'arena', s.p, [s.p]).monsters[0] || {}).alert;
+  assert.deepStrictEqual([World.alertOf(w), shownAs()], [2, 2], 'the page is told it has someone in sight (the ! over its head)');
+  put(s, 'arena', 6, 6, 'S');                                  // gone behind the wall, too far to hear
+  turns(s, 1);
+  assert.ok(w.ai && w.ai.a < 5000, 'out of sight: the aggro starts to run down');
+  assert.deepStrictEqual([World.alertOf(w), shownAs()], [1, 1], 'and that it is now looking for them (the ?)');
+  assert.deepStrictEqual([w.ai.x, w.ai.y], [6, 0], 'it still makes for where it last saw them');
+  // it survives being saved and loaded, and a night with nobody on the map costs it nothing
+  const left = w.ai.a;
+  s.ws = JSON.parse(JSON.stringify(s.ws));
+  const w2 = World.mapState(s.ws, 'arena').monsters[0];
+  s.at += 8 * 3600 * 1000;
+  const e = []; World.advance(s.c, s.ws, 'arena', [s.p], s.at, mid, e);
+  assert.ok(w2.ai && w2.ai.k === 'p' && w2.ai.a >= left - 2 * 1100, 'still hunting the next morning');
+  turns(s, 6);
+  assert.strictEqual(w2.ai, undefined, 'and after its few seconds of looking, it lets go');
+  assert.deepStrictEqual([World.alertOf(w2), shownAs()], [0, undefined]);
+});
+
+test('walker: its target behind a shut door, it breaks the door down, comes through and attacks', () => {
+  const s = arena();
+  put(s, 'arena', 0, 0, 'S');
+  const w = withWalker(s, 'arena', 2, 2, { aggro: 6 });        // door hp 12, plank wall hp 20, its blows do 6
+  turns(s, 1);
+  assert.strictEqual(w.ai.k, 'p');
+  put(s, 'arena', 1, 5, 'N');                                  // the player slips to the far side; it hears them there
+  const ev = turns(s, 8);
+  const hits = ev.filter(e => e.type === 'hit' && e.struct);
+  assert.deepStrictEqual(hits.map(e => e.struct), ['arena.e1', 'arena.e1'], 'two blows, both on the door: the weakest way in');
+  assert.strictEqual(World.structInfo(s.c, liveOf(s), DOOR), null, 'the door is gone');
+  assert.strictEqual(World.structInfo(s.c, liveOf(s), WALL(2)).hp, 20, 'the wall beside it was never touched');
+  assert.ok(w.y >= 3, 'it came through the doorway');
+  assert.match(texts(ev), /The walker hits you for/);
+});
+
+test('walker: the way it works out counts blows as steps: a weak door before a wall, and never what it cannot break', () => {
+  const s = arena();
+  const w = withWalker(s, 'arena', 2, 2);
+  const to = (x, y) => (ax, ay) => ax === x && ay === y;
+  assert.strictEqual(World.findPath(s.c, s.ws, 'arena', liveOf(s), w, to(1, 4), 6, { obst: {} }), 'WSS', 'through the door');
+  assert.strictEqual(World.findPath(s.c, s.ws, 'arena', liveOf(s), w, to(3, 4), 6, { obst: {} }), 'ESS', 'through the planks when the door is the long way');
+  assert.strictEqual(World.findPath(s.c, s.ws, 'arena', liveOf(s), w, to(1, 4), 0, { obst: {} }), null, 'on foot alone there is no way');
+  w.x = 5; w.y = 2;
+  assert.strictEqual(World.findPath(s.c, s.ws, 'arena', liveOf(s), w, to(5, 3), 6, { obst: {} }), 'WWSEE', 'never through brick it cannot break: along to the planks');
+});
+
+function walkerYard(cfg) {
+  const s = yard();
+  Object.assign(s.c.config, cfg || {});
+  doAct(s, { type: 'build', bp: 'bp_wood_wall', x: 4, y: 4, side: 'N' });
+  const rec = World.structInfo(s.c, yardMap(s), N44).rec;
+  rec.prog = rec.need; rec.hp = rec.max;                       // a finished wall north of the builder: 40 health
+  return s;
+}
+
+test('walker: what players built draws it like a player would, and it tears it down to get at who is behind', () => {
+  const s = walkerYard();
+  const w = withWalker(s, 'yard', 4, 1);                       // the wall hides the builder from it
+  turns(s, 1);
+  assert.deepStrictEqual([w.ai.k, w.ai.t], ['s', N44]);
+  let ev = turns(s, 3);
+  assert.deepStrictEqual([w.x, w.y], [4, 3], 'it walks up to the wall');
+  assert.ok(ev.some(e => e.type === 'hit' && e.struct === 'h4,4'), 'and starts on it');
+  ev = ev.concat(turns(s, 8));
+  assert.strictEqual(World.structInfo(s.c, yardMap(s), N44), null, 'seven blows and the wall is down');
+  assert.strictEqual(w.ai.k, 'p', 'through the hole it had beaten in it, it saw the builder');
+  assert.match(texts(ev), /The walker hits you for/);
+});
+
+test('walker: Config walkers_attack_buildings = off leaves buildings alone', () => {
+  const s = walkerYard({ walkers_attack_buildings: 'off' });
+  const w = withWalker(s, 'yard', 4, 1);
+  turns(s, 6);
+  assert.strictEqual(w.ai, undefined);
+  assert.strictEqual(World.structInfo(s.c, yardMap(s), N44).hp, 40);
+});
+
+test('walker: a living target comes before a building, and a building is left when one shows up', () => {
+  const s = walkerYard();
+  const w = withWalker(s, 'yard', 4, 1);
+  turns(s, 2);
+  assert.strictEqual(w.ai.k, 's');
+  put(s, 'yard', 1, 1, 'S');                                   // the builder steps out into the open
+  turns(s, 1);
+  assert.deepStrictEqual([w.ai.k, w.ai.id], ['p', 'p1']);
+});
+
+test('walker: it hunts prey animals too, once a player is around to see it start, and stops when it has won', () => {
+  const s = arena();
+  s.c.config.walker_wake_radius = 3;
+  s.c.monsters.deer = Object.assign({}, s.c.monsters.rat, { id: 'deer', name: 'Deer', prey: true, hp: 10, aggro: 0, moveMs: 600000 });
+  put(s, 'arena', 6, 6, 'N');                                  // the player is south of the wall, out of sight and far away
+  const w = withWalker(s, 'arena', 0, 0);
+  const deer = { ref: 'deer', id: 'deer#0', x: 3, y: 0, dead: false, hp: 10, statuses: [], last: 0, respawnAt: 0 };
+  World.mapState(s.ws, 'arena').monsters.push(deer);
+  turns(s, 3);
+  assert.strictEqual(w.ai, undefined, 'nobody near: inert');
+  s.c.config.walker_wake_radius = 24;
+  turns(s, 1);
+  assert.deepStrictEqual([w.ai.k, w.ai.id], ['m', 'deer#0']);
+  turns(s, 6);
+  assert.strictEqual(deer.dead, true, 'it caught the deer');
+  assert.strictEqual(w.ai, undefined, 'and with that it is done');
+});
+
+test('walker: struck from out of sight, it turns on whoever struck it', () => {
+  const s = arena();
+  put(s, 'arena', 3, 5, 'N');
+  const w = withWalker(s, 'arena', 3, 1);
+  w.engaged = 'p1';                                            // what World.hitMonster leaves on a monster a player hurt
+  turns(s, 1);
+  assert.deepStrictEqual([w.ai.k, w.ai.id, w.engaged], ['p', 'p1', null]);
+});
+
+
+test('a new character takes the hair and colour chosen on the character screen, if they are on offer', () => {
+  const c = Content.build(tables), ch = World.hairChoices(c);
+  assert.ok(ch.styles.length > 3 && ch.styles.includes('') && ch.colors.includes('hair_blonde'));
+  assert.ok(ch.styles.includes(c.config.start_hair), 'the starting hair is one of them');
+  const pick = ch.styles.find(x => x && x !== c.config.start_hair);
+  const p = World.newPlayer(c, 'a', 'Ana', 'warrior', { hair: pick, hairColor: 'hair_blonde' });
+  assert.deepStrictEqual([p.hair, p.hairColor], [pick, 'hair_blonde']);
+  assert.strictEqual(World.newPlayer(c, 'b', 'Ben', 'warrior', { hair: '', hairColor: 'hair_grey' }).hair, '', 'bald is a choice');
+  // the body: a man's unless a woman's was chosen; the same two for every class, named in Config
+  const f = World.newPlayer(c, 'f', 'Fay', 'mage', { body: 'female' });
+  assert.deepStrictEqual([f.body, World.publicPlayer(c, f).body, World.bodySprite(c, f)], ['female', 'female', c.config.body_female]);
+  assert.deepStrictEqual([p.body, World.publicPlayer(c, p).body, World.bodySprite(c, p)], [undefined, '', c.config.body_male]);
+  assert.strictEqual(World.newPlayer(c, 'g', 'Gil', 'warrior', { body: 'dragon' }).body, undefined);
+  // the skin: one of the tones on offer; the art's own tone is simply not recorded
+  assert.ok(ch.skins.length >= 5 && ch.skins.includes('skin_dark'));
+  const k = World.newPlayer(c, 'k', 'Kai', 'warrior', { skin: 'skin_dark' });
+  assert.deepStrictEqual([k.skin, World.publicPlayer(c, k).skin], ['skin_dark', 'skin_dark']);
+  assert.strictEqual(World.newPlayer(c, 'l', 'Lee', 'warrior', { skin: 'skin_light' }).skin, undefined);
+  assert.strictEqual(World.newPlayer(c, 'm', 'Moe', 'warrior', { skin: 'green' }).skin, undefined);
+  const bare = Content.build(tables); delete bare.config.body_male; delete bare.config.body_female;
+  assert.strictEqual(World.bodySprite(bare, p), bare.classes.warrior.bodySprite, 'no Config row: the class picture still serves for a man');
+  assert.match(World.bodySprite(bare, f), /body_survivor_female.png$/);
+  const q = World.newPlayer(c, 'c', 'Cai', 'warrior', { hair: 'art/somewhere/else.png', hairColor: 'red; drop' });
+  assert.deepStrictEqual([q.hair, q.hairColor], [c.config.start_hair, c.config.start_hair_color], 'anything else is ignored');
+  const d = World.newPlayer(c, 'd', 'Dee', 'warrior');
+  assert.deepStrictEqual([d.hair, d.hairColor], [c.config.start_hair, c.config.start_hair_color], 'no choice = the starting look');
+  c.config.hair_styles = 'art/a.png, art/b.png'; c.config.hair_colors = 'hair_black';
+  assert.deepStrictEqual(World.hairChoices(c).styles, [c.config.start_hair, 'art/a.png', 'art/b.png', ''], 'the Config can name its own');
+});
+
+
+test('animated ground: a tileset may hold several frames and a terrain may carry a tint; both are optional', () => {
+  const c = Content.build(tables);
+  assert.deepStrictEqual([c.tilesets.ts_water.frames, c.tilesets.ts_water.frameMs], [8, 140]);
+  assert.deepStrictEqual([c.terrain.l_toxic.autotile, c.terrain.l_toxic.tint], ['ts_water', 'water_toxic']);
+  assert.deepStrictEqual([c.tilesets.fields.frames, c.terrain.l_water.tint], [1, '']);   // nothing said = a still sheet, as drawn
+  assert.ok(!c.terrain.l_lava.pass.n && !c.terrain.l_lava.pass.s);                        // not for walking on
+  // …but flat: you see across it, where other ground nobody can cross hides what is behind
+  const open = Object.keys(c.terrain).find(id => c.terrain[id].pass.n && c.terrain[id].pass.s && c.terrain[id].pass.e && c.terrain[id].pass.w);
+  const wall = Object.keys(c.terrain).find(id => !c.terrain[id].pass.n && !c.terrain[id].pass.s && !c.terrain[id].seeThrough);
+  const flat = { width: 5, height: 1, terrain: [[open, open, 'l_water', open, open]], entities: [], hWalls: [], vWalls: [] };
+  const solid = Object.assign({}, flat, { terrain: [[open, open, wall, open, open]] });
+  const none = () => '';
+  assert.strictEqual(World.blocksSight(c, flat, 2, 0, none), false);
+  assert.strictEqual(World.blocksSight(c, solid, 2, 0, none), true);
+});
+
+// ---------------------------------------------------------------- ground height
+test('ground height: a change of height is a cliff, a ramp joins two levels, and its flanks stay closed', () => {
+  const tb = JSON.parse(JSON.stringify(tables)), row = Array(6).fill('til_1'), el = Array(6).fill(0).map(() => Array(6).fill(''));
+  // a 2x2 plateau at level 1 (cells 2..3, 1..2), reached by a ramp at (2,3) climbing north
+  el[1][2] = '1'; el[1][3] = '1'; el[2][2] = '1'; el[2][3] = '1'; el[3][2] = '0N';
+  tb.Maps.push({ id: 'hill', name: 'Hill', width: 6, height: 6, terrain: JSON.stringify(Array(6).fill(row)), elev: JSON.stringify(el) });
+  const c = Content.build(tb), m = c.maps.hill, go = (x, y, d) => Rules.tryMove(c, m, x, y, d, {});
+  assert.deepStrictEqual([Rules.heightAt(m, 2, 1), Rules.heightAt(m, 0, 0), Rules.rampAt(m, 2, 3), Rules.rampAt(m, 2, 2)], [1, 0, 'N', '']);
+  assert.deepStrictEqual([go(1, 1, 'E').ok, go(1, 1, 'E').reason], [false, 'cliff'], 'up a cliff');
+  assert.strictEqual(go(2, 1, 'W').reason, 'cliff', 'nor down it');
+  assert.strictEqual(go(2, 1, 'E').ok, true, 'along the top');
+  assert.strictEqual(go(3, 3, 'N').reason, 'cliff', 'the plateau from the south, beside the ramp');
+  assert.strictEqual(go(2, 4, 'N').ok, true, 'onto the foot of the ramp');
+  assert.strictEqual(go(2, 3, 'N').ok, true, 'and off its top onto the plateau');
+  assert.strictEqual(go(2, 2, 'S').ok, true, 'back down the same way');
+  assert.strictEqual(go(1, 3, 'E').reason, 'cliff', 'not onto the ramp from its flank');
+  assert.strictEqual(go(2, 3, 'E').reason, 'cliff', 'nor off it sideways');
+  assert.strictEqual(go(1, 4, 'NE').ok, false, 'no cutting the corner onto the ramp');
+  el[3][3] = '0N'; m.elev = el;                                                       // a second ramp beside it: one wide ramp
+  assert.strictEqual(go(2, 3, 'E').ok, true);
+  assert.deepStrictEqual([Rules.groundHeight(m, 2.5, 3.99), Rules.groundHeight(m, 2.5, 3.5), Rules.groundHeight(m, 2.5, 1.5), Rules.groundHeight(m, 0.5, 0.5)].map(v => Math.round(v * 100) / 100), [0.01, 0.5, 1, 0]);
+  // reach: nothing on another level is used or hit — a tree up on the plateau, a monster below a ledge
+  assert.deepStrictEqual([Rules.reachBlocked(c, m, 1, 1, 2, 1), Rules.reachBlocked(c, m, 2, 1, 3, 1), Rules.reachBlocked(c, m, 1, 0, 2, 1), Rules.reachBlocked(c, m, 2, 4, 2, 3)], [true, false, true, false]);
+  tb.Objects.push({ id: 't_oak', name: 'Oak', kind: 'deco', walkable: false, properties: '{"hp":10,"material":"wood","harvest":"wood:3"}' });
+  tb.MapEntities.push({ map: 'hill', key: 'hill.e1', x: 2, y: 1, ref: 't_oak', data: '' });
+  const c2 = Content.build(tb), ws2 = { maps: {} }, p2 = World.newPlayer(c2, 'p1', 'Ana', c2.config.start_class);
+  Object.assign(p2, { map: 'hill', x: 1, y: 1, facing: 'E' });
+  assert.match(texts(World.act(c2, ws2, p2, { type: 'attack', x: 2, y: 1 }, 5000, mid, [p2])), /Nothing to attack/, 'the oak is up on the plateau');
+  assert.strictEqual(World.harvestWith(c2, World.liveMap(c2, ws2, 'hill'), p2, 2, 1), null);
+  Object.assign(p2, { x: 3, y: 1, facing: 'W' });
+  assert.match(texts(World.act(c2, ws2, p2, { type: 'attack', x: 2, y: 1 }, 9000, mid, [p2])), /You hit the oak/, 'from beside it on the plateau it can be worked');
+  // a map with no heights behaves as before, and monsters obey the same cliffs (they move with tryMove)
+  assert.strictEqual(Rules.cliffBetween(c.maps[c.config.start_map], 1, 1, 'E'), false);
+});
+
+// ---------------------------------------------------------------- animals
+// An open 12x12 field; the player stands at (1,1). Animals are put straight into the map's monsters.
+function meadow() {
+  const tb = JSON.parse(JSON.stringify(tables)), row = Array(12).fill('til_1');
+  tb.Maps.push({ id: 'field', name: 'Field', width: 12, height: 12, terrain: JSON.stringify(Array(12).fill(row)) });
+  const c = Content.build(tb), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Ana', 'warrior');
+  c.config.move_burst = 999;
+  Object.assign(p, { map: 'field', x: 1, y: 1, facing: 'S' });
+  World.advance(c, ws, 'field', [p], 1000, mid, []);
+  const s = { c, ws, p, t: 1000 };
+  s.put = (ref, x, y, extra) => { const m = Object.assign({ id: ref + '#' + ws.maps.field.monsters.length, ref, x, y, hp: c.monsters[ref].hp, dead: false, last: s.t, respawnAt: 0, facing: 'S', spawn: '' }, extra || {}); ws.maps.field.monsters.push(m); return m; };
+  s.run = (ms, rng) => { const ev = []; for (let k = 0; k < ms / 100; k++) { s.t += 100; World.advance(c, ws, 'field', [p], s.t, rng || mid, ev); } return ev; };
+  return s;
+}
+const dist = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+
+test('animals: a deer runs from a player who comes close, and never attacks', () => {
+  const s = meadow(), deer = s.put('deer', 4, 4);
+  const hp = s.p.hp, d0 = dist(deer, s.p);
+  s.run(3000);
+  assert.ok(dist(deer, s.p) > d0, 'it put distance between them: ' + dist(deer, s.p));
+  assert.strictEqual(s.p.hp, hp);
+  const far = s.put('deer', 10, 10), at = [far.x, far.y];
+  s.run(1000, () => 0.99);                                             // out of its flee range, and the dice say stand still
+  assert.deepStrictEqual([far.x, far.y], at);
+});
+
+test('animals: a wolf goes for a player in range and bites; one that has just eaten leaves distant players alone', () => {
+  const s = meadow(), wolf = s.put('wolf', 5, 1);
+  const hp = s.p.hp;
+  s.run(4000);
+  assert.ok(dist(wolf, s.p) === 1 && s.p.hp < hp, 'it closed in and bit');
+  const s2 = meadow(), w2 = s2.put('wolf', 6, 6), rabbit = s2.put('rabbit', 7, 6);
+  Object.assign(s2.p, { x: 0, y: 0 }); s2.c.monsters.wolf.aggro = 3; s2.c.monsters.rabbit.moveMs = 99999;   // the player is out of range; the rabbit cannot get away
+  s2.run(6000);
+  assert.ok(rabbit.dead, 'the wolf killed the rabbit');
+  assert.ok(w2.fedUntil > s2.t, 'and has eaten');
+  const carcass = s2.ws.maps.field.struct.ents.find(b => b.ref === 'carcass_rabbit');
+  assert.ok(carcass && carcass.wild && carcass.x === rabbit.x, 'the rabbit left a carcass where it fell');
+});
+
+test('animals: a carcass is a container with the loot inside; emptied it is gone, and it rots away if left', () => {
+  const s = meadow(), deer = s.put('deer', 2, 1);
+  s.c.monsters.deer.moveMs = 99999;
+  World.hitMonster(s.c, s.ws, 'field', s.p, deer, 999, s.t, mid, []);
+  const body = () => s.ws.maps.field.struct.ents.find(b => b.ref === 'carcass_deer');
+  assert.ok(deer.dead && body(), 'a carcass lies there');
+  assert.strictEqual(World.count(s.p, 'raw_meat'), 0, 'nothing straight into the bag');
+  const go = a2 => World.act(s.c, s.ws, s.p, a2, s.t += 1000, mid, [s.p]);
+  let ev = go({ type: 'interact', x: 2, y: 1 });
+  const box = ev.find(e => e.type === 'storage');
+  assert.deepStrictEqual(box.inv.map(st => st.item + ':' + st.qty).sort(), ['leather:2', 'raw_meat:4'], 'opened like any container');
+  World.give(s.c, s.p, 'wood', 1, []);
+  assert.match(texts(go({ type: 'inv', key: box.key, from: { w: 'bag', s: s.p.inventory.find(st => st.item === 'wood').s }, to: { w: 'box' } })), /can't put things in that/);
+  assert.strictEqual(box.takeOnly, true);
+  const woodCell = s.p.inventory.find(st => st.item === 'wood').s;
+  go({ type: 'inv', key: box.key, from: { w: 'box', s: 0 }, to: { w: 'bag', s: woodCell } });      // dropped onto the wood: no swap into the carcass
+  assert.ok(body() && !body().inv.some(st => st.item === 'wood') && World.count(s.p, 'wood') === 1, 'half taken: still there, and nothing went in');
+  ev = go({ type: 'inv', key: box.key, from: { w: 'box', s: 1 }, to: { w: 'bag' } });
+  assert.deepStrictEqual([World.count(s.p, 'raw_meat'), World.count(s.p, 'leather'), !!body()], [4, 2, false], 'taken clean, it is gone');
+  assert.ok(ev.some(e => e.type === 'storage' && e.gone && e.key === box.key), 'and the page is told to close it');
+  const s2 = meadow(), d2 = s2.put('deer', 6, 6);
+  World.hitMonster(s2.c, s2.ws, 'field', s2.p, d2, 999, s2.t, mid, []);
+  assert.ok(s2.ws.maps.field.struct.ents.some(b => b.ref === 'carcass_deer'));
+  World.advance(s2.c, s2.ws, 'field', [s2.p], s2.t + 301000, mid, []);
+  assert.ok(!s2.ws.maps.field.struct.ents.some(b => b.ref === 'carcass_deer'), 'five minutes on it has rotted away');
+  // a monster with only a loot table leaves a body too, with what the table rolled inside; an empty one is gone when looked at
+  const s4 = meadow(), rat = s4.put('rat', 2, 1);
+  s4.c.monsters.rat.carcass = 'carcass_rabbit'; s4.c.monsters.rat.moveMs = 99999;
+  s4.c.loot.rat = [{ item: 'bone', chance: 1, min: 2, max: 2 }];
+  World.hitMonster(s4.c, s4.ws, 'field', s4.p, rat, 999, s4.t, mid, []);
+  const b4 = s4.ws.maps.field.struct.ents.find(b => b.ref === 'carcass_rabbit');
+  assert.deepStrictEqual([b4.inv.map(st => st.item + ':' + st.qty).join(), World.count(s4.p, 'bone')], ['bone:2', 0], 'the table drop is in the body, not in the bag');
+  const s5 = meadow(), rat5 = s5.put('rat', 2, 1);
+  s5.c.monsters.rat.carcass = 'carcass_rabbit'; s5.c.loot.rat = [];
+  World.hitMonster(s5.c, s5.ws, 'field', s5.p, rat5, 999, s5.t, mid, []);
+  assert.ok(s5.ws.maps.field.struct.ents.some(b => b.ref === 'carcass_rabbit'), 'a body even with nothing on it');
+  assert.match(texts(World.act(s5.c, s5.ws, s5.p, { type: 'interact', x: 2, y: 1 }, s5.t += 1000, mid, [s5.p])), /There is nothing on the rabbit carcass/);
+  assert.ok(!s5.ws.maps.field.struct.ents.some(b => b.ref === 'carcass_rabbit'), 'and looking at it clears it away');
+  // an animal with loot but no carcass hands it over when a player kills it
+  const s3 = meadow(), d3 = s3.put('deer', 6, 6);
+  s3.c.monsters.deer.carcass = '';
+  World.hitMonster(s3.c, s3.ws, 'field', s3.p, d3, 999, s3.t, mid, []);
+  assert.deepStrictEqual([World.count(s3.p, 'raw_meat'), World.count(s3.p, 'leather')], [4, 2]);
+  s3.c.monsters.rabbit.carcass = '';
+  World.hitMonster(s3.c, s3.ws, 'field', null, s3.put('rabbit', 7, 7), 999, s3.t, mid, []);          // killed by a wolf: nobody gets it
+  assert.strictEqual(World.count(s3.p, 'raw_meat'), 4);
+});
+
+test('animals: a chicken is tamed with seeds, settles at a coop, lays eggs there, and its spawner grows a new wild one', () => {
+  const s = meadow(), hen = s.put('chicken', 2, 2, { spawn: 'field.e9', id: 'field.e9#0' });
+  s.c.monsters.chicken.layS = 10;
+  const st = World.structOf ? World.structOf(s.ws, 'field') : (s.ws.maps.field.struct = s.ws.maps.field.struct || { rev: 1, n: 0, walls: {}, ents: [], dmg: {}, gone: {}, floor: {}, hole: {}, shadow: {}, roof: {} });
+  st.ents.push({ key: 'field.b' + (++st.n), x: 4, y: 4, ref: 'obj_coop', data: {}, hp: 30, max: 30, bp: 'bp_coop', by: 'p1', built: 1, prog: 4, need: 4 }); st.rev = (st.rev || 0) + 1;
+  const use = () => texts(World.act(s.c, s.ws, s.p, { type: 'interact', x: hen.x, y: hen.y }, s.t += 1000, mid, [s.p]));
+  s.run(2000);
+  assert.ok(dist(hen, s.p) > 1, 'empty-handed, it keeps away');
+  World.give(s.c, s.p, 'seeds', 2, []); s.p.belt[1] = 'seeds'; World.holdSlot(s.c, s.p, 1);
+  Object.assign(hen, { x: 2, y: 1 });
+  s.run(1500, () => 0.99);
+  assert.deepStrictEqual([hen.x, hen.y], [2, 1], 'with seeds in hand it does not run');
+  assert.match(use(), /The chicken is yours now\. It settles at the coop/);
+  assert.deepStrictEqual([World.count(s.p, 'seeds'), hen.tame, hen.owner, !!hen.free, hen.home.x, hen.home.y], [1, true, 'p1', true, 4, 4]);
+  assert.match(use(), /Your chicken lives at the coop/);
+  const again = s.ws.maps.field.monsters.find(q => q.id === 'field.e9#0');
+  assert.ok(again && again !== hen && again.dead && again.respawnAt > s.t, 'the spawner will grow another');
+  World.holdSlot(s.c, s.p, -1);
+  s.run(40000);
+  assert.ok(dist(hen, { x: 4, y: 4 }) <= 3, 'it went to live by the coop: ' + hen.x + ',' + hen.y);
+  const eggs = () => s.ws.maps.field.struct.ents.filter(b => b.ref === '_drop' && b.data.pickup === 'egg:1');
+  assert.ok(eggs().length >= 1 && eggs().length <= 6, 'eggs lie around: ' + eggs().length);
+  const egg = eggs()[0], n = eggs().length;
+  Object.assign(s.p, { x: egg.x, y: egg.y });
+  World.act(s.c, s.ws, s.p, { type: 'interact' }, s.t += 1000, mid, [s.p]);
+  assert.deepStrictEqual([World.count(s.p, 'egg'), eggs().length], [1, n - 1], 'picked up');
+  World.hitMonster(s.c, s.ws, 'field', null, hen, 999, s.t, mid, []);
+  World.advance(s.c, s.ws, 'field', [s.p], s.t += 500, mid, []);
+  assert.ok(!s.ws.maps.field.monsters.includes(hen), 'killed, a tame one does not come back');
+});
+
+// ---------------------------------------------------------------- cookers
+test('a campfire cooks: fuel and food go in their cells, lit it burns and cooks over time, and goes out with the fuel', () => {
+  const tb = JSON.parse(JSON.stringify(tables)), row = Array(5).fill('til_1');
+  tb.Maps.push({ id: 'kitchen', name: 'Kitchen', width: 5, height: 5, terrain: JSON.stringify(Array(5).fill(row)) });
+  tb.MapEntities.push({ map: 'kitchen', key: 'kitchen.e1', x: 2, y: 1, ref: 'obj_24', data: '' });
+  const c = Content.build(tb), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Ana', 'warrior');
+  Object.assign(p, { map: 'kitchen', x: 2, y: 2, facing: 'N', inventory: [] });
+  let now = 100000;
+  const go = a => World.act(c, ws, p, a, now += 100, mid, [p]);
+  const fire = { key: 'kitchen.e1' }, state = () => World.stateOf(c, ws, 'kitchen', fire) || '';
+  const cells = () => { const o = {}; ws.maps.kitchen.cookers['kitchen.e1'].inv.forEach(st => { o[st.s] = st.item + ':' + st.qty; }); return o; };
+  const cellOf = id => p.inventory.find(st => st.item === id).s;
+  let ev = go({ type: 'interact', x: 2, y: 1 });
+  const box = ev.find(e => e.type === 'storage');
+  assert.ok(box && box.slots === 3 && box.cook && !box.cook.lit, 'using it opens its three cells');
+  assert.ok(!ev.some(e => e.type === 'craft'), 'not the crafting panel');
+  assert.strictEqual(state(), 'empty');
+  World.give(c, p, 'raw_meat', 3, []); World.give(c, p, 'wood', 2, []); World.give(c, p, 'seeds', 1, []);
+  assert.match(texts(go({ type: 'store', key: fire.key, op: 'light' })), /nothing in it to burn/);
+  go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('raw_meat') }, to: { w: 'box' } });
+  go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('wood') }, to: { w: 'box' } });
+  assert.deepStrictEqual(cells(), { 0: 'raw_meat:3', 1: 'wood:2' }, 'each to its own cell');
+  assert.match(texts(go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('seeds') }, to: { w: 'box' } })), /Nothing can be made of that here/);
+  assert.match(texts(go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('seeds') }, to: { w: 'box', s: 1 } })), /will not burn/);
+  assert.match(texts(go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('seeds') }, to: { w: 'box', s: 2 } })), /where things come out/);
+  assert.strictEqual(state(), 'fueled');
+  ev = go({ type: 'store', key: fire.key, op: 'light' });
+  assert.ok(ev.find(e => e.type === 'storage').cook.lit);
+  assert.strictEqual(state(), 'burning');
+  assert.strictEqual(World.view(c, ws, 'kitchen', p, [p], -1).states['kitchen.e1'], 'burning', 'the page is told, for the picture');
+  World.advance(c, ws, 'kitchen', [p], now += 9000, mid, []);
+  assert.deepStrictEqual(cells(), { 0: 'raw_meat:2', 1: 'wood:1', 2: 'cooked_meat:1' }, 'nine seconds on: one cooked, one piece of wood burning');
+  World.advance(c, ws, 'kitchen', [p], now += 3600000, mid, []);                          // left alone for an hour
+  assert.deepStrictEqual(cells(), { 2: 'cooked_meat:3' }, 'all cooked, the fuel spent');
+  assert.deepStrictEqual([state(), ws.maps.kitchen.cookers['kitchen.e1'].lit], ['empty', false], 'and the fire went out');
+  go({ type: 'inv', key: fire.key, from: { w: 'box', s: 2 }, to: { w: 'bag' } });
+  assert.strictEqual(World.count(p, 'cooked_meat'), 3);
+  // what a cooker makes is not made by hand
+  const recs = World.recipesFor(c, World.liveMap(c, ws, 'kitchen'), p, World.viewLookup(c, c.maps.kitchen, { states: {}, monsters: [], players: [] }, p));
+  assert.ok(!recs.some(r => r.id === 'r_cooked_meat') && recs.some(r => r.id === 'r_hammer'));
+});
+
+test('a bow: one arrow on the string, drawing the next takes time, and others are told how it is held', () => {
+  const s = hero('warrior');
+  World.give(s.c, s.p, 'bow', 1, []); World.give(s.c, s.p, 'arrow', 3, []);
+  s.p.belt[0] = 'bow'; World.holdSlot(s.c, s.p, 0);
+  assert.strictEqual(s.p.equipment.weapon, 'bow');
+  assert.strictEqual(World.weaponState(s.c, s.p), '', 'drawn for the first time it comes with an arrow nocked');
+  const m = monster(s, 'skeleton', 12, 13); s.p.x = 9; s.p.y = 13;
+  const hp = m.hp;
+  act(s, { type: 'shoot', x: 12, y: 13 }, 10000);
+  assert.ok(m.hp < hp, 'the arrow hit');
+  assert.strictEqual(World.weaponState(s.c, s.p), 'empty');
+  act(s, { type: 'shoot', x: 12, y: 13 }, 11000);                      // the next click draws another
+  assert.strictEqual(World.weaponState(s.c, s.p), 'reload');
+  const other = World.newPlayer(s.c, 'o', 'Other', 'warrior'); other.map = s.p.map;
+  assert.strictEqual(World.view(s.c, s.ws, other.map, other, [s.p, other]).players.find(q => q.id === s.p.id).wst, 'reload');
+  act(s, { type: 'face', dir: 'E' }, 11000 + 950);
+  assert.deepStrictEqual([World.weaponState(s.c, s.p), World.count(s.p, 'arrow')], ['', 1], 'drawn: one arrow shot, one on the string, one left');
+});
+
+test('inventory: Take all empties a container into the bag as far as it fits, and Sort joins and orders the stacks', () => {
+  const s = fresh();
+  put(s, 'map_3', 9, 7, 'E');
+  const box = act(s, { type: 'interact' }).find(e => e.type === 'storage');
+  const before = [World.count(s.p, 'potion'), World.count(s.p, 'wooden_sword')];
+  const ev = act(s, { type: 'inv', op: 'takeall', key: box.key });
+  assert.deepStrictEqual([World.count(s.p, 'potion'), World.count(s.p, 'wooden_sword')], [before[0] + 2, before[1] + 1]);
+  assert.deepStrictEqual(ev.find(e => e.type === 'storage').inv, [], 'the container is shown empty');
+  // a full bag takes only what fits
+  act(s, { type: 'inv', key: box.key, from: { w: 'bag', s: s.p.inventory.find(st => st.item === 'wooden_sword').s }, to: { w: 'box' } });
+  s.p.inventory = [{ item: 'iron_key', qty: 1, s: 0 }]; s.c.config.bag_slots = 1;
+  assert.match(texts(act(s, { type: 'inv', op: 'takeall', key: box.key })), /Your bag is full/);
+  // sort: scattered part stacks of one thing become full ones, from the first cell
+  s.c.config.bag_slots = 32;
+  const max = World.stackMaxOf(s.c, 'potion');
+  s.p.inventory = [{ item: 'potion', qty: 1, s: 20 }, { item: 'iron_key', qty: 1, s: 3 }, { item: 'potion', qty: max - 1, s: 7 }, { item: 'potion', qty: 2, s: 11 }];
+  act(s, { type: 'inv', op: 'sort' });
+  const pots = s.p.inventory.filter(st => st.item === 'potion').map(st => st.qty);
+  assert.deepStrictEqual(pots, [max, 2]);
+  assert.deepStrictEqual(s.p.inventory.map(st => st.s), [0, 1, 2], 'laid out from the first cell');
+  assert.strictEqual(World.count(s.p, 'iron_key'), 1);
+});
+
+test('the belt: a slot whose item has run out is free again', () => {
+  const s = fresh();
+  const slot = s.p.belt.indexOf('potion');
+  assert.ok(slot >= 0, 'the start potions sit on the belt');
+  World.take(s.p, 'potion', World.count(s.p, 'potion') - 1);
+  assert.strictEqual(s.p.belt[slot], 'potion', 'one left: still there');
+  World.take(s.p, 'potion', 1);
+  assert.strictEqual(s.p.belt[slot], '');
+});
+
+test('building: an object you built can be moved to a free spot, keeping what it is; others may not, and not onto something', () => {
+  const s = chairs();
+  roomAct(s, s.p, { type: 'build', bp: 'bp_chair', x: 7, y: 4, facing: 'N' });
+  const chair = roomMap(s).entities.filter(e => e.ref === 'obj_chair' && e.x === 7)[0], T = { t: 'ent', key: chair.key }, key = chair.key;
+  const lk = () => World.viewLookup(s.c, roomMap(s), World.view(s.c, s.ws, 'room', s.p, [s.p, s.q], -1), s.p);
+  assert.ok(World.canMove(s.c, roomMap(s), lk(), s.p, T).ok, 'it may be picked up');
+  assert.match(World.canMove(s.c, roomMap(s), lk(), s.p, T, 7, 4).reason, /already there/);
+  const spot = [[6, 4], [8, 4], [7, 3], [7, 5]].filter(q => World.canMove(s.c, roomMap(s), lk(), s.p, T, q[0], q[1]).ok)[0];
+  assert.ok(spot, 'a free cell next to it: ' + World.canMove(s.c, roomMap(s), lk(), s.p, T, 8, 4).reason);
+  assert.match(roomAct(s, s.q, { type: 'relocate', target: T, x: spot[0], y: spot[1] }), /not yours|Too far|belongs/);
+  assert.match(roomAct(s, s.p, { type: 'relocate', target: T, x: spot[0], y: spot[1], facing: 'W' }), /You move the chair/);
+  const now = roomMap(s).entities.filter(e => e.key === key)[0];
+  assert.deepStrictEqual([now.x, now.y, now.data.facing], [spot[0], spot[1], 'W'], 'same thing, new spot, turned');
+  roomAct(s, s.p, { type: 'build', bp: 'bp_chair', x: 7, y: 4 });
+  assert.match(roomAct(s, s.p, { type: 'relocate', target: T, x: 7, y: 4 }), /already there|not clear/);
+});
+
+test('a harvested tree does not grow back on top of someone standing there: it waits until the spot is clear', () => {
+  const s = meadow();
+  const map = s.c.maps.field, ref = Object.keys(s.c.objects).find(k => (s.c.objects[k].properties || {}).harvest), tree = { key: 'field.t1', x: 5, y: 5, ref, data: {} };
+  map.entities = (map.entities || []).concat([tree]);
+  World.advance(s.c, s.ws, 'field', [s.p], s.t, mid, []);
+  s.ws.maps.field.struct = s.ws.maps.field.struct || {}; s.ws.maps.field.struct.gone = s.ws.maps.field.struct.gone || {}; s.ws.maps.field.struct.gone[tree.key] = 2;
+  s.ws.maps.field.timers[tree.key] = { at: s.t + 1000, regrow: true };
+  const w = s.put('deer', tree.x, tree.y); s.c.monsters.deer.moveMs = 9e9;
+  World.advance(s.c, s.ws, 'field', [s.p], s.t + 2000, mid, []);
+  assert.ok(s.ws.maps.field.struct.gone[tree.key], 'someone is on it: not yet');
+  w.x = tree.x + 1;
+  World.advance(s.c, s.ws, 'field', [s.p], s.t + 6000, mid, []);
+  assert.ok(!s.ws.maps.field.struct.gone[tree.key], 'clear: it is back');
+});
+
+test('water: drinking from it quenches and adds toxicity; too much makes you ill, and it wears off', () => {
+  const s = meadow(), map = s.c.maps.field;
+  map.terrain[1][2] = 'l_water';                                        // right beside the player (1,1)
+  const lk = () => World.viewLookup(s.c, map, World.view(s.c, s.ws, 'field', s.p, [s.p]), s.p);
+  assert.deepStrictEqual(World.actionsAt(s.c, map, lk(), s.p, 2, 1).map(a => a.verb), ['drink']);
+  assert.strictEqual(World.actionsAt(s.c, map, lk(), s.p, 1, 2).length, 0, 'plain ground offers nothing');
+  s.p.thirst = 40;
+  let ev = World.act(s.c, s.ws, s.p, { type: 'interact', x: 2, y: 1, verb: 'drink' }, s.t, mid, [s.p]);
+  assert.strictEqual(s.p.thirst, 65); assert.strictEqual(s.p.tox, 8);
+  assert.match(texts(ev), /drink from the water/);
+  s.p.thirst = 100;
+  assert.match(texts(World.act(s.c, s.ws, s.p, { type: 'interact', x: 2, y: 1, verb: 'drink' }, s.t, mid, [s.p])), /not thirsty/);
+  assert.strictEqual(s.p.tox, 8);
+  s.p.facing = 'E'; s.p.thirst = 10;                                    // F, facing it: the same
+  World.act(s.c, s.ws, s.p, { type: 'interact' }, s.t, mid, [s.p]);
+  assert.strictEqual(s.p.thirst, 35); assert.strictEqual(s.p.tox, 16);
+  s.p.tox = 49; s.p.thirst = 10;
+  ev = World.act(s.c, s.ws, s.p, { type: 'interact', x: 2, y: 1, verb: 'drink' }, s.t, mid, [s.p]);
+  assert.match(texts(ev), /feel sick/);
+  const hp = s.p.hp; s.c.config.thirst_decay_per_min = 0; s.c.config.hunger_decay_per_min = 0;
+  s.run(13000);                                                         // two ticks of 6 s
+  assert.strictEqual(s.p.hp, hp - 4);
+  s.p.tox = 10; s.run(60000 * 2);
+  assert.ok(Math.abs(s.p.tox - 7) < 0.01, 'wears off 1.5 a minute: ' + s.p.tox);
+  assert.strictEqual(World.publicPlayer(s.c, s.p).tox, 7);
+});
+
+test('water: a used bottle leaves an empty one, which is filled at water and drunk again (not clean)', () => {
+  const s = meadow(), map = s.c.maps.field;
+  map.terrain[1][2] = 'l_water';
+  const n = id => World.count(s.p, id), lk = () => World.viewLookup(s.c, map, World.view(s.c, s.ws, 'field', s.p, [s.p]), s.p);
+  s.p.inventory = []; s.p.belt = s.p.belt.map(() => ''); s.p.held = -1;
+  World.give(s.c, s.p, 'water', 2, []); World.give(s.c, s.p, 'ration', 1, []);
+  s.p.thirst = 0; s.p.hunger = 0;
+  World.act(s.c, s.ws, s.p, { type: 'use', item: 'water' }, s.t, mid, [s.p]);
+  World.act(s.c, s.ws, s.p, { type: 'use', item: 'ration' }, s.t, mid, [s.p]);
+  assert.strictEqual(n('water'), 1); assert.strictEqual(n('bottle'), 1); assert.strictEqual(n('empty_can'), 1);
+  assert.strictEqual(s.p.tox, 0, 'bottled water is clean');
+  s.p.thirst = 0; World.act(s.c, s.ws, s.p, { type: 'use', item: 'water' }, s.t, mid, [s.p]);
+  assert.strictEqual(n('bottle'), 2);
+  assert.deepStrictEqual(World.actionsAt(s.c, map, lk(), s.p, 2, 1).map(a => a.verb), ['drink', 'fill:bottle']);
+  const ev = World.act(s.c, s.ws, s.p, { type: 'interact', x: 2, y: 1, verb: 'fill:bottle' }, s.t, mid, [s.p]);
+  assert.match(texts(ev), /fill the empty bottle ..2/);
+  assert.strictEqual(n('bottle'), 0); assert.strictEqual(n('dirty_water'), 2);
+  assert.match(texts(World.act(s.c, s.ws, s.p, { type: 'interact', x: 2, y: 1, verb: 'fill:bottle' }, s.t, mid, [s.p])), /nothing to fill/);
+  s.p.thirst = 0; World.act(s.c, s.ws, s.p, { type: 'use', item: 'dirty_water' }, s.t, mid, [s.p]);
+  assert.strictEqual(s.p.thirst, 60); assert.strictEqual(s.p.tox, 12); assert.strictEqual(n('bottle'), 1);
+  // an empty bottle in hand: the click (and F) fills it rather than drinking
+  s.p.belt[0] = 'bottle'; s.p.held = 0;
+  assert.strictEqual(World.actionsAt(s.c, map, lk(), s.p, 2, 1)[0].verb, 'fill:bottle');
+  s.p.facing = 'E'; World.act(s.c, s.ws, s.p, { type: 'interact' }, s.t, mid, [s.p]);
+  assert.strictEqual(n('bottle'), 0); assert.strictEqual(n('dirty_water'), 2);
+  // content from before these columns: nothing left behind, water found by its name
+  const old = JSON.parse(JSON.stringify(tables));
+  old.Items.forEach(r => { delete r.leaves; delete r.fills_into; delete r.toxicity; }); old.Terrain.forEach(r => { delete r.water; delete r.toxicity; });
+  const c2 = Content.build(old);
+  assert.strictEqual(c2.items.water.leaves, ''); assert.strictEqual(c2.terrain.l_water.water, true); assert.strictEqual(c2.terrain.l_lava.water, false);
 });
 
 console.log(`\n${passed} world tests passed`);

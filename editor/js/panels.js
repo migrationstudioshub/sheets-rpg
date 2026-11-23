@@ -31,7 +31,7 @@ var Panels = (function () {
     if (type === 'terrain') {
       var t = E.content.terrain[id]; if (!t) return c;
       var ts = t.autotile && E.content.tilesets[t.autotile], img;   // no art → empty thumb (shows what needs art)
-      if (ts && (img = Assets.get(ts.image))) {
+      if (ts && (img = Render.groundSheet ? Render.groundSheet(E.content, t, ts) : Assets.get(ts.image))) {
         var full = (E.content.autotile[ts.layout] || {})[255], n = full ? full[0] : 1, i = n - 1;
         g.drawImage(img, (i % ts.columns) * ts.tileSize, Math.floor(i / ts.columns) * ts.tileSize, ts.tileSize, ts.tileSize, 0, 0, T(), T());
       } else if (t.sprite && (img = Assets.get(t.sprite))) g.drawImage(img, 0, 0, T(), T());
@@ -192,7 +192,7 @@ var Panels = (function () {
 
   // ------------------------------------------------------------ palette
   var filter = '';
-  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', walls: 'Walls', roof: 'Roof', spawn: 'Start', nobuild: 'No-build' };
+  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', walls: 'Walls', roof: 'Roof', spawn: 'Start', nobuild: 'No-build', height: 'Height' };
   // N-S walls: 'center' straddles the grid line; 'cursor' snaps the wall fully onto whichever tile the cursor is
   // nearer, so you can keep objects in the other tile clear of the wall art. Visual only; collision stays on the line.
   function wallSideRow() {
@@ -207,10 +207,27 @@ var Panels = (function () {
     var box = $('palette'); box.innerHTML = '';
     var paletteTab = E.paletteTab;
     var tabs = h('div', { className: 'tabs' },
-      ['terrain', 'objects', 'monsters', 'walls', 'roof', 'spawn', 'nobuild'].map(function (t) {
+      ['terrain', 'objects', 'monsters', 'walls', 'roof', 'spawn', 'nobuild', 'height'].map(function (t) {
         return h('button', { className: paletteTab === t ? 'on' : '', text: TAB_NAMES[t],
           onclick: function () { E.setPaletteTab(t); all(); E.redraw(); } });
       }));
+    if (paletteTab === 'height') {                                    // ground height: pick a level, and whether it is a ramp
+      box.appendChild(tabs);
+      E.brush = E.brush || {};
+      if (E.brush.elev == null) E.brush.elev = 1;
+      box.appendChild(h('p', { className: 'note',
+        text: 'Height raises the ground in steps (one step = one tile high, two = a storey). Pick a level and paint with Brush (B) or Rectangle (R); Erase (E) puts a tile back to level 0. Where two tiles do not meet at the same height there is a cliff nobody can cross. A ramp joins the level you pick to the one above it: choose which way it climbs, and paint it on the LOWER level\'s tile.' }));
+      box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Level' }),
+        [0, 1, 2, 3, 4].map(function (n) {
+          return h('button', { className: Number(E.brush.elev) === n ? 'on' : '', text: String(n), onclick: function () { E.brush.elev = n; all(); } });
+        })));
+      box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Ramp' }),
+        [['', 'None'], ['N', '▲ N'], ['E', '▶ E'], ['S', '▼ S'], ['W', '◀ W']].map(function (r) {
+          return h('button', { className: (E.brush.ramp || '') === r[0] ? 'on' : '', text: r[1], onclick: function () { E.brush.ramp = r[0]; all(); } });
+        })));
+      box.appendChild(h('p', { className: 'note', text: E.brush.ramp ? 'Painting: a ramp from level ' + (Number(E.brush.elev) || 0) + ' up to ' + ((Number(E.brush.elev) || 0) + 1) + '.' : 'Painting: flat ground at level ' + (Number(E.brush.elev) || 0) + '.' }));
+      return;
+    }
     if (paletteTab === 'nobuild') {                                   // no palette either: paint / erase the no-build mask
       box.appendChild(tabs);
       box.appendChild(h('p', { className: 'note',
@@ -297,7 +314,7 @@ var Panels = (function () {
         if (!styles.length) listBox.appendChild(h('div', { className: 'kind', text: 'No wall styles yet: add one with + New wallStyle' }));
       } else {
         var byKind = {};
-        Object.keys(E.content.objects).map(function (k) { return E.content.objects[k]; })
+        Object.keys(E.content.objects).filter(function (k) { return k.charAt(0) !== '_'; }).map(function (k) { return E.content.objects[k]; })   // (ids starting with _ are the game's own)
           .filter(function (o) { return o.kind !== 'spawn' || o.sprite; })  // plain spawns use the Monsters tab; a sprited spawn (e.g. a nest) is a real placeable object
           .filter(match).forEach(function (o) { (byKind[o.kind] = byKind[o.kind] || []).push(o); });
         Object.keys(byKind).sort().forEach(function (k) {

@@ -80,6 +80,19 @@ var Content = (function () {
         .map(function (d) { return { name: str(d.name), type: str(d.type) || 'text', def: d.def == null ? '' : d.def, notes: str(d.notes) }; }) };
   }
 
+  /**
+   * The tool tags an item counts as (what "needs tool" on a blueprint, a recipe or a harvestable object asks for).
+   * Its own `tool` field if it has one ("axe, blade"). With none, an item whose type is a tool type — the type's id
+   * is "tool", or it has the tool tick and is not something you equip (so not every weapon) — is a tool by its own id.
+   * r = the item's row, ty = its type (a row or a built type; may be missing). The Content Studio lists the same.
+   */
+  function toolTags(r, ty) {
+    var tags = str(r && r.tool).split(/[;,]/).map(function (x) { return x.trim(); }).filter(Boolean);
+    if (tags.length || !r || !str(r.id)) return tags;
+    var isTool = str(r.type) === 'tool' || !!(ty && bool(ty.tool) && !bool(ty.equip));
+    return isTool ? [str(r.id)] : tags;
+  }
+
   function build(tables) {
     var c = { config: {}, tilesets: {}, autotile: {}, terrain: {}, kinds: {}, objects: {}, maps: {} };
 
@@ -88,7 +101,8 @@ var Content = (function () {
     (tables.Tilesets || []).forEach(function (r) {
       var id = str(r.id); if (!id) return;
       c.tilesets[id] = { id: id, image: str(r.image), tileSize: num(r.tile_size, 32),
-        columns: num(r.columns, 8), layout: str(r.layout) };
+        columns: num(r.columns, 8), layout: str(r.layout),
+        frames: Math.max(1, num(r.frames, 1)), frameMs: num(r.frame_ms, 200) };   // frames > 1 = an animated sheet: that many whole sheets side by side
     });
 
     (tables.Autotile || []).forEach(function (r) {
@@ -101,7 +115,10 @@ var Content = (function () {
       var id = str(r.id); if (!id) return;
       c.terrain[id] = { id: id, name: str(r.name) || id,
         sprite: str(r.sprite), autotile: str(r.autotile), layer: str(r.layer) === 'overlay' ? 'overlay' : (str(r.layer) === 'base' ? 'base' : ''),
-        frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200), buildOver: bool(r.build_over),
+        frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200), buildOver: bool(r.build_over), tint: str(r.tint), seeThrough: bool(r.see_through),
+        // a water source (drink from it, fill bottles). Not said = anything called "…water…"; toxicity '' = Config water_toxicity
+        water: r.water === undefined || r.water === '' || r.water === null ? /water/i.test(str(r.name) || id) : bool(r.water),
+        toxicity: r.toxicity === undefined || r.toxicity === '' || r.toxicity === null ? null : num(r.toxicity, 0),
         pass: { n: bool(r.pass_n), e: bool(r.pass_e), s: bool(r.pass_s), w: bool(r.pass_w) } };
     });
 
@@ -131,8 +148,9 @@ var Content = (function () {
       else if (p) kind.props[p] = { type: str(r.type), 'default': scalar(r['default']), notes: str(r.notes) };
     });
 
-    (tables.Objects || []).forEach(function (r) {
-      var id = str(r.id); if (!id) return;
+    // '_drop' is built in: an item lying on the ground (what a tame animal lays). The entity says which (data.pickup).
+    (tables.Objects || []).concat([{ id: '_drop', name: 'Item', kind: 'pickup', walkable: true, properties: '{}' }]).forEach(function (r) {
+      var id = str(r.id); if (!id || c.objects[id]) return;
       var pr = json(r.properties, {});
       c.objects[id] = { id: id, name: str(r.name) || id, kind: str(r.kind) || 'deco',
         sprite: str(r.sprite), spriteStates: pairs(r.sprite_states), walkable: str(r.kind) === 'stairs' ? true : bool(r.walkable),   // stairs are always walked on
@@ -170,9 +188,11 @@ var Content = (function () {
       var roof = decodeGrid(json(r.roof, []));
       // No-build mask: a W×H grid ('1' = players may not build on this tile), painted in the map editor.
       var nobuild = decodeGrid(json(r.nobuild, []));
+      // Ground height: a W×H grid of tokens ('' = level; '2' = two steps up; '1N' = a ramp from 1 up to 2 going north). See Rules.heightAt.
+      var elev = decodeGrid(json(r.elev, []));
       // Frozen autotile shapes from shift-click mapping: sparse { "x,y": mask } per layer, render-only.
       c.maps[id] = { id: id, name: str(r.name) || id, width: num(r.width, grid[0] ? grid[0].length : 0),
-        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls, roof: roof, nobuild: nobuild,
+        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls, roof: roof, nobuild: nobuild, elev: elev,
         roof_color: str(r.roof_color),
         // A floor of a multi-storey map (docs/FLOORS.md): the ground map's id and this floor's level. Linked below.
         floorOf: str(r.floor_of), z: num(r.z, 0),
@@ -205,14 +225,18 @@ var Content = (function () {
         cooldownMs: Math.max(0, num(r.cooldown_s, ty ? ty.cooldownS : 0)) * 1000,
         props: props,
         slot: slot, wornSprite: str(r.worn_sprite), defaultTint: str(r.default_tint),
+        wornEmpty: str(r.worn_empty), wornReload: str(r.worn_reload), wornAim: str(r.worn_aim),   // a magazine weapon held empty / being reloaded (a bow: no arrow / drawing)
         stackMax: num(r.stack_max, 99), value: num(r.value, 0),
         atk: num(r.atk, 0), def: num(r.def, 0), heal: num(r.heal, 0), mp: num(r.mp, 0),
         hunger: num(r.hunger, 0), thirst: num(r.thirst, 0),
+        // toxicity: what using it adds to the toxicity gauge (negative = a cure); leaves: the item left in the bag
+        // once it is used (an empty bottle); fillsInto: what this (empty) item becomes when filled at water
+        toxicity: num(r.toxicity, 0), leaves: str(r.leaves), fillsInto: str(r.fills_into),
         // equip_if gates equipping a weapon/armor (e.g. a rifle at level 3)
         equipIf: str(r.equip_if),
         // a ranged weapon: range > 0, spends `ammo` per shot, fires no faster than fire_ms;
         // clip = magazine size (fire from the loaded mag; press R to refill it from the ammo stack)
-        range: num(r.range, 0), ammo: str(r.ammo), ammoCost: Math.max(1, num(r.ammo_cost, 1)), fireMs: num(r.fire_ms, 0), clip: num(r.clip, 0),
+        range: num(r.range, 0), ammo: str(r.ammo), ammoCost: Math.max(1, num(r.ammo_cost, 1)), fireMs: num(r.fire_ms, 0), clip: num(r.clip, 0), reloadMs: Math.max(0, num(r.reload_ms, 0)),
         // fire_mode: '' / single = one shot per click; semi / auto = hold the fire button to keep firing
         fireMode: str(r.fire_mode),
         // aim: {px,py,mx,my} normalised to the worn sprite — pivot (rotation axis) and barrel tip, set in the
@@ -225,9 +249,13 @@ var Content = (function () {
         throwRange: num(r.throw_range, 0), throwArea: num(r.throw_area, 0), throwPower: num(r.throw_power, 0),
         throwStatus: str(r.throw_status), throwStatusMs: num(r.throw_status_ms, 0),
         // damage to walls/objects per hit (0 = derived from attack); burns = a thrown blast also sets wood alight
-        structureDmg: num(r.structure_dmg, 0), burns: bool(r.burns),
+        structureDmg: num(r.structure_dmg, 0), burns: bool(r.burns), fuelS: num(r.fuel_s, 0),
+        vsMaterial: (function () {                              // material_dmg "wood:3, stone:0.5" -> {wood: 3, stone: 0.5}
+          var o = {}; str(r.material_dmg).split(/[,;]/).forEach(function (part) { var b = part.split(':'), k = String(b[0] || '').trim(), v = Number(b[1]); if (k && v >= 0) o[k] = v; });
+          return o;
+        })(),
         // tool tags this item counts as (hammer, axe, ...): recipes and harvestable objects can ask for one
-        tools: str(r.tool).split(/[;,]/).map(function (x) { return x.trim(); }).filter(Boolean),
+        tools: toolTags(r, c.itemTypes[str(r.type)]),
         onUse: str(r.on_use) };
     });
     (tables.Monsters || []).forEach(function (r) {
@@ -240,6 +268,13 @@ var Content = (function () {
         attackRange: num(r.attack_range, 0), rangedMs: Math.max(250, num(r.ranged_cooldown_ms, 1500)),
         rangedProjectile: bool(r.ranged_projectile), rangedStatus: str(r.ranged_status),
         infectChance: num(r.infect_chance, 0),
+        // brain: how it thinks ('' = the plain one: go for whoever is within aggro_range; 'walker' = World.walkerStep).
+        // Walker settings: sight = how far it spots a target (0 = aggro_range), aggroS = seconds it keeps looking after
+        // losing sight (0 = 30), structureDmg = damage per blow to walls and objects (0 = its attack).
+        // prey = walkers hunt this monster as they hunt players (animals).
+        brain: str(r.brain), sight: num(r.sight_range, 0), aggroS: num(r.aggro_s, 0), structureDmg: num(r.structure_dmg, 0), prey: bool(r.prey),
+        // animals: how near a threat may come before it runs, what it leaves when killed, what tames it, what a tame one lays and how often
+        fleeRange: num(r.flee_range, 0), carcass: str(r.carcass), tameWith: str(r.tame_with), lays: str(r.lays), layS: num(r.lay_s, 0), loot: str(r.loot),   // lays / loot: item lists ("egg:1", "raw_meat:4, leather:2")
         // paper-doll monsters: one or more Appearance sets; the server picks one per spawn and rolls a look
         appearance: parseLooks(r.appearance) };
     });
@@ -438,6 +473,6 @@ var Content = (function () {
     return hash({ row: row, ents: ents });
   }
 
-  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, linkFloors: linkFloors, autoFloors: autoFloors, tidyMaps: tidyMaps };
+  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, toolTags: toolTags, linkFloors: linkFloors, autoFloors: autoFloors, tidyMaps: tidyMaps };
 })();
 if (typeof module !== 'undefined') module.exports = Content;

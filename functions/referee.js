@@ -82,15 +82,19 @@ function create(deps) {
     (ms.monsters || []).forEach(mo => {
       if (mo.dead) return;
       const def = content.monsters[mo.ref], k = mKey(mo.id);
-      m[k] = [mo.x, mo.y, mo.hp, mo.facing || 'S', (mo.statuses || []).map(st => st.id).join('|')].join(',');
+      // x, y, health, facing, statuses, and what it is up to (World.alertOf: 2 after someone in sight, 1 looking for them)
+      const al = World.alertOf ? World.alertOf(mo) : 0;
+      m[k] = [mo.x, mo.y, mo.hp, mo.facing || 'S', (mo.statuses || []).map(st => st.id).join('|')].concat(al ? [al] : []).join(',');
       d[k] = JSON.stringify({ id: mo.id, ref: mo.ref, maxHp: def ? def.hp : mo.hp, look: mo.look || undefined });
     });
     return {
       doors: Object.keys(fst).length ? JSON.stringify(fst) : null,
       players: (players || []).filter(q => q.map === mapId).map(q => ({
         // class + equipment + hair: what the others need to draw this player as they are (the same fields an answer carries)
-        id: q.id, name: q.name, 'class': q['class'] || '', equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '',
-        x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level
+        id: q.id, name: q.name, 'class': q['class'] || '', equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '',
+        x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level,
+        wst: World.weaponState ? World.weaponState(content, q) : '',   // weapon in hand: '' | empty | reload (its picture)
+        act: q.act || ''                                       // their last swing or shot, for the others to draw (World.noteAct)
       })),
       m: m, d: d
     };
@@ -340,11 +344,11 @@ function create(deps) {
     return { player: World.publicPlayer(content, p), world: world, events: events, seq: last.ms.seq };
   }
 
-  async function join(name, cls) {
+  async function join(name, cls, look) {
     const content = await getContent();
     name = String(name || '').replace(/[^\p{L}\p{N} _\-']/gu, '').trim().slice(0, 16);
     if (!name) throw new Error('pick a name (letters and numbers)');
-    const p = World.newPlayer(content, crypto.randomUUID().slice(0, 8), name, cls);
+    const p = World.newPlayer(content, crypto.randomUUID().slice(0, 8), name, cls, look);
     p.token = crypto.randomUUID() + crypto.randomUUID().slice(0, 8);
     p.created = new Date().toISOString();
     p._seen = clock();

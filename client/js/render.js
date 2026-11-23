@@ -6,9 +6,140 @@
  * offscreen canvas; objects and characters are drawn every frame on top.
  */
 var Render = (function () {
-  function tileFromSheet(img, ts, n, g, dx, dy, size) {
+  // frame (optional): an animated tileset's image holds ts.frames whole sheets side by side; this picks one.
+  function tileFromSheet(img, ts, n, g, dx, dy, size, frame) {
     var i = n - 1, sx = (i % ts.columns) * ts.tileSize, sy = Math.floor(i / ts.columns) * ts.tileSize;
+    if (frame) sx += frame * ts.columns * ts.tileSize;
     g.drawImage(img, sx, sy, ts.tileSize, ts.tileSize, dx, dy, size, size);
+  }
+  /** The sheet a terrain's autotile is cut from: the tileset's image, in the terrain's tint if it has one. */
+  function groundSheet(content, t, ts) {
+    var img = ts && Assets.get(ts.image);
+    if (!img || !t || !t.tint || typeof Tint === 'undefined' || !Tint.tintedOver) return img;
+    return Tint.tintedOver(img, Assets.get(ts.image.replace(/\.png$/i, '.tint.png')), Tint.TINTS[t.tint]);
+  }
+  // ---- ground height, drawn raised (stage 2) ----
+  // A tile at height h is drawn h tiles higher on the screen; where the ground drops to the south its cliff face
+  // fills the gap. Everything that stands on the ground is drawn with the same lift (liftAt), but keeps its place in
+  // the back-to-front order by where it stands on the map. The baked ground has a margin on top for the lift
+  // (canvas.pad). A ramp climbing north is its tile stretched over two; climbing east or west it is sheared;
+  // climbing south it is seen edge-on, so it takes no room on the screen at all.
+  function elevOn(map) { return !!(map && map.elev && map.elev.length && typeof Rules !== 'undefined' && Rules.groundHeight); }
+  function maxElev(map) {
+    var top = 0;
+    if (elevOn(map)) for (var y = 0; y < map.height; y++) for (var x = 0; x < map.width; x++) {
+      var h = Rules.heightAt(map, x, y) + (Rules.rampAt(map, x, y) ? 1 : 0); if (h > top) top = h;
+    }
+    return top;
+  }
+  /** How many pixels higher something standing at (x, y) is drawn (x, y = the tile, fractions allowed while walking). */
+  function liftAt(map, x, y, T) { return elevOn(map) ? Math.round(Rules.groundHeight(map, x + 0.5, y + 0.5) * T) : 0; }
+  function liftIn(map, x, y, T) { return elevOn(map) ? liftAt(map, Math.max(0, Math.min(map.width - 1, x)), Math.max(0, Math.min(map.height - 1, y)), T) : 0; }
+  /** Which tile is under a point of the raised picture (px, py in map pixels, before any lift): the one drawn there. */
+  function pickCell(map, px, py, T) {
+    var x = Math.floor(px / T), flat = { x: x, y: Math.floor(py / T) };
+    if (!elevOn(map) || x < 0 || x >= map.width) return flat;
+    var u = px / T - x, top = maxElev(map);
+    for (var y = Math.min(map.height - 1, flat.y + top + 1); y >= Math.max(0, flat.y); y--) {      // the nearest one wins: it is drawn last
+      var h = Rules.heightAt(map, x, y), r = Rules.rampAt(map, x, y);
+      if (r === 'S') continue;                                                                    // edge-on: no room on the screen
+      var hi = r === 'N' ? h + 1 : r === 'E' ? h + u : r === 'W' ? h + 1 - u : h;                   // its far (north) edge…
+      var lo = r === 'N' ? h : hi;                                                                // …and its near one
+      var below = Rules.groundHeight(map, x + u, y + 1.001);                                      // the ground just south: the face reaches down to it
+      var y0 = (y - hi) * T, y1 = (y + 1 - Math.min(lo, below)) * T;
+      if (py >= y0 && py < y1) return { x: x, y: y };
+    }
+    return flat;
+  }
+
+  // ---- ground height, shown flat (the map editor) ----
+  // Until the ground is drawn raised, height reads as relief on the flat map: higher ground a touch lighter, a dark
+  // line with a shadow on the low side wherever two tiles do not meet (a cliff), and arrows up every ramp. The same
+  // picture in the game and in the map editor (labels = the height written on each raised tile, for the editor).
+  function drawRelief(g, map, ox, oy, size, x0, y0, x1, y1, labels) {
+    if (!map.elev || !map.elev.length || typeof Rules === 'undefined' || !Rules.heightAt) return;
+    x0 = Math.max(0, x0 == null ? 0 : x0); y0 = Math.max(0, y0 == null ? 0 : y0);
+    x1 = Math.min(map.width - 1, x1 == null ? map.width - 1 : x1); y1 = Math.min(map.height - 1, y1 == null ? map.height - 1 : y1);
+    var lw = Math.max(2, Math.round(size / 10)), sh = Math.max(3, Math.round(size / 4));
+    g.save();
+    for (var y = y0; y <= y1; y++) for (var x = x0; x <= x1; x++) {
+      var h = Rules.heightAt(map, x, y), r = Rules.rampAt(map, x, y), dx = ox + x * size, dy = oy + y * size;
+      if (h || r) { g.fillStyle = 'rgba(255,255,255,' + Math.min(0.3, 0.07 * (h + (r ? 0.5 : 0))) + ')'; g.fillRect(dx, dy, size, size); }
+      if (r) {                                                // arrows pointing up the slope
+        g.save(); g.translate(dx + size / 2, dy + size / 2); g.rotate(r === 'N' ? 0 : r === 'E' ? Math.PI / 2 : r === 'S' ? Math.PI : -Math.PI / 2);
+        g.strokeStyle = 'rgba(255,255,255,.75)'; g.lineWidth = Math.max(1.5, size / 16); g.lineCap = 'round'; g.lineJoin = 'round';
+        [-0.18, 0.12].forEach(function (k) { g.beginPath(); g.moveTo(-size * 0.22, size * (k + 0.14)); g.lineTo(0, size * (k - 0.08)); g.lineTo(size * 0.22, size * (k + 0.14)); g.stroke(); });
+        g.restore();
+      }
+      // the east and south sides of this tile (each boundary is looked at once)
+      [['E', x + 1, y], ['S', x, y + 1]].forEach(function (q) {
+        if (q[1] >= map.width || q[2] >= map.height || !Rules.cliffBetween(map, x, y, q[0])) return;
+        var mine = Rules.groundHeight(map, x + (q[0] === 'E' ? 0.99 : 0.5), y + (q[0] === 'S' ? 0.99 : 0.5));
+        var theirs = Rules.groundHeight(map, q[1] + (q[0] === 'E' ? 0.01 : 0.5), q[2] + (q[0] === 'S' ? 0.01 : 0.5));
+        var lowIsOther = theirs <= mine, bx = dx + (q[0] === 'E' ? size : 0), by = dy + (q[0] === 'S' ? size : 0);
+        g.fillStyle = 'rgba(0,0,0,.28)';
+        if (q[0] === 'E') g.fillRect(lowIsOther ? bx : bx - sh, by, sh, size); else g.fillRect(bx, lowIsOther ? by : by - sh, size, sh);
+        g.fillStyle = 'rgba(20,16,12,.9)';
+        if (q[0] === 'E') g.fillRect(bx - lw / 2, by, lw, size); else g.fillRect(bx, by - lw / 2, size, lw);
+      });
+      if (labels && (h || r)) {
+        g.fillStyle = 'rgba(255,255,255,.9)'; g.font = 'bold ' + Math.max(9, Math.round(size * 0.34)) + 'px sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top';
+        g.fillText(String(h) + (r ? '▲' : ''), dx + 2, dy + 1);
+      }
+    }
+    g.restore();
+  }
+  // ---- animated ground (water, lava…) ----
+  // The baked ground holds every cell's first frame. The cells that move are listed once per map (animatedCells) and
+  // drawn again every frame over the bake (drawAnimated), all on one clock so a whole lake ripples together. A cell
+  // moves when its base terrain is an animated strip (sprite + frames), or when its base or overlay terrain is cut
+  // from an animated tileset (frames > 1). Whatever lies over a moving base is listed with it and redrawn on top.
+  function animatedCells(content, map) {
+    var out = [], edgeSame = content.config.autotile_edge_same !== false;
+    var overlay = (map.overlay && map.overlay.length) ? map.overlay : null, auto = null, autoOv = null;
+    // (the frames may be written on the tileset or, for an autotiled terrain, on the terrain itself: either works)
+    function moving(t) { var ts = t && t.autotile && content.tilesets[t.autotile]; return !!(ts && (ts.frames > 1 || t.frames > 1)); }
+    function part(grids, grid, x, y) {                          // one layer of a cell, ready to draw (null = nothing there)
+      var tid = grid[y] && grid[y][x], t = tid && content.terrain[tid]; if (!t) return null;
+      if (t.autotile) {
+        var ag = grids(), a = ag[y] && ag[y][x], ts = a && content.tilesets[a.tileset];
+        return ts ? { t: t, ts: ts, tile: a.tile } : null;
+      }
+      return t.sprite ? { t: t } : null;
+    }
+    function baseGrid() { return auto || (auto = Autotile.gridFor(content, map.terrain, edgeSame, map.shapes)); }
+    function overGrid() { return autoOv || (autoOv = Autotile.gridFor(content, overlay, edgeSame, map.overlayShapes)); }
+    for (var y = 0; y < map.height; y++) for (var x = 0; x < map.width; x++) {
+      var bt = content.terrain[map.terrain[y] && map.terrain[y][x]], ot = overlay ? content.terrain[overlay[y] && overlay[y][x]] : null;
+      var baseMoves = !!bt && (moving(bt) || (bt.frames > 1 && !!bt.sprite && !bt.autotile)), overMoves = moving(ot);
+      if (!baseMoves && !overMoves) continue;
+      var parts = [];
+      if (baseMoves) { var bp = part(baseGrid, map.terrain, x, y); if (bp) parts.push(bp); }
+      if (ot && (overMoves || baseMoves)) { var op = part(overGrid, overlay, x, y); if (op) parts.push(op); }
+      if (parts.length) out.push({ x: x, y: y, parts: parts });
+    }
+    return out;
+  }
+  /** Draws the moving cells at their frame for `now`. size = a tile on screen; x0..y1 (optional) = the cells in view. */
+  function drawAnimated(g, content, cells, ox, oy, size, now, x0, y0, x1, y1, lift) {   // lift(x, y) = pixels higher (raised ground), or nothing
+    for (var i = 0; i < cells.length; i++) {
+      var a = cells[i];
+      if (x0 != null && (a.x < x0 || a.x > x1 || a.y < y0 || a.y > y1)) continue;
+      var dx = ox + a.x * size, dy = oy + a.y * size - (lift ? lift(a.x, a.y) : 0);
+      for (var k = 0; k < a.parts.length; k++) {
+        var p = a.parts[k];
+        if (p.ts) {
+          var sheet = groundSheet(content, p.t, p.ts); if (!sheet) continue;
+          var own = p.ts.frames > 1, n = Math.max(1, (own ? p.ts.frames : p.t.frames) || 1), ms = (own ? p.ts.frameMs : p.t.frameMs) || 200;
+          if (sheet.width < n * p.ts.columns * p.ts.tileSize) n = 1;                 // the picture does not hold that many sheets: a still one
+          tileFromSheet(sheet, p.ts, p.tile, g, dx, dy, size, n > 1 ? Math.floor(now / ms) % n : 0);
+        } else {
+          var img = Assets.get(p.t.sprite); if (!img) continue;
+          var f = frameOf(img, p.t.frames, p.t.frameMs, now);
+          g.drawImage(img, f.sx, 0, f.sw, f.fh, dx, dy, size, size);
+        }
+      }
+    }
   }
 
   function drawSprite(g, path, label, color, dx, dy, size) {
@@ -244,6 +375,15 @@ var Render = (function () {
     g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(x - 1, y - 1, w + 2, 5);
     g.fillStyle = color || (pct < 0.33 ? '#e0563f' : pct < 0.66 ? '#e0a83f' : '#7bcf62');
     g.fillRect(x, y, Math.max(1, Math.round(w * Math.max(0, Math.min(1, pct)))), 3);
+  }
+  /** How much of a resource (a tree, a wreck…) is left: a see-through ring that empties as it is worked. */
+  function drawRing(g, cx, cy, pct) {
+    var r = 8, a0 = -Math.PI / 2;
+    g.save();
+    g.lineWidth = 4; g.lineCap = 'butt';
+    g.strokeStyle = 'rgba(0,0,0,.35)'; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+    g.strokeStyle = 'rgba(255,255,255,.7)'; g.beginPath(); g.arc(cx, cy, r, a0, a0 + Math.PI * 2 * Math.max(0, Math.min(1, pct))); g.stroke();
+    g.restore();
   }
   function drawDoor(g, content, map, job, ox, oy, S, cutA) {
     var o = job.o, ed = job.ed, W = job.W, open = job.open;
@@ -486,7 +626,9 @@ var Render = (function () {
   function drawObject(g, o, path, dx, dy, size, part, now, flip) {
     var img = path && Assets.get(path);
     if (!img) { if (part === 'base' && path) g.drawImage(Assets.placeholder(o.name, '#7a5a3a', size), dx, dy, size, size); return; }
-    var f = frameOf(img, o.frames, o.frameMs, now), fw = f.sw, ih = img.height;
+    // The object's frames apply to a picture wide enough to hold them; a narrower one is a still. So one object can
+    // have an animated state (a lit fire: a strip of 3) next to plain ones (the empty pit: a single tile).
+    var nfr = Math.max(1, o.frames || 1), f = frameOf(img, img.width >= nfr * NT ? nfr : 1, o.frameMs, now), fw = f.sw, ih = img.height;
     var sc = size / NT, w = Math.max(1, Math.round(fw / NT)), destW = w * size;
     // Centre the sprite over its footprint width, so a sprite wider (or narrower) than its footprint
     // straddles the footprint tiles instead of growing rightward from the anchor.
@@ -514,13 +656,11 @@ var Render = (function () {
     var img = path && Assets.get(path); if (!img) return false;
     return img.height > NT + 1;                             // taller than one footprint tile = overflow above
   }
-  /** A state with no art yet (open door, emptied chest, sprung trap, lit switch) shown as a simple mark. */
+  /** A state with no art of its own. The tile is no longer darkened for an opened or emptied thing (the art is
+   *  final now: a state that should look different gets its own picture); only a switched-on lever keeps its glow. */
   function drawStateMark(g, o, st, dx, dy, S) {
     if (!st || o.spriteStates[st]) return;
-    if (st === 'open' && o.kind === 'door') { g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(dx + 4, dy + 2, S - 8, S - 4); }
-    else if (st === 'empty' || st === 'open') { g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(dx, dy, S, S); }
-    else if (st === 'down' && o.kind === 'trap') { g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(dx, dy, S, S); }
-    else if (st === 'on') { g.fillStyle = 'rgba(255,210,80,.35)'; g.fillRect(dx, dy, S, S); }
+    if (st === 'on') { g.fillStyle = 'rgba(255,210,80,.35)'; g.fillRect(dx, dy, S, S); }
   }
 
   /**
@@ -535,11 +675,20 @@ var Render = (function () {
   // bottom-anchored at the tile's foot and scaled to the tile width; the whole stack flips as one.
   // `aim` (radians, world space) rotates the weapon layer so the gun points at the crosshair; null = no aim.
   // The pivot is a rough shoulder/hand point — a per-gun "forward" setup is a future tool.
-  function drawLayers(g, layers, ax, ay, T, flip, aim) {
-    var topY = ay;
+  // `swing` (0..1, or null) is how far through a melee swing the figure is: the weapon is raised, brought down in
+  // front and returned, turning about the hand (the weapon's pivot from the Content Studio, else a point at the grip).
+  function swingTurn(p) {                                  // radians; negative = raised (for a figure facing right)
+    var UP = -1.5, DOWN = 1.0;
+    if (p < 0.25) return UP * (p / 0.25);
+    if (p < 0.6) { var q = (p - 0.25) / 0.35; return UP + (DOWN - UP) * q * q; }
+    return DOWN * (1 - (p - 0.6) / 0.4);
+  }
+  function drawLayers(g, layers, ax, ay, T, flip, aim, swing) {
+    var topY = ay, turn = swing != null && swing >= 0 && swing < 1 ? swingTurn(swing) : 0;
     layers.forEach(function (l) {
       var base = Assets.get(l.path); if (!base) return;
       var img = (l.mask && l.ramp) ? Tint.getTintedLayer(base, Assets.get(l.mask), l.ramp) : base;
+      if (l.skin) img = Tint.skinned(img, l.skin, !l.skinAll);   // the character's skin tone: the body, and the hands drawn into what it holds
       var h = Math.round(T * base.height / base.width), dy = ay + T - h;
       if (dy < topY) topY = dy;
       if (aim != null && l.slot === 'weapon') {            // the equipped weapon swings to track the crosshair
@@ -556,7 +705,16 @@ var Render = (function () {
         // axis) so it turns upright while the barrel keeps pointing exactly at the cursor.
         if (Math.cos(aim) < 0) { g.rotate(aim); g.scale(1, -1); g.rotate(-aim); }
         g.rotate(aim - intrinsic);
+        if (turn) g.rotate(turn);                           // (mirrored with the weapon when it points left)
         g.drawImage(img, -px * T, -py * h, T, h);
+        g.restore();
+      } else if (turn && l.slot === 'weapon') {             // not aiming: the same swing, the way the figure faces
+        var sp = l.aimPoints || null, sx = sp && sp.px != null ? sp.px : 0.5, sy = sp && sp.py != null ? sp.py : 0.6;
+        g.save();
+        if (flip) { g.translate(ax + T, 0); g.scale(-1, 1); g.translate(sx * T, dy + sy * h); }
+        else g.translate(ax + sx * T, dy + sy * h);
+        g.rotate(turn);
+        g.drawImage(img, -sx * T, -sy * h, T, h);
         g.restore();
       } else {
         g.save();
@@ -569,11 +727,12 @@ var Render = (function () {
   }
 
   /** Paints base colours, terrain, the variety layer, wall faces and flat ground decals once. */
-  function bakeGround(content, map) {
+  function bakeGround(content, map, raised) {                 // raised: draw the ground's height (the game); the editor keeps it flat
     var T = content.config.tile_size || 32, sc = T / NT;
     var c = document.createElement('canvas');
-    c.width = map.width * T; c.height = map.height * T;
-    var g = c.getContext('2d');
+    var up = raised && elevOn(map), pad = up ? maxElev(map) * T : 0;
+    c.width = map.width * T; c.height = map.height * T + pad; c.pad = pad;
+    var g = c.getContext('2d'), G = g;                        // G = where drawCell paints (a scratch tile while a raised one is made)
     g.imageSmoothingEnabled = false;
     var edgeSame = content.config.autotile_edge_same !== false;
     var base = map.terrain, overlay = (map.overlay && map.overlay.length) ? map.overlay : null;
@@ -589,37 +748,115 @@ var Render = (function () {
       var t = content.terrain[tid]; if (!t) return;
       var a = autoGrid[y][x];
       if (a) {
-        var ts = content.tilesets[a.tileset], img = Assets.get(ts.image);
+        var ts = content.tilesets[a.tileset], img = groundSheet(content, t, ts);   // (an animated sheet: its first frame)
         var info = Sc && Sc.tileInfo(ts.image);
         if (underlay && info && info.baseTile) {               // underlay: texture shows at ragged edges
           var bimg = Assets.get(info.baseTile);
-          if (bimg) g.drawImage(bimg, 0, 0, bimg.width, bimg.height, dx, dy, T, T);
+          if (bimg) G.drawImage(bimg, 0, 0, bimg.width, bimg.height, dx, dy, T, T);
         }
-        if (img) tileFromSheet(img, ts, a.tile, g, dx, dy, T);
+        if (img) tileFromSheet(img, ts, a.tile, G, dx, dy, T);
         if (info && info.scatterKey && Sc) {                   // variety layer (baked, so it's free per frame)
           var interior = Autotile.effectiveMask(cells, x, y, edgeSame, overrides) === 255;
           Sc.scatterFor(info.scatterKey, x, y, interior).forEach(function (s) {
             var sh = Assets.get(Sc.sheetPath(info.dir, s.sheet)); if (!sh) return;
-            g.save();
-            if (s.flip) { g.translate(dx + T, dy); g.scale(-1, 1); g.drawImage(sh, s.sx, s.sy, NT, NT, 0, 0, T, T); }
-            else g.drawImage(sh, s.sx, s.sy, NT, NT, dx, dy, T, T);
-            g.restore();
+            G.save();
+            if (s.flip) { G.translate(dx + T, dy); G.scale(-1, 1); G.drawImage(sh, s.sx, s.sy, NT, NT, 0, 0, T, T); }
+            else G.drawImage(sh, s.sx, s.sy, NT, NT, dx, dy, T, T);
+            G.restore();
           });
         }
       } else if (t.sprite) {
         var timg = Assets.get(t.sprite);
-        if (timg) { var f0 = frameOf(timg, t.frames, t.frameMs, 0); g.drawImage(timg, 0, 0, f0.sw, f0.fh, dx, dy, T, T); }
+        if (timg) { var f0 = frameOf(timg, t.frames, t.frameMs, 0); G.drawImage(timg, 0, 0, f0.sw, f0.fh, dx, dy, T, T); }
       }
       // no art → nothing drawn (an artless terrain shows empty, so missing art is obvious)
     }
 
-    for (var y = 0; y < map.height; y++) {
+    if (!up) for (var y = 0; y < map.height; y++) {
       for (var x = 0; x < map.width; x++) {
         var dx = x * T, dy = y * T;
         drawCell(base, auto, x, y, dx, dy, true, map.shapes);            // ground layer (opaque)
         if (autoOv) drawCell(overlay, autoOv, x, y, dx, dy, false, map.overlayShapes);   // overlay (transparent)
       }
     }
+    else {
+      // Raised: row by row from the far side, so nearer ground covers what is behind it. Each tile is painted on
+      // a scratch square first, then put down lifted (or stretched / sheared, for a ramp), then its cliff face.
+      var scr = document.createElement('canvas'); scr.width = scr.height = T;
+      var sg = scr.getContext('2d'); sg.imageSmoothingEnabled = false;
+      var cliffOf = function (x, y) {                         // the face picture of the ground at a tile, if its art has one
+        var t = content.terrain[base[y] && base[y][x]] || (overlay && content.terrain[overlay[y] && overlay[y][x]]);
+        var ts = t && t.autotile && content.tilesets[t.autotile], info = Sc && ts && Sc.tileInfo(ts.image);
+        if (info && info.cliff) return Assets.get(info.cliff);
+        // a plain tile (no tileset): the same rule on its own picture, <name>.png -> <name>_face.png
+        return t && t.sprite && !/^https?:/i.test(t.sprite) ? Assets.get(t.sprite.replace(/\.png$/i, '_face.png')) : null;
+      };
+      var drop = function (x, y) {                            // how far the ground falls at the south edge of a tile: [left, right, own left, own right]
+        if (x < 0 || x >= map.width) return [0, 0, 0, 0];
+        var oL = Rules.groundHeight(map, x + 0.001, y + 0.999), oR = Rules.groundHeight(map, x + 0.999, y + 0.999);
+        var sL = y + 1 < map.height ? Rules.groundHeight(map, x + 0.001, y + 1.001) : 0, sR = y + 1 < map.height ? Rules.groundHeight(map, x + 0.999, y + 1.001) : 0;
+        return [Math.max(0, oL - sL), Math.max(0, oR - sR), oL, oR];
+      };
+      for (var ry = 0; ry < map.height; ry++) for (var rx = 0; rx < map.width; rx++) {
+        var eh = Rules.heightAt(map, rx, ry), er = Rules.rampAt(map, rx, ry), X = rx * T;
+        if ((base[ry] && base[ry][rx]) || (overlay && overlay[ry] && overlay[ry][rx])) {
+          sg.clearRect(0, 0, T, T); G = sg;
+          drawCell(base, auto, rx, ry, 0, 0, true, map.shapes);
+          if (autoOv) drawCell(overlay, autoOv, rx, ry, 0, 0, false, map.overlayShapes);
+          G = g;
+          if (!er) g.drawImage(scr, X, pad + (ry - eh) * T);
+          else if (er === 'N') g.drawImage(scr, 0, 0, T, T, X, pad + (ry - eh - 1) * T, T, 2 * T);
+          else if (er === 'E' || er === 'W') {
+            // slanted: the square sheared up toward its high side. It is drawn a pixel taller than it is, top and
+            // bottom, so the slanted joins between the tiles of one slope close up (a slanted edge is never drawn
+            // crisp, and the gap showed as a dark diagonal line on every row). Only the slope's TOP edge gets a line.
+            g.save();
+            if (er === 'E') g.transform(1, -1, 0, 1, X, pad + (ry - eh) * T); else g.transform(1, 1, 0, 1, X, pad + (ry - eh - 1) * T);
+            g.drawImage(scr, 0, 0, T, T, 0, -1, T, T + 2);
+            g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(0, -1, T, T + 2);
+            if (!(ry > 0 && map.elev[ry - 1] && map.elev[ry - 1][rx] === map.elev[ry][rx])) { g.fillStyle = 'rgba(0,0,0,.5)'; g.fillRect(0, -1, T, 2); }   // where the slope ends, at the top
+            g.restore();
+          }
+          if (er === 'N') { g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(X, pad + (ry - eh - 1) * T, T, 2 * T); }   // a slope catches a little more light
+          else if (er === 'S') {
+            // A slope climbing south (away from the camera) is seen edge-on: its near and far edges land on the same
+            // line of the screen, so it has no room of its own. So that it shows at all, it is drawn as a lighter
+            // band lying just above that line (over the last quarter of the tile it climbs from).
+            var sY = pad + (ry - eh) * T, sH = Math.max(4, Math.round(T / 4));
+            g.drawImage(scr, 0, 0, T, T, X, sY - sH, T, sH);
+            g.fillStyle = 'rgba(255,255,255,.2)'; g.fillRect(X, sY - sH, T, sH);
+            g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(X, sY - sH, T, 1);
+          }
+        }
+        // the cliff face under its south edge
+        var d = drop(rx, ry);
+        if (d[0] > 0.01 || d[1] > 0.01) {
+          var Yl = pad + (ry + 1 - d[2]) * T, Yr = pad + (ry + 1 - d[3]) * T, Bl = Yl + d[0] * T, Br = Yr + d[1] * T, topY = Math.min(Yl, Yr), botY = Math.max(Bl, Br);
+          g.save(); g.beginPath(); g.moveTo(X, Yl); g.lineTo(X + T, Yr); g.lineTo(X + T, Br); g.lineTo(X, Bl); g.closePath(); g.clip();
+          var fimg = cliffOf(rx, ry), dl = drop(rx - 1, ry), dr = drop(rx + 1, ry), hasL = dl[0] > 0.01 || dl[1] > 0.01, hasR = dr[0] > 0.01 || dr[1] > 0.01;
+          if (fimg) {
+            var cols = Math.max(1, Math.round(fimg.width / NT));                       // 4 = single, left, middle, right; 5 = …with two middles
+            var col = (!hasL && !hasR) ? 0 : (!hasL && hasR) ? 1 : (hasL && !hasR) ? cols - 1 : (cols >= 5 ? 2 + (rx % 2) : Math.min(2, cols - 1));
+            for (var fy = topY; fy < botY; fy += T) g.drawImage(fimg, Math.min(col, cols - 1) * NT, 0, NT, Math.min(NT, fimg.height), X, fy, T, T);
+          } else {                                                                     // no art for it yet: a plain earth bank
+            g.fillStyle = '#4b3d2e'; g.fillRect(X, topY, T, botY - topY);
+            g.fillStyle = 'rgba(0,0,0,.18)'; for (var by2 = topY + 6; by2 < botY; by2 += 9) g.fillRect(X, by2, T, 2);
+          }
+          var shd = g.createLinearGradient(0, topY, 0, botY); shd.addColorStop(0, 'rgba(0,0,0,0)'); shd.addColorStop(1, 'rgba(0,0,0,.28)');
+          g.fillStyle = shd; g.fillRect(X, topY, T, botY - topY);                      // darker toward its foot
+          g.restore();
+          if (Math.abs(Yl - Yr) < 0.5) { g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(X, Math.round(Yl), T, 1); }   // the lip (level ground only: under a slanted tile a level line would cut across its foot)
+        }
+        // a dark edge where this tile stands above its west / east / north neighbour (no face to see there)
+        if (!er && eh) {
+          g.fillStyle = 'rgba(0,0,0,.3)';
+          if (Rules.cliffBetween(map, rx, ry, 'W') && Rules.groundHeight(map, rx - 0.5, ry + 0.5) < eh) g.fillRect(X, pad + (ry - eh) * T, 1, T);
+          if (Rules.cliffBetween(map, rx, ry, 'E') && Rules.groundHeight(map, rx + 1.5, ry + 0.5) < eh) g.fillRect(X + T - 1, pad + (ry - eh) * T, 1, T);
+          if (ry > 0 && Rules.cliffBetween(map, rx, ry, 'N') && Rules.groundHeight(map, rx + 0.5, ry - 0.5) < eh) g.fillRect(X, pad + (ry - eh) * T, T, 1);
+        }
+      }
+    }
+    function bakeLift(x, y) { return up ? liftAt(map, x, y, T) : 0; }
 
     // wall faces: a 2-tile front face under every wall cell whose south neighbour is not the same wall.
     for (var wy = 0; wy < map.height; wy++) {
@@ -632,7 +869,7 @@ var Render = (function () {
         var face = Assets.get(winfo.face); if (!face) continue;
         var l = hasFace(content, map, Sc, wx - 1, wy, tid), r = hasFace(content, map, Sc, wx + 1, wy, tid);
         var col = (!l && !r) ? 0 : (!l && r) ? 1 : (l && r) ? 2 : 3;            // single / left / middle / right
-        g.drawImage(face, col * NT, 0, NT, face.height, wx * T, (wy + 1) * T, T, face.height * sc);
+        g.drawImage(face, col * NT, 0, NT, face.height, wx * T, pad + (wy + 1) * T - bakeLift(wx, wy), T, face.height * sc);
       }
     }
 
@@ -642,7 +879,7 @@ var Render = (function () {
       if (!o || layerOf(o) !== 'ground_decal') return;
       var dimg = o.sprite && Assets.get(o.sprite); if (!dimg) return;
       var cell = (e.data && e.data.cell) | 0, cols = Math.max(1, Math.round(dimg.width / NT));
-      g.drawImage(dimg, (cell % cols) * NT, Math.floor(cell / cols) * NT, NT, NT, e.x * T, e.y * T, T, T);
+      g.drawImage(dimg, (cell % cols) * NT, Math.floor(cell / cols) * NT, NT, NT, e.x * T, pad + e.y * T - bakeLift(e.x, e.y), T, T);
     });
     return c;
   }
@@ -665,7 +902,8 @@ var Render = (function () {
   Renderer.prototype.setMap = function (map, floorMaps) {   // floorMaps = { floorId: that floor's live map } (optional)
     this.map = map;
     this.mapId = map.id;
-    this.ground = bakeGround(this.content, map);
+    this.ground = bakeGround(this.content, map, true);          // (with the ground's height drawn)
+    this.elevTop = maxElev(map);
     var content = this.content;
     this.wall25 = wall25(content, map);                                              // every wall as cap + face pieces
     // Floors (docs/FLOORS.md, stage 1): standing on an upper floor, the floors beneath are drawn first, each lower
@@ -697,11 +935,7 @@ var Render = (function () {
     });
     above.sort(function (a, b) { return a.dz - b.dz; });                             // nearest floor first, higher ones over it
     this.above = above;
-    var c = this.content, animated = [];
-    map.terrain.forEach(function (row, y) { row.forEach(function (tid, x) {
-      var t = c.terrain[tid]; if (t && t.frames > 1 && t.sprite && !t.autotile) animated.push({ x: x, y: y, t: t });
-    }); });
-    this.animated = animated;
+    this.animated = animatedCells(this.content, map);          // the ground that moves: water, lava…
   };
 
   /**
@@ -778,19 +1012,16 @@ var Render = (function () {
     // On an upper floor a cell with no terrain is open air: nothing of this floor (fog, roof, indoor shade) is drawn there.
     var sparse = map.z > 0;
     function hasFloor(x, y) { return !sparse || !!(map.terrain[y] && map.terrain[y][x]); }
-    g.drawImage(this.ground, ox, oy);
+    g.drawImage(this.ground, ox, oy - (this.ground.pad || 0));
+    var EL = elevOn(map), elevTop = this.elevTop || 0, ground = this.ground;
+    function L(x, y) { return EL ? liftAt(map, x, y, T) : 0; }       // how much higher what stands at (x, y) is drawn
 
     var x0 = Math.floor(cam.x / T) - 1, y0 = Math.floor(cam.y / T) - 1;
-    var x1 = x0 + Math.ceil(this.canvas.width / T) + 2, y1 = y0 + Math.ceil(this.canvas.height / T) + 3;
+    var x1 = x0 + Math.ceil(this.canvas.width / T) + 2, y1 = y0 + Math.ceil(this.canvas.height / T) + 3 + (this.elevTop || 0);
     var now = performance.now();
 
     // layer 2b: animated terrain (water, lava...) is drawn live over the baked ground
-    if (this.animated.length) this.animated.forEach(function (a) {
-      if (a.x < x0 || a.x > x1 || a.y < y0 || a.y > y1) return;
-      var img = Assets.get(a.t.sprite); if (!img) return;
-      var f = frameOf(img, a.t.frames, a.t.frameMs, now);
-      g.drawImage(img, f.sx, 0, f.sw, f.fh, ox + a.x * T, oy + a.y * T, T, T);
-    });
+    if (this.animated.length) drawAnimated(g, this.content, this.animated, ox, oy, T, now, x0, y0, x1, y1, EL ? L : null);
 
     // ---- sight: what the local player sees / knows this frame (see makeSight) ----
     var cfg = c.config || {}, o2 = opts || {};
@@ -807,22 +1038,22 @@ var Render = (function () {
     var strip = shadowStrip(T);
     if (strip) prims.forEach(function (p) {
       if (p.kind !== 'hface' || p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1 || p.y >= map.height) return;
-      if (sight.edgeKnown('h', p.x, p.y)) g.drawImage(strip, ox + p.x * T, oy + p.y * T);
+      if (sight.edgeKnown('h', p.x, p.y)) g.drawImage(strip, ox + p.x * T, oy + p.y * T - L(p.x, p.y));
     });
     // layer 2d: fog and roof over the ground — a dim veil on cells out of sight, the roof on unknown interiors
     var cx, cy, xa = Math.max(0, x0), xb = Math.min(map.width - 1, x1), ya = Math.max(0, y0), yb = Math.min(map.height - 1, y1);
     if (sight.vis) {
       if (fogA > 0) { g.fillStyle = 'rgba(0,0,0,' + fogA + ')';
-        for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.seen(cx, cy) && sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T); }
+        for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.seen(cx, cy) && sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T - L(cx, cy), T, T); }
       g.fillStyle = roofCol;
-      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T);
+      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T - L(cx, cy), T, T);
     }
     // layer 2e: indoors is darker (config indoor_dark, 0-1; 0 = off). The floor gets a veil here; whatever
     // stands indoors — objects, characters, the wall surfaces facing into the room — is drawn darker to match
     // in the sorted pass below (see dim), so a room reads as one dim space while outside stays bright.
     var dark = cfg.indoor_dark === undefined || cfg.indoor_dark === '' ? 0.25 : Number(cfg.indoor_dark); if (!(dark >= 0 && dark < 1)) dark = 0.25;
     if (dark > 0) { g.fillStyle = 'rgba(0,0,0,' + dark + ')';
-      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (sight.indoor(cx, cy) && sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T, T, T); }
+      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (sight.indoor(cx, cy) && sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T - L(cx, cy), T, T); }
     var canFilter = dark > 0 && typeof g.filter === 'string';
     function dim(on) { if (canFilter) g.filter = on ? 'brightness(' + (1 - dark) + ')' : 'none'; }
     function inDark(x, y) { return dark > 0 && sight.indoor(Math.round(x), Math.round(y)); }
@@ -859,7 +1090,7 @@ var Render = (function () {
           var dOpen = opening === 'arch' || states[e.key] === 'open';
           if (isH) {
             edges.forEach(function (q) { doorFaces[q.x + ',' + q.y] = 1; if (cut) doorGap[q.x + ',' + q.y] = 1; });   // the door draws these faces itself; on a cut wall its whole width is a gap in the stub
-            renderables.push({ sortY: oy + ed0.y * T + 0.6, dark: inDark(ed0.x, ed0.y), door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
+            renderables.push({ sortY: oy + ed0.y * T + 0.6, dark: inDark(ed0.x, ed0.y), lift: L(ed0.x, ed0.y), door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
           } else edges.forEach(function (q) {
             vDoor[q.x + ',' + q.y] = dOpen ? 'open' : 'shut';   // in a thin N-S wall: a gap, or a tinted slab
             // A side door is seen edge-on, so it is marked on the floor: a doorstep laid across the wall line,
@@ -912,7 +1143,8 @@ var Render = (function () {
         }
         // On a cut wall, windows stay standing (solid) and things you can use stay too (faint); pure decoration drops with the wall.
         if (cut && !opening && o.kind === 'deco') return;
-        var wst = states[e.key], wp = objPath(o, wst, null), mp = wallMountPlace(map, o, e, ox, oy, T);
+        var wlf = L(e.x, e.y), wst = states[e.key], wp = objPath(o, wst, null), mp = wallMountPlace(map, o, e, ox, oy - wlf, T);
+        mp.sortY += wlf;                                                   // (lifted on the screen, but sorted where it stands)
         // A window in an E-W wall that still stands: cut the wall face open to the window's outline, so
         // whatever is see-through inside the art really shows what is behind the wall.
         if (opening === 'window' && isH && !cut) {
@@ -934,13 +1166,14 @@ var Render = (function () {
       if (o.kind === 'stairs') {                                          // each step tile sorts with its own row: over the wall behind it, under whoever stands on it
         var sdd = Rules.DIRS[Rules.stairDir(e)];
         for (var si = 0; si < Rules.stairLen(); si++)
-          renderables.push({ sortY: Math.round(oy + (e.y + si * sdd.dy) * T) + T - 0.5, dark: inDark(e.x, e.y), step: { o: o, e: e, i: si } });
+          renderables.push({ sortY: Math.round(oy + (e.y + si * sdd.dy) * T) + T - 0.5, dark: inDark(e.x, e.y), lift: L(e.x, e.y), step: { o: o, e: e, i: si } });
         return;
       }
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
       var path = objPath(o, st, facing), flip = facing === 'left' || (!!facing && Rules.facingOf(String(facing)) === 'W');
+      if (o.id === '_drop') { var lying = World.list((e.data || {}).pickup)[0], lit = lying && c.items[lying.item]; if (lit && lit.sprite) path = lit.sprite; }   // an item on the ground: its own picture
       if (!path && e.bp !== undefined) path = '#built';              // something a player built with no art yet: show a lettered box, never nothing
-      var dx = ox + e.x * T, dy = oy + e.y * T, dz = o.draw || 'auto';
+      var dx = ox + e.x * T, dy = oy + e.y * T - L(e.x, e.y), dz = o.draw || 'auto';
       if (dz === 'over') {
         overs.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
       } else if (dz === 'under') {
@@ -954,7 +1187,7 @@ var Render = (function () {
         // tile it draws after the character (+0.1: still under a wall on that line, which is +0.25). Any other
         // facing keeps the tie as it was: the character on the tile is drawn over the object.
         var back = facing && Rules.turnable(o) && Rules.facingOf(String(facing)) === 'N' ? 0.1 : 0;
-        renderables.push({ sortY: Math.round(oy + e.y * T) + T + back, dark: inDark(e.x, e.y), alpha: e.need && (e.prog || 0) < e.need ? 0.5 : 1, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
+        renderables.push({ sortY: Math.round(oy + e.y * T) + T + back, dark: inDark(e.x, e.y), alpha: e.need && (e.prog || 0) < e.need ? 0.5 : 1, at: EL ? { x: e.x, y: e.y, w: Math.max(1, o.footprintW || 1) } : null, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
       }
     });
 
@@ -971,7 +1204,7 @@ var Render = (function () {
       if (!sight.edgeKnown(isV ? 'v' : 'h', p.x, p.y)) return;                  // a wall wholly inside unknown rooms
       if (p.kind === 'hface' && doorFaces[p.x + ',' + p.y]) return;             // a door draws this face region itself
       if (p.kind === 'hcap' && doorGap[p.x + ',' + p.y]) return;                // a doorway in a cut wall: no stub across it
-      renderables.push({ sortY: prim25SortY(p, oy, T) + (isCap ? 0.5 : 0.25), prim: p,
+      renderables.push({ sortY: prim25SortY(p, oy, T) + (isCap ? 0.5 : 0.25), prim: p, lift: L(Math.min(p.x, map.width - 1), Math.min(p.y, map.height - 1)),
         cut: !isV && sight.cutH(p.x, p.y, p.h), shut: vd === 'shut' && !isCap, glass: vd === 'glass' && !isCap,
         holes: p.kind === 'hface' ? winHoles[p.x + ',' + p.y] : null,
         hurt: p.kind === 'hface' && map._struct ? wallHurt(p.x, p.y) : 0,
@@ -994,18 +1227,19 @@ var Render = (function () {
     });
     renderables.sort(function (p, q) { return p.sortY - q.sortY; });
     renderables.forEach(function (r) {
-      if (r.door) { dim(r.dark); drawDoor(g, c, map, r.door, ox, oy, T, cutA); dim(false); return; }
+      var oyL = oy - (r.lift || 0);                                    // this thing's own ground height
+      if (r.door) { dim(r.dark); drawDoor(g, c, map, r.door, ox, oyL, T, cutA); dim(false); return; }
       if (r.prim) {
         if (r.frame) g.globalAlpha = 0.5;
-        if (r.roofed && !r.cut) primRectFill(g, r.prim, ox, oy, T, roofCol);
-        else if (!(r.holes && !r.cut && drawFaceWithHoles(g, c, r.prim, ox, oy, T, r.dark, r.holes))) drawPrim25(g, c, r.prim, ox, oy, T, r.cut, r.dark);
-        if (r.hurt && !r.cut && !r.roofed) drawCracks(g, r.prim, ox, oy, T, r.hurt);
-        if (r.shut) primRectFill(g, r.prim, ox, oy, T, 'rgba(46,30,16,.55)');
-        if (r.glass) primRectFill(g, r.prim, ox, oy, T, 'rgba(190,228,255,.55)');     // a window in a thin wall: glassy
+        if (r.roofed && !r.cut) primRectFill(g, r.prim, ox, oyL, T, roofCol);
+        else if (!(r.holes && !r.cut && drawFaceWithHoles(g, c, r.prim, ox, oyL, T, r.dark, r.holes))) drawPrim25(g, c, r.prim, ox, oyL, T, r.cut, r.dark);
+        if (r.hurt && !r.cut && !r.roofed) drawCracks(g, r.prim, ox, oyL, T, r.hurt);
+        if (r.shut) primRectFill(g, r.prim, ox, oyL, T, 'rgba(46,30,16,.55)');
+        if (r.glass) primRectFill(g, r.prim, ox, oyL, T, 'rgba(190,228,255,.55)');     // a window in a thin wall: glassy
         if (r.frame) g.globalAlpha = 1;
         return;
       }
-      if (r.step) { dim(r.dark); drawStairStep(g, c, r.step.o, r.step.e, r.step.i, ox, oy, T, now); dim(false); return; }
+      if (r.step) { dim(r.dark); drawStairStep(g, c, r.step.o, r.step.e, r.step.i, ox, oyL, T, now); dim(false); return; }
       if (r.obj) {
         if (r.alpha < 1) g.globalAlpha = r.alpha;
         dim(r.dark);
@@ -1014,19 +1248,57 @@ var Render = (function () {
         drawStateMark(g, r.obj.o, r.obj.st, r.obj.dx, r.obj.dy, T);
         dim(false);
         g.globalAlpha = 1;
+        if (r.at) behindRise(r.at.x, r.at.y, r.at.w, r.obj.dy - 2 * T, r.obj.dy + T);
         return;
       }
       var a = r.actor;
-      if (r.sensed) { drawSensed(g, Math.round(ox + a.x * T), Math.round(oy + a.y * T), T); return; }
+      var aL = L(a.x, a.y);
+      if (r.sensed) { drawSensed(g, Math.round(ox + a.x * T), Math.round(oy + a.y * T) - aL, T); return; }
       // climbing a staircase: drawn part-way up to the floor above
-      paintActor(a, Math.round(ox + a.x * T), Math.round(oy + a.y * T) - Math.round(Rules.stairHeight(c, map, a.x, a.y) * WALL_H * T), r.dark);
+      var aY = Math.round(oy + a.y * T) - Math.round(Rules.stairHeight(c, map, a.x, a.y) * WALL_H * T) - aL;
+      paintActor(a, Math.round(ox + a.x * T), aY, r.dark);
+      if (EL) behindRise(a.x, a.y, 1, aY - T, aY + T);
     });
+    // Raised ground hides what stands behind it. The ground is one picture drawn before everything, so the hiding is
+    // done afterwards: straight after a thing is drawn, the pieces of higher ground that lie nearer the camera are
+    // painted over it again from that picture — solid, or see-through close to the player (the cut-away walls get).
+    // (x, y) = where it stands, w = tiles wide; top..bottom = the screen rows its picture covers.
+    function behindRise(x, y, w, top, bottom) {
+      if (!EL || !elevTop) return;
+      // Every tile nearer the camera than the thing (a row further south) whose ground reaches above the ground the
+      // thing stands on covers it from its far edge — level, or slanted for a ramp — down to where ground at the
+      // thing's own height would begin. Those shapes are gathered into one outline, and the ground picture is
+      // painted again inside it. (Ground at the same height, such as the tile being walked onto, covers nothing.)
+      var hA = Rules.groundHeight(map, x + 0.5, y + 0.5), row = Math.floor(y + 0.5), pad = ground.pad || 0;
+      var left = Math.round(ox + x * T), wide = Math.round(w * T), any = false, near = false;
+      var c0 = Math.max(0, Math.floor(x + 0.001)), c1 = Math.min(map.width - 1, Math.ceil(x + w - 0.001) - 1 + (x !== Math.floor(x) ? 1 : 0));
+      g.save(); g.beginPath();
+      for (var cx2 = c0; cx2 <= c1; cx2++) for (var k = 1; k <= elevTop + 2; k++) {
+        var cy2 = row + k; if (cy2 >= map.height) break;
+        var hL = Rules.groundHeight(map, cx2 + 0.001, cy2 + 0.001), hR = Rules.groundHeight(map, cx2 + 0.999, cy2 + 0.001);   // its far edge, left and right
+        if (Math.max(hL, hR) <= hA + 0.01) continue;
+        var yLim = oy + (cy2 - hA) * T, yL = oy + (cy2 - Math.max(hL, hA)) * T, yR = oy + (cy2 - Math.max(hR, hA)) * T;
+        if (Math.min(yL, yR) >= bottom || yLim <= top) continue;                       // does not reach the thing's picture
+        var X0 = ox + cx2 * T;
+        g.moveTo(X0, yL); g.lineTo(X0 + T, yR); g.lineTo(X0 + T, yLim); g.lineTo(X0, yLim); g.closePath();
+        any = true;
+        if (meActor && Math.abs(cx2 - meActor.x) <= cutR && Math.abs(cy2 - meActor.y) <= cutR + elevTop) near = true;
+      }
+      if (any) {
+        g.clip();
+        g.globalAlpha = near ? 1 - cutA : 1;                                           // close to the player the rise goes see-through
+        var sy = Math.max(0, pad + top - oy), sh = Math.min(ground.height - sy, bottom - top);
+        var sx = Math.max(0, left - ox), sw = Math.min(ground.width - sx, wide + (left - ox < 0 ? left - ox : 0));
+        if (sw > 0 && sh > 0) g.drawImage(ground, sx, sy, sw, sh, ox + sx, oy + sy - pad, sw, sh);
+      }
+      g.restore();
+    }
     /** Draw one character (a player or a monster) with its tile's top-left at (ax, ay): figure, status tint, health bar, name. */
     function paintActor(a, ax, ay, isDark) {
       var top = ay;                                                  // top of the drawn figure (busts rise above the tile)
       dim(isDark);
       if (a.layers && a.layers.length) {
-        top = drawLayers(g, a.layers, ax, ay, T, a.facing === 'W', a.aim);
+        top = drawLayers(g, a.layers, ax, ay, T, a.facing === 'W', a.aim, a.swing);
       } else if (a.sprite !== undefined) {
         var img = a.sprite && Assets.get(a.sprite);
         if (img) {
@@ -1066,15 +1338,16 @@ var Render = (function () {
           if (em[1] === 'h') { if (!sight.seen(ex, ey) && !sight.seen(ex, ey - 1)) return; }
           else if (!sight.seen(ex, ey) && !sight.seen(ex - 1, ey)) return;
           info = World.structInfo(c, map, { t: 'wall', orient: em[1], x: ex, y: ey }); if (!info) return;
-          bx = ox + (em[1] === 'h' ? ex + 0.5 : ex) * T; by = oy + (em[1] === 'h' ? ey * T - 10 : (ey + 0.5) * T);
+          bx = ox + (em[1] === 'h' ? ex + 0.5 : ex) * T; by = oy + (em[1] === 'h' ? ey * T - 10 : (ey + 0.5) * T) - L(Math.min(ex, map.width - 1), Math.min(ey, map.height - 1));
         } else {
           info = World.structInfo(c, map, { t: 'ent', key: k }); if (!info) return;
           var en = info.e, eo = c.objects[en.ref], onWall = layerOf(eo) === 'wall';
           if (!sight.seen(en.x, en.y) && !(onWall && sight.seen(en.x, en.y - 1))) return;
-          bx = ox + (en.x + Math.max(1, eo.footprintW || 1) / 2) * T; by = oy + en.y * T - (onWall ? 10 : 6);
+          bx = ox + (en.x + Math.max(1, eo.footprintW || 1) / 2) * T; by = oy + en.y * T - (onWall ? 10 : 6) - L(en.x, en.y);
         }
         var fr = info.rec && (info.rec.prog || 0) < (info.rec.need || 0);
         if (fr) drawHpBar(g, bx, by, info.rec.prog / info.rec.need, '#6fb7ff');          // a frame: how far along it is
+        else if (info.max > 0 && !em && (!info.built || (info.rec && info.rec.wild)) && info.obj && ((info.rec && info.rec.data && info.rec.data.harvest) || (info.obj.properties && info.obj.properties.harvest))) drawRing(g, bx, oy + (info.e.y + 0.5) * T - L(info.e.x, info.e.y), info.hp / info.max);   // a resource: a ring, not a health bar
         else if (info.max > 0) drawHpBar(g, bx, by, info.hp / info.max);
       });
     }
@@ -1132,7 +1405,8 @@ var Render = (function () {
   /** While building: whose land is whose. Bases you belong to get a green outline, others a red wash. */
   Renderer.prototype.drawClaims = function (cam, claims, me, gh) {
     var g = this.g, c = this.content, T = c.config.tile_size || 32, ox = -cam.x, oy = -cam.y;
-    function box(x, y, r) { return [ox + (x - r) * T, oy + (y - r) * T, (2 * r + 1) * T, (2 * r + 1) * T]; }
+    var cmap = this.map;
+    function box(x, y, r) { return [ox + (x - r) * T, oy + (y - r) * T - liftIn(cmap, x, y, T), (2 * r + 1) * T, (2 * r + 1) * T]; }   // (at the height of the flag's own ground)
     g.save(); g.lineWidth = 2;
     (claims || []).forEach(function (q) {
       var b = box(q.x, q.y, q.r), mine = World.isMember(q.e, me);
@@ -1150,7 +1424,7 @@ var Render = (function () {
   };
   Renderer.prototype.drawGhost = function (cam, gh) {
     if (!gh) return;
-    var g = this.g, c = this.content, T = c.config.tile_size || 32, ox = -cam.x, oy = -cam.y, map = this.map;
+    var g = this.g, c = this.content, T = c.config.tile_size || 32, ox = -cam.x, map = this.map, oy = -cam.y - liftIn(this.map, gh.x, gh.y, T);   // on raised ground: drawn at its height
     // a roof (or a floor upstairs) says how safe the spot is: green = well held, yellow = as far from a wall as it can go, red = it would fall
     var edgy = gh.ok && gh.risk === 'edge';
     var bp = gh.bp, col = edgy ? '#ffd65a' : gh.ok ? '#6fe08a' : '#ff6b5b', o = bp.places === 'object' ? c.objects[bp.object] : null;
@@ -1188,6 +1462,8 @@ var Render = (function () {
       drawObject(g, o, gpath, ox + gh.x * T, oy + gh.y * T, T, 'base', 0, gfs.flip); drawObject(g, o, gpath, ox + gh.x * T, oy + gh.y * T, T, 'top', 0, gfs.flip);
       var fw = Math.max(1, o.footprintW || 1), fh = Math.max(1, o.footprintH || 1);
       g.globalAlpha = 1; g.strokeStyle = col; g.lineWidth = 2;
+      g.fillStyle = edgy ? 'rgba(255,214,90,.30)' : gh.ok ? 'rgba(111,224,138,.30)' : 'rgba(255,107,91,.38)';
+      g.fillRect(ox + gh.x * T, oy + (gh.y - fh + 1) * T, fw * T, fh * T);
       g.strokeRect(ox + gh.x * T + 1, oy + (gh.y - fh + 1) * T + 1, fw * T - 2, fh * T - 2);
       x0 = null;
     }
@@ -1209,7 +1485,7 @@ var Render = (function () {
     var g = this.g, T = this.content.config.tile_size || 32, ox = -cam.x, oy = -cam.y;
     g.save(); g.fillStyle = 'rgba(120,170,255,.22)'; g.strokeStyle = 'rgba(160,200,255,.55)'; g.lineWidth = 1;
     Object.keys(roof).forEach(function (k) {
-      var q = k.split(','), px = ox + Number(q[0]) * T, py = oy + Number(q[1]) * T;
+      var q = k.split(','), px = ox + Number(q[0]) * T, py = oy + Number(q[1]) * T - liftIn(map, Number(q[0]), Number(q[1]), T);
       if (px < -T || py < -T || px > g.canvas.width || py > g.canvas.height) return;
       g.fillRect(px, py, T, T);
       g.beginPath(); g.moveTo(px, py + T); g.lineTo(px + T, py); g.stroke();                       // a diagonal: "something overhead"
@@ -1217,15 +1493,16 @@ var Render = (function () {
     g.restore();
   };
   /** The remove tool's outline (main.js removeTarget): red = a click takes it apart, grey = not now (with why). */
-  Renderer.prototype.drawRemove = function (cam, rt, low) {
+  Renderer.prototype.drawRemove = function (cam, rt, low, move) {      // move: the same outline for the move tool (blue, its own words)
     var g = this.g, c = this.content, T = c.config.tile_size || 32, ox = -cam.x, oy = -cam.y;
-    var hint = 'Remove tool · H: walls ' + (low ? 'down' : 'up') + ' · Esc: stop';   // always on screen while the tool is
+    var hint = move ? 'Move tool · drag something you built to its new spot · Esc: stop' : 'Remove tool · H: walls ' + (low ? 'down' : 'up') + ' · Esc: stop';   // always on screen while the tool is
     g.save(); g.font = '12px sans-serif'; g.textAlign = 'center';
     var hw = g.measureText(hint).width, hx = this.canvas.width / 2;
-    g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(hx - hw / 2 - 8, 6, hw + 16, 20); g.fillStyle = '#ffb4a8'; g.fillText(hint, hx, 20); g.restore();
+    g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(hx - hw / 2 - 8, 6, hw + 16, 20); g.fillStyle = move ? '#b9dcff' : '#ffb4a8'; g.fillText(hint, hx, 20); g.restore();
     if (!rt || !rt.info) return;
     var i = rt.info;
-    var col = rt.ok ? '#ff5a4a' : '#9aa0a8', fill = rt.ok ? 'rgba(255,90,74,.28)' : 'rgba(154,160,168,.22)';
+    oy -= liftIn(this.map, i.x, i.y, T);                         // on raised ground: drawn at its height
+    var col = !rt.ok ? '#9aa0a8' : move ? '#6fb7ff' : '#ff5a4a', fill = !rt.ok ? 'rgba(154,160,168,.22)' : move ? 'rgba(111,183,255,.28)' : 'rgba(255,90,74,.28)';
     g.save(); g.strokeStyle = col; g.fillStyle = fill; g.lineWidth = 2; g.lineCap = 'round';
     function box(x, y, w, h) { g.fillRect(ox + x * T, oy + y * T, w * T, h * T); g.strokeRect(ox + x * T + 1, oy + y * T + 1, w * T - 2, h * T - 2); }
     function edge(q) {                                      // the wall's face above its line, and the line itself
@@ -1246,7 +1523,7 @@ var Render = (function () {
       var fw = Math.max(1, (i.obj && i.obj.footprintW) || 1), fh = Math.max(1, (i.obj && i.obj.footprintH) || 1);
       box(i.x, i.y - fh + 1, fw, fh);
     }
-    var text = rt.ok ? 'Remove ' + i.name : rt.reason;
+    var text = rt.ok ? (move ? 'Move ' : 'Remove ') + i.name : rt.reason;
     if (text) {
       g.font = '11px sans-serif'; g.textAlign = 'center';
       var tx = ox + (lx + (i.t === 'wall' && i.orient === 'v' ? 0 : 0.5)) * T, ty = oy + (ly + 1) * T + 12, tw = g.measureText(text).width;
@@ -1256,41 +1533,47 @@ var Render = (function () {
     g.restore();
   };
   Renderer.prototype.drawAim = function (cam, aim) {
-    var g = this.g, T = this.content.config.tile_size || 32;
+    var g = this.g, T = this.content.config.tile_size || 32, amap = this.map;
+    function up(x, y) { return liftIn(amap, Math.round(x), Math.round(y), T); }   // each tile at the height of its ground
     g.fillStyle = 'rgba(255,255,255,.10)';
-    aim.cells.forEach(function (c) { g.fillRect(Math.round(c.x * T - cam.x) + 1, Math.round(c.y * T - cam.y) + 1, T - 2, T - 2); });
+    aim.cells.forEach(function (c) { g.fillRect(Math.round(c.x * T - cam.x) + 1, Math.round(c.y * T - cam.y) + 1 - up(c.x, c.y), T - 2, T - 2); });
     var h = aim.hover; if (!h) return;
     var col = h.ok ? '#6fe08a' : '#ff6b5b';
     g.strokeStyle = col; g.lineWidth = 1; g.setLineDash([3, 3]);
-    g.beginPath(); g.moveTo(aim.from.x * T + T / 2 - cam.x, aim.from.y * T + T / 2 - cam.y); g.lineTo(h.x * T + T / 2 - cam.x, h.y * T + T / 2 - cam.y); g.stroke();
+    g.beginPath(); g.moveTo(aim.from.x * T + T / 2 - cam.x, aim.from.y * T + T / 2 - cam.y - up(aim.from.x, aim.from.y)); g.lineTo(h.x * T + T / 2 - cam.x, h.y * T + T / 2 - cam.y - up(h.x, h.y)); g.stroke();
     g.setLineDash([]);
     if (h.ok && aim.blast) {                                  // explicit cells (a blast that stops at walls)
       g.fillStyle = 'rgba(255,170,80,.18)';
-      aim.blast.forEach(function (c) { g.fillRect(Math.round(c.x * T - cam.x) + 1, Math.round(c.y * T - cam.y) + 1, T - 2, T - 2); });
+      aim.blast.forEach(function (c) { g.fillRect(Math.round(c.x * T - cam.x) + 1, Math.round(c.y * T - cam.y) + 1 - up(c.x, c.y), T - 2, T - 2); });
     } else if (h.ok && aim.area) {
       g.fillStyle = 'rgba(255,170,80,.18)';
-      g.fillRect(Math.round((h.x - aim.area) * T - cam.x), Math.round((h.y - aim.area) * T - cam.y), (2 * aim.area + 1) * T, (2 * aim.area + 1) * T);
+      g.fillRect(Math.round((h.x - aim.area) * T - cam.x), Math.round((h.y - aim.area) * T - cam.y) - up(h.x, h.y), (2 * aim.area + 1) * T, (2 * aim.area + 1) * T);
     }
-    g.lineWidth = 2; g.strokeRect(Math.round(h.x * T - cam.x) + 1, Math.round(h.y * T - cam.y) + 1, T - 2, T - 2);
+    g.lineWidth = 2; g.strokeRect(Math.round(h.x * T - cam.x) + 1, Math.round(h.y * T - cam.y) + 1 - up(h.x, h.y), T - 2, T - 2);
   };
 
   /** Layer 6: projectiles, spell flashes, floating numbers and words (damage, healing, loot, level up). */
   Renderer.prototype.drawFx = function (cam, fx, now) {
-    var g = this.g, T = this.content.config.tile_size || 32;
+    var g = this.g, T = this.content.config.tile_size || 32, fmap = this.map;
+    var cam0 = cam; cam = { x: cam0.x, y: cam0.y };                 // (shifted per effect by the height of the ground it is on)
+    function hOf(x, y) { return liftAt(fmap, Math.max(0, Math.min(fmap.width - 1, Math.round(x))), Math.max(0, Math.min(fmap.height - 1, Math.round(y))), T); }   // how high the ground at a tile is drawn
+    function onGround(x, y) { cam.y = cam0.y + liftAt(fmap, Math.max(0, Math.min(fmap.width - 1, x)), Math.max(0, Math.min(fmap.height - 1, y)), T); }
     g.textAlign = 'center';
     for (var i = fx.length - 1; i >= 0; i--) {
       var f = fx[i], age = (now - f.t0) / (f.life || 900);
       if (age >= 1) { fx.splice(i, 1); continue; }
       if (age < 0) continue;
+      onGround(f.x != null ? f.x : f.to ? f.to.x : 0, f.y != null ? f.y : f.to ? f.to.y : 0);
       if (f.kind === 'proj') {
-        var px = (f.from.x + (f.to.x - f.from.x) * age) * T + T / 2 - cam.x, py = (f.from.y + (f.to.y - f.from.y) * age) * T + T / 2 - cam.y;
+        var h0 = hOf(f.from.x, f.from.y), h1 = hOf(f.to.x, f.to.y);   // from the height it leaves at to the height it lands at
+        var px = (f.from.x + (f.to.x - f.from.x) * age) * T + T / 2 - cam.x, py = (f.from.y + (f.to.y - f.from.y) * age) * T + T / 2 - cam0.y - (h0 + (h1 - h0) * age);
         g.fillStyle = f.color; g.globalAlpha = .35; g.beginPath(); g.arc(px, py, 7, 0, 7); g.fill();
         g.globalAlpha = 1; g.beginPath(); g.arc(px, py, 3.5, 0, 7); g.fill();
         continue;
       }
       if (f.kind === 'tracer') {                                      // a bullet streak that fades fast
         g.strokeStyle = f.color; g.globalAlpha = .9 * (1 - age); g.lineWidth = 2;
-        g.beginPath(); g.moveTo(f.from.x * T + T / 2 - cam.x, f.from.y * T + T / 2 - cam.y); g.lineTo(f.to.x * T + T / 2 - cam.x, f.to.y * T + T / 2 - cam.y); g.stroke();
+        g.beginPath(); g.moveTo(f.from.x * T + T / 2 - cam.x, f.from.y * T + T / 2 - cam0.y - hOf(f.from.x, f.from.y)); g.lineTo(f.to.x * T + T / 2 - cam.x, f.to.y * T + T / 2 - cam0.y - hOf(f.to.x, f.to.y)); g.stroke();
         g.globalAlpha = 1;
         continue;
       }
@@ -1310,7 +1593,7 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { Renderer: Renderer, bakeGround: bakeGround, drawObject: drawObject, frameOf: frameOf,
+  return { Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, drawAnimated: drawAnimated, drawRelief: drawRelief, pickCell: pickCell, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

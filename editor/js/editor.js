@@ -89,6 +89,24 @@ var E = {
     }
     return map.nobuild;
   };
+  // Ground height: a W×H grid of tokens ('' = level, '2' = two steps up, '1N' = a ramp from 1 up to 2 going north);
+  // see Rules.heightAt. The Height tab paints E.brush.elev (a level) with E.brush.ramp ('' or the way it climbs).
+  E.ensureElev = function (map) {
+    map = map || E.map();
+    var r = map.elev;
+    if (!r || r.length !== map.height || (r[0] && r[0].length !== map.width)) {
+      var g = [];
+      for (var y = 0; y < map.height; y++) { var row = []; for (var x = 0; x < map.width; x++) row.push((r && r[y] && r[y][x]) || ''); g.push(row); }
+      map.elev = g;
+    }
+    return map.elev;
+  };
+  function setElev(x, y, v) {
+    var m = E.map(); if (x < 0 || y < 0 || x >= m.width || y >= m.height) return false;
+    var g = E.ensureElev(m); if (g[y][x] === v) return false;
+    g[y][x] = v; return true;
+  }
+  function elevToken() { var b = E.brush || {}, h = Math.max(0, Math.min(9, Number(b.elev) || 0)), r = b.ramp || ''; return r ? h + r : (h ? String(h) : ''); }
   function setNoBuild(x, y, v) {
     var m = E.map(); if (x < 0 || y < 0 || x >= m.width || y >= m.height) return false;
     var g = E.ensureNoBuild(m); if (g[y][x] === v) return false;
@@ -153,7 +171,7 @@ var E = {
     var ov = map.overlay;
     var hasOv = ov && ov.some(function (r) { return r && r.some(function (c) { return c; }); });
     if (hasOv) row.overlay = JSON.stringify(ov); else delete row.overlay;   // keep overlay-free maps clean
-    ['vWalls', 'hWalls', 'roof', 'nobuild'].forEach(function (k) {           // edge walls + roof cover + no-build mask, dropped when all-empty
+    ['vWalls', 'hWalls', 'roof', 'nobuild', 'elev'].forEach(function (k) {           // edge walls + roof cover + no-build mask, dropped when all-empty
       var grid = map[k], has = grid && grid.some(function (r) { return r && r.some(function (c) { return c; }); });
       if (has) row[k] = JSON.stringify(grid); else delete row[k];
     });
@@ -216,7 +234,7 @@ var E = {
       terrain: JSON.parse(JSON.stringify(m.terrain)), overlay: JSON.parse(JSON.stringify(m.overlay || [])),
       vWalls: JSON.parse(JSON.stringify(m.vWalls || [])), hWalls: JSON.parse(JSON.stringify(m.hWalls || [])),
       roof: JSON.parse(JSON.stringify(m.roof || [])), roof_color: m.roof_color || '',
-      nobuild: JSON.parse(JSON.stringify(m.nobuild || [])),
+      nobuild: JSON.parse(JSON.stringify(m.nobuild || [])), elev: JSON.parse(JSON.stringify(m.elev || [])),
       spawn: m.spawn ? JSON.parse(JSON.stringify(m.spawn)) : null,
       shapes: JSON.parse(JSON.stringify(m.shapes || {})), overlayShapes: JSON.parse(JSON.stringify(m.overlayShapes || {})),
       entities: JSON.parse(JSON.stringify(m.entities)) };
@@ -226,7 +244,7 @@ var E = {
     if (E.mapId !== s.mapId) E.openMap(s.mapId);
     m.width = s.width; m.height = s.height; m.name = s.name; m.terrain = s.terrain; m.overlay = s.overlay || [];
     m.vWalls = s.vWalls || []; m.hWalls = s.hWalls || []; m.roof = s.roof || []; m.roof_color = s.roof_color || '';
-    m.nobuild = s.nobuild || [];
+    m.nobuild = s.nobuild || []; m.elev = s.elev || [];
     m.spawn = s.spawn || null;
     m.shapes = s.shapes || {}; m.overlayShapes = s.overlayShapes || {}; m.entities = s.entities;
     if (E.selected && !E.entityByKey(E.selected)) E.selected = null;
@@ -253,6 +271,7 @@ var E = {
     if (E.layer === 'spawn') return clearSpawn();
     if (E.layer === 'roof') return setRoof(x, y, '');
     if (E.layer === 'nobuild') return setNoBuild(x, y, '');
+    if (E.layer === 'height') return setElev(x, y, '');
     if (E.layer === 'terrain') return setTerrain(x, y, '');
     return removeObject(x, y);
   }
@@ -404,7 +423,7 @@ var E = {
       else if (E.paletteTab === 'terrain' && E.tool === 'rect' && (t === 'objects' || t === 'monsters' || t === 'walls')) E.tool = 'brush';
     }
     E.paletteTab = t;
-    E.layer = t === 'terrain' ? 'terrain' : t === 'walls' ? 'walls' : t === 'roof' ? 'roof' : t === 'nobuild' ? 'nobuild' : t === 'spawn' ? 'spawn' : 'objects';
+    E.layer = t === 'terrain' ? 'terrain' : t === 'walls' ? 'walls' : t === 'roof' ? 'roof' : t === 'nobuild' ? 'nobuild' : t === 'height' ? 'height' : t === 'spawn' ? 'spawn' : 'objects';
   };
   // Player spawn point: a single cell per map {x, y, facing} where new/respawning players start. Click to set,
   // erase/click again on it to clear. Facing is chosen in the Start panel; it defaults to S.
@@ -456,6 +475,7 @@ var E = {
     if (E.layer === 'spawn') return setSpawn(x, y);
     if (E.layer === 'roof') return setRoof(x, y, '1');
     if (E.layer === 'nobuild') return setNoBuild(x, y, '1');
+    if (E.layer === 'height') return setElev(x, y, elevToken());
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
     if (E.paletteTab === 'monsters') return placeMonster(x, y, E.brush.monster);
     return placeObject(x, y, E.brush.object);
@@ -508,6 +528,7 @@ var E = {
     if (E.layer === 'spawn') return setSpawn(x, y);
     if (E.layer === 'roof') return floodRoof(x, y);
     if (E.layer === 'nobuild') return setNoBuild(x, y, '1');
+    if (E.layer === 'height') return setElev(x, y, elevToken());
     if (E.layer === 'objects') return rect({ x: x, y: y }, { x: x, y: y }, paint);
     var cells = E.cells();
     var from = cells[y][x], to = (E.tool === 'erase' && E.terrainLayer === 'overlay') ? '' : E.brush.terrain;
@@ -666,6 +687,7 @@ var E = {
     if (m.vWalls && m.vWalls.length) m.vWalls = resizeWalls(m.vWalls, h, w + 1);
     if (m.roof && m.roof.length) m.roof = resizeWalls(m.roof, h, w);
     if (m.nobuild && m.nobuild.length) m.nobuild = resizeWalls(m.nobuild, h, w);
+    if (m.elev && m.elev.length) m.elev = resizeWalls(m.elev, h, w);
     m.width = w; m.height = h;
     m.entities = m.entities.filter(function (e) { return e.x < w && e.y < h; });
     ['shapes', 'overlayShapes'].forEach(function (k) {         // drop frozen shapes outside the new bounds
@@ -738,7 +760,7 @@ var E = {
       canvas.width = wrap.clientWidth; canvas.height = wrap.clientHeight;
     }
     var m = E.map(), c = E.content, t = T(), s = cellSize(), vx = E.view.x, vy = E.view.y;
-    if (E.groundDirty) { E.ground = Render.bakeGround(c, m); E.groundDirty = false; }
+    if (E.groundDirty) { E.ground = Render.bakeGround(c, m); E.moving = Render.animatedCells ? Render.animatedCells(c, m) : []; E.groundDirty = false; }
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#101216'; g.fillRect(0, 0, canvas.width, canvas.height);
     g.fillStyle = '#1b1e25'; g.fillRect(vx - 1, vy - 1, m.width * s + 2, m.height * s + 2);
@@ -758,6 +780,7 @@ var E = {
       g.globalAlpha = 1;
     }
     if (E.show.terrain) g.drawImage(E.ground, vx, vy, m.width * s, m.height * s);
+    if (E.show.terrain && E.moving && E.moving.length) Render.drawAnimated(g, c, E.moving, vx, vy, s, performance.now());   // water, lava… move here as in the game
 
     // Objects and 2.5D edge walls share ONE back-to-front pass (by south edge), exactly as the game draws
     // them, so a thing north of a wall is hidden behind it and one south of it sits in front — live, as you
@@ -804,6 +827,9 @@ var E = {
       for (var ry = 0; ry < m.height; ry++) { var rrow = m.roof[ry] || [];
         for (var rx = 0; rx < m.width; rx++) if (rrow[rx]) g.fillRect(vx + rx * s, vy + ry * s, s, s); }
     }
+
+    // ground height: relief as the game shows it, with the numbers while the Height tab is active
+    if (m.elev && m.elev.length && Render.drawRelief) Render.drawRelief(g, m, vx, vy, s, null, null, null, null, E.layer === 'height');
 
     // no-build tiles (authoring aid): a red hatch, shown while the No-build tab is active
     if (m.nobuild && m.nobuild.length && E.layer === 'nobuild') {
@@ -1136,6 +1162,7 @@ var E = {
     if (k === '5') { E.setPaletteTab('roof'); Panels.all(); E.redraw(); return; }
     if (k === '6') { E.setPaletteTab('spawn'); Panels.all(); E.redraw(); return; }
     if (k === '7') { E.setPaletteTab('nobuild'); Panels.all(); E.redraw(); return; }
+    if (k === '8') { E.setPaletteTab('height'); Panels.all(); E.redraw(); return; }
     if (k === 'o' && E.layer === 'walls') { E.wallSide = E.wallSide === 'cursor' ? 'center' : 'cursor'; Panels.palette(); E.redraw(); return; }
     if (k === '0') { E.fitView(); return; }
     if (k === 'escape') { if (E.mode) Panels.endPick(); else { E.selected = null; Panels.inspector(); E.redraw(); } return; }

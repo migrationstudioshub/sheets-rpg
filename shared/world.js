@@ -149,7 +149,7 @@ var World = (function () {
   // ---- health: what a wall or object can take ----
   // A target is {t:'wall', orient, x, y} or {t:'ent', key}. resolveOn answers what it is and how hurt it is,
   // from a map (authored or live) plus the layer — so the referee and the client's menus/drawing agree.
-  var NO_HP_KINDS = { spawn: 1, trigger: 1, teleport: 1, npc: 1, sign: 1 };
+  var NO_HP_KINDS = { spawn: 1, trigger: 1, teleport: 1, npc: 1, sign: 1, pickup: 1 };
   // damage multiplier by what hits (row) and what it is made of (column)
   var MULT = {
     melee:   { wood: 1,   metal: 0.25, stone: 0.25, glass: 2 },
@@ -158,6 +158,11 @@ var World = (function () {
     fire:    { wood: 1,   metal: 0,    stone: 0,    glass: 0 },
     monster: { wood: 1,   metal: 0.5,  stone: 0.5,  glass: 2 }
   };
+  /** What a thing yields when worked: said on the thing itself (a carcass carries its animal's loot), else its object's harvest. */
+  function harvestOf(tg) {
+    var own = tg && tg.rec && tg.rec.data && tg.rec.data.harvest;
+    return own || (tg && tg.obj && tg.obj.properties && tg.obj.properties.harvest) || '';
+  }
   function resolveOn(c, map, st, t) {
     if (!map || !t) return null;
     st = st || NO_STRUCT;
@@ -221,10 +226,16 @@ var World = (function () {
       if (st.walls[tg.key]) delete st.walls[tg.key]; else st.gone[tg.key] = 1;
       delete st.dmg[tg.key];
     } else {
+      // A door or a window broken out of its wall takes that stretch of wall with it: what is left is a hole to
+      // walk through, not a blank wall (which is what the fixture was standing in).
+      if (tg.obj && tg.e && openingOf(tg.obj)) fixtureEdges(tg.obj, tg.e).forEach(function (q) {
+        var wk = Rl().edgeKey(q.orient, q.x, q.y);
+        if (st.walls[wk]) delete st.walls[wk]; else if (Rl().wallAt(map, q.orient, q.x, q.y)) st.gone[wk] = 1;
+        delete st.dmg[wk];
+      });
       dropEnt(tg.key);
       var hv = !tg.built && tg.obj && tg.obj.properties && tg.obj.properties.harvest;
-      if (hv) {                                              // a tree, a wreck...: it yields, then comes back later
-        if (src && src.player) list(hv).forEach(function (g) { give(c, src.player, g.item, g.qty, ev); });
+      if (hv) {                                              // a tree, a wreck...: it has yielded as it was worked (damageStructure); it comes back later
         var back = Number(tg.obj.properties.respawn_s) || Number(c.config.harvest_respawn_s) || 600;
         st.gone[tg.key] = 2;
         ms.timers[tg.key] = { at: ((src && src.now) || Date.now()) + back * 1000, regrow: true };
@@ -254,7 +265,17 @@ var World = (function () {
     var st = structOf(ws, mapId), left = tg.hp - dealt;
     if (tg.built) tg.rec.hp = Math.max(0, left); else st.dmg[tg.key] = (Number(st.dmg[tg.key]) || 0) + dealt;
     touchStruct(st); ws.dirty = true;
-    ev.push({ type: 'hit', map: mapId, x: tg.x, y: tg.y, amount: dealt, struct: tg.key, hp: Math.max(0, left), max: tg.max });
+    var hitEv = { type: 'hit', map: mapId, x: tg.x, y: tg.y, amount: dealt, struct: tg.key, hp: Math.max(0, left), max: tg.max };
+    if (src.kind === 'melee' && src.player) hitEv.by = src.player.id;   // the others show this number from the player's `act` (noteAct)
+    ev.push(hitEv);
+    // A tree, a wreck…: what it yields comes out as it is worked, in step with the damage done (a third of the way
+    // through = a third of each item, rounded down; the last blow hands over the rest). Nothing is kept on the side:
+    // the share already handed out is worked out from its health, so only the difference is given.
+    var hvy = src.player && (!tg.built || (tg.rec && tg.rec.wild)) && harvestOf(tg);   // (wild = a carcass: put there by the world, not built)
+    if (hvy && tg.max > 0) list(hvy).forEach(function (g) {
+      var was = Math.floor(g.qty * Math.max(0, tg.max - tg.hp) / tg.max), is = Math.floor(g.qty * Math.min(tg.max, tg.max - Math.max(0, left)) / tg.max);
+      if (is > was) give(c, src.player, g.item, is - was, ev);
+    });
     if (left <= 0) destroyStructure(c, ws, mapId, tg, src, ev);
     return { dealt: dealt, destroyed: left <= 0, tg: tg };
   }
@@ -304,13 +325,13 @@ var World = (function () {
   function protectedOn(c, map, tg, p) {
     if (yes(c.config.pvp_structures)) return false;
     if (tg.by && tg.by === p.id) return false;
-    if (!tg.built && tg.obj && tg.obj.properties && tg.obj.properties.harvest) return false;
+    if ((!tg.built || (tg.rec && tg.rec.wild)) && harvestOf(tg)) return false;
     return !!foreignClaim(c, map, p, structCells(tg));
   }
   function protectedFrom(c, ws, mapId, tg, p) { return protectedOn(c, liveMap(c, ws, mapId), tg, p); }
   /** May p take this built thing apart? Shared by the action menu and the referee. */
   function mayDismantle(c, map, p, tg) {
-    if (!tg || !tg.built) return false;
+    if (!tg || !tg.built || (tg.rec && tg.rec.wild)) return false;                // (a carcass, an egg: nobody built those)
     if (tg.obj && tg.obj.kind === 'claim') return tg.by === p.id;                  // a claim: its owner only
     var cells = structCells(tg);
     if (foreignClaim(c, map, p, cells)) return false;                              // someone else's base
@@ -446,6 +467,20 @@ var World = (function () {
     if (bd > reach) return no('Too far away.');
     if (bd > 0 && !canSee(c, map, p.x, p.y, best.x, best.y, lk.stateOf)) return no('You can\'t reach there.');
     if (cells.some(function (cl) { return noBuild(map, cl.x, cl.y); })) return no('You can\'t build here.');
+    // Nothing stands on ground nobody can walk on (water, lava, rock — the overlay's terrain if one is painted there,
+    // else the base's): no object, no floor. A wall may run along its edge, but not with such ground on both sides.
+    // (A roof is another storey's floor, so it may span it.)
+    var unwalk = function (cx, cy) {
+      var gt = inMap(map, cx, cy) ? Rl().terrainAt(c, map, cx, cy) : null;
+      return gt && !(gt.pass.n || gt.pass.e || gt.pass.s || gt.pass.w) ? gt : null;
+    };
+    var wet = null;
+    if (spot.kind === 'floor' || spot.kind === 'tile') cells.some(function (cl) { return !!(wet = unwalk(cl.x, cl.y)); });
+    else if (spot.kind === 'wall' && spot.edges && spot.edges[0]) {
+      var we = spot.edges[0], w1 = unwalk(we.x, we.y), w2 = we.orient === 'h' ? unwalk(we.x, we.y - 1) : unwalk(we.x - 1, we.y);
+      if (w1 && w2) wet = w1;
+    }
+    if (wet) return no('You can\'t build on ' + lower(wet.name) + '.');
     var fcl = foreignClaim(c, map, p, cells);
     if (fcl) return no('This land belongs to ' + claimOwner(fcl) + '.');
     var st = map._struct || NO_STRUCT, mine = 0, total = Object.keys(st.walls).length + st.ents.length;
@@ -687,7 +722,7 @@ var World = (function () {
           : o.kind === 'stairs' ? { facing: Rl().DIRS[a.facing] ? a.facing : 'N' }       // stairs always say which way they climb
           : (a.facing && Rl().turnable(o) && Rl().facingOf(String(a.facing)) !== 'S' ? { facing: Rl().facingOf(String(a.facing)) } : {}),
         hp: live(max), max: max, bp: bp.id, by: p.id, built: now, prog: 0, need: need };
-      if (o.kind === 'container' && Number(pr.storage) > 0) rec.inv = {};
+      if (o.kind === 'container') rec.inv = [];                // whatever is built to hold things starts empty (never with loot)
       if (o.kind === 'claim') { rec.owner = p.name; rec.members = []; p.claims = heldClaims(map, p).concat([{ map: p.map, key: rec.key }]); shadowClaim(c, ws, p.map, rec, false); }
       if (o.kind === 'stairs') {
         openAbove(c, ws, p.map, map, rec, bp, p);
@@ -771,7 +806,7 @@ var World = (function () {
     else return cheb(p.x, p.y, tg.x, tg.y) <= 1 && !(p.x === tg.x && p.y === tg.y && !tg.obj.walkable);
     return cells.some(function (cl) { return cl.x === p.x && cl.y === p.y; });
   }
-  function needsWork(tg) { return !!tg && ((tg.rec && (tg.rec.prog || 0) < (tg.rec.need || 0)) || (tg.max > 0 && tg.hp < tg.max)); }
+  function needsWork(tg) { return !!tg && !(tg.rec && tg.rec.wild) && ((tg.rec && (tg.rec.prog || 0) < (tg.rec.need || 0)) || (tg.max > 0 && tg.hp < tg.max)); }   // (a half-worked carcass is not something to repair)
   /**
    * The structure at/toward cell (x,y) from p, as a target: the fixture or wall on the edge between, else an
    * object in that cell. `want` filters (needsWork, built...). Used for F, the action menu, and `work` with a cell.
@@ -871,6 +906,53 @@ var World = (function () {
       return no('Take down what hangs on it first.', tg);
     return { ok: true, info: tg, cells: cells };
   }
+  /**
+   * May player p move something they built — and, with x and y given, may it go THERE? Answers {ok, reason, info, bp}.
+   * The one question behind the move tool (its outline and its ghost) and the referee. Only free-standing objects:
+   * a wall, a door or window, stairs and a claim flag are taken apart and built again. It keeps what it is (its
+   * key, its health, what is inside it); the new spot must pass everything a fresh build there would, except the
+   * cost and the tool. bp = the blueprint to draw the ghost with.
+   */
+  function canMove(c, map, lk, p, t, x, y, facing) {
+    function no(why, info, bp) { return { ok: false, reason: why, info: info || null, bp: bp || null }; }
+    var st = (map && map._struct) || NO_STRUCT, tg = map && t ? resolveOn(c, map, st, t) : null;
+    if (!tg || !tg.built || tg.t !== 'ent' || (tg.rec && tg.rec.wild)) return no('Only something that was built can be moved.');
+    if (isWallFixture(tg.obj) || tg.obj.kind === 'stairs' || tg.obj.kind === 'claim') return no('That can\'t be moved: take it apart and build it again.', tg);
+    if (cheb(p.x, p.y, tg.x, tg.y) > cfgNum(c, 'build_reach', 2)) return no('Too far away.', tg);
+    if (!mayDismantle(c, map, p, tg)) return no('That is not yours to move.', tg);
+    var bp = Object.assign({ id: '', name: tg.name }, (c.blueprints || {})[tg.rec.bp] || {}, { places: 'object', object: tg.rec.ref, cost: '', tool: '', station: '', unlock: '' });
+    if (x === undefined || x === null) return { ok: true, info: tg, bp: bp };
+    x = Math.round(Number(x)); y = Math.round(Number(y));
+    if (x === tg.x && y === tg.y) return no('It is already there.', tg, bp);
+    // the map as it would be with the thing lifted off it
+    var rest = function (e) { return e.key !== tg.key; };
+    var m2 = Object.assign(Object.create(map), { entities: (map.entities || []).filter(rest), _struct: Object.assign({}, st, { ents: st.ents.filter(rest) }) });
+    var own = buildSpot(c, map, bp, tg.x, tg.y), mine = own ? own.cells : [{ x: tg.x, y: tg.y }];
+    var lk2 = Object.assign({}, lk, { free: function (fx, fy, who) {
+      if (lk.free(fx, fy, who)) return true;
+      return mine.some(function (cl) { return cl.x === fx && cl.y === fy; }) && !lk.monsterAt(fx, fy) && !lk.playerAt(fx, fy) && !(p.x === fx && p.y === fy);
+    } });
+    var chk = canBuild(c, m2, lk2, p, bp, x, y, undefined, facing);
+    chk.info = tg; chk.bp = bp;
+    return chk;
+  }
+  /** Move something you built to another spot (action {type:'relocate', target, x, y, facing}). Free. */
+  function relocate(c, ws, p, a, now, ev, players) {
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    var map = liveMap(c, ws, p.map), chk = canMove(c, map, serverLookup(c, ws, p.map, players || [p]), p, a.target, Number(a.x), Number(a.y), a.facing);
+    if (!chk.ok) return say(chk.reason || 'That can\'t be moved there.');
+    var st = structOf(ws, p.map), rec = null;
+    st.ents.forEach(function (b) { if (b.key === chk.info.key) rec = b; });
+    if (!rec) return say('Pick something.');
+    rec.x = Math.round(Number(a.x)); rec.y = Math.round(Number(a.y));
+    if (a.facing && Rl().turnable(chk.info.obj)) {
+      var f = Rl().facingOf(String(a.facing)); rec.data = rec.data || {};
+      if (f === 'S') delete rec.data.facing; else rec.data.facing = f;
+    }
+    touchStruct(st); ws.dirty = true;
+    ev.push({ type: 'struct', map: p.map, op: 'place', x: rec.x, y: rec.y, by: p.id });
+    say('You move the ' + chk.info.name + '.');
+  }
   /** Take apart something that was built: it leaves the map and part of its materials come back. */
   function dismantle(c, ws, p, t, now, ev, players) {
     function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
@@ -916,30 +998,239 @@ var World = (function () {
     say('You upgrade it to ' + aAn(lower(nb.name)) + '.');
   }
   /** Storage containers players built: look inside, put things in, take things out. */
-  function storageEvent(c, p, e, ev) {
-    var o = objOf(c, e);
-    ev.push({ type: 'storage', to: p.id, key: e.key, name: o.name, slots: Number((o.properties || {}).storage) || 0, inv: e.inv || {} });
+  /** What a container holds, as stacks (one made before stacks had cells held {item: qty}: turned into stacks here). */
+  function boxInv(c, e) {
+    if (!Array.isArray(e.inv)) { var old = e.inv || {}; e.inv = []; Object.keys(old).forEach(function (id) { addStacks(c, e.inv, id, Number(old[id]) || 0, 0); }); }
+    return e.inv;
   }
+  // How many cells: the object's `storage`, else its `capacity` (the container kind's own setting), else MAP_BOX_SLOTS.
+  function boxSlots(c, e) {
+    if (e._slots) return e._slots;
+    var o = objOf(c, e), pr = (o && o.properties) || {};
+    return Number(pr.storage) || Number(props(c, e).capacity) || MAP_BOX_SLOTS;
+  }
+  // A container placed in the map editor (a chest, a cupboard…) holds things too: its stacks live in the map's own
+  // state, ms.boxes[key], from the first time someone opens it (openContainer, which also rolls its loot INTO it).
+  // This hands it out in the shape of a built one — {key, x, y, ref, inv} — so the same code moves things in and out.
+  // Cells: its `storage` or `capacity` setting, else MAP_BOX_SLOTS. One marked per_player holds something different
+  // for everyone: each player's own stacks for it are kept on the player (p.boxes['<map>:<key>']), loot included.
+  var MAP_BOX_SLOTS = 16;
+  function mapBox(c, ws, mapId, key, make, p) {
+    var map = liveMap(c, ws, mapId), ent = map && (map.entities || []).filter(function (en) { return en.key === key; })[0], o = ent && objOf(c, ent);
+    if (!o || o.kind !== 'container' || isBuiltEnt(map, ent)) return null;
+    var pr = props(c, ent), own = yes(pr.per_player), hold, hk = own ? mapId + ':' + key : key;
+    if (own) { if (!p) return null; hold = p.boxes = (p.boxes && typeof p.boxes === 'object' && !Array.isArray(p.boxes)) ? p.boxes : {}; }
+    else { var ms = mapState(ws, mapId); hold = ms.boxes = ms.boxes || {}; }
+    if (!Array.isArray(hold[hk])) { if (!make) return null; hold[hk] = []; }
+    return { key: key, x: ent.x, y: ent.y, ref: ent.ref, inv: hold[hk], _slots: Number(pr.storage) || Number(pr.capacity) || MAP_BOX_SLOTS, _ent: ent };
+  }
+  function storageEvent(c, p, e, ev) {
+    var o = objOf(c, e), out = { type: 'storage', to: p.id, key: e.key, name: o.name, slots: boxSlots(c, e), inv: boxInv(c, e) };
+    if (e.wild) out.takeOnly = true;                          // a carcass: things come out of it, nothing goes in
+    if (e._cook) {                                           // a cooker: how the fire stands, for the page to show and count on from
+      var k = e._cook, inp = stackAt(k.inv, 0), r = inp && cookRecipe(c, e._station, inp.item);
+      out.cook = { lit: !!k.lit, burn: Math.max(0, Math.round(k.burn || 0)), prog: Math.round(k.prog || 0), need: r ? Math.max(1, (r.timeS || COOK_S) * 1000) : 0 };
+    }
+    ev.push(out);
+  }
+  // ------------------------------------------------------------ cookers (a campfire, a furnace)
+  // A crafting station whose object says `cooks` does its recipes over time instead of at once. It holds three cells:
+  // 0 what goes in, 1 the fuel, 2 what comes out. Lit, it burns one piece of fuel after another (an item's fuel_s =
+  // how long a piece lasts) and, while there is something in cell 0 that one of ITS recipes takes (station = the
+  // cooker's station id; the recipe's first input, its first output, its time_s per piece), turns it into cell 2.
+  // It goes out when the fuel does. Its state lives in the map's own record, ms.cookers[key] = {inv, lit, burn (ms
+  // of the piece now burning), prog (ms on the piece being made), at, st: station}; time is counted when someone is
+  // on the map or opens it, and all the time between is made up then — so a fire left alone keeps cooking.
+  // The object's state for its picture (sprite_states): 'burning', 'fueled' (fuel in it, not burning) or 'empty'.
+  var COOK_S = 5;
+  function cookerOf(c, e) {
+    var o = objOf(c, e); if (!o || o.kind !== 'craft') return null;
+    var pr = props(c, e); return yes(pr.cooks) ? { station: pr.station || o.id } : null;
+  }
+  function cookRecipe(c, station, itemId) {
+    var recs = c.recipes || {}, hit = null;
+    Object.keys(recs).forEach(function (id) {
+      var r = recs[id], inp = r.station === station ? list(r.inputs)[0] : null;
+      if (!hit && inp && inp.item === itemId && list(r.outputs)[0]) hit = r;
+    });
+    return hit;
+  }
+  function cookBox(c, ws, mapId, e, ck) {
+    var ms = mapState(ws, mapId); ms.cookers = ms.cookers || {};
+    var rec = ms.cookers[e.key] || (ms.cookers[e.key] = { inv: [], lit: false, burn: 0, prog: 0, at: 0, st: ck.station });
+    rec.st = ck.station;
+    return { key: e.key, x: e.x, y: e.y, ref: e.ref, inv: rec.inv, _slots: 3, _cook: rec, _station: ck.station };
+  }
+  function cookTick(c, ws, mapId, key, now) {
+    var ms = mapState(ws, mapId), rec = ms.cookers && ms.cookers[key]; if (!rec) return;
+    var dt = rec.lit ? Math.max(0, now - (rec.at || now)) : 0, guard = 0;
+    rec.at = now;
+    function drop(st) { if (st.qty <= 0) rec.inv.splice(rec.inv.indexOf(st), 1); }
+    while (rec.lit && dt > 0 && guard++ < 5000) {
+      if (!(rec.burn > 0)) {                                  // the next piece of fuel, or the fire is out
+        var f = stackAt(rec.inv, 1), fi = f && c.items[f.item];
+        if (!f || !(fi && fi.fuelS > 0)) { rec.lit = false; rec.prog = 0; break; }
+        rec.burn = fi.fuelS * 1000; f.qty--; drop(f);
+      }
+      var inp = stackAt(rec.inv, 0), r = inp && cookRecipe(c, rec.st, inp.item), out = stackAt(rec.inv, 2);
+      var need = r ? Math.max(1, (r.timeS || COOK_S) * 1000) : 0, takes = r ? list(r.inputs)[0].qty : 0, gives = r ? list(r.outputs)[0] : null;
+      var can = !!(r && inp.qty >= takes && (!out || (out.item === gives.item && out.qty + gives.qty <= stackMaxOf(c, gives.item))));
+      if (!can) rec.prog = 0;
+      var step = Math.min(dt, rec.burn, can ? need - (rec.prog || 0) : Infinity);
+      rec.burn -= step; dt -= step;
+      if (can) {
+        rec.prog = (rec.prog || 0) + step;
+        if (rec.prog >= need) {
+          rec.prog = 0; inp.qty -= takes; drop(inp);
+          if (out) out.qty += gives.qty; else rec.inv.push({ item: gives.item, qty: gives.qty, s: 2 });
+        }
+      }
+    }
+    // ('burning', not 'lit': the craft kind's own default state is called lit, and a default state is never sent to the page)
+    var state = rec.lit ? 'burning' : (stackAt(rec.inv, 1) || rec.burn > 0) ? 'fueled' : 'empty';
+    if (ms.states[key] !== state) setState(ws, mapId, key, state);
+    ws.dirty = true;
+  }
+  /** The container p may reach into (next to it, and not in someone else's base), or null with the reason said. */
+  function openBox(c, ws, p, key, say, now) {
+    var st = structOf(ws, p.map), e = st.ents.filter(function (b) { return b.key === String(key || ''); })[0];
+    var le = (liveMap(c, ws, p.map).entities || []).filter(function (b) { return b.key === String(key || ''); })[0], ck = le && !(le.need && (le.prog || 0) < le.need) ? cookerOf(c, le) : null;
+    if (ck) { e = cookBox(c, ws, p.map, le, ck); cookTick(c, ws, p.map, e.key, now || Date.now()); }
+    if (e && !e.inv && (objOf(c, e) || {}).kind === 'container' && !(e.need && (e.prog || 0) < e.need)) e.inv = [];
+    if (!e) { e = mapBox(c, ws, p.map, String(key || ''), false, p); if (e && stateOf(c, ws, p.map, e._ent) === 'locked') { say('It is locked.'); return null; } }
+    if (!e || !e.inv) { say('That holds nothing.'); return null; }
+    if (cheb(p.x, p.y, e.x, e.y) > 1) { say('Too far away.'); return null; }
+    var scl = foreignClaim(c, liveMap(c, ws, p.map), p, [{ x: e.x, y: e.y }]);
+    if (scl) { say('That belongs to ' + claimOwner(scl) + '\'s base.'); return null; }
+    return e;
+  }
+  /** A container the world left (a carcass) that has just been emptied: it is gone, and the page is told to close it. */
+  function emptiedWild(c, ws, p, e, ev) {
+    if (!e || !e.wild || (e.inv && e.inv.length)) return false;
+    var st = structOf(ws, p.map), i = st.ents.indexOf(e);
+    if (i >= 0) st.ents.splice(i, 1);
+    delete mapState(ws, p.map).timers[e.key];
+    touchStruct(st); ws.dirty = true;
+    ev.push({ type: 'storage', to: p.id, key: e.key, gone: true });
+    return true;
+  }
+  // The old way in: so many of an item, by name (kept for pages that still send it; the grid uses 'inv' below).
   function storeAct(c, ws, p, a, now, ev) {
     function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
-    var st = structOf(ws, p.map), e = st.ents.filter(function (b) { return b.key === String(a.key || ''); })[0];
-    if (!e || !e.inv) return say('That holds nothing.');
-    if (cheb(p.x, p.y, e.x, e.y) > 1) return say('Too far away.');
-    var scl = foreignClaim(c, liveMap(c, ws, p.map), p, [{ x: e.x, y: e.y }]);
-    if (scl) return say('That belongs to ' + claimOwner(scl) + '\'s base.');
-    var id = String(a.item || ''), qty = Math.max(1, Math.round(Number(a.qty)) || 1), o = objOf(c, e), slots = Number((o.properties || {}).storage) || 0;
+    var e = openBox(c, ws, p, a.key, say, now); if (!e) return;
+    if (e._cook && (a.op === 'light' || a.op === 'douse')) {     // the fire itself
+      var k = e._cook;
+      if (a.op === 'douse') k.lit = false;
+      else if (!stackAt(k.inv, 1) && !(k.burn > 0)) return say('There is nothing in it to burn.');
+      else { k.lit = true; k.at = now; }
+      cookTick(c, ws, p.map, e.key, now); storageEvent(c, p, e, ev); return;
+    }
+    if (e._cook && a.op !== 'look') return;                     // (things go in and out of a cooker by its cells: the 'inv' action)
+    var id = String(a.item || ''), qty = Math.max(1, Math.round(Number(a.qty)) || 1), inv = boxInv(c, e), slots = boxSlots(c, e);
     if (a.op === 'put') {
+      if (e.wild) return say('You can\'t put things in that.');
       if (id === 'gold' || !c.items[id]) return say('You can\'t store that.');
       qty = Math.min(qty, count(p, id)); if (qty < 1) return say('You have none.');
-      if (e.inv[id] === undefined && slots > 0 && Object.keys(e.inv).length >= slots) return say('It is full.');
-      take(p, id, qty); e.inv[id] = (e.inv[id] || 0) + qty;
+      var left = addStacks(c, inv, id, qty, slots);
+      if (left >= qty) return say('It is full.');
+      take(p, id, qty - left);
     } else if (a.op === 'take') {
-      qty = Math.min(qty, e.inv[id] || 0); if (qty < 1) return say('There is none in there.');
-      e.inv[id] -= qty; if (e.inv[id] <= 0) delete e.inv[id];
-      give(c, p, id, qty, ev, true);
+      qty = Math.min(qty, countIn(inv, id)); if (qty < 1) return say('There is none in there.');
+      var back = addStacks(c, p.inventory, id, qty, bagSlots(c));
+      if (back >= qty) return say('Your bag is full.');
+      removeStacks(inv, id, qty - back);
     } else if (a.op !== 'look') return;
     ws.dirty = true;                                                   // contents are private: no revision bump, no push
+    if (emptiedWild(c, ws, p, e, ev)) return;
     storageEvent(c, p, e, ev);
+  }
+  /**
+   * Move a stack: {type:'inv', from:{w:'bag'|'box', s}, to:{w:'bag'|'box', s?}, qty?, key?}. w = whose grid (box =
+   * the container `key`), s = the cell. qty = how many of the stack (missing = all of it: less = splitting it).
+   * Onto an empty cell it is put down; onto more of the same it tops that stack up (what does not fit stays behind);
+   * onto something else the two change places (whole stacks only). With no cell named it goes wherever it fits.
+   */
+  function invAct(c, ws, p, a, now, ev) {
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    var from = a.from || {}, to = a.to || {}, e = null;
+    if (a.op === 'sort') {                                    // put the bag in order: same things joined into full stacks, kinds together
+      sortStacks(c, tidyStacks(c, p.inventory));
+      return;
+    }
+    if (a.op === 'takeall') {                                 // everything in the open container, into the bag, as far as it fits
+      e = openBox(c, ws, p, a.key, say, now); if (!e) return;
+      if (e._cook) return;                                    // (a cooker's cells are taken one by one)
+      var tb = tidyStacks(c, p.inventory), fb = boxInv(c, e), size = bagSlots(c), moved = 0, stuck = 0;
+      fb.slice().sort(function (x, y) { return x.s - y.s; }).forEach(function (st) {
+        var left = addStacks(c, tb, st.item, st.qty, size);
+        moved += st.qty - left; stuck += left; st.qty = left;
+        if (left <= 0) fb.splice(fb.indexOf(st), 1);
+      });
+      if (stuck) say(moved ? 'Your bag is full: some of it stays.' : 'Your bag is full.');
+      if (!moved) return;
+      if (typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);
+      if (emptiedWild(c, ws, p, e, ev)) return;
+      ws.dirty = true; storageEvent(c, p, e, ev);
+      return;
+    }
+    if (from.w === 'box' || to.w === 'box') { e = openBox(c, ws, p, a.key, say, now); if (!e) return; }
+    if (e && e.wild && to.w === 'box') return say('You can\'t put things in that.');
+    var bag = tidyStacks(c, p.inventory), box = e ? boxInv(c, e) : null;
+    var fromL = from.w === 'box' ? box : bag, toL = to.w === 'box' ? box : bag;
+    var toSize = to.w === 'box' ? boxSlots(c, e) : bagSlots(c), fromSize = from.w === 'box' ? boxSlots(c, e) : bagSlots(c);
+    var src = stackAt(fromL, Math.floor(Number(from.s)));
+    if (!src) return say('There is nothing there.');
+    if (e && e._cook) {                                       // a cooker's cells take only what belongs in them
+      if (to.w === 'box') {
+        var fuel = (c.items[src.item] || {}).fuelS > 0, cooks = !!cookRecipe(c, e._station, src.item);
+        var cell = to.s === undefined || to.s === null || to.s === '' ? (cooks ? 0 : fuel ? 1 : -1) : Math.floor(Number(to.s));
+        if (from.w === 'box') return;                           // (no shuffling between its own cells)
+        if (cell === 2) return say('That is where things come out.');
+        if (cell === 1 && !fuel) return say('That will not burn.');
+        if (cell !== 1 && !(cell === 0 && cooks)) return say('Nothing can be made of that here.');
+        var there = stackAt(box, cell);
+        if (there && there.item !== src.item) return say('Take out what is in there first.');
+        to = { w: 'box', s: cell };
+      } else if (to.s !== undefined && to.s !== null && to.s !== '') {
+        var onto = stackAt(bag, Math.floor(Number(to.s)));
+        if (onto && onto.item !== src.item) to = { w: 'bag' };  // (never a swap INTO the cooker: it goes wherever it fits)
+      }
+    }
+    if (e && e.wild && from.w === 'box' && to.w === 'bag' && to.s !== undefined && to.s !== null && to.s !== '') {
+      var onto2 = stackAt(bag, Math.floor(Number(to.s)));
+      if (onto2 && onto2.item !== src.item) to = { w: 'bag' };   // (never a swap into a take-only container)
+    }
+    var id = src.item, other = '', max = stackMaxOf(c, id);
+    var qty = Math.max(1, Math.min(src.qty, Math.round(Number(a.qty)) || src.qty));
+    if (to.s === undefined || to.s === null || to.s === '') {            // wherever it fits
+      if (fromL === toL) return;
+      var left = addStacks(c, toL, id, qty, toSize);
+      if (left >= qty) return say(to.w === 'box' ? 'It is full.' : 'Your bag is full.');
+      src.qty -= qty - left;
+    } else {
+      var t = Math.floor(Number(to.s));
+      if (!(t >= 0) || (toSize && t >= toSize)) return say('There is no room there.');
+      if (fromL === toL && t === src.s) return;
+      var dst = stackAt(toL, t);
+      if (!dst) {
+        if (qty === src.qty && fromL === toL) src.s = t;                 // the whole stack, to another cell of the same grid
+        else { toL.push({ item: id, qty: qty, s: t }); src.qty -= qty; }
+      } else if (dst.item === id && dst.qty < max) {
+        var n = Math.min(qty, max - dst.qty); dst.qty += n; src.qty -= n;
+      } else {
+        if (qty !== src.qty) return say('That cell is taken.');
+        if (fromSize && src.s >= fromSize) return say('There is no room to swap.');     // (a stack past the last cell cannot be swapped into)
+        other = dst.item;
+        var a0 = src.s; src.s = t; dst.s = a0;                          // change places…
+        if (fromL !== toL) { fromL.splice(fromL.indexOf(src), 1); toL.splice(toL.indexOf(dst), 1); toL.push(src); fromL.push(dst); }   // …across the two grids
+      }
+    }
+    if (src.qty <= 0 && fromL.indexOf(src) >= 0) fromL.splice(fromL.indexOf(src), 1);
+    goneFromBag(p, id); if (other) goneFromBag(p, other);
+    if (typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);     // what is in hand may have just left (or come back)
+    if (e && e._cook) cookTick(c, ws, p.map, e.key, now);       // (its picture follows what is in it)
+    if (emptiedWild(c, ws, p, e, ev)) return;
+    if (e) { ws.dirty = true; storageEvent(c, p, e, ev); }
   }
 
   /** What stands on a wall edge, as a target: the door/window fixture there if it can be hurt, else the wall. */
@@ -962,6 +1253,7 @@ var World = (function () {
     if (!ed) {                                                                         // diagonal: only an object there, and only with no wall corner between
       if (Math.abs(p.x - x) !== 1 || Math.abs(p.y - y) !== 1 || moveBlockedEdge(c, map, p.x, p.y, x, y)) return null;
     } else {
+      if (Rl().cliffReach(map, p.x, p.y, x, y)) return null;                             // it stands on another level of ground
       var onEdge = edgeTarget(c, map, st, ed.orient, ed.x, ed.y);
       if (onEdge) return onEdge;
       if (Rl().edgeBlocked(c, map, ed.orient, ed.x, ed.y, 'move')) return null;        // an unbreakable wall is in the way
@@ -970,18 +1262,52 @@ var World = (function () {
       .map(function (e) { return resolveOn(c, map, st, { t: 'ent', key: e.key }); }).filter(function (g) { return g && g.can; })[0];
     return hit ? { t: 'ent', key: hit.key } : null;
   }
+  /** What the player strikes with: the belt slot in hand (a weapon or a tool), else the weapon worn (older characters). */
+  function heldItem(c, p) {
+    var id = p.held >= 0 && p.belt ? p.belt[p.held] : '';
+    if (id && c.items[id] && count(p, id) > 0) return c.items[id];
+    return c.items[(p.equipment || {}).weapon] || null;
+  }
+  /**
+   * The resource at (x,y) that p may keep working by holding the button: something next to them that yields when
+   * broken (properties.harvest), with the tool it asks for IN HAND (no tool asked = anything will do). null otherwise.
+   * map = a live map. The page asks this every swing; the referee has no say in it (each swing is a plain attack).
+   */
+  function harvestWith(c, map, p, x, y) {
+    if (!map || cheb(p.x, p.y, x, y) !== 1) return null;
+    var t = strikeTarget(c, map, p, x, y), tg = t && t.t === 'ent' ? resolveOn(c, map, map._struct || NO_STRUCT, t) : null;
+    if (!tg || (tg.built && !(tg.rec && tg.rec.wild)) || !tg.can || tg.hp <= 0 || !tg.obj || !harvestOf(tg)) return null;
+    var need = toolTags((tg.obj.properties || {}).harvest_tool);
+    if (need.length) {
+      var it = heldItem(c, p), tags = (it && it.tools) || [];
+      if (!need.some(function (g) { return tags.indexOf(g) >= 0; })) return null;
+    }
+    return tg;
+  }
   function structureDamageOf(c, p, weapon) {
     if (weapon && Number(weapon.structureDmg) > 0) return Number(weapon.structureDmg);
     var k = c.config.structure_dmg_scale === undefined || c.config.structure_dmg_scale === '' ? 0.5 : Number(c.config.structure_dmg_scale);
     return Math.max(1, Math.round(stats(c, p).atk * (k >= 0 ? k : 0.5)));
+  }
+  // What a player last did that the OTHERS should see: "n,kind,x,y,amount" on the player (kind m = a melee swing,
+  // r = a shot that hurt a creature; x,y = what it was aimed at; amount = the damage, 0 for none). It travels with
+  // the player wherever players are listed (answers and the live push), so a page shows the swing and the number the
+  // moment it learns of it, without waiting for the events of its own next request. n only counts (1..999, round).
+  function noteAct(p, kind, x, y, amount) {
+    var n = (Number(String(p.act || '').split(',')[0]) || 0) % 999 + 1;
+    p.act = [n, kind, x, y, Math.max(0, Math.round(Number(amount) || 0))].join(',');
   }
   /** A melee swing at a wall or object (same pace as a basic attack). */
   function strike(c, ws, p, t, now, rng, ev) {
     if (now < (p.nextAttack || 0)) return false;
     p.nextAttack = now + (Number(c.config.attack_ms) || 0);
     var tg0 = resolveTarget(c, ws, p.map, t), needTool = tg0 && tg0.obj && tg0.obj.properties && tg0.obj.properties.harvest_tool;
-    if (needTool && !hasTool(c, p, needTool)) { ev.push({ type: 'info', to: p.id, text: 'You need ' + aAn(needTool) + ' for the ' + tg0.name + '.' }); return true; }
-    var res = damageStructure(c, ws, p.map, t, structureDamageOf(c, p, c.items[(p.equipment || {}).weapon]), { kind: 'melee', by: p.id, player: p, now: now }, ev);
+    if (needTool && !hasTool(c, p, needTool)) { noteAct(p, 'm', tg0.x, tg0.y, 0); ev.push({ type: 'info', to: p.id, text: 'You need ' + toolsText(needTool) + ' for the ' + tg0.name + '.' }); return true; }
+    // An axe bites wood, a pickaxe stone: what is in hand may multiply its blows on one material (the item's material_dmg).
+    var inHand = heldItem(c, p), edge = tg0 && inHand && inHand.vsMaterial ? Number(inHand.vsMaterial[tg0.material]) : NaN;
+    var res = damageStructure(c, ws, p.map, t, structureDamageOf(c, p, inHand) * (edge >= 0 ? edge : 1), { kind: 'melee', by: p.id, player: p, now: now }, ev);
+    var seenAt = res ? res.tg : tg0;
+    if (seenAt) noteAct(p, 'm', seenAt.x, seenAt.y, res ? res.dealt : 0);
     if (!res) ev.push({ type: 'info', to: p.id, text: 'You can\'t damage that.' });
     else if (!res.dealt) ev.push({ type: 'info', to: p.id, text: 'You can\'t even scratch the ' + res.tg.name + '.' });
     else if (!res.destroyed) ev.push({ type: 'info', to: p.id, text: 'You hit the ' + res.tg.name + ' for ' + res.dealt + '.' });
@@ -1049,17 +1375,55 @@ var World = (function () {
     var ks = Object.keys(c.maps), withSpawn = ks.filter(function (k) { return c.maps[k] && c.maps[k].spawn; })[0];
     return c.maps[withSpawn] || c.maps[ks[0]];
   }
-  function newPlayer(c, id, name, cls) {
+  // ---- how a new character may look (the character screen offers these; the referee takes nothing else) ----
+  // Hair shapes are paper-doll layers (a hair_*.png with its .tint.png mask); colours are hair_* ramps of the page's
+  // Tint.TINTS. Config hair_styles / hair_colors (lists) replace the built-in ones. '' = bald, always allowed.
+  var HAIR_DIR = 'art/sprites/paperdoll/hair/';
+  var HAIR_STYLES = ['hair_messy', 'hair_buzz', 'hair_slick', 'hair_shaggy', 'hair_under', 'hair_bob', 'hair_pony', 'hair_long', 'hair_metal_mohawk_v1', 'hair_metal_mohawk_v2']
+    .map(function (n) { return HAIR_DIR + n + '.png'; });
+  var HAIR_COLORS = ['hair_black', 'hair_dark', 'hair_brown', 'hair_auburn', 'hair_ginger', 'hair_blonde', 'hair_grey', 'hair_white'];
+  // The body under the gear: one for men, one for women, the same for every class (Config body_male / body_female).
+  // A character carries body: 'female' or nothing (= male). The class's own body_sprite is only the fallback for a
+  // male body when the Config names none (content made before bodies were a choice).
+  var BODY_MALE = 'art/sprites/paperdoll/base/body_survivor.png', BODY_FEMALE = 'art/sprites/paperdoll/base/body_survivor_female.png';
+  function bodySprite(c, p) {
+    var cls = p && c.classes && c.classes[p['class']];
+    if (p && p.body === 'female') return c.config.body_female || BODY_FEMALE;
+    return c.config.body_male || (cls && cls.bodySprite) || BODY_MALE;
+  }
+  // Skin tones a character may have: names of the page's Tint.SKINS (which holds the colours). skin_light is the
+  // art as drawn, and what a character with no tone recorded has.
+  var SKIN_TONES = ['skin_pale', 'skin_light', 'skin_tan', 'skin_olive', 'skin_brown', 'skin_dark', 'skin_deep'];
+  function cfgList(c, key) { return String(c.config[key] == null ? '' : c.config[key]).split(/[,;\n]/).map(function (x) { return x.trim(); }).filter(Boolean); }
+  function hairChoices(c) {
+    var styles = cfgList(c, 'hair_styles'), colors = cfgList(c, 'hair_colors');
+    if (!styles.length) styles = HAIR_STYLES.slice();
+    if (!colors.length) colors = HAIR_COLORS.slice();
+    var s0 = c.config.start_hair || '', c0 = c.config.start_hair_color || 'hair_brown';
+    if (s0 && styles.indexOf(s0) < 0) styles.unshift(s0);
+    if (colors.indexOf(c0) < 0) colors.unshift(c0);
+    if (styles.indexOf('') < 0) styles.push('');
+    return { styles: styles, colors: colors, style: s0, color: c0, skins: SKIN_TONES.slice(), skin: 'skin_light' };
+  }
+  /** look (optional) = {body, skin, hair, hairColor} chosen on the character screen; anything not on offer is ignored. */
+  function newPlayer(c, id, name, cls, look) {
     var p = { id: id, name: name, 'class': c.classes[cls] ? cls : (c.config.start_class || Object.keys(c.classes)[0] || ''),
       map: '', x: 0, y: 0, facing: 'S', level: 1, xp: 0, gold: 0, inventory: [], equipment: {}, flags: {}, explored: {}, respawn: '',
       // cosmetic paper-doll choices (character creation will let players pick these)
       hair: c.config.start_hair || '', hairColor: c.config.start_hair_color || 'hair_brown' };
+    if (look) {
+      if (look.body === 'female') p.body = 'female';
+      if (SKIN_TONES.indexOf(look.skin) >= 0 && look.skin !== 'skin_light') p.skin = look.skin;
+      var ch = hairChoices(c);
+      if (typeof look.hair === 'string' && ch.styles.indexOf(look.hair) >= 0) p.hair = look.hair;
+      if (ch.colors.indexOf(look.hairColor) >= 0) p.hairColor = look.hairColor;
+    }
     var map = startMap(c), sp = map && map.spawn;                           // the map's own spawn point wins over config.start_x/y
     var sx = sp ? Number(sp.x) || 0 : Number(c.config.start_x) || 0, sy = sp ? Number(sp.y) || 0 : Number(c.config.start_y) || 0;
     var at = Rl().nearestStandable(c, map, sx, sy);
     p.map = map.id; p.x = at.x; p.y = at.y; p.facing = (sp && sp.facing) || 'S';
     p.hp = stats(c, p).maxHp; p.mp = stats(c, p).maxMp;
-    p.hunger = 100; p.thirst = 100;
+    p.hunger = 100; p.thirst = 100; p.tox = 0;
     p.cooldowns = {}; p.statuses = []; p.mags = {}; p.abilities = ['', '']; p.belt = emptyBelt();
     list(classOf(c, p).startItems).forEach(function (s) { give(c, p, s.item, s.qty, [], true); });
     // equip the first weapon/armor they start with, so e.g. a survivor spawns with the pistol in hand
@@ -1099,6 +1463,7 @@ var World = (function () {
   function holdSlot(c, p, slot, ev) {
     slot = Math.floor(Number(slot)); if (!(slot >= 0 && slot < BELT_SIZE)) slot = -1;
     p.held = slot; p.equipment = p.equipment || {};
+    delete p.reload;                                          // changing what is in hand drops a reload under way
     var id = slot >= 0 ? (p.belt || [])[slot] : '', it = id && c.items[id], was = p.equipment.weapon || '';
     var wep = !!(it && it.slot === 'weapon' && count(p, id) > 0);
     if (wep && it.equipIf && !check(c, p, it.equipIf)) {
@@ -1108,7 +1473,7 @@ var World = (function () {
     }
     if (wep) {
       p.equipment.weapon = id;
-      if (was !== id && itemCan(it, 'shoot') && Number(it.clip) > 0 && !((p.mags && p.mags[id]) || 0)) loadMag(c, p, it);   // a freshly drawn gun loads its magazine
+      if (was !== id && itemCan(it, 'shoot') && Number(it.clip) > 0 && (!p.mags || p.mags[id] == null)) loadMag(c, p, it);   // a gun drawn for the first time comes loaded (an emptied one is reloaded the slow way)
     } else delete p.equipment.weapon;
     if ((p.equipment.weapon || '') !== was) { syncLoadout(c, p); p.hp = Math.min(p.hp, stats(c, p).maxHp); }
   }
@@ -1116,6 +1481,7 @@ var World = (function () {
   function normalize(c, p) {
     function obj(v, d) { if (v && typeof v === 'object') return v; try { return v ? JSON.parse(v) : d; } catch (e) { return d; } }
     p.inventory = obj(p.inventory, []); if (!Array.isArray(p.inventory)) p.inventory = [];
+    tidyStacks(c, p.inventory);                                // every stack in a cell of its own, none over its limit
     p.equipment = obj(p.equipment, {}); p.flags = obj(p.flags, {}); p.explored = obj(p.explored, {});
     p.cooldowns = obj(p.cooldowns, {}); p.statuses = obj(p.statuses, []); if (!Array.isArray(p.statuses)) p.statuses = [];
     p.mags = obj(p.mags, {}); if (!p.mags || typeof p.mags !== 'object' || Array.isArray(p.mags)) p.mags = {};   // rounds loaded per gun
@@ -1148,6 +1514,7 @@ var World = (function () {
     p.mp = p.mp === '' || p.mp == null || isNaN(mp) ? mm : Math.max(0, Math.min(mp, mm));
     var hun = Number(p.hunger); p.hunger = p.hunger === '' || p.hunger == null || isNaN(hun) ? 100 : Math.max(0, Math.min(100, hun));
     var thi = Number(p.thirst); p.thirst = p.thirst === '' || p.thirst == null || isNaN(thi) ? 100 : Math.max(0, Math.min(100, thi));
+    var tx = Number(p.tox); p.tox = isNaN(tx) ? 0 : Math.max(0, Math.min(100, tx));
     if (p._fill) { delete p._fill; syncLoadout(c, p); }   // migrated/empty bars: drop stale skills/items, then refill
     if (!c.maps[p.map]) { var np = newPlayer(c, p.id, p.name, p['class']); p.map = np.map; p.x = np.x; p.y = np.y; }
     return p;
@@ -1170,7 +1537,8 @@ var World = (function () {
   }
   /** Items that belong on the belt: things you consume or throw, weapons and tools. */
   function beltItems(c, p) {
-    return (p.inventory || []).map(function (s) { return s.item; }).filter(function (id) {
+    return (p.inventory || []).map(function (s) { return s.item; }).filter(function (id, i, all) {
+      if (all.indexOf(id) !== i) return false;                  // (an item may be in several stacks)
       var it = c.items[id]; return itemCan(it, 'consume') || itemCan(it, 'throw') || !!(it && (it.slot === 'weapon' || (it.tools || []).length));
     });
   }
@@ -1195,28 +1563,93 @@ var World = (function () {
   }
 
   function itemName(c, id) { return id === 'gold' ? 'gold' : (c.items[id] ? c.items[id].name : id); }
+  // ---- stacks and slots ----
+  // What someone carries, and what a container holds, is a list of stacks {item, qty, s}: s = the cell it sits in
+  // (the page draws the list as a grid). A stack holds at most the item's stack_max; more of it makes another stack.
+  // The bag has Config bag_slots cells (32). Things GIVEN to a player (loot, crafting, harvest) are never lost: with
+  // no cell free they land past the last cell (the page shows them as overflow) — but nothing can be MOVED into a
+  // bag or a container that is full. count / give / take stay the only ways the rest of the rules touch a bag.
+  function stackMaxOf(c, id) { var it = c.items[id], m = it ? Number(it.stackMax) : 0; return m > 0 ? m : 99; }
+  function bagSlots(c) { return Math.max(1, Math.round(cfgNum(c, 'bag_slots', 32))); }
+  /** Every stack gets a cell of its own (older saves had none), and none is over its item's limit. */
+  function tidyStacks(c, list) {
+    var used = {}, extra = [];
+    list.forEach(function (st) {
+      if (!(st.s >= 0) || st.s !== Math.floor(st.s) || used[st.s]) st.s = -1; else used[st.s] = 1;
+    });
+    function free() { for (var i = 0; ; i++) if (!used[i]) { used[i] = 1; return i; } }
+    list.forEach(function (st) {
+      if (st.s < 0) st.s = free();
+      var max = stackMaxOf(c, st.item);
+      while (st.qty > max) { extra.push({ item: st.item, qty: max, s: free() }); st.qty -= max; }
+    });
+    extra.forEach(function (st) { list.push(st); });
+    return list;
+  }
+  /** Puts a list in order, in place: stacks of the same item are joined (each as full as it goes), then laid out from
+   *  the first cell by kind of item, then name. */
+  function sortStacks(c, list) {
+    var tot = {}, ids = [];
+    list.forEach(function (st) { if (!(st.item in tot)) { tot[st.item] = 0; ids.push(st.item); } tot[st.item] += st.qty; });
+    function k(id) { var it = c.items[id] || {}; return [String(it.type || '~'), String(it.name || id).toLowerCase(), id]; }
+    ids.sort(function (x, y) { var a = k(x), b = k(y); for (var i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1; return 0; });
+    list.length = 0;
+    ids.forEach(function (id) {
+      var max = stackMaxOf(c, id), n = tot[id];
+      while (n > 0) { var q = Math.min(n, max); list.push({ item: id, qty: q, s: list.length }); n -= q; }
+    });
+    return list;
+  }
+  function stackAt(list, slot) { for (var i = 0; i < list.length; i++) if (list[i].s === slot) return list[i]; return null; }
+  function freeCell(list) { var used = {}; list.forEach(function (st) { used[st.s] = 1; }); for (var i = 0; ; i++) if (!used[i]) return i; }
+  /** Puts qty of an item into a list: tops up its stacks, then starts new ones in the first free cells. size = how
+   *  many cells there are (0 = no limit). Returns how many did not fit. */
+  function addStacks(c, list, id, qty, size) {
+    var max = stackMaxOf(c, id);
+    if (list.some(function (st) { return !(st.s >= 0); })) tidyStacks(c, list);
+    list.slice().sort(function (a, b) { return a.s - b.s; }).forEach(function (st) {
+      if (qty > 0 && st.item === id && st.qty < max) { var n = Math.min(qty, max - st.qty); st.qty += n; qty -= n; }
+    });
+    while (qty > 0) {
+      var cell = freeCell(list); if (size && cell >= size) break;
+      var m = Math.min(qty, max); list.push({ item: id, qty: m, s: cell }); qty -= m;
+    }
+    return qty;
+  }
+  /** Takes qty of an item out of a list, from its last stacks first. Returns how many it could not find. */
+  function removeStacks(list, id, qty) {
+    list.filter(function (st) { return st.item === id; }).sort(function (a, b) { return b.s - a.s; }).forEach(function (st) {
+      var n = Math.min(qty, st.qty); st.qty -= n; qty -= n;
+      if (st.qty <= 0) list.splice(list.indexOf(st), 1);
+    });
+    return qty;
+  }
+  function countIn(list, id) { var n = 0; (Array.isArray(list) ? list : []).forEach(function (st) { if (st.item === id) n += st.qty; }); return n; }
   function count(p, id) {
     if (id === 'gold') return p.gold;
-    var s = p.inventory.filter(function (x) { return x.item === id; })[0]; return s ? s.qty : 0;
+    return countIn(p.inventory, id);
   }
   function give(c, p, id, qty, ev, quiet) {
     if (!qty) return;
     if (id === 'gold') p.gold += qty;
     else {
-      var s = p.inventory.filter(function (x) { return x.item === id; })[0];
-      if (s) s.qty += qty; else p.inventory.push({ item: id, qty: qty });
+      var size = bagSlots(c), over = p.inventory.some(function (st) { return st.s >= size; });
+      addStacks(c, p.inventory, id, qty, 0);
+      if (ev && !over && p.inventory.some(function (st) { return st.s >= size; })) ev.push({ type: 'info', to: p.id, text: 'Your bag is overfull.' });
     }
     if (!quiet) ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y, text: '+' + qty + ' ' + itemName(c, id) });
   }
+  /** What is worn or held goes when the last of it leaves the bag. */
+  function goneFromBag(p, id) {
+    if (countIn(p.inventory, id) > 0) return;
+    Object.keys(p.equipment || {}).forEach(function (k) { if (p.equipment[k] === id) delete p.equipment[k]; });
+    if (Array.isArray(p.belt)) p.belt = p.belt.map(function (b) { return b === id ? '' : b; });   // none left: its belt slot is free again
+  }
   function take(p, id, qty) {
     if (id === 'gold') { if (p.gold < qty) return false; p.gold -= qty; return true; }
-    var s = p.inventory.filter(function (x) { return x.item === id; })[0];
-    if (!s || s.qty < qty) return false;
-    s.qty -= qty;
-    if (s.qty <= 0) {
-      p.inventory.splice(p.inventory.indexOf(s), 1);
-      Object.keys(p.equipment).forEach(function (k) { if (p.equipment[k] === id) delete p.equipment[k]; });
-    }
+    if (countIn(p.inventory, id) < qty) return false;
+    removeStacks(p.inventory, id, qty);
+    goneFromBag(p, id);
     return true;
   }
   function roll(c, table, rng) {
@@ -1453,7 +1886,7 @@ var World = (function () {
       if (healed) ws.dirty = true;
       return ms;
     }
-    var old = {};
+    var old = {}, freed = (ms.monsters || []).filter(function (m) { return m.free; });   // tamed animals belong to no spawner: they stay whatever the spawners do
     (ms.monsters || []).forEach(function (m) { old[m.id] = m; });
     ms.monsters = want.map(function (w) {
       var m = old[w.id];
@@ -1463,7 +1896,7 @@ var World = (function () {
       if (look) m.look = look;
       place(c, ws, mapId, m, w.e, w.radius, w.i);
       return m;
-    });
+    }).concat(freed);
     ms.spawnSig = sig;
     ws.dirty = true;
     return ms;
@@ -1484,7 +1917,8 @@ var World = (function () {
     else goal = { way: 'down', x: x, y: y, dir: dir };            // from the landing they left, the way they stepped
     (ms.monsters || []).forEach(function (m) {
       var def = c.monsters[m.ref]; if (!def || m.dead) return;
-      if (m.engaged !== p.id && Math.abs(m.x - x) + Math.abs(m.y - y) > def.aggro) return;
+      var after = m.engaged === p.id || !!(m.ai && m.ai.k === 'p' && m.ai.id === p.id);
+      if (def.brain === 'walker' ? !after : (!after && Math.abs(m.x - x) + Math.abs(m.y - y) > def.aggro)) return;
       m.follow = { way: goal.way, x: goal.x, y: goal.y, dir: goal.dir, who: p.id, until: now + FOLLOW_MS };
       any = true;
     });
@@ -1546,6 +1980,446 @@ var World = (function () {
     });
   }
 
+  // ------------------------------------------------------------ monster brains
+  // Each monster def names a brain (Monsters → brain). '' is the plain one in advance(): go for whoever is within
+  // aggro range, in a straight line. 'walker' is walkerStep below.
+  /** A ranged monster's shot at a player `dist` tiles away, if it has one ready and a clear line. True = it fired. */
+  function monsterShot(c, ws, mapId, map, m, def, ms2, target, dist, now, rng, ev) {
+    if (!(def.attackRange > 1 && dist > 1 && dist <= def.attackRange && now >= (m.nextShot || 0) &&
+        canSee(c, map, m.x, m.y, target.x, target.y, function (e) { return stateOf(c, ws, mapId, e); }))) return false;
+    m.nextShot = now + def.rangedMs;
+    m.facing = Math.abs(target.x - m.x) >= Math.abs(target.y - m.y) ? (target.x > m.x ? 'E' : 'W') : (target.y > m.y ? 'S' : 'N');
+    var rdmg = damage(ms2.atk, stats(c, target).def, rng);
+    target.hp -= rdmg;
+    ev.push({ type: 'cast', map: mapId, skill: '_ranged', by: m.id, from: { x: m.x, y: m.y }, to: { x: target.x, y: target.y }, x: target.x, y: target.y, projectile: !!def.rangedProjectile, color: '#8fbf4f' });
+    ev.push({ type: 'hit', map: mapId, x: target.x, y: target.y, amount: rdmg, to: target.id, text: 'The ' + lower(def.name) + ' spits at you for ' + rdmg + '.' });
+    if (target.hp <= 0) die(c, ws, target, ev);
+    else {
+      if (def.rangedStatus && c.statuses && c.statuses[def.rangedStatus]) applyStatus(c, target, def.rangedStatus, Number(c.config.ranged_status_ms) || 3000, now, m.id);
+      if (def.infectChance && rng() < def.infectChance) applyInfection(c, ws, mapId, target, now, ev);
+    }
+    return true;
+  }
+  /** A monster's blow at the player beside it. True = that killed them. */
+  function monsterSwing(c, ws, mapId, m, def, ms2, target, now, rng, ev) {
+    var dmg = damage(ms2.atk, stats(c, target).def, rng);
+    target.hp -= dmg;
+    m.facing = target.x > m.x ? 'E' : target.x < m.x ? 'W' : target.y > m.y ? 'S' : 'N';
+    ev.push({ type: 'hit', map: mapId, x: target.x, y: target.y, amount: dmg, to: target.id, text: 'The ' + lower(def.name) + ' hits you for ' + dmg + '.' });
+    if (target.hp <= 0) { die(c, ws, target, ev); return true; }
+    if (def.infectChance && rng() < def.infectChance) applyInfection(c, ws, mapId, target, now, ev);
+    return false;
+  }
+  // ------------------------------------------------------------ animals (Monsters brain: animal | hunter)
+  // animal: never attacks. It wanders (roamStep) and runs from whatever comes within its flee_range: players, and
+  //   the monsters that hunt (brain hunter or walker). Hurt, it runs from whoever hurt it, from further off.
+  //   One with tame_with does not run from a player HOLDING that item, and using it then feeds it: it is that player's
+  //   (m.tame, m.owner), leaves its spawner (m.free: a new wild one grows there in time) and lives around its home
+  //   (m.home: the nearest coop — an object of kind coop — within Config coop_range, else where it was tamed).
+  //   A tame one with a coop leaves its `lays` object on the ground every lay_s seconds (an egg to pick up).
+  // hunter: goes for the nearest prey animal or player within aggro_range, bites what it reaches, and after a
+  //   kill it has eaten: for a while it only minds players who come close.
+  // Killed, a monster with a `carcass` leaves that object where it fell (leaveCarcass): worked like a tree
+  //   (harvest, harvest_tool), gone after Config carcass_rot_s.
+  var TAME_LEASH = 3, HUNTER_FED_MS = 40000;
+  function leaveCarcass(c, ws, mapId, m, def, now, drops) {   // drops = what its loot table rolled this time
+    var o = def && def.carcass && c.objects[def.carcass]; if (!o) return false;
+    var st = structOf(ws, mapId), map = liveMap(c, ws, mapId);
+    if (!map || (map.entities || []).some(function (e) { return e.x === m.x && e.y === m.y && !isWallFixture(objOf(c, e)); })) return false;   // no room where it fell
+    // Inside: what it always gives (loot) and what its loot table rolled. A body is left even with nothing on it
+    // (it is gone the moment someone looks, or when it rots).
+    var inv = []; list(def.loot).concat(drops || []).forEach(function (g) { if (c.items[g.item] && g.qty > 0) addStacks(c, inv, g.item, g.qty, 0); });
+    var max = Number((o.properties || {}).hp) || 0, key = mapId + '.b' + (++st.n);
+    st.ents.push({ key: key, x: m.x, y: m.y, ref: o.id, data: {}, hp: max, max: max, bp: '', by: null, built: now, prog: 0, need: 0, wild: true, inv: inv });
+    mapState(ws, mapId).timers[key] = { at: now + Math.max(10, cfgNum(c, 'carcass_rot_s', 300)) * 1000, rot: true };
+    touchStruct(st); ws.dirty = true;
+    return true;
+  }
+  /** One step toward (tx, ty), the way the plain brain walks: the long axis first, cutting a corner when it may. */
+  function stepToward(c, ws, mapId, map, m, here, tx, ty, stepMs) {
+    var dx = tx - m.x, dy = ty - m.y, dirs = [];
+    if (!dx && !dy) return false;
+    if (Math.abs(dx) >= Math.abs(dy)) { dirs.push(dx > 0 ? 'E' : 'W'); if (dy) dirs.push(dy > 0 ? 'S' : 'N'); }
+    else { dirs.push(dy > 0 ? 'S' : 'N'); if (dx) dirs.push(dx > 0 ? 'E' : 'W'); }
+    if (dx && dy) dirs.unshift((dy > 0 ? 'S' : 'N') + (dx > 0 ? 'E' : 'W'));
+    for (var i = 0; i < dirs.length; i++) {
+      var r = Rl().tryMove(c, map, m.x, m.y, dirs[i], moveOpts(c, ws, mapId, here, m));
+      if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = Rl().faceFor(dirs[i], m.facing); m.last += (Rl().stepCost(dirs[i]) - 1) * stepMs; return true; }
+    }
+    return false;
+  }
+  /** One step away from (tx, ty): of the eight ways, the open one that ends furthest from it. */
+  function stepAway(c, ws, mapId, map, m, here, tx, ty, stepMs) {
+    var best = null, bd = (m.x - tx) * (m.x - tx) + (m.y - ty) * (m.y - ty), opts = moveOpts(c, ws, mapId, here, m);
+    ['N', 'E', 'S', 'W', 'NE', 'SE', 'SW', 'NW'].forEach(function (dir) {
+      var r = Rl().tryMove(c, map, m.x, m.y, dir, opts); if (!r.ok || r.map) return;
+      var d = (r.x - tx) * (r.x - tx) + (r.y - ty) * (r.y - ty);
+      if (d > bd) { bd = d; best = { r: r, dir: dir }; }
+    });
+    if (!best) return false;
+    m.x = best.r.x; m.y = best.r.y; m.facing = Rl().faceFor(best.dir, m.facing); m.last += (Rl().stepCost(best.dir) - 1) * stepMs;
+    return true;
+  }
+  function coopNear(c, map, x, y, range) {
+    var best = null, bd = 1e9;
+    (map.entities || []).forEach(function (e) {
+      var o = objOf(c, e); if (!o || o.kind !== 'coop' || (e.need && (e.prog || 0) < e.need)) return;
+      var d = cheb(x, y, e.x, e.y); if (d <= range && d < bd) { bd = d; best = e; }
+    });
+    return best;
+  }
+  function tame(c, ws, mapId, map, ms, m, def, p, now) {
+    // its spawner grows a new wild one in time; this one is on its own from here on
+    if (m.spawn) {
+      ms.monsters.push({ id: m.id, ref: m.ref, spawn: m.spawn, x: m.x, y: m.y, hp: def.hp, dead: true, last: now, respawnAt: now + (Number(def.respawnS) || 60) * 1000, facing: 'S' });
+      ms.tn = (ms.tn || 0) + 1; m.id = 'tame' + ms.tn + '_' + String(m.ref).replace(/[^a-z0-9_]/gi, '');
+      delete m.spawn;
+    }
+    m.free = true; m.tame = true; m.owner = p.id; m.engaged = null;
+    var coop = coopNear(c, map, m.x, m.y, cfgNum(c, 'coop_range', 8));
+    m.home = coop ? { x: coop.x, y: coop.y, coop: coop.key } : { x: m.x, y: m.y };
+    m.layAt = now + Math.max(5, def.layS || 0) * 1000;
+    ws.dirty = true;
+    return !!coop;
+  }
+  function animalStep(c, ws, mapId, map, ms, m, def, here, now, rng, stepMs) {
+    var range = def.fleeRange || def.aggro || 4, threat = null, best = 1e9;
+    if (!m.tame) here.forEach(function (q) {
+      var d = cheb(q.x, q.y, m.x, m.y); if (d > range || d >= best) return;
+      if (def.tameWith && (heldItem(c, q) || {}).id === def.tameWith) return;          // feed in hand: nothing to fear
+      best = d; threat = q;
+    });
+    ms.monsters.forEach(function (q) {
+      var qd = c.monsters[q.ref]; if (q === m || q.dead || !qd || qd.prey || (qd.brain !== 'hunter' && qd.brain !== 'walker')) return;
+      var d = cheb(q.x, q.y, m.x, m.y); if (d <= range && d < best) { best = d; threat = q; }
+    });
+    if (!threat && m.engaged) {                                                        // hurt: away from whoever did it, from twice as far
+      var eng = here.filter(function (q) { return q.id === m.engaged; })[0];
+      if (eng && cheb(eng.x, eng.y, m.x, m.y) <= range * 2 + 2) threat = eng; else m.engaged = null;
+    }
+    if (threat) { stepAway(c, ws, mapId, map, m, here, threat.x, threat.y, stepMs); return; }
+    if (!m.tame) { roamStep(c, ws, mapId, map, m, here, rng); return; }
+    // tame: it keeps to its home, and lays there
+    var h = m.home || (m.home = { x: m.x, y: m.y });
+    if (!h.coop) { var cp = coopNear(c, map, h.x, h.y, cfgNum(c, 'coop_range', 8)); if (cp) { h.x = cp.x; h.y = cp.y; h.coop = cp.key; } }   // a coop built since: it moves in
+    else if (!(map.entities || []).some(function (e) { return e.key === h.coop; })) delete h.coop;                                           // its coop is gone
+    if (cheb(m.x, m.y, h.x, h.y) > TAME_LEASH) stepToward(c, ws, mapId, map, m, here, h.x, h.y, stepMs);
+    else if (rng() < 0.4) {
+      var dir = 'NESW'.charAt(rint(rng, 0, 3)), r = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
+      if (r.ok && !r.map && cheb(r.x, r.y, h.x, h.y) <= TAME_LEASH) { m.x = r.x; m.y = r.y; m.facing = dir; }
+    }
+    var egg = list(def.lays).length ? c.objects._drop : null;
+    if (egg && h.coop && def.layS > 0 && now >= (m.layAt || 0)) {
+      m.layAt = now + def.layS * 1000;
+      var st = structOf(ws, mapId), lying = st.ents.filter(function (b) { return b.ref === egg.id && cheb(b.x, b.y, h.x, h.y) <= TAME_LEASH + 1; }).length;
+      var taken = (map.entities || []).some(function (e) { return e.x === m.x && e.y === m.y && !isWallFixture(objOf(c, e)); });
+      if (lying < cfgNum(c, 'egg_cap', 6) && !taken) {
+        st.ents.push({ key: mapId + '.b' + (++st.n), x: m.x, y: m.y, ref: egg.id, data: { pickup: def.lays }, hp: 0, max: 0, bp: '', by: null, built: now, prog: 0, need: 0, wild: true });
+        touchStruct(st); ws.dirty = true;
+      }
+    }
+  }
+  function hunterStep(c, ws, mapId, map, ms, m, def, ms2, here, now, rng, ev, stepMs, engageRange) {
+    var range = def.aggro || 6, fed = now < (m.fedUntil || 0), target = null, kind = '', best = 1e9;
+    var eng = m.engaged ? here.filter(function (q) { return q.id === m.engaged; })[0] : null;
+    if (eng && cheb(eng.x, eng.y, m.x, m.y) <= engageRange) { target = eng; kind = 'p'; best = 0; } else if (m.engaged) m.engaged = null;
+    if (!target) here.forEach(function (q) {
+      var d = cheb(q.x, q.y, m.x, m.y); if (d <= (fed ? 2 : range) && d < best) { best = d; target = q; kind = 'p'; }
+    });
+    if (!target && !fed) ms.monsters.forEach(function (q) {
+      var qd = c.monsters[q.ref]; if (q === m || q.dead || !qd || !qd.prey) return;
+      var d = cheb(q.x, q.y, m.x, m.y); if (d <= range && d < best) { best = d; target = q; kind = 'm'; }
+    });
+    if (!target) { roamStep(c, ws, mapId, map, m, here, rng); return ''; }
+    if (cheb(m.x, m.y, target.x, target.y) === 1 && !moveBlockedEdge(c, map, m.x, m.y, target.x, target.y)) {
+      if (kind === 'p') monsterSwing(c, ws, mapId, m, def, ms2, target, now, rng, ev);
+      else {
+        m.facing = target.x > m.x ? 'E' : target.x < m.x ? 'W' : target.y > m.y ? 'S' : 'N';
+        hitMonster(c, ws, mapId, null, target, damage(ms2.atk, monStats(c, target).def, rng), now, rng, ev, '');
+        if (target.dead) m.fedUntil = now + HUNTER_FED_MS;
+      }
+      return 'stop';
+    }
+    stepToward(c, ws, mapId, map, m, here, target.x, target.y, stepMs);
+    return '';
+  }
+  /** Idle wandering near its spawn point; away from home it drifts back. */
+  function roamStep(c, ws, mapId, map, m, here, rng) {
+    if (!(rng() < 0.5)) return;
+    var dir = 'NESW'.charAt(rint(rng, 0, 3));
+    var sp = entity(c, mapId, m.spawn), rad = sp ? (Number(props(c, sp).radius) || 0) + 2 : 3;
+    // Away from home (it chased someone and lost them): it does not freeze there. It mills about, and half
+    // its steps head back, so it drifts home.
+    var away = !!sp && (Math.abs(m.x - sp.x) > rad || Math.abs(m.y - sp.y) > rad);
+    if (away && rng() < 0.5) {
+      var hx = sp.x - m.x, hy = sp.y - m.y;
+      dir = Math.abs(hx) >= Math.abs(hy) ? (hx > 0 ? 'E' : 'W') : (hy > 0 ? 'S' : 'N');
+    }
+    var r2 = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
+    if (r2.ok && !r2.map && (!sp || away || (Math.abs(r2.x - sp.x) <= rad && Math.abs(r2.y - sp.y) <= rad))) { m.x = r2.x; m.y = r2.y; m.facing = dir; }
+  }
+  function millStep(c, ws, mapId, map, m, here, rng) {
+    var dir = 'NESW'.charAt(rint(rng, 0, 3)), r = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
+    if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = dir; }
+  }
+
+  // ---- the walker ----
+  // What a walker carries between turns, in the map's record (so it survives everyone leaving): m.ai =
+  //   {k: 'p' a player | 'm' a prey monster | 's' something players built, id / t: who or what,
+  //    a: aggro left in ms, x, y: where it last knew its target to be,
+  //    p: the way it worked out ("NNEES"), g: where that way leads, n: turns to wait before working one out again,
+  //    w: 1 = it is poking around where it lost them (walks only, breaks nothing)}
+  // No m.ai = it is not after anything.
+  //   INERT     no player within Config walker_wake_radius: it does not move or think at all.
+  //   ROAM      a player is around: it wanders, and looks. Seeing a player or a prey animal (line of sight, within
+  //             sight_range) or, failing those, something players built, starts the hunt.
+  //   HUNT      while it sees its target, aggro stays full. It walks straight at it, or along a way it works out;
+  //             what blocks that way and can be broken, it breaks (the cheapest way counts blows as steps, so a
+  //             door goes before a wall and a short way round before either).
+  //   SEARCH    target out of sight: aggro runs down, by the walker's OWN turns (so not while nobody is on the map
+  //             and the world stands still). It makes for where it last saw them (within aggro_range it still hears
+  //             them through walls), breaking in if it must, then pokes around. At zero it gives up.
+  // Once hunting it needs no player nearby. It ends by losing interest, by winning (target dead or destroyed), or dying.
+  /**
+   * What a monster is up to, for the page to show over its head: 2 = it is after someone it can see (!),
+   * 1 = it is looking for someone it lost (?), 0 = neither. Only brains that keep such a state (the walker) say more than 0.
+   */
+  function alertOf(m) { var ai = m && m.ai; return ai && ai.k !== 's' ? (ai.s ? 2 : 1) : 0; }
+  var WALKER_PATH = 24, WALKER_NODES = 320, WALKER_REACH = 18, WALKER_MAXCOST = 160;
+  var WALKER_PLANS = 8;                                       // ways worked out per map per turn, whatever the size of the horde: the rest wait their turn
+  function walkerCtx(c, ws, mapId, map) {
+    var b = c.config.walkers_attack_buildings;
+    return { map: map, stale: false, built: null, prey: null, obst: {}, budget: WALKER_PLANS, stateFn: function (e) { return stateOf(c, ws, mapId, e); },
+      wake: cfgNum(c, 'walker_wake_radius', 24), buildings: b === undefined || b === '' || yes(b) };
+  }
+  /** Can something standing at (x, y) strike this wall or object (tg from resolveOn)? */
+  function structReach(c, map, x, y, tg) {
+    var cells = structCells(tg);
+    if (tg.t === 'wall' || (tg.obj && isWallFixture(tg.obj))) return cells.some(function (q) { return q.x === x && q.y === y; });
+    var d = cheb(x, y, tg.x, tg.y);
+    return d === 0 || (d === 1 && !moveBlockedEdge(c, map, x, y, tg.x, tg.y));
+  }
+  /** How many of a monster's blows (dmg each) a wall or object takes to break; 0 = it cannot be broken that way. */
+  function blowsToBreak(c, map, t, dmg) {
+    var tg = resolveOn(c, map, map._struct, t); if (!tg || !tg.can || tg.hp <= 0) return 0;
+    var mult = MULT.monster[tg.material]; if (mult === undefined) mult = 1;
+    var dealt = Math.max(0, Math.round(dmg * mult) - tg.armor);
+    return dealt > 0 ? Math.ceil(tg.hp / dealt) : 0;
+  }
+  /**
+   * A step from (x, y) towards dir failed with answer r: what would have to be broken to make it, as
+   * {t: target, hits} — the shut door or window on that edge, else the wall, else the object in the way — or null.
+   */
+  function obstacleFor(c, map, x, y, dir, r, dmg, ctx) {
+    var k = x + ',' + y + dir + dmg; if (ctx.obst[k] !== undefined) return ctx.obst[k];
+    var cands = [], R = Rl(), d = R.DIRS[dir];
+    if (r.reason === 'wall' || r.reason === 'door') {
+      var ed = R.wallEdge(x, y, dir), ov = map._edgeOv && map._edgeOv[R.edgeKey(ed.orient, ed.x, ed.y)];
+      var tt = R.terrainAt(c, map, x + d.dx, y + d.dy);
+      if (tt && (tt.pass.n || tt.pass.e || tt.pass.s || tt.pass.w)) {          // (nothing to gain with no ground behind it)
+        if (ov && ov.key) cands.push({ t: 'ent', key: ov.key });
+        cands.push({ t: 'wall', orient: ed.orient, x: ed.x, y: ed.y });
+      }
+    } else if (r.reason === 'object' && r.entity) cands.push({ t: 'ent', key: r.entity });
+    var best = null;
+    cands.forEach(function (t) { var n = blowsToBreak(c, map, t, dmg); if (n > 0 && (!best || n < best.hits)) best = { t: t, hits: n }; });
+    return (ctx.obst[k] = best);
+  }
+  /**
+   * The cheapest way from the monster to a cell where at(x, y) holds, as a string of steps ("NNE"), '' when it is
+   * there already, or null when there is none within reach. Four-way. With dmg > 0, a step blocked by something it
+   * can break is allowed and costs its blows; with dmg 0 it only walks. Other creatures are not in the way here:
+   * the walk itself deals with them. Bounded (WALKER_NODES cells, WALKER_REACH tiles out) so a horde stays cheap.
+   */
+  function findPath(c, ws, mapId, map, m, at, dmg, ctx) {
+    if (at(m.x, m.y)) return '';
+    var R = Rl(), W = map.width, start = m.y * W + m.x, cost = {}, prev = {}, how = {}, done = {}, buckets = [[start]], n = 0, DIRS4 = ['N', 'E', 'S', 'W'];
+    var opts = { mapOf: function (id) { return liveMap(c, ws, id); }, walkable: function (e) { return walkableEntity(c, ws, mapId, e); } };
+    cost[start] = 0;
+    for (var cc = 0; cc < buckets.length && cc <= WALKER_MAXCOST; cc++) {
+      var b = buckets[cc]; if (!b) continue;
+      for (var i = 0; i < b.length; i++) {
+        var id = b[i]; if (done[id] || cost[id] !== cc) continue;
+        done[id] = 1;
+        var x = id % W, y = (id - x) / W;
+        if (id !== start && at(x, y)) {
+          var out = '';
+          while (id !== start) { out = how[id] + out; id = prev[id]; }
+          return out.slice(0, WALKER_PATH);
+        }
+        if (++n > WALKER_NODES) return null;
+        for (var k = 0; k < 4; k++) {
+          var dir = DIRS4[k], d = R.DIRS[dir], nx = x + d.dx, ny = y + d.dy, nid = ny * W + nx, step = 1;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= map.height || done[nid] || cheb(nx, ny, m.x, m.y) > WALKER_REACH) continue;
+          var r = R.tryMove(c, map, x, y, dir, opts);
+          if (r.map) continue;                                  // (stairs to another floor: not a way it plans)
+          if (!r.ok) {
+            var ob = dmg > 0 ? obstacleFor(c, map, x, y, dir, r, dmg, ctx) : null;
+            if (!ob) continue;
+            step = 1 + Math.min(60, Math.ceil(ob.hits / 2));
+          } else if (r.x !== nx || r.y !== ny) continue;
+          var nc = cc + step;
+          if (cost[nid] === undefined || nc < cost[nid]) { cost[nid] = nc; prev[nid] = id; how[nid] = dir; (buckets[nc] = buckets[nc] || []).push(nid); }
+        }
+      }
+    }
+    return null;
+  }
+  /** The nearest thing players built that the walker can see from where it stands (a target for resolveOn), or null. */
+  function builtInSight(c, map, m, sight, ctx) {
+    if (!ctx.built) {
+      var list = [], st = map._struct;
+      if (st) {
+        Object.keys(st.walls || {}).forEach(function (k) { var ed = edgeOfKey(k); if (ed) list.push({ t: { t: 'wall', orient: ed.orient, x: ed.x, y: ed.y }, cells: edgeCells(ed) }); });
+        (st.ents || []).forEach(function (e) {
+          var o = objOf(c, e); if (!o || NO_HP_KINDS[o.kind] || !(Number(e.max) > 0) || !(Number(e.hp) > 0)) return;
+          var cells = [{ x: e.x, y: e.y }];
+          if (isWallFixture(o)) { cells = []; fixtureEdges(o, e).forEach(function (q) { edgeCells(q).forEach(function (cl) { cells.push(cl); }); }); }
+          list.push({ t: { t: 'ent', key: e.key }, cells: cells });
+        });
+      }
+      ctx.built = list;
+    }
+    var near = [];
+    ctx.built.forEach(function (b) {
+      var d = 1e9; b.cells.forEach(function (q) { d = Math.min(d, cheb(q.x, q.y, m.x, m.y)); });
+      if (d <= sight) near.push({ b: b, d: d });
+    });
+    near.sort(function (p, q) { return p.d - q.d; });
+    for (var i = 0; i < near.length && i < 4; i++) {
+      var b = near[i].b, tg = resolveOn(c, map, map._struct, b.t);
+      if (!tg || !tg.can || tg.hp <= 0) continue;
+      if (b.cells.some(function (q) { return (q.x === m.x && q.y === m.y) || canSee(c, map, m.x, m.y, q.x, q.y, ctx.stateFn); })) return b.t;
+    }
+    return null;
+  }
+  /** A blow at a wall or object. */
+  function walkerBash(c, ws, mapId, m, def, ms2, t, now, ev, ctx) {
+    var res = damageStructure(c, ws, mapId, t, def.structureDmg > 0 ? def.structureDmg : ms2.atk, { kind: 'monster', by: m.id, now: now }, ev);
+    ctx.stale = true;                                         // the map changed: everyone after this one looks again
+    if (t.t === 'wall') m.facing = t.orient === 'h' ? (m.y >= t.y ? 'N' : 'S') : (m.x >= t.x ? 'W' : 'E');
+    else if (res && res.tg) m.facing = Math.abs(res.tg.x - m.x) >= Math.abs(res.tg.y - m.y) ? (res.tg.x > m.x ? 'E' : res.tg.x < m.x ? 'W' : m.facing) : (res.tg.y > m.y ? 'S' : 'N');
+    return res;
+  }
+  /**
+   * One turn of a walker. Answers 'stop' (it struck: no more steps this turn), 'gone' (it left this floor), or nothing.
+   */
+  function walkerStep(c, ws, mapId, ms, m, def, ms2, here, now, rng, ev, stepMs, ctx) {
+    if (ctx.stale) { ctx.map = liveMap(c, ws, mapId); ctx.obst = {}; ctx.built = null; ctx.stale = false; }
+    var map = ctx.map, sight = def.sight > 0 ? def.sight : def.aggro, full = (def.aggroS > 0 ? def.aggroS : 30) * 1000;
+    function sees(x, y) { return cheb(m.x, m.y, x, y) <= sight && canSee(c, map, m.x, m.y, x, y, ctx.stateFn); }
+    function byId(list, id) { for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]; return null; }
+    var ai = m.ai || null, tgt = null, seen = false;
+    if (m.engaged) {                                          // struck by someone, or it came up the stairs after them
+      var who = byId(here, m.engaged);
+      if (who) ai = m.ai = { k: 'p', id: who.id, a: full, x: who.x, y: who.y };
+      m.engaged = null;
+    }
+    if (ai && ai.k === 'p') tgt = byId(here, ai.id);
+    else if (ai && ai.k === 'm') { tgt = byId(ms.monsters, ai.id); if (!tgt || tgt.dead) { delete m.ai; ai = tgt = null; } }      // it won
+    else if (ai && ai.k === 's') { tgt = resolveOn(c, map, map._struct, ai.t); if (!tgt || !tgt.can || tgt.hp <= 0) { delete m.ai; ai = tgt = null; } }
+    if (ai && ai.k === 'p' && !tgt && m.follow && now < m.follow.until) {                // they took the stairs: after them
+      return followStairs(c, ws, mapId, map, ms, m, here, now) ? 'gone' : undefined;
+    }
+    if (ai && ai.k !== 's') {
+      if (tgt && sees(tgt.x, tgt.y)) { seen = true; ai.a = full; ai.x = tgt.x; ai.y = tgt.y; ai.s = 1; delete ai.w; }   // s: it has them in sight (alertOf)
+      else {
+        ai.a -= stepMs; delete ai.s;
+        if (tgt && cheb(m.x, m.y, tgt.x, tgt.y) <= def.aggro) { ai.x = tgt.x; ai.y = tgt.y; delete ai.w; }   // out of sight but close: it hears them
+        if (ai.a <= 0) { delete m.ai; ai = tgt = null; }
+      }
+    }
+    // Looking for something (new) to go after — only with a player around to set it off.
+    var awake = here.some(function (q) { return cheb(q.x, q.y, m.x, m.y) <= ctx.wake; });
+    if (awake && !seen) {
+      var found = null, fk = '', fd = 1e9;
+      here.forEach(function (q) { var d = cheb(q.x, q.y, m.x, m.y); if (d < fd && sees(q.x, q.y)) { fd = d; found = q; fk = 'p'; } });
+      if (!ctx.prey) ctx.prey = ms.monsters.filter(function (q) { var qd = c.monsters[q.ref]; return qd && qd.prey; });
+      if (!def.prey) ctx.prey.forEach(function (q) { if (q.dead || q === m) return; var d = cheb(q.x, q.y, m.x, m.y); if (d < fd && sees(q.x, q.y)) { fd = d; found = q; fk = 'm'; } });
+      if (found) { ai = m.ai = { k: fk, id: found.id, a: full, x: found.x, y: found.y, s: 1 }; tgt = found; seen = true; }
+      else if (!ai && ctx.buildings) {
+        var bt = builtInSight(c, map, m, sight, ctx);
+        if (bt) { ai = m.ai = { k: 's', t: bt, a: full }; tgt = resolveOn(c, map, map._struct, bt); }
+      }
+    }
+    if (!ai) { if (awake) roamStep(c, ws, mapId, map, m, here, rng); return; }
+    ws.dirty = true;
+    if (m.guest) m.idleUntil = now + GUEST_IDLE_MS;
+    var goal;
+    if (ai.k === 's') {
+      if (structReach(c, map, m.x, m.y, tgt)) { walkerBash(c, ws, mapId, m, def, ms2, ai.t, now, ev, ctx); return 'stop'; }
+      goal = { s: tgt };
+    } else {
+      if (tgt) {
+        if (ai.k === 'p' && monsterShot(c, ws, mapId, map, m, def, ms2, tgt, Math.abs(tgt.x - m.x) + Math.abs(tgt.y - m.y), now, rng, ev)) return 'stop';
+        if (cheb(m.x, m.y, tgt.x, tgt.y) === 1 && !moveBlockedEdge(c, map, m.x, m.y, tgt.x, tgt.y)) {
+          if (ai.k === 'p') { if (monsterSwing(c, ws, mapId, m, def, ms2, tgt, now, rng, ev)) delete m.ai; }
+          else {
+            m.facing = tgt.x > m.x ? 'E' : tgt.x < m.x ? 'W' : tgt.y > m.y ? 'S' : 'N';
+            hitMonster(c, ws, mapId, null, tgt, damage(ms2.atk, monStats(c, tgt).def, rng), now, rng, ev, '');
+            if (tgt.dead) delete m.ai;
+          }
+          return 'stop';
+        }
+      }
+      goal = { x: ai.x, y: ai.y, adj: !!(tgt && tgt.x === ai.x && tgt.y === ai.y) };
+    }
+    return walkerMove(c, ws, mapId, ms, m, def, ms2, here, now, rng, ev, stepMs, ctx, ai, goal, seen);
+  }
+  function walkerMove(c, ws, mapId, ms, m, def, ms2, here, now, rng, ev, stepMs, ctx, ai, goal, seen) {
+    var map = ctx.map, R = Rl(), opts = moveOpts(c, ws, mapId, here, m), dmg = def.structureDmg > 0 ? def.structureDmg : ms2.atk, r, i;
+    function at(x, y) {
+      if (goal.s) return structReach(c, map, x, y, goal.s);
+      // (goal.adj = its target stands there. The way still leads INTO that cell, so that a wall right beside the target
+      // is part of it; the walker never arrives, it strikes as soon as it is beside them with nothing between.)
+      return x === goal.x && y === goal.y;
+    }
+    if (!goal.s && !goal.adj && at(m.x, m.y)) {                 // it is where it last knew them to be, and they are not: poke around
+      ai.x = Math.max(0, Math.min(map.width - 1, m.x + rint(rng, -4, 4))); ai.y = Math.max(0, Math.min(map.height - 1, m.y + rint(rng, -4, 4)));
+      ai.w = 1; ai.p = ''; delete ai.n;
+      return;
+    }
+    // a way it worked out is kept between turns, and followed, while it still leads where it wants to go
+    var gk = goal.s ? goal.s.key : null, same = goal.s ? ai.g === gk : !!(ai.g && typeof ai.g === 'object' && cheb(ai.g[0], ai.g[1], goal.x, goal.y) <= (goal.adj ? 2 : 0));
+    if (seen && !goal.s && !(same && ai.p)) {                   // it sees them and is on no such way: straight at them, as far as that goes
+      // (the corner cut and the long way of the two only: a sidestep along something in the way is the worked-out way's job,
+      // or it would walk off from a wall it has nearly broken through)
+      var dirs = stepsToward(m, goal.x, goal.y); if (dirs.length > 2) dirs.length = 2; else if (dirs.length === 2 && !R.DIAG[dirs[0]]) dirs.length = 1;
+      for (i = 0; i < dirs.length; i++) {
+        r = R.tryMove(c, map, m.x, m.y, dirs[i], opts);
+        if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = R.faceFor(dirs[i], m.facing); m.last += (R.stepCost(dirs[i]) - 1) * stepMs; ai.p = ''; return; }
+      }
+    }
+    // …otherwise along a way it works out
+    if (!same || !ai.p) {
+      if (same && ai.n > 0) { ai.n--; millStep(c, ws, mapId, map, m, here, rng); return; }
+      if (ctx.budget <= 0) return;                              // enough thinking on this map for one turn: it stands a moment
+      ctx.budget--;
+      var path = findPath(c, ws, mapId, map, m, at, ai.w ? 0 : dmg, ctx);
+      ai.g = goal.s ? gk : [goal.x, goal.y];
+      if (!path) {                                              // no way there for now: mill about, look again in a few turns
+        ai.p = ''; ai.n = 5;
+        if (ai.w) { ai.x = m.x; ai.y = m.y; }                   // (a poke-around spot it cannot walk to: pick another)
+        if (ai.k === 's') { ai.a -= 4 * stepMs; if (ai.a <= 0) delete m.ai; }
+        millStep(c, ws, mapId, map, m, here, rng);
+        return;
+      }
+      ai.p = path; delete ai.n;
+    }
+    var d = ai.p.charAt(0);
+    r = R.tryMove(c, map, m.x, m.y, d, opts);
+    if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = d; ai.p = ai.p.slice(1); return; }
+    if (r.reason === 'occupied') {
+      var pl = r.who && r.who.player;
+      if (pl && !moveBlockedEdge(c, map, m.x, m.y, pl.x, pl.y)) { monsterSwing(c, ws, mapId, m, def, ms2, pl, now, rng, ev); return 'stop'; }   // someone in its way
+      if (rng() < 0.25) ai.p = '';                              // stuck behind another one: now and then, think again
+      return;
+    }
+    var ob = ai.w || r.map ? null : obstacleFor(c, map, m.x, m.y, d, r, dmg, ctx);
+    if (ob) { walkerBash(c, ws, mapId, m, def, ms2, ob.t, now, ev, ctx); return 'stop'; }
+    ai.p = '';
+  }
+
   /** Moves the world on to `now`: timers, respawns, monsters wandering, chasing and attacking. */
   function advance(c, ws, mapId, players, now, rng, ev) {
     if (!c.maps[mapId]) return;
@@ -1558,10 +2432,19 @@ var World = (function () {
     }
     Object.keys(ms.timers).forEach(function (k) {
       var t = ms.timers[k]; if (now < t.at) return;
-      if (t.regrow) { var stg = structOf(ws, mapId); delete stg.gone[k]; touchStruct(stg); }   // a harvested object is back
+      if (t.regrow) {
+        // A harvested object grows back — but never on top of someone: a tree that came back where a walker (or a
+        // player) stood shut it inside, unseen and unable to see. It waits until the spot is clear.
+        var ge = entity(c, mapId, k);
+        var onIt = ge && (ms.monsters.some(function (m) { return !m.dead && m.x === ge.x && m.y === ge.y; }) || players.some(function (p) { return p.map === mapId && p.hp > 0 && p.x === ge.x && p.y === ge.y; }));
+        if (onIt) { t.at = now + 3000; return; }
+        var stg = structOf(ws, mapId); delete stg.gone[k]; touchStruct(stg);
+      }
+      else if (t.rot) { var str2 = structOf(ws, mapId), ri = -1; str2.ents.forEach(function (b, i) { if (b.key === k) ri = i; }); if (ri >= 0) { str2.ents.splice(ri, 1); touchStruct(str2); ws.dirty = true; } }   // a carcass nobody took is gone
       else setState(ws, mapId, k, t.state);
       delete ms.timers[k];
     });
+    if (ms.cookers) Object.keys(ms.cookers).forEach(function (k) { if (ms.cookers[k].lit) cookTick(c, ws, mapId, k, now); });
     var here = players.filter(function (p) { return p.map === mapId && p.hp > 0; });
     var engageRange = Number(c.config.engage_range) || 24;       // how far a hit monster will chase before giving up
     var hDecay = Number(c.config.hunger_decay_per_min) || 0, tDecay = Number(c.config.thirst_decay_per_min) || 0;
@@ -1570,6 +2453,8 @@ var World = (function () {
       var st = stats(c, p);
       if (p.lastRegen && st.mpRegen) p.mp = Math.min(st.maxMp, (Number(p.mp) || 0) + st.mpRegen * Math.max(0, now - p.lastRegen) / 1000);
       p.lastRegen = now;
+      finishReload(c, p, now, ev);
+      craftTick(c, ws, p, now, ev);
       survivalTick(c, ws, p, now, hDecay, tDecay, starveDmg, starveMs, ev);
       tickStatuses(c, ws, mapId, p, false, now, rng, ev, players);
     });
@@ -1581,9 +2466,11 @@ var World = (function () {
         if (o && o.kind === 'trap' && isTimed(c, e, pr) && p.map === mapId) timedTrapHit(c, ws, p, e, o, pr, now, ev);
       });
     });
+    var wctx = null;                                            // what the walkers of this map share for this turn
     ms.monsters.forEach(function (m) {
       var def = c.monsters[m.ref]; if (!def) return;
       if (m.dead) {
+        if (m.ai) delete m.ai;
         if (now >= m.respawnAt) {
           var se = entity(c, mapId, m.spawn);
           if (se) place(c, ws, mapId, m, se, Number(props(c, se).radius) || 0, rint(rng, 0, 50));
@@ -1600,6 +2487,16 @@ var World = (function () {
       m.last = steps > 2 ? now : m.last + steps * stepMs;
       steps = Math.min(steps, 2);
       for (var s = 0; s < steps; s++) {
+        if (def.brain === 'walker') {                           // its own brain (see walkerStep)
+          wctx = wctx || walkerCtx(c, ws, mapId, map);
+          var wr = walkerStep(c, ws, mapId, ms, m, def, ms2, here, now, rng, ev, stepMs, wctx);
+          map = wctx.map;
+          if (wr === 'gone') return;
+          if (wr === 'stop') break;
+          continue;
+        }
+        if (def.brain === 'animal') { animalStep(c, ws, mapId, map, ms, m, def, here, now, rng, stepMs); continue; }
+        if (def.brain === 'hunter') { if (hunterStep(c, ws, mapId, map, ms, m, def, ms2, here, now, rng, ev, stepMs, engageRange) === 'stop') break; continue; }
         var target = null, best = 1e9;
         var eng = m.engaged ? here.filter(function (q) { return q.id === m.engaged; })[0] : null;   // chase whoever hit it
         if (eng) {
@@ -1613,29 +2510,10 @@ var World = (function () {
         });
         if (target && m.guest) m.idleUntil = now + GUEST_IDLE_MS;
         if (target) {
-          if (def.attackRange > 1 && best > 1 && best <= def.attackRange && now >= (m.nextShot || 0) &&
-              canSee(c, map, m.x, m.y, target.x, target.y, function (e) { return stateOf(c, ws, mapId, e); })) {
-            m.nextShot = now + def.rangedMs;
-            m.facing = Math.abs(target.x - m.x) >= Math.abs(target.y - m.y) ? (target.x > m.x ? 'E' : 'W') : (target.y > m.y ? 'S' : 'N');
-            var rdmg = damage(ms2.atk, stats(c, target).def, rng);
-            target.hp -= rdmg;
-            ev.push({ type: 'cast', map: mapId, skill: '_ranged', by: m.id, from: { x: m.x, y: m.y }, to: { x: target.x, y: target.y }, x: target.x, y: target.y, projectile: !!def.rangedProjectile, color: '#8fbf4f' });
-            ev.push({ type: 'hit', map: mapId, x: target.x, y: target.y, amount: rdmg, to: target.id, text: 'The ' + lower(def.name) + ' spits at you for ' + rdmg + '.' });
-            if (target.hp <= 0) die(c, ws, target, ev);
-            else {
-              if (def.rangedStatus && c.statuses && c.statuses[def.rangedStatus]) applyStatus(c, target, def.rangedStatus, Number(c.config.ranged_status_ms) || 3000, now, m.id);
-              if (def.infectChance && rng() < def.infectChance) applyInfection(c, ws, mapId, target, now, ev);
-            }
-            break;
-          }
+          if (monsterShot(c, ws, mapId, map, m, def, ms2, target, best, now, rng, ev)) break;
           if (cheb(m.x, m.y, target.x, target.y) === 1 && !moveBlockedEdge(c, map, m.x, m.y, target.x, target.y)) {
             // beside its target (diagonals count) with no wall between: swing. (A wall on the edge makes it try to move around instead.)
-            var dmg = damage(ms2.atk, stats(c, target).def, rng);
-            target.hp -= dmg;
-            m.facing = target.x > m.x ? 'E' : target.x < m.x ? 'W' : target.y > m.y ? 'S' : 'N';
-            ev.push({ type: 'hit', map: mapId, x: target.x, y: target.y, amount: dmg, to: target.id, text: 'The ' + lower(def.name) + ' hits you for ' + dmg + '.' });
-            if (target.hp <= 0) die(c, ws, target, ev);
-            else if (def.infectChance && rng() < def.infectChance) applyInfection(c, ws, mapId, target, now, ev);
+            monsterSwing(c, ws, mapId, m, def, ms2, target, now, rng, ev);
             break;
           }
           var dx = target.x - m.x, dy = target.y - m.y, dirs = [];
@@ -1652,19 +2530,7 @@ var World = (function () {
           }
         } else if (m.follow && now < m.follow.until) {
           if (followStairs(c, ws, mapId, map, ms, m, here, now)) return;      // gone to the other floor
-        } else if (rng() < 0.5) {
-          var dir = 'NESW'.charAt(rint(rng, 0, 3));
-          var sp = entity(c, mapId, m.spawn), rad = sp ? (Number(props(c, sp).radius) || 0) + 2 : 3;
-          // Away from home (it chased someone and lost them): it does not freeze there. It mills about, and half
-          // its steps head back, so it drifts home.
-          var away = !!sp && (Math.abs(m.x - sp.x) > rad || Math.abs(m.y - sp.y) > rad);
-          if (away && rng() < 0.5) {
-            var hx = sp.x - m.x, hy = sp.y - m.y;
-            dir = Math.abs(hx) >= Math.abs(hy) ? (hx > 0 ? 'E' : 'W') : (hy > 0 ? 'S' : 'N');
-          }
-          var r2 = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
-          if (r2.ok && !r2.map && (!sp || away || (Math.abs(r2.x - sp.x) <= rad && Math.abs(r2.y - sp.y) <= rad))) { m.x = r2.x; m.y = r2.y; m.facing = dir; }
-        }
+        } else roamStep(c, ws, mapId, map, m, here, rng);
       }
     });
     // guests that moved on, died, or lost interest are simply gone (they have no spawner to return to)
@@ -1687,8 +2553,50 @@ var World = (function () {
     ev.push({ type: 'death', map: p.map, x: p.x, y: p.y, to: p.id, text: 'You were defeated' + (lost ? ' and lost ' + lost + ' gold' : '') + '.' });
     var r = respawnPoint(c, p), map = c.maps[r.map] || c.maps[Object.keys(c.maps)[0]];
     var at = Rl().nearestStandable(c, map, r.x, r.y);
-    p.map = map.id; p.x = at.x; p.y = at.y; p.facing = r.facing || 'S'; p.hp = stats(c, p).maxHp;
+    p.map = map.id; p.x = at.x; p.y = at.y; p.facing = r.facing || 'S'; p.hp = stats(c, p).maxHp; p.tox = 0;
   }
+  function toxSickAt(c) { return cfgNum(c, 'toxicity_sick_at', 50); }
+  /** Adds to (or, negative, clears) the toxicity gauge; says so when it tips you over into being ill. */
+  function addTox(c, p, n, ev) {
+    n = Number(n) || 0; if (!n) return;
+    var was = Number(p.tox) || 0, at = toxSickAt(c);
+    p.tox = Math.max(0, Math.min(100, was + n));
+    if (n > 0 && was < at && p.tox >= at) ev.push({ type: 'info', to: p.id, text: 'You feel sick: too much bad water. It wears off with time.' });
+  }
+  // ---- water: drinking from it, filling what holds it
+  function waterAt(c, map, x, y) { var t = map && inMap(map, x, y) ? Rl().terrainAt(c, map, x, y) : null; return t && t.water ? t : null; }
+  /** The items in the bag that can be filled at water, the one in hand first: [{id, qty, into}]. */
+  function fillables(c, p) {
+    var seen = {}, out = [], inHand = Array.isArray(p.belt) && p.held >= 0 ? p.belt[p.held] : '';
+    (p.inventory || []).forEach(function (st) {
+      var it = c.items[st.item]; if (!it || !it.fillsInto || !c.items[it.fillsInto] || seen[st.item]) return;
+      seen[st.item] = 1; out.push({ id: st.item, qty: count(p, st.item), into: it.fillsInto });
+    });
+    out.sort(function (a, b) { return (b.id === inHand) - (a.id === inHand); });
+    return out;
+  }
+  /** Water right there (drink / fill): what the player does with it. verb '' = fill what is in hand, else drink. */
+  function useWater(c, p, wt, verb, ev) {
+    var say = function (t) { ev.push({ type: 'info', to: p.id, text: t }); }, fl = fillables(c, p), name = lower(wt.name);
+    var inHand = Array.isArray(p.belt) && p.held >= 0 ? p.belt[p.held] : '';
+    var fm = /^fill:(.+)$/.exec(verb || ''), f = fm ? fl.filter(function (g) { return g.id === fm[1]; })[0] : (verb !== 'drink' && fl[0] && fl[0].id === inHand ? fl[0] : null);
+    if (fm && !f) return say('You have nothing to fill.');
+    if (f) {
+      var slot = Array.isArray(p.belt) ? p.belt.indexOf(f.id) : -1, hadHeld = p.held;
+      take(p, f.id, f.qty); give(c, p, f.into, f.qty, ev, true);
+      if (slot >= 0 && !p.belt[slot] && p.belt.indexOf(f.into) < 0) p.belt[slot] = f.into;      // it stays where it was on the belt
+      syncLoadout(c, p);
+      if (hadHeld === slot && slot >= 0 && p.belt[slot] === f.into) p.held = slot;
+      return say('You fill the ' + lower(itemName(c, f.id)) + (f.qty > 1 ? ' (×' + f.qty + ')' : '') + ' at the ' + name + '.');
+    }
+    var thi = Number(p.thirst) || 0;
+    if (Math.round(thi) >= 100) return say('You are not thirsty.');      // (the gauge reads full: no sip for a fraction, and its toxicity)
+    p.thirst = Math.min(100, thi + cfgNum(c, 'water_thirst', 25));
+    var tox = wt.toxicity == null ? cfgNum(c, 'water_toxicity', 8) : wt.toxicity;
+    say('You drink from the ' + name + '.' + (tox > 0 ? ' It is not clean.' : ''));
+    addTox(c, p, tox, ev);
+  }
+
   /** Hunger and thirst drain over time; at zero they gnaw at your health. Set to 0 in Config to disable. */
   function survivalTick(c, ws, p, now, hDecay, tDecay, starveDmg, starveMs, ev) {
     // Time only passes for a player who is in the game. A playing client checks in every few seconds, so a
@@ -1701,7 +2609,14 @@ var World = (function () {
       if (hDecay) p.hunger = Math.max(0, (Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)) - hDecay * secs / 60);
       if (tDecay) p.thirst = Math.max(0, (Number(p.thirst) == null || isNaN(Number(p.thirst)) ? 100 : Number(p.thirst)) - tDecay * secs / 60);
     }
+    if (p.lastSurvival != null && Number(p.tox) > 0) p.tox = Math.max(0, Number(p.tox) - cfgNum(c, 'toxicity_decay_per_min', 1.5) * Math.max(0, now - p.lastSurvival) / 60000);
     p.lastSurvival = now;
+    var sickDmg = cfgNum(c, 'toxicity_damage', 2);
+    if (!sickDmg || !((Number(p.tox) || 0) >= toxSickAt(c))) p.nextSick = 0;
+    else {
+      if (!p.nextSick || p.nextSick > now + starveMs) p.nextSick = now + starveMs;
+      while (p.nextSick <= now && p.hp > 0) { p.nextSick += starveMs; hurt(c, ws, p, sickDmg, 'Poisoned by what you drank, you lose ', ev); }
+    }
     var empty = (Number(p.hunger) || 0) <= 0, dry = (Number(p.thirst) || 0) <= 0;
     if (!starveDmg || !(empty || dry)) { p.nextStarve = 0; return; }
     if (!p.nextStarve) p.nextStarve = now + starveMs;
@@ -1742,6 +2657,7 @@ var World = (function () {
     if (now < (p.nextAttack || 0)) return false;               // basic attacks have a short delay
     p.nextAttack = now + (Number(c.config.attack_ms) || 0);
     var def = c.monsters[m.ref], dmg = damage(stats(c, p).atk, monStats(c, m).def, rng);
+    noteAct(p, 'm', m.x, m.y, dmg);
     hitMonster(c, ws, mapId, p, m, dmg, now, rng, ev, 'You hit the ' + lower(def.name) + ' for ' + dmg + '.');
     return true;
   }
@@ -1753,6 +2669,13 @@ var World = (function () {
     ev.push({ type: 'hit', map: mapId, x: m.x, y: m.y, amount: dmg, to: p ? p.id : undefined, text: p ? text : '' });
     if (m.hp > 0) return;
     m.dead = true; m.statuses = [];
+    // What it had on it. With a carcass, everything is found inside it (whoever did the killing); with none, a
+    // player who killed it is handed it. (Gold is not a thing in a bag: it always goes to the player.)
+    var hasBody = !!(def.carcass && c.objects[def.carcass]);
+    var gold = p ? rint(rng, def.goldMin, def.goldMax) : 0, drops = p || hasBody ? roll(c, def.lootTable, rng) : [];
+    var lay = leaveCarcass(c, ws, mapId, m, def, now, drops);
+    if (!lay && p) list(def.loot).concat(drops).forEach(function (g) { give(c, p, g.item, g.qty, ev); });
+    if (m.free) m.gone = true;                                 // a tamed animal has no spawner to come back at
     // Respawn delay: the spawn point's own respawn_after_s wins (set per spawner); 0/blank falls back
     // to the monster's respawn_s. The monster reappears that many seconds after it's killed.
     var se = m.spawn && entity(c, mapId, m.spawn);
@@ -1760,9 +2683,7 @@ var World = (function () {
     m.respawnAt = now + (rs > 0 ? rs : def.respawnS) * 1000;
     if (!p) return;
     ev.push({ type: 'kill', map: mapId, x: m.x, y: m.y, to: p.id, text: 'The ' + lower(def.name) + ' is defeated. +' + def.xp + ' XP' });
-    var gold = rint(rng, def.goldMin, def.goldMax);
     if (gold > 0) give(c, p, 'gold', gold, ev);
-    roll(c, def.lootTable, rng).forEach(function (l) { give(c, p, l.item, l.qty, ev); });
     gainXp(c, p, def.xp, ev);
   }
 
@@ -1836,10 +2757,11 @@ var World = (function () {
     }
     return out;
   }
-  /** Walls (terrain nobody can cross), closed doors and objects marked blocks_sight stop skills. */
+  /** Walls (terrain nobody can cross), closed doors and objects marked blocks_sight stop sight, skills and shots.
+   *  Ground that cannot be crossed but lies flat (water, lava, a pit: the terrain's see_through) stops none of them. */
   function blocksSight(c, map, x, y, stateFn) {
     var t = Rl().terrainAt(c, map, x, y);
-    if (!t || !(t.pass.n || t.pass.e || t.pass.s || t.pass.w)) return true;
+    if (!t || (!(t.pass.n || t.pass.e || t.pass.s || t.pass.w) && !t.seeThrough)) return true;
     return Rl().blockersAt(c, map, x, y).some(function (e) {
       var o = objOf(c, e); if (!o) return false;
       if (o.kind === 'door') return isEdgeDoor(o) ? false : stateFn(e) !== 'open';   // edge door blocks sight on its EDGE, not its cell
@@ -1961,8 +2883,8 @@ var World = (function () {
     // what players built or broke there travels only when the asker is behind (haveRev = the revision they hold)
     var sv = ms && ms.struct, srev = sv ? sv.rev || 0 : 0;
     return { structRev: srev, struct: srev && haveRev !== srev ? publicStruct(sv) : undefined, states: fixtureStates(c, ws, mapId), players: (everyone || []).filter(function (q) { return q.map === mapId && q.hp > 0 && !(but && q.id === but.id); }).map(function (q) {
-      return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '',
-        x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level };
+      return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '',
+        x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level, act: q.act || '', wst: weaponState(c, q) };
     }), monsters: ((ms && ms.monsters) || []).filter(function (m) { return !m.dead; }).map(function (m) {
       var d = c.monsters[m.ref];
       return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing, look: m.look || undefined };
@@ -2062,6 +2984,13 @@ var World = (function () {
 
   // ------------------------------------------------------------ firearms (shooting is the click action, not a skill)
   /** The equipped weapon if it is a ranged one (range > 0), else null. */
+  /** How the weapon in hand stands, for its picture: 'reload' (being reloaded), 'empty' (a magazine with nothing in it) or ''. */
+  function weaponState(c, p) {
+    var w = c.items[(p.equipment || {}).weapon];
+    if (!w || !itemCan(w, 'shoot') || !(Number(w.clip) > 0)) return '';
+    if (p.reload && p.reload.id === w.id) return 'reload';
+    return ((p.mags && p.mags[w.id]) || 0) < (Number(w.ammoCost) || 1) ? 'empty' : '';
+  }
   function rangedWeapon(c, p) {
     var it = c.items[(p.equipment || {}).weapon];
     return itemCan(it, 'shoot') && (Number(it.range) || 0) > 0 ? it : null;
@@ -2172,17 +3101,32 @@ var World = (function () {
     take(p, w.ammo, add); p.mags[w.id] = loaded + add;
     return add;
   }
-  /** Reload the equipped gun (R): pull rounds from the ammo stack into its magazine. */
+  // Reloading takes time: the gun's reload_ms, else Config reload_ms (1500; 0 = at once). While it lasts the player
+  // carries p.reload = {id: the gun, at, until}; the rounds go in when it is over (finishReload, run before every
+  // action and on every turn of the world), so a reload that is dropped — by changing what is in hand — costs nothing.
+  function reloadMsOf(c, w) { var v = Number(w && w.reloadMs); return v > 0 ? v : Math.max(0, cfgNum(c, 'reload_ms', 1500)); }
+  function finishReload(c, p, now, ev) {
+    var r = p.reload; if (!r) return;
+    var w = rangedWeapon(c, p);
+    if (!w || w.id !== r.id) { delete p.reload; return; }
+    if (now < r.until) return;
+    delete p.reload;
+    if (loadMag(c, p, w) > 0 && ev) ev.push({ type: 'info', to: p.id, text: 'You reload the ' + lower(w.name) + '. ' + p.mags[w.id] + '/' + w.clip });
+  }
+  /** Reload the equipped gun (R, or a click on an empty magazine): pull rounds from the ammo stack into its magazine. */
   function reload(c, ws, p, a, now, ev) {
     function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
     var w = rangedWeapon(c, p);
+    if (p.reload) return;                                       // already at it
     if (!w) return say('You have no gun to reload.');
     if (!(Number(w.clip) > 0)) return say('The ' + lower(w.name) + ' has no magazine.');
     if (((p.mags && p.mags[w.id]) || 0) >= w.clip) return say('The ' + lower(w.name) + ' is already loaded.');
-    var add = loadMag(c, p, w);
-    if (add <= 0) return say('Out of ' + lower(itemName(c, w.ammo)) + '.');
+    if (count(p, w.ammo) <= 0) return say('Out of ' + lower(itemName(c, w.ammo)) + '.');
+    var ms = reloadMsOf(c, w);
+    ev.push({ type: 'reload', to: p.id, map: p.map, x: p.x, y: p.y, ms: ms });
+    if (ms > 0) { p.reload = { id: w.id, at: now, until: now + ms }; return; }
+    loadMag(c, p, w);
     say('You reload the ' + lower(w.name) + '. ' + p.mags[w.id] + '/' + w.clip);
-    ev.push({ type: 'reload', to: p.id, map: p.map, x: p.x, y: p.y });
   }
 
   /** Fire the equipped ranged weapon toward (x,y): a ray that pierces `penetration` enemies with damage falloff. */
@@ -2208,7 +3152,7 @@ var World = (function () {
     var w = rangedWeapon(c, p);
     if (!w) return say('You have no ranged weapon equipped.');
     if (hasStatus(p, 'stun')) return say('You are stunned.');
-    if (now < ((p.cooldowns || {})._shoot || 0)) return;
+    if (now < ((p.cooldowns || {})._shoot || 0) || p.reload) return;
     var theirs = liveMap(c, ws, String(a.map)), tx = Math.round(Number(a.x)), ty = Math.round(Number(a.y));
     if (isNaN(tx) || isNaN(ty)) return say('Pick a target.');
     var chk = shotAcross(c, p, liveMap(c, ws, p.map), theirs, tx, ty, function (e) { return stateOf(c, ws, p.map, e); });
@@ -2216,7 +3160,7 @@ var World = (function () {
     var ammoId = w.ammo, cost = w.ammoCost || 1, clip = Number(w.clip) || 0;
     if (clip > 0) {
       p.mags = p.mags || {};
-      if ((p.mags[w.id] || 0) < cost) return say(count(p, ammoId) >= cost ? 'Out of ammo — press R to reload.' : 'Out of ' + lower(itemName(c, ammoId)) + '.');
+      if ((p.mags[w.id] || 0) < cost) return count(p, ammoId) >= cost ? reload(c, ws, p, a, now, ev) : say('Out of ' + lower(itemName(c, ammoId)) + '.');   // empty: the click reloads
     } else if (ammoId && count(p, ammoId) < cost) return say('Out of ' + lower(itemName(c, ammoId)) + '.');
     faceTo(p, tx, ty);
     if (clip > 0) p.mags[w.id] = (p.mags[w.id] || 0) - cost; else if (ammoId) take(p, ammoId, cost);
@@ -2236,7 +3180,7 @@ var World = (function () {
     if (!w) return say('You have no ranged weapon equipped.');
     if (hasStatus(p, 'stun')) return say('You are stunned.');
     var fire = Number(w.fireMs) || Number(c.config.attack_ms) || 0;
-    if (now < ((p.cooldowns || {})._shoot || 0)) return;        // still cycling: ignore quietly
+    if (now < ((p.cooldowns || {})._shoot || 0) || p.reload) return;   // still cycling, or reloading: ignore quietly
     var map = liveMap(c, ws, p.map), lk = serverLookup(c, ws, p.map, players);
     var tx = Math.round(Number(a.x)), ty = Math.round(Number(a.y));
     if (isNaN(tx) || isNaN(ty)) return say('Pick a target.');
@@ -2245,7 +3189,7 @@ var World = (function () {
     var ammoId = w.ammo, cost = w.ammoCost || 1, ammoIt = ammoId && c.items[ammoId], clip = Number(w.clip) || 0;
     if (clip > 0) {                                             // magazine: fire from loaded rounds (reload with R)
       p.mags = p.mags || {};
-      if ((p.mags[w.id] || 0) < cost) return say(count(p, ammoId) >= cost ? 'Out of ammo — press R to reload.' : 'Out of ' + lower(itemName(c, ammoId)) + '.');
+      if ((p.mags[w.id] || 0) < cost) return count(p, ammoId) >= cost ? reload(c, ws, p, a, now, ev) : say('Out of ' + lower(itemName(c, ammoId)) + '.');   // empty: the click reloads
     } else if (ammoId && count(p, ammoId) < cost) return say('Out of ' + lower(itemName(c, ammoId)) + '.');
     faceTo(p, tx, ty);
     if (clip > 0) p.mags[w.id] = (p.mags[w.id] || 0) - cost;
@@ -2258,6 +3202,7 @@ var World = (function () {
       if (hits >= pen) break;
       var m = monsterAt(ms, end.x, end.y); if (!m) continue;
       var dmg = Math.max(1, Math.round(damage(base, monStats(c, m).def, rng) * Math.pow(1 - fall, hits)));
+      if (!hits) noteAct(p, 'r', m.x, m.y, dmg);
       hitMonster(c, ws, p.map, p, m, dmg, now, rng, ev, 'You shoot the ' + lower(c.monsters[m.ref].name) + ' for ' + dmg + '.');
       hits++;
     }
@@ -2387,15 +3332,20 @@ var World = (function () {
   }
   // ------------------------------------------------------------ crafting
   /** Does the player carry something that counts as this tool (an item whose tool tags include it)? */
+  /** tag may list several tools ("axe, saw"): any one of them will do. */
+  function toolTags(tag) { return String(tag || '').split(/[;,]/).map(function (x) { return x.trim(); }).filter(Boolean); }
   function hasTool(c, p, tag) {
-    if (!tag) return true;
-    return (p.inventory || []).some(function (s) { var it = c.items[s.item]; return it && it.tools && it.tools.indexOf(tag) >= 0; });
+    var tags = toolTags(tag);
+    if (!tags.length) return true;
+    return (p.inventory || []).some(function (s) { var it = c.items[s.item]; return it && it.tools && tags.some(function (g) { return it.tools.indexOf(g) >= 0; }); });
   }
-  /** The crafting stations in reach: {stationId: object name}. A station is an object of kind craft with a station id. */
+  function toolsText(tag) { return toolTags(tag).map(aAn).join(' or '); }
+  /** The crafting stations in reach: {stationId: object name}. A station is an object of kind craft; its id as a
+   *  station is its `station` setting (several objects may share one) or, with none, the object's own id. */
   function stationsNear(c, map, p, lk) {
     var out = {}, range = Number(c.config.station_range) || 2;
     (map.entities || []).forEach(function (e) {
-      var o = objOf(c, e), id = o && o.kind === 'craft' && props(c, e).station;
+      var o = objOf(c, e), id = o && o.kind === 'craft' && (props(c, e).station || o.id);
       if (!id || cheb(p.x, p.y, e.x, e.y) > range) return;
       if (e.need && (e.prog || 0) < e.need) return;                      // still being built
       if (isBuiltEnt(map, e) && !mayUse(c, map, p, e.x, e.y)) return;    // in someone else's base
@@ -2405,7 +3355,7 @@ var World = (function () {
     return out;
   }
   function stationName(c, id) {
-    var k = Object.keys(c.objects).filter(function (x) { var o = c.objects[x]; return o.kind === 'craft' && o.properties && o.properties.station === id; })[0];
+    var k = Object.keys(c.objects).filter(function (x) { var o = c.objects[x]; return o.kind === 'craft' && ((o.properties && o.properties.station) || x) === id; })[0];
     return lower(k ? c.objects[k].name : id);
   }
   /** Can p make `qty` of recipe r right here? {ok, reason, missing: [{item, need, have}]} — shared by the panel and the referee. */
@@ -2421,9 +3371,10 @@ var World = (function () {
   }
   /** Every recipe this player knows, with whether it can be made here and now. For the crafting panel. */
   function recipesFor(c, map, p, lk) {
-    var stations = stationsNear(c, map, p, lk), recs = c.recipes || {};
+    var stations = stationsNear(c, map, p, lk), recs = c.recipes || {}, cooked = {};
+    Object.keys(c.objects).forEach(function (id) { var o = c.objects[id], pr = o.properties || {}; if (o.kind === 'craft' && yes(pr.cooks)) cooked[pr.station || o.id] = 1; });   // what a cooker makes is made IN it, over time
     return Object.keys(recs).map(function (id) { return recs[id]; })
-      .filter(function (r) { return !r.unlock || check(c, p, r.unlock); })
+      .filter(function (r) { return (!r.unlock || check(c, p, r.unlock)) && !(r.station && cooked[r.station]); })
       .map(function (r) {
         var chk = recipeCheck(c, r, p, stations, 1);
         return { id: r.id, name: r.name, category: r.category, station: r.station, tool: r.tool, timeS: r.timeS,
@@ -2431,19 +3382,56 @@ var World = (function () {
           outputs: list(r.outputs), can: chk.ok, reason: chk.reason, here: !r.station || !!stations[r.station] };
       });
   }
+  // Making something takes time (the recipe's time_s, per piece; 0 = at once). The materials go in at the start and
+  // the player carries the job: p.craft = {id, qty, made, ms: work done on the piece in hand, at: when work was last
+  // counted, on: was the player at the station then}. Work only counts while they stay within reach of the station
+  // (a recipe made by hand counts anywhere); walk away and it waits, come back and it goes on. craftTick runs before
+  // every action and on every turn of the world. Time between two counts is capped (CRAFT_GAP), so a page that
+  // stopped asking — a closed tab — does not keep working.
+  var CRAFT_GAP = 30000;
+  function craftingHere(c, map, p, lk, r) {
+    return !!r && p.hp > 0 && (!r.station || !!stationsNear(c, map, p, lk)[r.station]);
+  }
+  function craftTick(c, ws, p, now, ev) {
+    var j = p.craft; if (!j) return;
+    var r = (c.recipes || {})[j.id];
+    if (!r || !c.maps[p.map]) { if (!r) delete p.craft; return; }
+    var here = craftingHere(c, liveMap(c, ws, p.map), p, serverLookup(c, ws, p.map, [p]), r);
+    if (j.on && here) j.ms = (Number(j.ms) || 0) + Math.min(CRAFT_GAP, Math.max(0, now - (Number(j.at) || now)));
+    j.at = now; j.on = here;
+    var need = Math.max(1, r.timeS * 1000), made = list(r.outputs), n = 0;
+    while (j.made < j.qty && j.ms >= need) { j.ms -= need; j.made++; n++; }
+    if (n) {
+      made.forEach(function (g) { give(c, p, g.item, g.qty * n, ev, true); });
+      ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y,
+        text: 'You make ' + made.map(function (g) { return g.qty * n + ' ' + lower(itemName(c, g.item)); }).join(', ') + '.' });
+    }
+    if (j.made >= j.qty) delete p.craft;
+  }
+  var CRAFT_MAX = 99;                                          // the most of one recipe asked for in one go
   function craft(c, ws, p, a, now, ev) {
     function say(t) { ev.push({ type: 'info', to: p.id, text: t }); }
+    if (a.cancel) {                                           // stop: what was not made yet comes back
+      var j = p.craft, jr = j && (c.recipes || {})[j.id];
+      if (!j) return;
+      delete p.craft;
+      if (jr) list(jr.inputs).forEach(function (g) { give(c, p, g.item, g.qty * (j.qty - j.made), ev, true); });
+      return say('You stop. What you had not used is back in your bag.');
+    }
     var r = (c.recipes || {})[String(a.recipe || '')];
     if (!r || (r.unlock && !check(c, p, r.unlock))) return say('You don\'t know how to make that.');
     if (hasStatus(p, 'stun')) return say('You are stunned.');
-    if (now < ((p.cooldowns || {})._craft || 0)) return say('You are still busy.');
-    var qty = Math.max(1, Math.min(20, Math.round(Number(a.qty)) || 1));
+    if (p.craft) return say('You are already making something.');
+    var qty = Math.max(1, Math.min(CRAFT_MAX, Math.round(Number(a.qty)) || 1));
     var map = liveMap(c, ws, p.map), chk = recipeCheck(c, r, p, stationsNear(c, map, p, serverLookup(c, ws, p.map, [p])), qty);
     if (!chk.ok) return say(chk.reason);
     list(r.inputs).forEach(function (g) { take(p, g.item, g.qty * qty); });
     var made = list(r.outputs);
+    if (r.timeS > 0) {
+      p.craft = { id: r.id, qty: qty, made: 0, ms: 0, at: now, on: true };
+      return say('You start on ' + (qty > 1 ? qty + ' × ' : '') + lower(r.name || itemName(c, (made[0] || {}).item)) + '.');
+    }
     made.forEach(function (g) { give(c, p, g.item, g.qty * qty, ev, true); });
-    if (r.timeS > 0) { p.cooldowns = p.cooldowns || {}; p.cooldowns._craft = now + r.timeS * 1000 * qty; }
     ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y,
       text: 'You make ' + made.map(function (g) { return g.qty * qty + ' ' + lower(itemName(c, g.item)); }).join(', ') + '.' });
   }
@@ -2572,10 +3560,39 @@ var World = (function () {
     }
     var refill = Number(pr.refill_after_s) || 0;
     if (yes(pr.per_player)) {
-      var when = p.flags[flag];
+      // Yours alone: the same grid, but what is in it is kept with you — everyone finds their own share of the loot
+      // there (put in the first time you open it, and again when it refills), and what you leave is still yours.
+      var when = p.flags[flag], mine = mapBox(c, ws, p.map, e.key, true, p);
+      if (mine) {
+        if (!(when && (!refill || now < when + refill * 1000))) {
+          p.flags[flag] = now;
+          (pr.contents ? list(pr.contents) : roll(c, pickLootTable(pr, rng), rng)).forEach(function (g) {
+            if (g.item === 'gold') give(c, p, 'gold', g.qty, ev); else if (c.items[g.item]) addStacks(c, mine.inv, g.item, g.qty, 0);
+          });
+        }
+        ev.push({ type: 'info', to: p.id, text: 'You open the ' + name + '.' });
+        storageEvent(c, p, mine, ev);
+        return;
+      }
       if (when && (!refill || now < when + refill * 1000)) { ev.push({ type: 'info', to: p.id, text: 'It is empty.' }); return; }
       p.flags[flag] = now;
     } else {
+      // Everyone's container: it opens as a grid you can take from and put into. What it holds as loot is put inside
+      // the first time it is opened (and again each time it refills) — never straight into the bag.
+      var bx = mapBox(c, ws, p.map, e.key, true, p);
+      if (bx) {
+        if (!(st === 'empty' || st === 'open')) {
+          setState(ws, p.map, e.key, 'empty');
+          if (refill) mapState(ws, p.map).timers[e.key] = { at: now + refill * 1000, state: null };
+          (pr.contents ? list(pr.contents) : roll(c, pickLootTable(pr, rng), rng)).forEach(function (g) {
+            if (g.item === 'gold') give(c, p, 'gold', g.qty, ev); else if (c.items[g.item]) addStacks(c, bx.inv, g.item, g.qty, 0);
+          });
+        }
+        ws.dirty = true;
+        ev.push({ type: 'info', to: p.id, text: 'You open the ' + name + '.' });
+        storageEvent(c, p, bx, ev);
+        return;
+      }
       if (st === 'empty' || st === 'open') { ev.push({ type: 'info', to: p.id, text: 'It is empty.' }); return; }
       setState(ws, p.map, e.key, 'empty');
       if (refill) mapState(ws, p.map).timers[e.key] = { at: now + refill * 1000, state: null };
@@ -2639,7 +3656,7 @@ var World = (function () {
     ev.push({ type: 'info', to: p.id, text: 'Click. You hear something move.' });
   }
 
-  var INTERACTIVE = { container: 1, door: 1, teleport: 1, 'switch': 1, rest: 1, sign: 1, craft: 1, npc: 1, trap: 1, claim: 1 };
+  var INTERACTIVE = { container: 1, door: 1, teleport: 1, 'switch': 1, rest: 1, sign: 1, craft: 1, npc: 1, trap: 1, claim: 1, pickup: 1, coop: 1 };
 
   /** Within reach: your own cell or any of the eight around it (walls in the way are a separate question: moveBlockedEdge). */
   function near(p, x, y) { return Math.abs(p.x - x) <= 1 && Math.abs(p.y - y) <= 1; }
@@ -2674,6 +3691,16 @@ var World = (function () {
     var blocked = !wm && (f.x !== p.x || f.y !== p.y) && moveBlockedEdge(c, map, p.x, p.y, f.x, f.y);
     var ms = mapState(ws, p.map), m = (wm || blocked) ? null : monsterAt(ms, f.x, f.y);
     // A creature there is never attacked by using or clicking: fighting is aiming (hold right-click) and clicking.
+    var md = m && c.monsters[m.ref];
+    if (m && md && md.tameWith && verb !== 'picklock') {       // an animal that can be kept: using it feeds it
+      var mname = lower(md.name);
+      if (m.tame) { ev.push({ type: 'info', to: p.id, text: m.owner === p.id ? 'Your ' + mname + (m.home && m.home.coop ? ' lives at the coop.' : ' has no coop to live at yet.') : 'That ' + mname + ' belongs to someone.' }); return; }
+      if (count(p, md.tameWith) < 1) { ev.push({ type: 'info', to: p.id, text: 'It would take ' + lower(itemName(c, md.tameWith)) + ' to tame the ' + mname + '.' }); return; }
+      take(p, md.tameWith, 1);
+      var housed = tame(c, ws, p.map, map, ms, m, md, p, now);
+      ev.push({ type: 'info', to: p.id, text: 'The ' + mname + ' is yours now.' + (housed ? ' It settles at the coop.' : ' Build a coop nearby for it to live at.') });
+      return;
+    }
     if (m && verb !== 'picklock') { ev.push({ type: 'info', to: p.id, text: 'Hold right-click to aim, then click to attack.' }); return; }
     var e = wm;
     if (!e) {
@@ -2685,7 +3712,9 @@ var World = (function () {
     if (!e) {
       var wt = !verb ? structAt(c, map, p, f.x, f.y, needsWork) : null;     // a frame to finish or something to repair
       if (wt) { work(c, ws, p, wt, now, ev); return; }
-      ev.push({ type: 'info', to: p.id, text: blocked ? 'A wall is in the way.' : 'Nothing to use here.' }); return;
+      var wtr = blocked ? null : waterAt(c, map, f.x, f.y);
+      if (wtr && near(p, f.x, f.y)) { useWater(c, p, wtr, verb, ev); return; }
+      ev.push({ type: 'info', to: p.id, text: blocked ? (Rl().cliffReach(map, p.x, p.y, f.x, f.y) ? 'You can\'t reach it: the ground is at another height.' : 'A wall is in the way.') : 'Nothing to use here.' }); return;
     }
     var o = objOf(c, e), pr = props(c, e);
     if (verb === 'picklock') {
@@ -2706,7 +3735,12 @@ var World = (function () {
         else ev.push({ type: 'info', to: p.id, text: 'This is ' + claimOwner(e) + '\'s base.' + (isMember(e, p) ? ' You are a member.' : '') });
         break;
       case 'container':
-        if (e.inv) storageEvent(c, p, e, ev);                              // a storage container someone built
+        if (isBuiltEnt(map, e)) {                                          // a storage container someone built: never loot, always a grid
+          var brec = structOf(ws, p.map).ents.filter(function (b) { return b.key === e.key; })[0] || e;
+          if (!brec.inv) brec.inv = [];
+          if (brec.wild && !brec.inv.length) { ev.push({ type: 'info', to: p.id, text: 'There is nothing on the ' + lower(o.name) + '.' }); emptiedWild(c, ws, p, brec, ev); break; }
+          storageEvent(c, p, brec, ev);
+        }
         else openContainer(c, ws, p, e, o, pr, now, rng, ev);
         break;
       case 'door': useDoor(c, ws, p, e, o, pr, ev, players); break;
@@ -2725,8 +3759,26 @@ var World = (function () {
         ev.push({ type: 'heal', to: p.id, map: p.map, x: p.x, y: p.y, text: 'You rest.' + (yes(pr.heals) ? ' Health restored.' : '') + (yes(pr.sets_respawn) ? ' You will return here if you fall.' : '') });
         break;
       case 'sign': ev.push({ type: 'info', to: p.id, text: pr.text || o.name }); break;
-      case 'craft': ev.push({ type: 'craft', to: p.id, key: e.key, station: pr.station || '' }); break;   // the client opens its crafting panel
+      case 'craft': {
+        var ckr = cookerOf(c, e);
+        if (ckr) { var cb = cookBox(c, ws, p.map, e, ckr); cookTick(c, ws, p.map, e.key, now); storageEvent(c, p, cb, ev); }   // a cooker: its three cells
+        else ev.push({ type: 'craft', to: p.id, key: e.key, station: pr.station || o.id || '' });   // the client opens its crafting panel
+        break;
+      }
       case 'npc': ev.push({ type: 'info', to: p.id, text: o.name + ' has nothing to say yet.' }); break;
+      case 'pickup': {                                         // something lying on the ground (an egg): into the bag, and it is gone
+        list(pr.pickup || (o.properties || {}).pickup).forEach(function (g) { give(c, p, g.item, g.qty, ev); });
+        var pst = structOf(ws, p.map), pi = -1; pst.ents.forEach(function (b, i) { if (b.key === e.key) pi = i; });
+        if (pi >= 0) pst.ents.splice(pi, 1); else pst.gone[e.key] = 1;
+        touchStruct(pst); ws.dirty = true;
+        break;
+      }
+      case 'coop': {
+        var birds = (ms.monsters || []).filter(function (q) { return q.tame && !q.dead && q.home && q.home.coop === e.key; });
+        var mineN = birds.filter(function (q) { return q.owner === p.id; }).length;
+        ev.push({ type: 'info', to: p.id, text: !birds.length ? 'Nobody lives here yet. Tame an animal near it.' : birds.length + ' live' + (birds.length === 1 ? 's' : '') + ' here' + (mineN ? ' (' + mineN + ' yours).' : '.') });
+        break;
+      }
       case 'trap': ev.push({ type: 'info', to: p.id, text: 'A trap. Better not step on it.' }); break;
     }
   }
@@ -2740,12 +3792,15 @@ var World = (function () {
       if (now < ready) { ev.push({ type: 'info', to: p.id, text: 'You can use the ' + lower(it.name) + ' again in ' + Math.ceil((ready - now) / 1000) + ' s.' }); return; }
       var mm = stats(c, p).maxMp, hun = Number(p.hunger) || 0, thi = Number(p.thirst) || 0;
       var fullHp = !it.heal || p.hp >= mx, fullMp = !it.mp || p.mp >= mm, fullHun = !it.hunger || hun >= 100, fullThi = !it.thirst || thi >= 100;
-      if (!it.onUse && fullHp && fullMp && fullHun && fullThi) {
+      var cures = it.toxicity < 0, fullTox = !cures || !(Number(p.tox) > 0);
+      if (!it.onUse && fullHp && fullMp && fullHun && fullThi && fullTox) {
+        if (cures && !it.heal && !it.mp && !it.hunger && !it.thirst) { ev.push({ type: 'info', to: p.id, text: 'You do not need it.' }); return; }
         ev.push({ type: 'info', to: p.id, text: it.hunger && !it.heal && !it.mp ? 'You are not hungry.' :
           it.thirst && !it.heal && !it.mp && !it.hunger ? 'You are not thirsty.' :
           it.mp && !it.heal ? 'Your mana is already full.' : 'You are already at full health.' }); return;
       }
       take(p, id, 1);
+      if (it.leaves && c.items[it.leaves]) give(c, p, it.leaves, 1, ev, true);        // the empty bottle stays in the bag
       if (it.cooldownMs > 0) { p.cooldowns = p.cooldowns || {}; p.cooldowns['use:' + id] = now + it.cooldownMs; }
       if (it.heal) {
         var h = Math.min(it.heal, mx - p.hp); p.hp += h;
@@ -2761,6 +3816,7 @@ var World = (function () {
       if (it.thirst) {
         var dr = Math.min(it.thirst, 100 - thi); if (dr > 0) { p.thirst = thi + dr; ev.push({ type: 'info', to: p.id, text: 'You drink the ' + lower(it.name) + '.' }); }
       }
+      if (it.toxicity) { if (cures && !it.heal && !it.mp && !it.hunger && !it.thirst) ev.push({ type: 'info', to: p.id, text: 'You use the ' + lower(it.name) + '.' }); addTox(c, p, it.toxicity, ev); }
       if (it.onUse) run(c, ws, p, it.onUse, now, ev);
     } else if (it.slot) {
       if (p.equipment[it.slot] === id) { delete p.equipment[it.slot]; if (it.slot === 'weapon') p.held = -1; ev.push({ type: 'info', to: p.id, text: 'You put away the ' + lower(it.name) + '.' }); }
@@ -2772,7 +3828,7 @@ var World = (function () {
         }
         if (it.slot === 'weapon') p.held = beltSlotFor(p, id);            // a weapon is worn by holding its belt slot
         p.equipment[it.slot] = id; ev.push({ type: 'info', to: p.id, text: 'You equip the ' + lower(it.name) + '.' });
-        if (itemCan(it, 'shoot') && Number(it.clip) > 0 && !((p.mags && p.mags[id]) || 0)) loadMag(c, p, it);   // a freshly drawn gun loads its magazine
+        if (itemCan(it, 'shoot') && Number(it.clip) > 0 && (!p.mags || p.mags[id] == null)) loadMag(c, p, it);   // a gun drawn for the first time comes loaded (an emptied one is reloaded the slow way)
       }
       syncLoadout(c, p);
       p.hp = Math.min(p.hp, stats(c, p).maxHp);
@@ -2785,6 +3841,8 @@ var World = (function () {
     if (!action || !c.maps[p.map]) return ev;
     players = players || [p];
     syncEdges(c, ws, p.map);                              // refresh the opening overlay this action reads
+    finishReload(c, p, now, ev);
+    craftTick(c, ws, p, now, ev);
     if (action.type === 'move') {
       // Walking speed is the referee's to enforce, not the page's. Each player has a budget of steps that refills
       // with time (one per move_ms, with some slack for uneven connections) up to move_burst; a straight step
@@ -2820,7 +3878,7 @@ var World = (function () {
       else if (!am) ev.push({ type: 'info', to: p.id, text: 'Nothing to attack there.' });
       else if (!near(p, ax, ay)) ev.push({ type: 'info', to: p.id, text: 'Too far away.' });
       // A wall between you (round the corner, for a diagonal) stops a melee swing, just as it stops a step.
-      else if (wallHere) ev.push({ type: 'info', to: p.id, text: 'A wall is in the way.' });
+      else if (wallHere) ev.push({ type: 'info', to: p.id, text: Rl().cliffReach(amap, p.x, p.y, ax, ay) ? 'You can\'t reach it: the ground is at another height.' : 'A wall is in the way.' });
       else { faceTo(p, ax, ay); attack(c, ws, p.map, p, am, now, rng, ev); }
     }
     else if (action.type === 'use') useItem(c, ws, p, action.item, now, ev);
@@ -2831,6 +3889,7 @@ var World = (function () {
     else if (action.type === 'reload') reload(c, ws, p, action, now, ev);
     else if (action.type === 'craft') craft(c, ws, p, action, now, ev);
     else if (action.type === 'build') build(c, ws, p, action, now, ev, players);
+    else if (action.type === 'relocate') { var mvT = cleanTarget(action.target); if (mvT) relocate(c, ws, p, Object.assign({}, action, { target: mvT }), now, ev, players); else ev.push({ type: 'info', to: p.id, text: 'Pick something.' }); }
     else if (action.type === 'work' || action.type === 'dismantle' || action.type === 'upgrade' || action.type === 'shift' || action.type === 'turn') {
       var stT = cleanTarget(action.target);
       if (!stT) ev.push({ type: 'info', to: p.id, text: 'Pick something.' });
@@ -2842,6 +3901,7 @@ var World = (function () {
       else upgrade(c, ws, p, stT, action.bp, now, ev);
     }
     else if (action.type === 'store') storeAct(c, ws, p, action, now, ev);
+    else if (action.type === 'inv') invAct(c, ws, p, action, now, ev);
     else if (action.type === 'claim') claimAct(c, ws, p, action, now, ev, players);
     else if (action.type === 'loadout') setLoadout(c, p, action.bar, action.slot, action.entry, ev);
     else if (action.type === 'hold') holdSlot(c, p, action.slot, ev);
@@ -2855,7 +3915,9 @@ var World = (function () {
   function actionsAt(c, map, lk, p, x, y) {
     var out = [], m = lk.monsterAt(x, y);
     if (m) {
-      return out;                                           // nothing a plain click does to a creature: attacks are aimed (right-click held), then clicked
+      var amd = c.monsters[m.ref];                          // an animal that can be kept: a click feeds it (or tells you about yours)
+      if (amd && amd.tameWith && near(p, x, y)) out.push({ type: 'interact', verb: '', label: 'Feed the ' + lower(amd.name) });
+      return out;                                           // nothing else a plain click does to a creature: attacks are aimed (right-click held), then clicked
     }
     var ents = Rl().entitiesAt(map, x, y).filter(function (e) { var o = objOf(c, e); return o && INTERACTIVE[o.kind]; });
     var e = ents[0], at = null;
@@ -2870,8 +3932,9 @@ var World = (function () {
       } else if (o.kind === 'container') out.push({ type: 'interact', verb: '', label: (st === 'empty' || st === 'open' ? 'Search the ' : 'Open the ') + name });
       else if (o.kind === 'door') out.push({ type: 'interact', verb: '', label: pr.target ? 'Go through the ' + name : (st === 'open' ? 'Close the ' : 'Open the ') + name });
       else {
-        var verbs = { teleport: 'Enter', 'switch': 'Pull', rest: 'Rest at', sign: 'Read', craft: 'Use', npc: 'Talk to', trap: 'Look at', claim: 'Look at' };
-        out.push({ type: 'interact', verb: '', label: (verbs[o.kind] || 'Use') + ' the ' + name });
+        var verbs = { teleport: 'Enter', 'switch': 'Pull', rest: 'Rest at', sign: 'Read', craft: 'Use', npc: 'Talk to', trap: 'Look at', claim: 'Look at', pickup: 'Pick up', coop: 'Look at' };
+        var lies = o.kind === 'pickup' ? list(pr.pickup)[0] : null;                 // an item on the ground is called by its own name
+        out.push({ type: 'interact', verb: '', label: (verbs[o.kind] || 'Use') + ' the ' + (lies ? lower(itemName(c, lies.item)) : name) });
       }
       if (at) out.forEach(function (a) { a.at = at; });          // act from the footprint cell, not the clicked face/hole
     }
@@ -2897,6 +3960,16 @@ var World = (function () {
           out.push({ type: 'dismantle', verb: '', target: bt2, label: 'Take the ' + bi.name + ' apart' });
         }
       }
+    }
+    // Water beside you: drink from it, fill what holds it (what is in hand goes first).
+    var wsrc = !e && near(p, x, y) ? waterAt(c, map, x, y) : null;
+    if (wsrc && !moveBlockedEdge(c, map, p.x, p.y, x, y)) {
+      var wl = [{ type: 'interact', verb: 'drink', label: 'Drink from the ' + lower(wsrc.name) }], hand = Array.isArray(p.belt) && p.held >= 0 ? p.belt[p.held] : '';
+      fillables(c, p).forEach(function (g) {
+        var a = { type: 'interact', verb: 'fill:' + g.id, label: 'Fill the ' + lower(itemName(c, g.id)) + (g.qty > 1 ? ' (' + g.qty + ')' : '') };
+        if (g.id === hand) wl.unshift(a); else wl.push(a);
+      });
+      out = wl.concat(out);
     }
     // A piece of floor you (or your base) laid, right beside you: it can be taken up again.
     if (near(p, x, y) && !(x === p.x && y === p.y) && tileMine(c, map, p, x, y) && !out.length)
@@ -2930,13 +4003,13 @@ var World = (function () {
       monsters: (ms.monsters || []).filter(function (m) { return !m.dead; }).map(function (m) {
         var d = c.monsters[m.ref];
         return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing,
-          statuses: (m.statuses || []).map(function (st) { return st.id; }),
+          statuses: (m.statuses || []).map(function (st) { return st.id; }), alert: alertOf(m) || undefined,
           look: m.look || undefined };     // random paper-doll layers [{path, tint}], when the monster has an Appearance set
       }),
       players: (players || []).filter(function (q) { return q.id !== p.id && q.map === mapId; }).map(function (q) {
         // class + equipment + hair let other clients draw this player's paper-doll (base body, hair, worn gear)
         return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {},
-          hair: q.hair || '', hairColor: q.hairColor || '', x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level };
+          hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '', x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level, act: q.act || '', wst: weaponState(c, q) };
       })
     };
   }
@@ -2975,11 +4048,14 @@ var World = (function () {
   function publicPlayer(c, p) {
     var s = stats(c, p);
     return { id: p.id, name: p.name, 'class': p['class'], map: p.map, x: p.x, y: p.y, facing: p.facing,
-      hair: p.hair || '', hairColor: p.hairColor || '',
+      hair: p.hair || '', hairColor: p.hairColor || '', body: p.body || '', skin: p.skin || '',
       hp: p.hp, maxHp: s.maxHp, mp: Math.floor(Number(p.mp) || 0), maxMp: s.maxMp, atk: s.atk, def: s.def, level: p.level, xp: p.xp,
       hunger: Math.round(Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)),
       thirst: Math.round(Number(p.thirst) == null || isNaN(Number(p.thirst)) ? 100 : Number(p.thirst)),
-      skills: usableSkills(c, p), abilities: p.abilities, belt: p.belt, held: p.held, mags: p.mags || {}, cooldowns: p.cooldowns || {},
+      tox: Math.ceil((Number(p.tox) || 0) - 1e-6), toxSick: toxSickAt(c),
+      skills: usableSkills(c, p), abilities: p.abilities, belt: p.belt, held: p.held, mags: p.mags || {}, reload: p.reload || undefined,
+      craft: p.craft && (c.recipes || {})[p.craft.id] ? { id: p.craft.id, qty: p.craft.qty, made: p.craft.made, ms: p.craft.ms, at: p.craft.at, on: !!p.craft.on, need: Math.max(1, c.recipes[p.craft.id].timeS * 1000) } : undefined,
+      cooldowns: p.cooldowns || {},
       statuses: (p.statuses || []).map(function (st) { return { id: st.id, until: st.until }; }),
       xpNext: xpFor(c, p.level + 1), xpThis: xpFor(c, p.level) || 0, gold: p.gold,
       // rooms this player has entered (per map) — the client needs it so `roof_reveal: permanent` keeps
@@ -3000,11 +4076,11 @@ var World = (function () {
     roofZoneAt: roofZoneAt, roofZones: roofZones, covered: covered, asRoof: asRoof, roofSteps: roofSteps, roofSpan: roofSpan, roofSupport: roofSupport,
     liveMap: liveMap, liveMapFromStruct: liveMapFromStruct, structOf: structOf, publicStruct: publicStruct,
     structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure,
-    recipesFor: recipesFor, hasTool: hasTool,
+    recipesFor: recipesFor, hasTool: hasTool, craftingHere: craftingHere, CRAFT_MAX: CRAFT_MAX, heldItem: heldItem, weaponState: weaponState, cookRecipe: cookRecipe, hitMonster: hitMonster, bagSlots: bagSlots, stackMaxOf: stackMaxOf, take: take, harvestWith: harvestWith, stationName: stationName,
     canBuild: canBuild, blueprintsFor: blueprintsFor, noBuild: noBuild, buildSpot: buildSpot,
-    claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, canRemove: canRemove, itemCan: itemCan, beltItems: beltItems, BELT_SIZE: BELT_SIZE, skillsOn: skillsOn, holdSlot: holdSlot,
+    claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, canRemove: canRemove, canMove: canMove, waterAt: waterAt, fillables: fillables, itemCan: itemCan, beltItems: beltItems, BELT_SIZE: BELT_SIZE, skillsOn: skillsOn, holdSlot: holdSlot,
     groundId: groundId, floorId: floorId, floorsOf: floorsOf, deliver: deliver,
-    sightRadius: sightRadius, seesAcross: seesAcross, peek: peek, advanceFloors: advanceFloors, fixtureStates: fixtureStates,
+    sightRadius: sightRadius, seesAcross: seesAcross, peek: peek, advanceFloors: advanceFloors, findPath: findPath, reloadMsOf: reloadMsOf, alertOf: alertOf, hairChoices: hairChoices, blocksSight: blocksSight, bodySprite: bodySprite, fixtureStates: fixtureStates,
     applyNotice: applyNotice, shotAcross: shotAcross, throwAcross: throwAcross, tileMine: tileMine };
 })();
 if (typeof module !== 'undefined') module.exports = World;

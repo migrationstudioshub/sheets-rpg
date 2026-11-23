@@ -225,6 +225,11 @@ indestructible, salvage), a "Station id" field when kind is `craft`, "Storage sl
 
 ### 4.4 Monsters — new columns (`Monsters`)
 
+> **Built differently (Nov 2026):** monsters that attack structures are the ones with `brain` = `walker`
+> (`World.walkerStep`, see CLAUDE.md "Monster brains"). The column is `structure_dmg` (0 = the monster's atk), a blow
+> takes one of its steps (no `structure_ms`), and a walker also goes for player-built things it sees. The table below is the
+> original plan.
+
 | Column | Type | Default | Meaning |
 | ------ | ---- | ------- | ------- |
 | `structure_atk` | number | 0 | Damage per swing against structures. `0` = this monster never attacks structures. |

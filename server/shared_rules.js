@@ -155,8 +155,18 @@ var Rules = (function () {
    * corner they share — the same "both ways round must be open" rule a diagonal step obeys, so nobody swings or
    * reaches round the end of a wall. (blockedBetween itself stays straight-only: sight asks it about diagonals.)
    */
+  /** Is there a change of ground height between cell A and a NEIGHBOURING cell B? Straight neighbours: the edge
+   *  between them; diagonal ones: any of the four edges at the corner they share (as reachBlocked does for walls). */
+  function cliffReach(map, ax, ay, bx, by) {
+    if (!map || !map.elev || !map.elev.length) return false;
+    function side(x0, y0, x1, y1) { return cliffBetween(map, x0, y0, x1 > x0 ? 'E' : x1 < x0 ? 'W' : y1 > y0 ? 'S' : 'N'); }
+    if (Math.abs(bx - ax) === 1 && Math.abs(by - ay) === 1) return side(ax, ay, bx, ay) || side(bx, ay, bx, by) || side(ax, ay, ax, by) || side(ax, by, bx, by);
+    if (Math.abs(bx - ax) + Math.abs(by - ay) !== 1) return false;
+    return side(ax, ay, bx, by);
+  }
   function reachBlocked(content, map, ax, ay, bx, by, what) {
     what = what || 'move';
+    if (what === 'move' && cliffReach(map, ax, ay, bx, by)) return true;   // nobody uses or hits what is on another level of ground
     if (Math.abs(bx - ax) === 1 && Math.abs(by - ay) === 1)
       return blockedBetween(content, map, ax, ay, bx, ay, what) || blockedBetween(content, map, bx, ay, bx, by, what) ||
              blockedBetween(content, map, ax, ay, ax, by, what) || blockedBetween(content, map, ax, by, bx, by, what);
@@ -298,6 +308,36 @@ var Rules = (function () {
     if (who) return { ok: false, x: x, y: y, reason: 'occupied', who: who, tx: nx, ty: ny };
     return { ok: true, x: nx, y: ny };
   }
+  // ------------------------------------------------------------ ground height (docs/UNDERGROUND_AND_ELEVATION.md §4)
+  // A map may carry `elev`: a W×H grid of tokens, '' = level ground. A token is the tile's height in whole steps
+  // ('1', '2'… one step = one tile on the screen, two = a storey), optionally followed by the way a RAMP on it
+  // climbs ('1N' = from height 1 at its south side up to 2 at its north side; '0E' = from 0 up to 1 going east).
+  // Between two tiles that do not meet at the same height there is a cliff: nobody steps across it, either way.
+  // A ramp meets its low neighbour at its foot and its high neighbour at its top; its two flanks are cliffs, except
+  // against another ramp just like it (a wide ramp). Diagonal steps obey the usual both-ways-round rule.
+  var OPP = { N: 'S', S: 'N', E: 'W', W: 'E' };
+  function elevTok(map, x, y) { var g = map && map.elev, row = g && g[y]; return row && row[x] ? String(row[x]) : ''; }
+  function heightAt(map, x, y) { return parseInt(elevTok(map, x, y), 10) || 0; }
+  function rampAt(map, x, y) { var t = elevTok(map, x, y), d = t.charAt(t.length - 1); return OPP[d] ? d : ''; }
+  /** The height a tile presents on one of its four sides, as text: two neighbours join when these are equal. */
+  function sideLevel(map, x, y, side) {
+    var h = heightAt(map, x, y), r = rampAt(map, x, y);
+    if (!r) return String(h);
+    return side === r ? String(h + 1) : side === OPP[r] ? String(h) : h + r;
+  }
+  function cliffBetween(map, x, y, dir) {
+    var d = DIRS[dir];
+    if (!d || !map || !map.elev || !map.elev.length) return false;
+    return sideLevel(map, x, y, dir) !== sideLevel(map, x + d.dx, y + d.dy, OPP[dir]);
+  }
+  /** How high the ground is at a point (fx, fy in tiles, fractions allowed: the middle of tile 3,4 is 3.5,4.5). */
+  function groundHeight(map, fx, fy) {
+    if (!map || !map.elev || !map.elev.length) return 0;
+    var x = Math.floor(fx), y = Math.floor(fy), h = heightAt(map, x, y), r = rampAt(map, x, y);
+    if (!r) return h;
+    var u = fx - x, v = fy - y;
+    return h + (r === 'N' ? 1 - v : r === 'S' ? v : r === 'E' ? u : 1 - u);
+  }
   function tryMove(content, map, x, y, dir, opts) {
     if (DIAG[dir]) return tryDiag(content, map, x, y, DIAG[dir], opts);
     var d = DIRS[dir];
@@ -308,6 +348,7 @@ var Rules = (function () {
     var sHere = stairAt(content, map, x, y), sThere = stairAt(content, map, nx, ny);
     if (sHere || sThere) { var sr = stairStep(content, map, x, y, dir, nx, ny, sHere, sThere, opts); if (sr) return sr; }
     if (!to) return stairDown(content, map, x, y, dir, nx, ny, opts) || { ok: false, x: x, y: y, reason: 'no terrain' };
+    if (map.elev && map.elev.length && cliffBetween(map, x, y, dir)) return { ok: false, x: x, y: y, reason: 'cliff' };   // a change of height with no ramp
     // The edge being crossed: a wall blocks the step unless an opening on it says otherwise (see edgeBlocked).
     var dEdge = wallEdge(x, y, dir);
     if (edgeBlocked(content, map, dEdge.orient, dEdge.x, dEdge.y, 'move')) {
@@ -373,6 +414,7 @@ var Rules = (function () {
   }
 
   return { WALL_H: WALL_H, DIRS: DIRS, DIAG: DIAG, isDir: isDir, stepCost: stepCost, faceFor: faceFor, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt, blockersAt: blockersAt,
+    heightAt: heightAt, rampAt: rampAt, cliffBetween: cliffBetween, groundHeight: groundHeight, cliffReach: cliffReach,
     terrainAt: terrainAt, standable: standable, nearestStandable: nearestStandable,
     parseWall: parseWall, wallAt: wallAt, wallEdge: wallEdge, wallBetween: wallBetween, wallBetweenCells: wallBetweenCells,
     wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight,

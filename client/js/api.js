@@ -211,6 +211,7 @@ var Api = (function () {
   // (the same bodies a POST carries, plus a number n the answer comes back with) and the changes of every turn come
   // down it unasked. this.pushed is true while it is open — the game then only asks now and then, to say it is
   // still there. With no socket (an older host, a browser without one) everything goes by POST, as it always did.
+  // What the messages hold, and how they are cut down to what changed, is client/js/wire.js (both ends).
   Lan.prototype.call = function (body) {
     var s = this.sock, self = this;
     if (s && s.readyState === 1) {
@@ -239,26 +240,20 @@ var Api = (function () {
     }
     s.onclose = lost;
     s.onerror = function () { try { s.close(); } catch (e) { /* already closed */ } };
+    var held = Wire.receiver();                              // what this socket has been sent so far (client/js/wire.js)
     s.onmessage = function (m) {
       var msg; try { msg = JSON.parse(m.data); } catch (e) { return; }
       if (!msg) return;
-      if (msg.push) {
-        // Only what changed since the last message on this socket: put it over what we hold (null = gone).
-        if (!self.held || !self.heldPlayer) return;
-        var w = Object.assign({}, self.held), d = msg.world || {};
-        Object.keys(d).forEach(function (k) { if (d[k] === null) delete w[k]; else w[k] = d[k]; });
-        w.now = msg.now;
-        self.held = w;
-        if (msg.player) self.heldPlayer = msg.player;
-        if (self.onPush) self.onPush({ player: self.heldPlayer, world: Object.assign({}, w), events: msg.events || [], seq: msg.seq });
-        return;
-      }
+      // A message carries only what changed since the last one on this socket: Wire.unpack puts it over what we
+      // hold and hands back the whole answer, in the shape every backend gives.
+      var whole = msg.now !== undefined && !msg.error ? Wire.unpack(held, msg) : null;
+      if (msg.push) { if (whole && whole.player && self.onPush) self.onPush(whole); return; }
       var wait = self.waiting[msg.re];
       if (!wait) return;
       delete self.waiting[msg.re];
       if (msg.error) { wait.reject(new Error(msg.error)); return; }
-      if (msg.world) { self.held = Object.assign({}, msg.world); self.heldPlayer = msg.player; self.pushed = true; }   // from here on the host sends changes unasked
-      wait.resolve(msg);
+      if (whole) self.pushed = true;                         // from here on the host sends changes unasked
+      wait.resolve(whole || msg);
     };
   };
   Lan.prototype.loadContent = function () {

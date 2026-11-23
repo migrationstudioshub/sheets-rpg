@@ -32,6 +32,7 @@ const os = require('os');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const Store = require('./store.js');
+const Wire = require(path.join(__dirname, '..', 'client', 'js', 'wire.js'));   // what travels on the socket, both ends
 
 const ROOT = path.join(__dirname, '..');
 
@@ -179,7 +180,7 @@ function step(token, action, since, structRev, floorRevs) {
 const TICK_MS = Math.max(20, Number(process.env.TICK_MS) || 100);
 const LAG_MS = Math.max(0, Number(process.env.LAG_MS) || 0);
 const CONNS = new Set();                                // live sockets (see "the socket")
-const STATS = { ticks: 0, pushes: 0, bytes: 0, slowest: 0, saved: 0 };
+const STATS = { ticks: 0, pushes: 0, bytes: 0, slowest: 0, busy: 0, saved: 0 };   // busy = ms spent in turns, in all
 function livePlayers(now) { return Object.keys(PLAYERS).map(tok => PLAYERS[tok]).filter(q => now - (q._seen || 0) < 60000); }
 
 function tick() {
@@ -202,24 +203,25 @@ function tick() {
   if (WORLD.log && WORLD.log.length > 50) WORLD.log = WORLD.log.slice(-50);
   CONNS.forEach(conn => { try { push(conn, now, live); } catch (e) { console.error('  push failed:', (e && e.message) || e); } });
   STATS.ticks++;
-  STATS.slowest = Math.max(STATS.slowest, Number(process.hrtime.bigint() - t0) / 1e6);
+  const took = Number(process.hrtime.bigint() - t0) / 1e6;
+  STATS.busy += took;
+  STATS.slowest = Math.max(STATS.slowest, took);
 }
 
-// What one connection is told. Every message is cut down to what this connection has not been sent yet: conn.sent
-// holds the JSON of each part of the world view as last sent, and only parts that differ go out (a part that is
-// gone goes out as null). An answer to a request (reply) carries everything and starts that record afresh.
-function worldParts(conn, world, full) {
-  const out = [], seen = {};
-  Object.keys(world).forEach(k => {
-    if (k === 'now') return;
-    const j = JSON.stringify(world[k]);
-    if (j === undefined) return;
-    seen[k] = true;
-    if (full || conn.sent[k] !== j) out.push(JSON.stringify(k) + ':' + j);
-    conn.sent[k] = j;
-  });
-  Object.keys(conn.sent).forEach(k => { if (!seen[k]) { delete conn.sent[k]; if (!full) out.push(JSON.stringify(k) + ':null'); } });
-  return out;
+// What one connection is told (the socket's messages: client/js/wire.js, both ends). Every message is cut down to
+// what this connection has not been sent yet — conn.wire remembers — and to what is near its player:
+// INTEREST: monsters and other players further than Config interest_radius tiles (20: past the edge of the screen
+// and past how far anyone sees) are left out, so a message does not grow with a crowd on the far side of the map.
+// interest_radius = 0 sends the whole map.
+function interest() {
+  const v = CONTENT.config.interest_radius;
+  return v === undefined || v === null || v === '' ? 20 : Math.max(0, Number(v) || 0);
+}
+function inRange(world, at) {
+  const r = interest();
+  if (!r) return world;
+  const near = q => Math.abs(q.x - at.x) <= r && Math.abs(q.y - at.y) <= r;
+  return Object.assign({}, world, { monsters: (world.monsters || []).filter(near), players: (world.players || []).filter(near) });
 }
 /** Remember which structure layers this connection now holds, so they are not sent again. */
 function noteRevs(conn, world) {
@@ -230,32 +232,23 @@ function noteRevs(conn, world) {
 }
 function push(conn, now, live) {
   const p = conn.token && PLAYERS[conn.token];
-  if (!p || now - (p._seen || 0) >= 60000) return;       // away (a hidden tab stops asking): nothing until they are back
+  if (!p || !conn.wire.started || now - (p._seen || 0) >= 60000) return;   // away (a hidden tab stops asking): nothing until they are back
   if (conn.sock.writableLength > 1e6) return;            // a connection that cannot keep up: skip, it gets the difference later
-  const players = presentOn(PLAYERS, p.map, now);
-  const world = World.view(CONTENT, WORLD, p.map, p, players, conn.structRev, live, conn.floorRevs);
-  const pj = JSON.stringify(World.publicPlayer(CONTENT, p));
-  const events = World.eventsFor(WORLD, conn.since, p);
-  const parts = worldParts(conn, world, false);
+  const world = World.view(CONTENT, WORLD, p.map, p, presentOn(PLAYERS, p.map, now), conn.structRev, live, conn.floorRevs);
+  const text = Wire.pack(conn.wire, { push: true, player: World.publicPlayer(CONTENT, p), world: inRange(world, p),
+    events: World.eventsFor(WORLD, conn.since, p), seq: WORLD.seq });
   noteRevs(conn, world);
   conn.since = WORLD.seq;
-  if (pj === conn.pj && !parts.length && !events.length) return;
-  let text = '{"push":1,"now":' + world.now + ',"seq":' + (WORLD.seq || 0);
-  if (pj !== conn.pj) { conn.pj = pj; text += ',"player":' + pj; }
-  if (parts.length) text += ',"world":{' + parts.join(',') + '}';
-  if (events.length) text += ',"events":' + JSON.stringify(events);
-  sendText(conn, text + '}');
+  if (!text) return;
+  sendText(conn, text);
   STATS.pushes++;
 }
-/** The answer to a request that came by the socket: n = the number the page gave the request. */
-function reply(conn, n, out) {
+/** The answer to a request that came by the socket: n = the number the page gave the request; full = a `load`. */
+function reply(conn, n, out, full) {
   if (!out || out.error || !out.world) { sendText(conn, JSON.stringify(Object.assign({ re: n }, out || { error: 'no answer' }))); return; }
-  conn.pj = JSON.stringify(out.player);
-  const parts = worldParts(conn, out.world, true);
+  sendText(conn, Wire.pack(conn.wire, { re: n, full: full, player: out.player, world: inRange(out.world, out.player), events: out.events, seq: out.seq }));
   noteRevs(conn, out.world);
   conn.since = out.seq;
-  sendText(conn, '{"re":' + JSON.stringify(n) + ',"seq":' + (out.seq || 0) + ',"player":' + conn.pj + ',"world":{"now":' + out.world.now +
-    (parts.length ? ',' + parts.join(',') : '') + '},"events":' + JSON.stringify(out.events || []) + '}');
 }
 
 function join(name, cls, look) {
@@ -289,7 +282,7 @@ function handleGame(body, conn) {
 // ---- the socket ----
 // A WebSocket, by hand (built-in modules only, like the rest of this host): the page keeps one open, sends its
 // requests through it (the same bodies a POST carries, plus a number n) and is sent the changes of every turn
-// without asking. Text frames only, no compression. A page that cannot open one keeps using POST, as before.
+// without asking; what the messages hold is client/js/wire.js. Text frames only, no compression. A page that cannot open one keeps using POST, as before.
 function frame(op, payload) {
   const len = payload.length;
   let head;
@@ -308,7 +301,7 @@ function onMessage(conn, text) {
   let body = null, out;
   try { body = JSON.parse(text); out = handleGame(body || {}, conn); }
   catch (err) { out = { error: String((err && err.message) || err) }; }
-  reply(conn, body && body.n, out);
+  reply(conn, body && body.n, out, !!body && body.action === 'load');
 }
 function readFrames(conn) {
   for (;;) {
@@ -339,7 +332,7 @@ function acceptSocket(req, sock) {
   const accept = crypto.createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
   sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
   sock.setNoDelay(true);
-  const conn = { sock: sock, token: '', since: undefined, structRev: undefined, floorRevs: undefined, sent: {}, pj: '', buf: Buffer.alloc(0), parts: [] };
+  const conn = { sock: sock, token: '', since: undefined, structRev: undefined, floorRevs: undefined, wire: Wire.sender(), buf: Buffer.alloc(0), parts: [] };
   CONNS.add(conn);
   sock.on('data', d => { conn.buf = conn.buf.length ? Buffer.concat([conn.buf, d]) : d; readFrames(conn); });
   sock.on('close', () => CONNS.delete(conn));

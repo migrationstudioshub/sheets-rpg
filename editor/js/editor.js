@@ -107,6 +107,108 @@ var E = {
     g[y][x] = v; return true;
   }
   function elevToken() { var b = E.brush || {}, h = Math.max(0, Math.min(9, Number(b.elev) || 0)), r = b.ramp || ''; return r ? h + r : (h ? String(h) : ''); }
+  // ---- random hills (the Height tab's generator). Smooth noise at several sizes laid over each other, cut into
+  // whole levels; then no step is ever more than one level (terraces, not towers), and ramps are cut into them.
+  function seeded(seed) { var a = seed >>> 0; return function () { a = (a + 0x6D2B79F5) | 0; var t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  /**
+   * A W×H grid of height tokens. o = {min, max, size (tiles across one hill), ramps (0 none, 1 few, 2 many), seed,
+   * fixed: grid of tokens that must stay as they are (undefined = free), flat (0..: how much of the land is lowland)}.
+   */
+  E.hillGrid = function (W, H, o) {
+    var lo = Math.max(0, Math.min(9, Math.round(Number(o.min) || 0))), hi = Math.max(lo, Math.min(9, Math.round(Number(o.max) || 0)));
+    var rnd = seeded(o.seed || 1), size = Math.max(3, Number(o.size) || 14), fixed = o.fixed || [];
+    var isFixed = function (x, y) { return !!fixed[y] && fixed[y][x] != null; };
+    // value noise: random numbers on a coarse lattice, blended smoothly between
+    function layer(cell) {
+      var gw = Math.ceil(W / cell) + 3, gh = Math.ceil(H / cell) + 3, lat = [], ox = rnd() * cell, oy = rnd() * cell;
+      for (var i = 0; i < gw * gh; i++) lat.push(rnd());
+      var sm = function (t) { return t * t * (3 - 2 * t); };
+      return function (x, y) {
+        var fx = (x + ox) / cell, fy = (y + oy) / cell, x0 = Math.floor(fx), y0 = Math.floor(fy), u = sm(fx - x0), v = sm(fy - y0);
+        var a = lat[y0 * gw + x0], b = lat[y0 * gw + x0 + 1], c2 = lat[(y0 + 1) * gw + x0], d = lat[(y0 + 1) * gw + x0 + 1];
+        return (a + (b - a) * u) * (1 - v) + (c2 + (d - c2) * u) * v;
+      };
+    }
+    var layers = [[size, 1], [size / 2, 0.5], [size / 4, 0.22], [size / 8, 0.08]].filter(function (l) { return l[0] >= 1.5; }).map(function (l) { return { f: layer(l[0]), w: l[1] }; });
+    var v = [], x, y, mn = Infinity, mx = -Infinity;
+    for (y = 0; y < H; y++) for (x = 0; x < W; x++) { var n = 0; layers.forEach(function (l) { n += l.f(x, y) * l.w; }); v.push(n); if (n < mn) mn = n; if (n > mx) mx = n; }
+    // into levels: lowland is common, high ground rarer the higher it is (valleys with hills and the odd mountain)
+    var steps = hi - lo + 1, bend = 1 + 1.6 * (o.flat == null ? 0.5 : Number(o.flat)), hgt = [];
+    for (y = 0; y < H; y++) { hgt.push([]); for (x = 0; x < W; x++) {
+      var t = mx > mn ? (v[y * W + x] - mn) / (mx - mn) : 0;
+      hgt[y].push(isFixed(x, y) ? (parseInt(fixed[y][x], 10) || 0) : Math.min(hi, lo + Math.floor(Math.pow(t, bend) * steps)));
+    } }
+    var at = function (x, y) { return x < 0 || y < 0 || x >= W || y >= H ? null : hgt[y][x]; };
+    var N4 = [[0, -1], [1, 0], [0, 1], [-1, 0]], N8 = N4.concat([[1, -1], [1, 1], [-1, 1], [-1, -1]]);
+    // no one-tile pimples or pits
+    for (var pass = 0; pass < 2; pass++) for (y = 0; y < H; y++) for (x = 0; x < W; x++) {
+      if (isFixed(x, y)) continue;
+      var ns = N4.map(function (d) { return at(x + d[0], y + d[1]); }).filter(function (q) { return q != null; }), h0 = hgt[y][x];
+      if (ns.length && ns.every(function (q) { return q < h0; })) hgt[y][x] = Math.max.apply(null, ns);
+      else if (ns.length && ns.every(function (q) { return q > h0; })) hgt[y][x] = Math.min.apply(null, ns);
+    }
+    // one level at a time: nothing stands more than a step above anything beside it (corners too)
+    var changed = true, guard = 0;
+    var sweep = function (x, y) {
+      if (isFixed(x, y)) return;
+      var low = Infinity; N8.forEach(function (d) { var q = at(x + d[0], y + d[1]); if (q != null && q < low) low = q; });
+      if (hgt[y][x] > low + 1) { hgt[y][x] = low + 1; changed = true; }
+    };
+    while (changed && guard++ < 40) {
+      changed = false;
+      for (y = 0; y < H; y++) for (x = 0; x < W; x++) sweep(x, y);
+      for (y = H - 1; y >= 0; y--) for (x = W - 1; x >= 0; x--) sweep(x, y);
+    }
+    var out = hgt.map(function (row, y) { return row.map(function (q, x) { return isFixed(x, y) ? String(fixed[y][x]) : (q ? String(q) : ''); }); });
+    // ramps: on a lower tile at the foot of a step, with level ground to walk in from and level ground on top.
+    // (None climbing south: that one is edge-on in the game, it cannot be seen.)
+    var gap = o.ramps === 2 ? 4 : o.ramps === 1 ? 9 : 0;
+    if (gap) {
+      var cand = [], put = [];
+      for (y = 0; y < H; y++) for (x = 0; x < W; x++) {
+        if (isFixed(x, y)) continue;
+        [['N', 0, -1], ['E', 1, 0], ['W', -1, 0]].forEach(function (d) {
+          var up = at(x + d[1], y + d[2]), back = at(x - d[1], y - d[2]), top2 = at(x + 2 * d[1], y + 2 * d[2]);
+          if (up !== hgt[y][x] + 1 || back !== hgt[y][x] || top2 !== up) return;
+          if (isFixed(x + d[1], y + d[2])) return;
+          cand.push({ x: x, y: y, d: d[0], h: hgt[y][x], r: rnd() });
+        });
+      }
+      cand.sort(function (a, b) { return a.r - b.r; });
+      cand.forEach(function (q) {
+        if (put.some(function (p) { return p.h === q.h && Math.abs(p.x - q.x) + Math.abs(p.y - q.y) < gap; })) return;
+        if (put.some(function (p) { return Math.abs(p.x - q.x) + Math.abs(p.y - q.y) < 2; })) return;      // never two ramps touching
+        put.push(q); out[q.y][q.x] = q.h + q.d;
+      });
+    }
+    return out;
+  };
+  /** Tiles the generator leaves alone: anything built or placed (objects, walls, roofs) and ground nobody walks on (water). */
+  E.hillFixed = function (m) {
+    var cur = E.ensureElev(m), fx = [], x, y, c = E.content;
+    for (y = 0; y < m.height; y++) fx.push(new Array(m.width));
+    var keep = function (x, y) { if (x >= 0 && y >= 0 && x < m.width && y < m.height) fx[y][x] = cur[y][x] || ''; };
+    (m.entities || []).forEach(function (e) {
+      var ob = c.objects[e.ref] || {}, fw = Math.max(1, ob.footprintW || 1), fh = Math.max(1, ob.footprintH || 1);
+      for (var dy = 0; dy < fh; dy++) for (var dx = 0; dx < fw; dx++) keep(e.x + dx, e.y - dy);
+    });
+    for (y = 0; y < m.height; y++) for (x = 0; x < m.width; x++) {
+      if (m.hWalls && m.hWalls[y] && m.hWalls[y][x]) { keep(x, y); keep(x, y - 1); }
+      if (m.vWalls && m.vWalls[y] && m.vWalls[y][x]) { keep(x, y); keep(x - 1, y); }
+      if (m.roof && m.roof[y] && m.roof[y][x] && m.roof[y][x] !== '0') keep(x, y);
+      var t = Rules.terrainAt(c, m, x, y);
+      if (!t || !(t.pass.n || t.pass.e || t.pass.s || t.pass.w)) keep(x, y);
+    }
+    return fx;
+  };
+  /** The Height tab's Generate button: random hills over the whole map (one undo step). Returns the seed it used. */
+  E.generateHills = function (o) {
+    var m = E.map(), seed = o.seed || (Math.floor(Math.random() * 2147483646) + 1);
+    E.checkpoint();
+    m.elev = E.hillGrid(m.width, m.height, { min: o.min, max: o.max, size: o.size, ramps: o.ramps, flat: o.flat, seed: seed, fixed: o.keep === false ? null : E.hillFixed(m) });
+    E.groundDirty = true; E.markDirty('map');
+    return seed;
+  };
   function setNoBuild(x, y, v) {
     var m = E.map(); if (x < 0 || y < 0 || x >= m.width || y >= m.height) return false;
     var g = E.ensureNoBuild(m); if (g[y][x] === v) return false;

@@ -68,12 +68,15 @@ A game action is sent as `do` (not `action`!): `{type: 'move', dirs} | {type: 'i
   `data/tables.json` as fallbacks; `CONTENT=local` forces the latter). **It runs a loop** (Nov 2026, stage 1 of the game server in
   `docs/QUESTS_INSTANCES_SERVER.md`): `tick()` advances every map with players `TICK_MS` (100) apart, and a hand-written WebSocket
   carries requests up (same bodies as POST plus `n`; answer `{re: n, …}`) and each turn's changes down (`{push: 1, …}`, only the
-  parts of the view that differ from what that socket was last sent — `conn.sent`; the host counts events per socket). Page side:
+  parts of the view that differ from what that socket was last sent — `conn.wire`; the host counts events per socket). Page side:
   `Lan.connect` + `api.onPush` → `takePush` in `main.js`; `api.pushed` slows asking to a 5 s "still here". No socket = POST and
   the 250 ms poll, as before. `LAG_MS` fakes lag. Tests: `node tools/test_host.js`. **Saving (stage 2)** goes through
   `host/store.js` (`load()` / `put(kind, id, json)`; files today, the database later): `host/save.live/` holds one file per
   character, per map, and `world.json`; `save()` writes only records whose JSON changed, every `SAVE_MS` (3 s) and on Ctrl+C.
-  All map state stays in memory (no load/unload).
+  All map state stays in memory (no load/unload). **Messages (stage 3)**: `client/js/wire.js` holds both ends
+  (`Wire.pack` host, `Wire.unpack` page; the format is in its header) — answers and pushes alike carry only what changed on
+  that socket, monsters/players one by one, and only those within Config `interest_radius` (20) of the player. Change the
+  format there, never in `server.js`/`api.js`. `node tools/bots.js` = a crowd of scripted players (the load test).
   Friends elsewhere reach it over Tailscale.
 - **Offline** (`API_URL` empty): `client/js/api.js` runs `shared/world.js` in the browser against `data/tables.json`
   (or a newer map-editor draft in localStorage), saving in localStorage. Useful for testing without the server.

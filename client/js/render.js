@@ -55,6 +55,113 @@ var Render = (function () {
     return out.length ? out : [flat];
   }
 
+  // ---- waterfalls ----
+  // Where water lies on raised ground and the ground drops away to the south, the water falls down the cliff face.
+  // A fall is a moving strip drawn over the (baked, still) face: frames side by side, each frame four tiles wide
+  // (single, left, middle, right), one tile high and repeated down the face. Which tiles have one:
+  //   - by itself: a terrain that is water (or has its own 'fall' picture), unless Config waterfalls = off;
+  //   - by hand: map.falls[y][x] (the map editor) = '1' a fall here whatever the ground, a tint name = a fall in
+  //     that colour, '0' = none here even over water. '' = by itself.
+  // The picture is the terrain's 'fall', else Config waterfall_sprite, else FALL_SPRITE; its colour the terrain's tint.
+  var FALL_SPRITE = 'art/tilesets/waterfall_anim.png';
+  function isOff(v) { return v === false || /^(off|false|0|no)$/i.test(String(v == null ? '' : v)); }
+  /** How far the ground falls at the south edge of a tile: [left, right, own left, own right] (in tiles). */
+  function southDrop(map, x, y) {
+    if (x < 0 || x >= map.width || y < 0 || y >= map.height) return [0, 0, 0, 0];
+    var oL = Rules.groundHeight(map, x + 0.001, y + 0.999), oR = Rules.groundHeight(map, x + 0.999, y + 0.999);
+    var sL = y + 1 < map.height ? Rules.groundHeight(map, x + 0.001, y + 1.001) : 0, sR = y + 1 < map.height ? Rules.groundHeight(map, x + 0.999, y + 1.001) : 0;
+    return [Math.max(0, oL - sL), Math.max(0, oR - sR), oL, oR];
+  }
+  /** The fall at a tile, if it has one: { sprite, tint, hand } (hand = put there in the map editor). */
+  function fallAt(content, map, x, y) {
+    if (!elevOn(map) || x < 0 || y < 0 || x >= map.width || y >= map.height) return null;
+    var d = southDrop(map, x, y); if (!(d[0] > 0.01 || d[1] > 0.01)) return null;       // no face to fall down
+    var mark = (map.falls && map.falls[y] && map.falls[y][x]) || '';
+    if (mark === '0') return null;
+    var cfg = content.config || {}, def = cfg.waterfall_sprite || FALL_SPRITE;
+    var bt = content.terrain[map.terrain[y] && map.terrain[y][x]], ot = map.overlay && map.overlay.length ? content.terrain[map.overlay[y] && map.overlay[y][x]] : null;
+    var t = ot && (ot.fall || ot.water) ? ot : bt, own = t ? (t.fall || (t.water ? def : '')) : '';
+    if (!mark && (!own || isOff(cfg.waterfalls))) return null;
+    return { sprite: own || def, tint: mark && mark !== '1' ? mark : (own && t.tint) || '', hand: !!mark };
+  }
+  /** Every fall of a map, with the piece of the strip each one uses (listed once per map, like animatedCells). */
+  function fallCells(content, map) {
+    var out = [];
+    if (!elevOn(map)) return out;
+    for (var y = 0; y < map.height; y++) for (var x = 0; x < map.width; x++) {
+      var f = fallAt(content, map, x, y); if (!f) continue;
+      var l = !!fallAt(content, map, x - 1, y), r = !!fallAt(content, map, x + 1, y);
+      out.push({ x: x, y: y, col: (!l && !r) ? 0 : (!l && r) ? 1 : (l && r) ? 2 : 3, sprite: f.sprite, tint: f.tint, hand: f.hand });
+    }
+    return out;
+  }
+  /** Draws the falls at their frame for `now`, over the raised ground (ox, oy = where the map's flat origin is on screen). */
+  function drawFalls(g, content, map, cells, ox, oy, size, now, x0, y0, x1, y1) {
+    if (!cells || !cells.length) return;
+    var ms = Number((content.config || {}).waterfall_ms) || 110;
+    for (var i = 0; i < cells.length; i++) {
+      var a = cells[i];
+      if (x0 != null && (a.x < x0 || a.x > x1 || a.y < y0 - 1 || a.y > y1 + 12)) continue;
+      var img = Assets.get(a.sprite); if (!img) continue;
+      var ramp = a.tint && typeof Tint !== 'undefined' && Tint.tintedOver ? Tint.TINTS[a.tint] : null;
+      if (ramp) img = Tint.tintedOver(img, Assets.get(a.sprite.replace(/\.png$/i, '.tint.png')), ramp);
+      var n = Math.max(1, Math.round(img.width / (4 * NT))), fr = Math.floor((now || 0) / ms) % n;
+      var d = southDrop(map, a.x, a.y), X = ox + a.x * size;
+      var Yl = oy + (a.y + 1 - d[2]) * size, Yr = oy + (a.y + 1 - d[3]) * size, Bl = Yl + d[0] * size, Br = Yr + d[1] * size;
+      var topY = Math.round(Math.min(Yl, Yr)), botY = Math.round(Math.max(Bl, Br));
+      for (var y2 = a.y + 2; y2 < map.height && y2 <= a.y + 12; y2++) {                 // nearer raised ground stands in front of it
+        var top2 = Math.round(oy + (y2 - Rules.heightAt(map, a.x, y2) - (Rules.rampAt(map, a.x, y2) ? 1 : 0)) * size);
+        if (top2 < botY) botY = top2;
+      }
+      if (botY <= topY) continue;
+      g.save(); g.beginPath(); g.moveTo(X, Yl); g.lineTo(X + size, Yr); g.lineTo(X + size, Math.min(Br, botY)); g.lineTo(X, Math.min(Bl, botY)); g.closePath(); g.clip();
+      for (var fy = topY; fy < botY; fy += size) g.drawImage(img, fr * 4 * NT + a.col * NT, 0, NT, Math.min(NT, img.height), X, fy, size, size);
+      g.restore();
+    }
+  }
+
+  // ---- things on cliff faces (layer:'cliff') ----
+  // An object whose definition has properties.layer = 'cliff' is a decoration ON a cliff face: vines, rocks, a cave
+  // mouth. Its placement names the raised tile whose south face it is on (x, y) and where on that face:
+  // data.dx = sideways from the middle of the tile (in tiles), data.up = how far its foot is above the foot of the
+  // cliff (in tiles), data.flip = mirrored. Any number may share a face; they are drawn in the order they were placed.
+  // Draw-only: the rules see a walkable object standing on the tile above.
+  /** Where the foot of the cliff under a tile's south edge is drawn (y, in the same space as oy), and where nearer raised ground starts covering it. */
+  function cliffFoot(map, x, y, oy, size) {
+    var d = southDrop(map, x, y), foot = oy + (y + 1 - ((d[2] + d[3]) / 2 - (d[0] + d[1]) / 2)) * size, cover = Infinity;
+    for (var y2 = y + 2; y2 < map.height && y2 <= y + 12; y2++) {
+      var top2 = oy + (y2 - Rules.heightAt(map, x, y2) - (Rules.rampAt(map, x, y2) ? 1 : 0)) * size;
+      if (top2 < cover) cover = top2;
+    }
+    return { foot: foot, top: foot - (d[0] + d[1]) / 2 * size, drop: (d[0] + d[1]) / 2, cover: cover };
+  }
+  /** The picture of a cliff thing and the rectangle it is drawn in: { img, sx, sw, sh, x, y, w, h, cover } or null. */
+  function cliffRect(map, o, e, ox, oy, size, now) {
+    if (!elevOn(map) || !o) return null;
+    var path = (typeof Rules !== 'undefined' && Rules.lookSprite && Rules.lookSprite(o, e)) || o.sprite, img = path ? Assets.get(path) : null;
+    var n = Math.max(1, o.frames || 1), fw = img ? img.width / n : NT, ih = img ? img.height : NT, k = size / NT;
+    var f = cliffFoot(map, e.x, e.y, oy, size), dt = e.data || {};
+    var w = fw * k, h = ih * k, cx = ox + (e.x + 0.5 + (Number(dt.dx) || 0)) * size, by = f.foot - (Number(dt.up) || 0) * size;
+    return { img: img, sx: (n > 1 ? Math.floor((now || 0) / (o.frameMs || 200)) % n : 0) * fw, sw: fw, sh: ih, x: Math.round(cx - w / 2), y: Math.round(by - h), w: w, h: h, cover: f.cover, flip: !!dt.flip };
+  }
+  function drawCliffThing(g, map, o, e, ox, oy, size, now) {
+    var r = cliffRect(map, o, e, ox, oy, size, now); if (!r) return;
+    g.save();
+    if (r.cover < r.y + r.h) { g.beginPath(); g.rect(r.x - 2, r.y - 2, r.w + 4, Math.max(0, r.cover - r.y + 2)); g.clip(); }   // raised ground nearer the camera stands in front
+    if (!r.img) g.drawImage(Assets.placeholder(o.name || '?', '#667', NT), r.x, r.y, r.w, r.h);
+    else if (r.flip) { g.translate(r.x + r.w, r.y); g.scale(-1, 1); g.drawImage(r.img, r.sx, 0, r.sw, r.sh, 0, 0, r.w, r.h); }
+    else g.drawImage(r.img, r.sx, 0, r.sw, r.sh, r.x, r.y, r.w, r.h);
+    g.restore();
+  }
+  /** Every cliff thing of a map, over the raised ground. hidden(e) = leave this one out. */
+  function drawCliffThings(g, content, map, ox, oy, size, now, hidden) {
+    if (!elevOn(map)) return;
+    for (var i = 0; i < map.entities.length; i++) {
+      var e = map.entities[i], o = content.objects[e.ref];
+      if (o && o.properties && o.properties.layer === 'cliff' && !(hidden && hidden(e))) drawCliffThing(g, map, o, e, ox, oy, size, now);
+    }
+  }
+
   // ---- ground height, shown flat (the map editor) ----
   // Until the ground is drawn raised, height reads as relief on the flat map: higher ground a touch lighter, a dark
   // line with a shadow on the low side wherever two tiles do not meet (a cliff), and arrows up every ramp. The same
@@ -609,7 +716,7 @@ var Render = (function () {
     if (vd === 'glass' && !isCap) primRectFill(g, p, ox, fy, T, 'rgba(190,228,255,.55)');
   }
 
-  /** The object layer: 'object' (y-sorted, default), 'wall' (hung on an edge face) or 'ground_decal' (flat). */
+  /** The object layer: 'object' (y-sorted, default), 'wall' (hung on an edge face), 'ground_decal' (flat) or 'cliff' (on a cliff face). */
   function layerOf(o) { return (o.properties && o.properties.layer) || 'object'; }
 
   /** Which sprite to show: an active state (open/empty…) wins, else the facing view, else the base sprite. */
@@ -806,12 +913,7 @@ var Render = (function () {
           if (r > 0.75) { g.fillStyle = 'rgba(0,0,0,.2)'; if (horiz) g.fillRect(X0 + a, inward > 0 ? Y0 + th : Y0 - th - u, seg, u); else g.fillRect(inward > 0 ? X0 + th : X0 - th - u, Y0 + a, u, seg); }
         }
       };
-      var drop = function (x, y) {                            // how far the ground falls at the south edge of a tile: [left, right, own left, own right]
-        if (x < 0 || x >= map.width) return [0, 0, 0, 0];
-        var oL = Rules.groundHeight(map, x + 0.001, y + 0.999), oR = Rules.groundHeight(map, x + 0.999, y + 0.999);
-        var sL = y + 1 < map.height ? Rules.groundHeight(map, x + 0.001, y + 1.001) : 0, sR = y + 1 < map.height ? Rules.groundHeight(map, x + 0.999, y + 1.001) : 0;
-        return [Math.max(0, oL - sL), Math.max(0, oR - sR), oL, oR];
-      };
+      var drop = function (x, y) { return southDrop(map, x, y); };   // how far the ground falls at the south edge of a tile
       for (var ry = 0; ry < map.height; ry++) for (var rx = 0; rx < map.width; rx++) {
         var eh = Rules.heightAt(map, rx, ry), er = Rules.rampAt(map, rx, ry), X = rx * T;
         if ((base[ry] && base[ry][rx]) || (overlay && overlay[ry] && overlay[ry][rx])) {
@@ -830,9 +932,15 @@ var Render = (function () {
             g.drawImage(scr, 0, 0, T, T, 0, -1, T, T + 2);
             g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(0, -1, T, T + 2);
             if (!(ry > 0 && map.elev[ry - 1] && map.elev[ry - 1][rx] === map.elev[ry][rx])) { g.fillStyle = 'rgba(0,0,0,.5)'; g.fillRect(0, -1, T, 2); }   // where the slope ends, at the top
+            if (ry > 0 && Rules.cliffBetween(map, rx, ry, 'N')) edge(rx, ry, 3, 0, 0, T, true, 1);                       // its sides, where nobody can step on or off it
+            if (ry + 1 < map.height && Rules.cliffBetween(map, rx, ry, 'S')) edge(rx, ry, 0, 0, T, T, true, -1);
             g.restore();
           }
-          if (er === 'N') { g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(X, pad + (ry - eh - 1) * T, T, 2 * T); }   // a slope catches a little more light
+          if (er === 'N') {
+            g.fillStyle = 'rgba(255,255,255,.06)'; g.fillRect(X, pad + (ry - eh - 1) * T, T, 2 * T);                     // a slope catches a little more light
+            if (rx > 0 && Rules.cliffBetween(map, rx, ry, 'W')) edge(rx, ry, 1, X, pad + (ry - eh - 1) * T, 2 * T, false, 1);          // its sides, where nobody can step on or off it
+            if (rx + 1 < map.width && Rules.cliffBetween(map, rx, ry, 'E')) edge(rx, ry, 2, X + T, pad + (ry - eh - 1) * T, 2 * T, false, -1);
+          }
           else if (er === 'S') {
             // A slope climbing south (away from the camera) is seen edge-on: its near and far edges land on the same
             // line of the screen, so it has no room of its own. So that it shows at all, it is drawn as a lighter
@@ -841,6 +949,8 @@ var Render = (function () {
             g.drawImage(scr, 0, 0, T, T, X, sY - sH, T, sH);
             g.fillStyle = 'rgba(255,255,255,.2)'; g.fillRect(X, sY - sH, T, sH);
             g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(X, sY - sH, T, 1);
+            if (rx > 0 && Rules.cliffBetween(map, rx, ry, 'W')) edge(rx, ry, 1, X, sY - sH, sH, false, 1);
+            if (rx + 1 < map.width && Rules.cliffBetween(map, rx, ry, 'E')) edge(rx, ry, 2, X + T, sY - sH, sH, false, -1);
           }
         }
         // the cliff face under its south edge
@@ -850,8 +960,10 @@ var Render = (function () {
           g.save(); g.beginPath(); g.moveTo(X, Yl); g.lineTo(X + T, Yr); g.lineTo(X + T, Br); g.lineTo(X, Bl); g.closePath(); g.clip();
           var fimg = cliffOf(rx, ry), dl = drop(rx - 1, ry), dr = drop(rx + 1, ry), hasL = dl[0] > 0.01 || dl[1] > 0.01, hasR = dr[0] > 0.01 || dr[1] > 0.01;
           if (fimg) {
-            var cols = Math.max(1, Math.round(fimg.width / NT));                       // 4 = single, left, middle, right; 5 = …with two middles
-            var col = (!hasL && !hasR) ? 0 : (!hasL && hasR) ? 1 : (hasL && !hasR) ? cols - 1 : (cols >= 5 ? 2 + (rx % 2) : Math.min(2, cols - 1));
+            var cols = Math.max(1, Math.round(fimg.width / NT));                       // single, left, middle, right; a 5th piece = a second middle, to vary a long face
+            var run = 0;                                                                // how many tiles of this face lie to the left
+            if (hasL && hasR && cols >= 5) for (var lx = rx - 1; lx >= 0 && run < 64; lx--, run++) { var dq = drop(lx, ry); if (!(dq[0] > 0.01 || dq[1] > 0.01)) break; }
+            var col = (!hasL && !hasR) ? 0 : (!hasL && hasR) ? 1 : (hasL && !hasR) ? 3 : (cols >= 5 && run % 2 === 0 ? 4 : 2);   // (two middles: they take turns, counted from the left end)
             for (var fy = topY; fy < botY; fy += T) g.drawImage(fimg, Math.min(col, cols - 1) * NT, 0, NT, Math.min(NT, fimg.height), X, fy, T, T);
           } else {                                                                     // no art for it yet: a plain earth bank
             g.fillStyle = '#4b3d2e'; g.fillRect(X, topY, T, botY - topY);
@@ -950,6 +1062,7 @@ var Render = (function () {
     above.sort(function (a, b) { return a.dz - b.dz; });                             // nearest floor first, higher ones over it
     this.above = above;
     this.animated = animatedCells(this.content, map);          // the ground that moves: water, lava…
+    this.falls = fallCells(this.content, map);                 // …and the water falling down its cliffs
   };
 
   /**
@@ -973,7 +1086,7 @@ var Render = (function () {
         (f.map.entities || []).forEach(function (e) {
           var o = c.objects[e.ref]; if (!o) return;
           if (o.kind === 'stairs') { drawStairs(g, c, o, e, ox, yy, T, nowB); return; }
-          if (layerOf(o) === 'wall' || layerOf(o) === 'ground_decal' || !o.sprite) return;
+          if (layerOf(o) === 'wall' || layerOf(o) === 'ground_decal' || layerOf(o) === 'cliff' || !o.sprite) return;
           var fs = e.data && e.data.facing && typeof Rules !== 'undefined' ? Rules.facingSprite(o, e) : { path: o.sprite, flip: false };
           items.push({ sortY: e.y * T + T, o: o, path: fs.path, flip: fs.flip, dx: ox + e.x * T, dy: yy + e.y * T });
         });
@@ -1036,6 +1149,8 @@ var Render = (function () {
 
     // layer 2b: animated terrain (water, lava...) is drawn live over the baked ground
     if (this.animated.length) drawAnimated(g, this.content, this.animated, ox, oy, T, now, x0, y0, x1, y1, EL ? L : null);
+    if (this.falls && this.falls.length) drawFalls(g, this.content, map, this.falls, ox, oy, T, now, x0, y0, x1, y1);
+    if (EL) drawCliffThings(g, this.content, map, ox, oy, T, now);          // what hangs on the cliff faces
 
     // ---- sight: what the local player sees / knows this frame (see makeSight) ----
     var cfg = c.config || {}, o2 = opts || {};
@@ -1090,7 +1205,7 @@ var Render = (function () {
     }
     map.entities.forEach(function (e) {
       if (e.x < x0 - 4 || e.x > x1 || e.y < y0 - 3 || e.y > y1) return;   // wide/tall objects reach beyond their cell
-      var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal') return;
+      var o = c.objects[e.ref]; if (!o || (hidden && hidden(e)) || layerOf(o) === 'ground_decal' || (EL && layerOf(o) === 'cliff')) return;   // (cliff things are drawn with the ground, above)
       if (layerOf(o) === 'wall') {                                        // a fixture on a wall edge
         var opening = openingOf(o), edges = fixtureEdges(o, e), ed0 = edges[0], isH = ed0.orient === 'h';
         // A plain mount belongs to the cell it is seen from (its own); an opening shows from either side.
@@ -1609,7 +1724,7 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, drawAnimated: drawAnimated, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
+  return { Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

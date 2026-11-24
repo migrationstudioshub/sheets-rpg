@@ -1176,7 +1176,7 @@
     hotbar();
     updateCursor();                 // keep the canvas cursor (crosshair when a gun is ready) in step with gear changes
   }
-  function toggleBag() { bagOpen = !bagOpen; $('bag').hidden = !bagOpen; if (bagOpen) { bag(); didUi('bag'); } else { storage = null; invSel = -1; } bagHud(); }
+  function toggleBag() { if (!bagOpen && questPop()) return; bagOpen = !bagOpen; $('bag').hidden = !bagOpen; if (bagOpen) { bag(); didUi('bag'); } else { storage = null; invSel = -1; } bagHud(); }
   /** While the inventory window is open the belt on screen stays above it: things are dragged onto its slots. */
   function bagHud() { $('hud-bc').classList.toggle('above', bagOpen); hotbar(); }
   // ---- build mode (B): pick a blueprint, then click where it goes. Whether a spot is allowed is decided by
@@ -1191,6 +1191,7 @@
     wasLocked = locked;
   }
   function toggleBuild(quiet) {
+    if (!buildOpen && questPop()) return;
     if (!buildOpen && me && me.buildLocked) { if (quiet !== true) log(me.buildLocked, 'info'); return; }
     buildOpen = !buildOpen && !!me;
     $('buildbar').hidden = !buildOpen; $('frame').classList.toggle('building', buildOpen);
@@ -1576,6 +1577,17 @@
     });
     if (wanted) send({ type: 'quest', op: 'did', what: what });
   }
+  /** A quest window is about to show: every other view (quest log, a container, the bag, crafting, building) is shut first. */
+  function questPop() { return !$('npcp').hidden; }          // a quest window is showing: nothing else opens over it
+  function closeViews() {
+    closeMenu();
+    if (questOpen) toggleQuests();
+    if (claim) closeClaim();
+    if (storage) closeStore();
+    if (buildOpen) toggleBuild(true); else if (building || removing || moveTool) stopBuilding();
+    if (craftOpen) toggleCraft();
+    if (bagOpen) toggleBag();
+  }
   function myQuests() { return (me && me.quests) || []; }
   function questEntry(id) { return myQuests().filter(function (x) { return x.id === id; })[0] || null; }
   function objName(id) { return (content.objects[id] || {}).name || 'someone'; }
@@ -1604,17 +1616,17 @@
   function itemName(id) { return id === 'gold' ? 'gold' : (content.items[id] || {}).name || id; }
   function choiceList(q) { return World.list(q.choice).filter(function (g) { return g.item === 'gold' || content.items[g.item]; }); }
   /** One goal in words: "Kill Rat 1/3", "Bring Bone 0/2", "Talk to Tom", "Go to Old Mill" — or its own label, with the count. */
-  var GOAL_VERB = { kill: 'Kill ', have: 'Bring ', use: 'Use ', craft: 'Make ', build: 'Build ', tame: 'Tame ', interact: 'Use ', goto: 'Go to ', talk: '', drink: '', eat: '' };
+  var GOAL_VERB = { kill: 'Kill ', have: 'Bring ', own: 'Have ', use: 'Use ', craft: 'Make ', build: 'Build ', tame: 'Tame ', interact: 'Use ', goto: 'Go to ', talk: '', drink: '', eat: '' };
   function goalLabel(g, have) {
     var text = (g.label ? '' : GOAL_VERB[g.type] || '') + World.goalText(content, g);
-    return g.need > 1 || g.type === 'have' ? text + ' ' + have + '/' + g.need : text;
+    return (g.need > 1 || g.type === 'have' || g.type === 'own' ? text + ' ' + have + '/' + g.need : text) + (g.opt ? ' (optional)' : '');
   }
   /** A quest's goals as lines, ticked when met. counts = the entry's n (none = not started). */
   function goalLines(q, counts) {
     var box = qel('div', 'qgoals');
     q.goals.forEach(function (g, i) {
       var have = counts ? Number(counts[i]) || 0 : 0, done = !!counts && have >= g.need;
-      box.appendChild(qtext(done ? 'done' : '', (done ? '✓ ' : '• ') + goalLabel(g, have)));
+      box.appendChild(qtext(done ? 'done' : '', (done ? '✓ ' : g.opt ? '◦ ' : '• ') + goalLabel(g, have)));
     });
     return box;
   }
@@ -1627,7 +1639,7 @@
     if (introOpen) closeIntro();
     closeClaimQuest();
     npcTalk = e; npcQuest = ''; npcPick = -1;
-    $('npcp').hidden = false; npcPanel();
+    closeViews(); $('npcp').hidden = false; npcPanel();
   }
   function closeNpc() { npcTalk = null; npcQuest = ''; $('npcp').hidden = true; claimPanel(); }   // (a finished quest may have been waiting for this window)
   function npcPanel() {
@@ -1685,7 +1697,7 @@
     }
     btns.appendChild(back); box.appendChild(btns);
   }
-  function toggleQuests() { questOpen = !questOpen; abandonArmed = ''; $('questp').hidden = !questOpen; if (questOpen) { questPanel(); didUi('quests'); } }
+  function toggleQuests() { if (!questOpen && questPop()) return; questOpen = !questOpen; abandonArmed = ''; $('questp').hidden = !questOpen; if (questOpen) { questPanel(); didUi('quests'); } }
   function questPanel() {
     var box = $('quest-body'), qs = content.quests || {}, list = myQuests().filter(function (x) { return qs[x.id]; });
     box.innerHTML = '';
@@ -1773,7 +1785,7 @@
     go.onclick = closeIntro;
     if (teach) { var skip = qel('button', '', 'Skip tutorial'); skip.onclick = skipTutorial; btns.appendChild(skip); }
     btns.appendChild(go); box.appendChild(btns);
-    $('npcp').hidden = false;
+    closeViews(); $('npcp').hidden = false;
   }
   function closeIntro() {
     if (!introOpen) return;
@@ -1818,7 +1830,7 @@
     go.disabled = picks.length > 0 && claimPick < 0;
     go.onclick = function () { send({ type: 'quest', op: 'turnin', id: q.id, choice: picks.length ? claimPick : undefined }); };
     btns.appendChild(go); box.appendChild(btns);
-    $('npcp').hidden = false;
+    closeViews(); $('npcp').hidden = false;
   }
   function closeClaimQuest() { if (!claimQuest) return; claimSkipped[claimQuest] = 1; claimQuest = ''; $('npcp').hidden = true; }
   /** After every answer: the tracker, the marks, and whichever quest window is open. */
@@ -1834,7 +1846,7 @@
   // ---- crafting panel (C, or use a crafting station): every recipe you know, what it needs, and Make buttons.
   // What can be made here is decided by World.recipesFor — the same check the referee runs on the craft action.
   var craftQty = {};                                           // how many of each recipe was last picked (the panel is redrawn often)
-  function toggleCraft() { craftOpen = !craftOpen; $('craft').hidden = !craftOpen; if (craftOpen) { craftPanel(); didUi('craft'); } }
+  function toggleCraft() { if (!craftOpen && questPop()) return; craftOpen = !craftOpen; $('craft').hidden = !craftOpen; if (craftOpen) { craftPanel(); didUi('craft'); } }
   function craftPanel() {
     var box = $('craft-items'); box.innerHTML = '';
     var recs = World.recipesFor(content, mapOf(), me, lookup());

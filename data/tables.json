@@ -216,6 +216,36 @@
    "notes": "What a player is told when they press B before building is unlocked. Empty = \"You don't know how to build yet.\""
   },
   {
+   "key": "waterfalls",
+   "value": "on",
+   "notes": "on | off: does water on raised ground fall down the cliff to its south by itself? Off = only the waterfalls placed by hand in the map editor"
+  },
+  {
+   "key": "waterfall_sprite",
+   "value": "",
+   "notes": "The standard waterfall strip (frames side by side, each four tiles wide). Empty = art/tilesets/waterfall_anim.png"
+  },
+  {
+   "key": "waterfall_ms",
+   "value": "",
+   "notes": "Milliseconds each waterfall frame stays. Empty = 110"
+  },
+  {
+   "key": "ground_item_cap",
+   "value": "150",
+   "notes": "The most items that trees drop and ground grows may lie on one map at a time. Nothing more appears until some are picked up"
+  },
+  {
+   "key": "growth_round_s",
+   "value": "",
+   "notes": "How often (seconds) a map looks at a few of its trees and its grass for something to drop or grow. Empty = 10"
+  },
+  {
+   "key": "growth_catchup_s",
+   "value": "",
+   "notes": "How much time away (seconds) a map makes up for when a player returns to it. Empty = 1800 (half an hour)"
+  },
+  {
    "key": "build_reach",
    "value": 2,
    "notes": "How far (tiles) from yourself you can place a structure"

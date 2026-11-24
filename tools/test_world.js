@@ -3290,6 +3290,9 @@ test('a campfire cooks: fuel and food go in their cells, lit it burns and cooks 
   assert.ok(!ev.some(e => e.type === 'craft'), 'not the crafting panel');
   assert.strictEqual(state(), 'empty');
   World.give(c, p, 'raw_meat', 3, []); World.give(c, p, 'wood', 2, []); World.give(c, p, 'seeds', 1, []);
+  const goals = Content.parseGoals('craft:cooked_meat:2; craft:raw_meat:1');   // a quest that asks for cooked meat to be made
+  c.quests = { q: { id: 'q', name: 'Q', giver: '', ender: 'x', goals, requires: '', rewards: '', choice: '' } }; p.quests = { q: { n: [0, 0], at: 1 } }; p.questsDone = {};
+  const made = () => World.questLog(c, p, 1e15)[0].s + ':' + World.questLog(c, p, 1e15)[0].n.join('/');
   assert.match(texts(go({ type: 'store', key: fire.key, op: 'light' })), /nothing in it to burn/);
   go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('raw_meat') }, to: { w: 'box' } });
   go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('wood') }, to: { w: 'box' } });
@@ -3307,8 +3310,10 @@ test('a campfire cooks: fuel and food go in their cells, lit it burns and cooks 
   World.advance(c, ws, 'kitchen', [p], now += 3600000, mid, []);                          // left alone for an hour
   assert.deepStrictEqual(cells(), { 2: 'cooked_meat:3' }, 'all cooked, the fuel spent');
   assert.deepStrictEqual([state(), ws.maps.kitchen.cookers['kitchen.e1'].lit], ['empty', false], 'and the fire went out');
+  assert.strictEqual(made(), 'active:0/0', 'cooked, but still in the fire: nobody has made it yet');
   go({ type: 'inv', key: fire.key, from: { w: 'box', s: 2 }, to: { w: 'bag' } });
   assert.strictEqual(World.count(p, 'cooked_meat'), 3);
+  assert.strictEqual(made(), 'active:2/0', 'taken out of the fire: whoever takes it made it (raw meat put in and taken back would not count)');
   // what a cooker makes is not made by hand
   const recs = World.recipesFor(c, World.liveMap(c, ws, 'kitchen'), p, World.viewLookup(c, c.maps.kitchen, { states: {}, monsters: [], players: [] }, p));
   assert.ok(!recs.some(r => r.id === 'r_cooked_meat') && recs.some(r => r.id === 'r_hammer'));
@@ -3657,7 +3662,7 @@ function onQuest(s, objectives) {
 }
 
 test('quests: objectives are a list of kinds — written as text or as the list the Content Studio saves, with their own wording', () => {
-  assert.deepStrictEqual(Content.GOAL_TYPES.map(k => k.id), ['kill', 'have', 'talk', 'use', 'drink', 'eat', 'goto', 'interact', 'craft', 'build', 'tame', 'walk', 'hit', 'shoot', 'hold', 'ui']);
+  assert.deepStrictEqual(Content.GOAL_TYPES.map(k => k.id), ['kill', 'have', 'own', 'talk', 'use', 'drink', 'eat', 'goto', 'interact', 'craft', 'build', 'tame', 'walk', 'hit', 'shoot', 'hold', 'ui']);
   assert.deepStrictEqual(Content.parseGoals('kill:rat:5; have:bone:2; talk:npc_tom; goto:field:8:7:2; nonsense:x:1; kill'),
     [{ type: 'kill', ref: 'rat', need: 5 }, { type: 'have', ref: 'bone', need: 2 }, { type: 'talk', ref: 'npc_tom', need: 1 }, { type: 'goto', ref: 'field', need: 1, x: 8, y: 7, r: 2 }],
     'text, as written by hand: what is not a kind, or names nothing, is dropped');
@@ -3964,6 +3969,118 @@ test('tutorial: steps count the basics, finish by themselves, lead into the firs
   World.run(e.c, e.ws, e.p, 'quest:t_talk', e.t, []);
   Object.assign(e.p, { x: 6, y: 6 }); e.as(e.p, { type: 'move', dirs: ['E'] });
   assert.strictEqual(e.log(e.p), 't_talk:ready:1');
+});
+
+test('quests: an optional objective is counted and shown, but the quest is ready without it', () => {
+  assert.deepStrictEqual(Content.parseGoals('kill:rat:2; ?have:bone:2; ?drink'),
+    [{ type: 'kill', ref: 'rat', need: 2 }, { type: 'have', ref: 'bone', need: 2, opt: true }, { type: 'drink', ref: '*', need: 1, opt: true }]);
+  assert.deepStrictEqual(Content.parseGoals(JSON.stringify([{ type: 'kill', ref: 'rat', need: 1, opt: true }, { type: 'eat', opt: false }])),
+    [{ type: 'kill', ref: 'rat', need: 1, opt: true }, { type: 'eat', ref: '*', need: 1 }]);
+  const s = village([{ id: 'job', name: 'Job', giver: 'npc_marta', objectives: 'kill:rat:1; ?kill:slime:2; ?have:bone:2', rewards: 'xp:3' }]);
+  s.c.monsters.rat.carcass = ''; s.c.monsters.rat.loot = ''; s.c.loot.rat = []; s.c.monsters.slime.carcass = ''; s.c.monsters.slime.loot = ''; s.c.loot.slime = [];
+  s.as(s.p, { type: 'quest', op: 'accept', id: 'job' });
+  s.kill(s.p, 'slime');
+  assert.strictEqual(s.log(s.p), 'job:active:0/1/0', 'the optional one is counted, and is not enough');
+  assert.match(texts(s.kill(s.p, 'rat')), /Job: done/);
+  assert.strictEqual(s.log(s.p), 'job:ready:1/1/0', 'ready with only what must be done');
+  s.kill(s.p, 'slime');
+  assert.strictEqual(s.log(s.p), 'job:ready:1/2/0', 'and the optional one still counts afterwards');
+  World.give(s.c, s.p, 'bone', 1, []);
+  s.as(s.p, { type: 'quest', op: 'turnin', id: 'job' });
+  assert.deepStrictEqual([s.log(s.p), World.count(s.p, 'bone'), !!s.p.questsDone.job], ['', 1, true], 'handed in; an optional bring-me not brought in full is left alone');
+  const t = village([{ id: 'job', name: 'Job', giver: 'npc_marta', objectives: 'talk:npc_marta; ?have:bone:2' }]);
+  t.as(t.p, { type: 'quest', op: 'accept', id: 'job' }); t.as(t.p, { type: 'interact', x: 3, y: 1 });
+  World.give(t.c, t.p, 'bone', 3, []);
+  t.as(t.p, { type: 'quest', op: 'turnin', id: 'job' });
+  assert.strictEqual(World.count(t.p, 'bone'), 1, 'brought in full: taken');
+});
+
+test('quests: drinking, eating and taking in hand may ask for anything, or for one item', () => {
+  assert.deepStrictEqual(Content.parseGoals('drink; drink:2; drink:water; eat:ration:2; hold:bow; hold'),
+    [{ type: 'drink', ref: '*', need: 1 }, { type: 'drink', ref: '*', need: 2 }, { type: 'drink', ref: 'water', need: 1 }, { type: 'eat', ref: 'ration', need: 2 }, { type: 'hold', ref: 'bow', need: 1 }, { type: 'hold', ref: '*', need: 1 }]);
+  assert.deepStrictEqual(Content.parseGoals(JSON.stringify([{ type: 'eat' }, { type: 'eat', ref: '*' }, { type: 'eat', ref: 'ration', need: 3 }])).map(g => g.ref + g.need), ['*1', '*1', 'ration3']);
+  const s = village([{ id: 'q', name: 'Q', giver: 'npc_marta', objectives: 'drink:water; drink; eat:ration; hold:bow; hold' }]);
+  assert.deepStrictEqual(s.c.quests.q.goals.map(g => World.goalText(s.c, g)), ['Drink ' + s.c.items.water.name.toLowerCase(), 'Drink some water', 'Eat ' + s.c.items.ration.name.toLowerCase(), 'Take the ' + s.c.items.bow.name.toLowerCase() + ' in hand', 'Take something in hand']);
+  s.as(s.p, { type: 'quest', op: 'accept', id: 'q' });
+  s.c.maps.field.terrain[1][1] = 'l_water'; s.p.thirst = 20;
+  s.as(s.p, { type: 'interact', x: 1, y: 1, verb: 'drink' });
+  assert.strictEqual(s.log(s.p), 'q:active:0/1/0/0/0', 'a stream is a drink, but not a bottle of water');
+  World.give(s.c, s.p, 'water', 1, []); s.p.thirst = 20;
+  s.as(s.p, { type: 'use', item: 'water' });
+  assert.strictEqual(s.log(s.p), 'q:active:1/1/0/0/0');
+  World.give(s.c, s.p, 'wood', 1, []); World.give(s.c, s.p, 'bow', 1, []); s.p.belt = ['wood', 'bow'];
+  s.as(s.p, { type: 'hold', slot: 0 });
+  assert.strictEqual(s.log(s.p), 'q:active:1/1/0/0/1', 'anything in hand is something; it is not the bow');
+  s.as(s.p, { type: 'hold', slot: 1 });
+  assert.strictEqual(s.log(s.p), 'q:active:1/1/0/1/1');
+  World.give(s.c, s.p, 'ration', 1, []); s.p.hunger = 10; s.p.cooldowns = {};
+  s.as(s.p, { type: 'use', item: 'ration' });
+  assert.strictEqual(s.log(s.p), 'q:ready:1/1/1/1/1');
+});
+
+test('quests: having an item in the bag is enough, and it is kept when the quest is handed in', () => {
+  const s = village([{ id: 'q', name: 'Q', objectives: 'own:wood:2; have:bone:1', rewards: 'xp:1' }]);
+  World.run(s.c, s.ws, s.p, 'quest:q', s.t, []);
+  const w0 = World.count(s.p, 'wood'), b0 = World.count(s.p, 'bone');
+  World.take(s.p, 'wood', w0); World.take(s.p, 'bone', b0);
+  World.give(s.c, s.p, 'wood', 1, []); World.give(s.c, s.p, 'bone', 1, []);
+  assert.strictEqual(s.log(s.p), 'q:active:1/1');
+  World.give(s.c, s.p, 'wood', 2, []);
+  assert.strictEqual(s.log(s.p), 'q:ready:2/1', 'what is in the bag right now');
+  s.as(s.p, { type: 'face', dir: 'N' });                      // (anything done: the mark is kept from here on)
+  World.take(s.p, 'wood', 2);
+  assert.strictEqual(s.log(s.p), 'q:ready:2/1', 'used up afterwards: it was had, and stays ticked');
+  World.give(s.c, s.p, 'wood', 4, []);
+  s.as(s.p, { type: 'quest', op: 'turnin', id: 'q' });
+  assert.deepStrictEqual([!!s.p.questsDone.q, World.count(s.p, 'wood'), World.count(s.p, 'bone')], [true, 5, 0], 'the wood is kept; what was to be brought is taken');
+});
+
+const rng = (seed) => { let v = (Math.abs(Math.floor(seed)) % 2147483646) + 1; return () => (v = (v * 16807) % 2147483647) / 2147483647; };
+test('growth: a tree lets branches fall nearby up to its cap, and not while it is cut down', () => {
+  const s = camp();
+  Object.assign(s.c.objects.t_tree.properties, { drops: 'potion:1', drop_s: 20, drop_radius: 2, drop_max: 3 });
+  const drops = () => World.structOf(s.ws, 'camp').ents.filter(b => b.ref === '_drop');
+  let now = 1000; const run = (secs) => { for (let k = 0; k < secs / 10; k++) { now += 10000; World.advance(s.c, s.ws, 'camp', [s.p], now, rng(now), []); } };
+  run(600);
+  assert.strictEqual(drops().length, 3, 'never more than drop_max');
+  drops().forEach(b => { assert.ok(Math.max(Math.abs(b.x - 1), Math.abs(b.y - 0)) <= 2, 'within its radius'); assert.strictEqual(b.data.pickup, 'potion:1'); assert.ok(!(b.x === 1 && b.y === 0)); });
+  const st0 = World.structOf(s.ws, 'camp'); st0.ents.splice(st0.ents.indexOf(drops()[0]), 1);   // one is picked up: another falls in time
+  assert.strictEqual(drops().length, 2);
+  run(600); assert.strictEqual(drops().length, 3);
+  const st = World.structOf(s.ws, 'camp'); st.ents = st.ents.filter(b => b.ref !== '_drop'); st.gone['camp.e2'] = 2;   // felled
+  put(s, 'camp', 6, 6, 'N'); run(600);
+  assert.strictEqual(drops().length, 0, 'a felled tree drops nothing');
+});
+
+test('growth: what a tree drops lands on ground at its own height when there is any', () => {
+  const s = camp();
+  Object.assign(s.c.objects.t_tree.properties, { drops: 'potion:1', drop_s: 20, drop_radius: 2, drop_max: 6 });
+  s.c.maps.camp.elev = Array.from({ length: 7 }, (_, y) => Array.from({ length: 7 }, (_, x) => (y === 0 ? '1' : '')));   // the tree stands on a ledge along the top row
+  let now = 1000; for (let k = 0; k < 120; k++) { now += 10000; World.advance(s.c, s.ws, 'camp', [s.p], now, rng(now), []); }
+  const d = World.structOf(s.ws, 'camp').ents.filter(b => b.ref === '_drop');
+  assert.ok(d.length >= 3, 'some fell: ' + d.length);
+  assert.ok(d.slice(0, 3).every(b => b.y === 0), 'the first ones are on the ledge: ' + d.map(b => b.x + ',' + b.y).join(' '));
+});
+
+test('growth: grass grows items on the base and on the overlay, thinly, and catches up after time away', () => {
+  const t = JSON.parse(JSON.stringify(tables)), W = 30;
+  t.Terrain.push({ id: 't_grass', name: 'Grass', sprite: '', pass_n: true, pass_e: true, pass_s: true, pass_w: true, grows: 'potion:1', grow_s: 30, grow_max: 2 });
+  const base = [], over = [];
+  for (let y = 0; y < W; y++) { base.push(Array(W).fill(y < 10 ? 't_grass' : 'til_1')); over.push(Array(W).fill(y >= 20 ? 't_grass' : '')); }
+  for (let x = 0; x < W; x++) over[0][x] = 'til_1';                        // grass with something else laid over it grows nothing
+  t.Maps.push({ id: 'meadow', name: 'Meadow', width: W, height: W, terrain: JSON.stringify(base), overlay: JSON.stringify(over) });
+  t.Config.push({ key: 'ground_item_cap', value: '40' });
+  const c = Content.build(t), ws = { maps: {} }, p = World.newPlayer(c, 'p1', 'Tester', 'warrior');
+  p.map = 'meadow'; p.x = 15; p.y = 15;
+  const drops = () => World.structOf(ws, 'meadow').ents.filter(b => b.ref === '_drop');
+  World.advance(c, ws, 'meadow', [p], 1000, rng(1), []);
+  assert.strictEqual(drops().length, 0);
+  World.advance(c, ws, 'meadow', [p], 1000 + 3600 * 1000, rng(2), []);      // an hour away: caught up in one go
+  const d = drops();
+  assert.ok(d.length > 8 && d.length <= 40, 'some, never past the cap: ' + d.length);
+  assert.ok(d.some(b => b.y >= 1 && b.y < 10) && d.some(b => b.y >= 20), 'on the base grass and on the overlay grass');
+  assert.ok(d.every(b => (b.y >= 1 && b.y < 10) || b.y >= 20), 'only where grass is the ground you see');
+  d.forEach(a => assert.ok(d.filter(b => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) <= 5).length <= 6, 'thin: ' + a.x + ',' + a.y));
 });
 
 console.log(`\n${passed} world tests passed`);

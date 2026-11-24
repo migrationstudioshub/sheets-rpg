@@ -562,12 +562,14 @@ var CStudio = (function () {
       return src.slice().sort(byName);
     }
     function save() {
-      var noTarget = function (g) { return (Content.GOAL_TYPES.filter(function (k) { return k.id === g.type; })[0] || {}).ref === 'none'; };
+      // no target to save: a kind that has none, or one left at "anything will do"
+      var noTarget = function (g) { var k = Content.GOAL_TYPES.filter(function (k) { return k.id === g.type; })[0] || {}; return k.ref === 'none' || (k.any && (!g.ref || g.ref === '*')); };
       var out = list.filter(function (g) { return g.ref || noTarget(g); }).map(function (g) {
         var kind = Content.GOAL_TYPES.filter(function (k) { return k.id === g.type; })[0], o = noTarget(g) ? { type: g.type } : { type: g.type, ref: g.ref };
         if (kind && kind.count) o.need = Math.max(1, parseInt(g.need, 10) || 1);
         if (g.type === 'goto') { o.x = parseInt(g.x, 10) || 0; o.y = parseInt(g.y, 10) || 0; o.r = Math.max(0, parseInt(g.r, 10) || 0); }
         if (g.label) o.label = g.label;
+        if (g.opt) o.opt = true;
         return o;
       });
       r[fl.key] = out.length ? JSON.stringify(out) : '';
@@ -582,12 +584,12 @@ var CStudio = (function () {
       box.innerHTML = '';
       list.forEach(function (g, i) {
         var kind = Content.GOAL_TYPES.filter(function (k) { return k.id === g.type; })[0] || Content.GOAL_TYPES[0];
-        var opts = pool(kind.ref), known = !g.ref || opts.some(function (x) { return x.id === g.ref; });
+        var opts = pool(kind.ref), known = !g.ref || (kind.any && g.ref === '*') || opts.some(function (x) { return x.id === g.ref; });
         var what = kind.ref === 'place' ? 'map' : kind.ref === 'npcs' ? 'person' : kind.ref === 'ui' ? 'window' : kind.ref.replace(/s$/, '');
         // with no list to pick from (the maps are kept by the map editor), the id is typed
-        var target = kind.ref === 'none' ? h('span', { className: 'lootlbl', style: 'flex:1', text: kind.id === 'drink' || kind.id === 'eat' ? 'from any source' : 'anything will do' }) : opts.length || kind.ref !== 'place'
+        var target = kind.ref === 'none' ? h('span', { className: 'lootlbl', style: 'flex:1', text: 'anything will do' }) : opts.length || kind.ref !== 'place'
           ? h('select', { style: 'flex:1;min-width:0' + (known ? '' : ';border-color:var(--bad)'), title: known ? '' : 'Nothing has this id', onchange: function (e) { g.ref = e.target.value; save(); draw(); } },
-              h('option', { value: '', text: '— pick a ' + what + ' —' }),
+              kind.any ? h('option', { value: '*', text: 'Anything will do', selected: !g.ref || g.ref === '*' }) : h('option', { value: '', text: '— pick a ' + what + ' —' }),
               known ? null : h('option', { value: g.ref, text: g.ref + ' (missing)', selected: true }),
               opts.map(function (x) { return h('option', { value: x.id, text: (x.name || x.id) + '  (' + x.id + ')', selected: x.id === g.ref }); }))
           : h('input', { type: 'text', value: g.ref || '', placeholder: 'map id, e.g. map_3', style: 'flex:1;min-width:0', title: 'The id of the map, as the map editor shows it',
@@ -605,9 +607,11 @@ var CStudio = (function () {
           kind.id === 'goto' ? num(g, 'r', 'How close counts, in tiles (0 = that very tile)', 0, 'within') : null,
           h('input', { type: 'text', value: g.label || '', placeholder: kind.id === 'goto' ? 'Shown as, e.g. Reach the old mill' : 'Shown as (optional), e.g. Clear the cellar', style: 'flex:1;min-width:0',
             title: 'How this objective reads in the game. Empty = made up from its target',
-            oninput: function (e) { g.label = e.target.value; save(); } }));
+            oninput: function (e) { g.label = e.target.value; save(); } }),
+          h('label', { className: 'lootlbl', style: 'display:flex;align-items:center;gap:4px;white-space:nowrap', title: 'An optional objective is counted and shown, but the quest can be handed in without it' },
+            h('input', { type: 'checkbox', checked: !!g.opt, onchange: function (e) { g.opt = e.target.checked; save(); } }), 'optional'));
         box.appendChild(more);
-        if (!opts.length && kind.ref !== 'place' && kind.ref !== 'none') box.appendChild(h('div', { className: 'help', style: 'color:var(--bad);margin:-4px 0 8px', text: kind.ref === 'npcs'
+        if (!opts.length && kind.ref !== 'place' && kind.ref !== 'none' && !kind.any) box.appendChild(h('div', { className: 'help', style: 'color:var(--bad);margin:-4px 0 8px', text: kind.ref === 'npcs'
           ? 'Nobody to pick yet: make an object of kind npc under Objects, and place it with the map editor.' : 'Nothing to pick yet: make one under ' + (kind.ref.charAt(0).toUpperCase() + kind.ref.slice(1)) + '.' }));
       });
       box.appendChild(h('button', { text: '+ Add objective', onclick: function () { list.push({ type: 'kill', ref: '', need: 1 }); draw(); } }));
@@ -981,6 +985,16 @@ var CStudio = (function () {
         h('span', { className: 'lootlbl', text: 'over (blows)' }),
         h('input', { type: 'number', min: 1, value: p.harvest_bare_hits == null ? '' : p.harvest_bare_hits, style: 'width:70px', title: 'How many blows bring the whole list out, each time round (empty = 4; 1 = the whole list on every blow)', oninput: function (e) { setProp(o, 'harvest_bare_hits', e.target.value === '' ? undefined : Number(e.target.value)); } })),
       h('div', { className: 'help', text: 'Optional: what someone gets by hitting it WITHOUT one of those tools in hand (a tree punched bare-handed: a few branches and fibres). This does not damage it and never runs out: the list comes out once every that many blows. The harvest above is what cutting it down with the tool gives. Empty = it cannot be harvested without the tool.' }),
+      h('label', { text: 'drops nearby' }),
+      itemsBox(p.drops, function (text) { setProp(o, 'drops', text || undefined); }),
+      h('div', { className: 'lootrow', style: 'margin-top:4px' },
+        h('span', { className: 'lootlbl', text: 'every (s)' }),
+        h('input', { type: 'number', min: 0, placeholder: '0', value: p.drop_s == null ? '' : p.drop_s, style: 'width:70px', title: 'Seconds between two drops from one of these. Empty or 0 = it drops nothing', oninput: function (e) { setProp(o, 'drop_s', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+        h('span', { className: 'lootlbl', text: 'within (tiles)' }),
+        h('input', { type: 'number', min: 0, placeholder: '2', value: p.drop_radius == null ? '' : p.drop_radius, style: 'width:70px', title: 'How far from it things may land (empty = 2, at most 6). They land on ground at its own height when there is any free', oninput: function (e) { setProp(o, 'drop_radius', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+        h('span', { className: 'lootlbl', text: 'at most' }),
+        h('input', { type: 'number', min: 0, placeholder: '3', value: p.drop_max == null ? '' : p.drop_max, style: 'width:70px', title: 'The most of its items that may lie within that distance; nothing more falls until some are picked up (empty = 3)', oninput: function (e) { setProp(o, 'drop_max', e.target.value === '' ? undefined : Number(e.target.value)); } })),
+      h('div', { className: 'help', text: 'Optional: items that fall from it by themselves and lie on the ground nearby to be picked up (a tree shedding branches). One of the list each time, on a free tile. Nothing falls while it is cut down. Only while someone is on the map; time away is caught up, within limits.' }),
       h('div', { className: 'help', text: 'Harvest: set it (with health) on a tree, a wreck, a bush — breaking it gives these items, and it comes back after a while instead of being gone for good.' }),
       h('div', { className: 'help', text: 'Health 0 or empty = this object cannot be damaged. With health, players can break it by attacking, shooting or blasting it; whoever breaks it gets the salvage. Spawns, triggers, teleports, signs and NPCs never break.' })));
     if (o.kind === 'stairs') {
@@ -1020,19 +1034,19 @@ var CStudio = (function () {
       }
     }
     form.appendChild(h('div', { className: 'sub', text: 'Placement layer' }));
-    var layer = ['wall', 'ground_decal'].indexOf(p.layer) >= 0 ? p.layer : 'object';
+    var layer = ['wall', 'ground_decal', 'cliff'].indexOf(p.layer) >= 0 ? p.layer : 'object';
     form.appendChild(h('div', { className: 'field', title: 'How this object is placed and drawn' },
       h('label', { text: 'Layer' }),
-      h('div', { className: 'seg' }, [['object', 'Object'], ['wall', 'Wall-mounted'], ['ground_decal', 'Ground decal']].map(function (m) {
+      h('div', { className: 'seg' }, [['object', 'Object'], ['wall', 'Wall-mounted'], ['ground_decal', 'Ground decal'], ['cliff', 'On a cliff face']].map(function (m) {
         return h('button', { type: 'button', className: 'segbtn' + (layer === m[0] ? ' on' : ''), text: m[1],
           onclick: function () {
             // A wall object sits on the wall, not the floor, so default it to walkable + see-through so it
             // doesn't block or wall off the tile in front. You can still toggle those back above.
-            if (m[0] === 'wall') { o.walkable = true; o.blocks_sight = false; }
+            if (m[0] === 'wall' || m[0] === 'cliff') { o.walkable = true; o.blocks_sight = false; }
             setProp(o, 'layer', m[0] === 'object' ? undefined : m[0]); objForm();
           } });
       })),
-      h('div', { className: 'help', text: 'Object: normal, y-sorted on the ground. Wall-mounted: hangs on a wall’s visible (south-facing) face — in the map editor, paint it on the Objects layer and it snaps to the nearest wall. Choosing this sets the object walkable and see-through, so it doesn’t block the floor tile in front (the wall itself still stops you); tick those back on above if you want a solid, view-blocking panel. Ground decal: a flat mark baked into the ground.' })));
+      h('div', { className: 'help', text: 'On a cliff face: a decoration (vines, rocks, a cave mouth) put anywhere on the face of raised ground, as many as you like: in the map editor, with Raised on, click on a cliff. Object: normal, y-sorted on the ground. Wall-mounted: hangs on a wall’s visible (south-facing) face — in the map editor, paint it on the Objects layer and it snaps to the nearest wall. Choosing this sets the object walkable and see-through, so it doesn’t block the floor tile in front (the wall itself still stops you); tick those back on above if you want a solid, view-blocking panel. Ground decal: a flat mark baked into the ground.' })));
     if (layer === 'wall') {
       // What the object does to the wall it sits on. A door is always a door (kind = door); anything else can
       // be a plain mount, a window (see through, can't walk through) or an archway (always open).

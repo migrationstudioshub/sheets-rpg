@@ -90,7 +90,8 @@ Tabs (one row per thing, first row = column names, the code finds columns by nam
 Config, Tilesets, Autotile, Terrain, Kinds, Objects, Maps, MapEntities, Items, Monsters, LootTables, Classes,
 Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server adds missing tabs/columns itself).
 
-- **Kinds** describe each interactable kind's properties (type, default); the editor builds its forms from them.
+- **Kinds** describe each interactable kind's properties (type, default); the editor builds its forms from them
+  (`field` in `editor/js/panels.js`; type `item_list` = rows of item × amount, `itemListField`, stored as `potion:2, gold:30`).
   Settings resolve as kind default → object `properties` (JSON) → placement `data` (JSON in MapEntities).
 - Object `kind`s: deco, container, door, switch, trap (step|timed), rest, sign, npc, spawn (places monsters), teleport, trigger, craft.
 - **Data-driven actions** (`on_interact`, `on_use`, `on_cast`, trigger `do`): `give:item:n; take:item:n; gold:n; heal:n; damage:n; flag:x; unflag:x; teleport:map:x:y; set_state:key:state; xp:n; message:text`; conditions (`if`): `flag:x, !flag:x, has:item:n, level:n`.
@@ -178,8 +179,8 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   drawn raised with cut-away) are designed in `docs/UNDERGROUND_AND_ELEVATION.md`. No voxels. Decide elevation before floors stage 3.
 - **Quests** (Nov 2026; design and what is still planned in `docs/QUESTS_INSTANCES_SERVER.md`): the `Quests` tab (Content
   Studio → Story → Quests): `giver` / `ender` = NPC **object ids** (kind `npc`; every placement of that object offers it),
-  `objectives` = a list of goals, one kind each from **`Content.GOAL_TYPES`** (kill, have, talk, use, drink, eat, goto, interact, craft,
-  build, tame; drink / eat have no target: `ref` is `*`) — stored as JSON `[{type, ref, need, label}]` (goto: `ref` = map, `x, y, r`) by the Studio's objectives editor
+  `objectives` = a list of goals, one kind each from **`Content.GOAL_TYPES`** (kill, have, own, talk, use, drink, eat, goto, interact, craft,
+  build, tame, walk, hit, shoot, hold, ui; see "More goal rules" below) — stored as JSON `[{type, ref, need, label}]` (goto: `ref` = map, `x, y, r`) by the Studio's objectives editor
   (`goalsField`), or hand-written text `kill:rat:5; goto:map_3:10:4:2`; `Content.parseGoals` reads both. A new kind = a row in
   `GOAL_TYPES` + one `questCount(c, p, type, ref, now, ev)` call where it happens (`questPlaces` does goto, after every action).
   `requires` (an `if` list — chains use `quest:<id>`), `rewards` (an action list; the Studio's `rewardsField` edits it as rows —
@@ -197,7 +198,7 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   by the action verb `quest:<id>` (e.g. in another quest's `rewards`) is announced the same way. Config `start_thirst` /
   `start_hunger` (0-100) = how a new character begins. **A quest with no giver and no ender is claimed where the player stands:**
   when it turns ready the page opens a "Quest complete" window (`claimPanel`: `done_text`, rewards, a Claim button → the
-  same `turnin`, which needs no NPC without an ender); closed unclaimed, it waits in the quest log. Nothing finishes by itself.
+  same `turnin`, which needs no NPC without an ender); closed unclaimed, it waits in the quest log. Nothing finishes by itself (tutorial steps apart, below).
   `questSweep` (after every action and on the map's turn) checks places reached; `questFinish` is the one way a quest is completed.
   **Tutorial steps** (Nov 2026) are quests with the `tutorial` tick: with no ender (and no choice) they are the ONE kind that
   finishes by itself (`questSweep`), so each step's `rewards` (`quest:<next>`) open the next "New quest" window at once; quest op
@@ -205,8 +206,16 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   basics: `walk` (steps, quiet), `hit`, `shoot`, `hold` (no target) and `ui` (`ref` from `Content.UI_PARTS`: bag, quests, craft,
   build — only the page knows, it sends quest op `did` + `what`; `didUi` in `main.js`). Quests `image` = a picture above the text
   (`questPic`; a GIF plays); `[W]` in quest text or a goal label is drawn as a key (`qtext`).
-  More goal rules: `own` = have items in the bag, live like `have` but kept at hand-in; a goal with `opt: true` (text: leading
-  `?`) is optional — counted and shown, never holds the quest back; `drink` / `eat` / `hold` take ref `*` (anything) or one item id.
+  More goal rules: **`have`** (bring) is what is in the bag right now, and the full amount must be there at hand-in, when it is
+  taken. **`own`** (have in the bag, kept) is the most that was in the bag at once while on the quest — `questSweep` keeps the
+  mark, so once met it stays ticked when the item is then eaten or used (the owner's "kill, pick up the meat, eat it" quest).
+  A goal with `opt: true` (text: a leading `?`) is optional: counted and shown, never holds the quest back, gives no bonus, and
+  an optional `have` is taken only if brought in full. `drink` / `eat` / `hold` take ref `*` (anything; a stream counts only
+  for `*`) or one item id. What a cooker makes counts for `craft` when a player takes it out of a cooked cell into the bag
+  (`invAct`): the fire cooks with nobody there, so the taker is the maker.
+  Page rules: a quest window (`#npcp`: new quest / tutorial, quest complete, an NPC) first shuts every other view
+  (`closeViews`), and while it shows the bag, craft, build and quest-log keys open nothing (`questPop`).
+  Not built, and not decided: a bonus reward for optional goals; the boss lockout (fight again at once, or once a day / week).
 - **Who took part in a kill** (Nov 2026): a monster keeps `m.hits = {playerId: when}`; on death everyone who hit it within
   Config `kill_credit_s` (30) gets `World` `killShare`: the kill for their quests, **full XP**, their own gold and their own roll
   of the loot table. The last hitter gets it at once; the others' shares wait in the map record (`ms.credits`) and are given by
@@ -297,6 +306,16 @@ for offline mode by updating `build_gamedata.py` too.
   art shows as lettered placeholders and pages wait ~8 s for image timeouts; wait for `#log` text before acting.
   `window.SheetsRPG` exposes `state()`, `camera()`, `aim()`, `plan()` for tests.
 - The owner's built-in browser can reach the live site and the Apps Script URL (good for checking the real server).
+- **On the owner's Windows machine** (the desktop app's sessions): Git Bash and PowerShell, files mostly CRLF. A server the
+  owner runs usually serves the repo at `http://localhost:8765` (the desktop app uses its own port and its own storage);
+  the game offline is `/client/index.html?offline` (seed `data/tables.json`), the Studio's Play-test runs the draft.
+  Things that cost time before: clicking Play in the create-character form before the page is ready submits the form and
+  lands on `index.html?` = the ONLINE game — check `location.search === '?offline'` before every scripted step. Scripted
+  keys: blur the focused input first; a short tap only turns the character, hold a key ~600 ms to step. The seed map's
+  rats and slimes box a new character in at the start within seconds. A test character is removed with the page's
+  New character button (pressed twice); a map-editor test edit leaves `sheetsrpg.editorWip` behind — remove it.
+  `tools/test_host.js` (the LAN host) is the fourth suite to run. Patches with quotes in them: write a script file and
+  run it, a shell heredoc breaks on apostrophes.
 
 ## Status (9 Nov 2026)
 Moved to the studio accounts (`docs/MIGRATION.md`): repo `migrationstudioshub/sheets-rpg` (one fresh commit, author

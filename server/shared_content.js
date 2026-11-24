@@ -116,7 +116,9 @@ var Content = (function () {
       var id = str(r.id); if (!id) return;
       c.terrain[id] = { id: id, name: str(r.name) || id,
         sprite: str(r.sprite), autotile: str(r.autotile), layer: str(r.layer) === 'overlay' ? 'overlay' : (str(r.layer) === 'base' ? 'base' : ''),
-        frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200), buildOver: bool(r.build_over), tint: str(r.tint), seeThrough: bool(r.see_through),
+        frames: num(r.frames, 1), frameMs: num(r.frame_ms, 200), buildOver: bool(r.build_over), tint: str(r.tint), seeThrough: bool(r.see_through), fall: str(r.fall),
+        // items that grow on it by themselves (plant fibre in the grass): what, one per 100 tiles every grow_s seconds, at most grow_max of an item near any spot
+        grows: str(r.grows), growS: num(r.grow_s, 0), growMax: Math.max(1, num(r.grow_max, 2)),
         // a water source (drink from it, fill bottles). Not said = anything called "…water…"; toxicity '' = Config water_toxicity
         water: r.water === undefined || r.water === '' || r.water === null ? /water/i.test(str(r.name) || id) : bool(r.water),
         toxicity: r.toxicity === undefined || r.toxicity === '' || r.toxicity === null ? null : num(r.toxicity, 0),
@@ -199,9 +201,11 @@ var Content = (function () {
       var nobuild = decodeGrid(json(r.nobuild, []));
       // Ground height: a W×H grid of tokens ('' = level; '2' = two steps up; '1N' = a ramp from 1 up to 2 going north). See Rules.heightAt.
       var elev = decodeGrid(json(r.elev, []));
+      // Waterfalls put (or forbidden) by hand: a W×H grid ('' = by itself, '1' = one here, a tint name = one in that colour, '0' = none). Draw-only.
+      var falls = decodeGrid(json(r.falls, []));
       // Frozen autotile shapes from shift-click mapping: sparse { "x,y": mask } per layer, render-only.
       c.maps[id] = { id: id, name: str(r.name) || id, width: num(r.width, grid[0] ? grid[0].length : 0),
-        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls, roof: roof, nobuild: nobuild, elev: elev,
+        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls, roof: roof, nobuild: nobuild, elev: elev, falls: falls,
         roof_color: str(r.roof_color),
         // A floor of a multi-storey map (docs/FLOORS.md): the ground map's id and this floor's level. Linked below.
         floorOf: str(r.floor_of), z: num(r.z, 0),
@@ -381,19 +385,24 @@ var Content = (function () {
    *   ref = which table the target comes from (npcs = objects of kind npc; place = a spot on a map;
    *         none = it has no target: any water will do, any food)
    *         ui = a window of the game page, from UI_PARTS: only the page knows it was opened, and reports it)
+   *   any = the target may be left open (ref "*": anything will do) or name one item ("drink", "drink:2",
+   *         "drink:water", "drink:water:2")
    *   count = it can be asked for several times ("kill 5")
    *   quiet = counted without a line in the log each time (steps walked)
    * Stored as a JSON list — [{type, ref, need, label}], and for a place {type: 'goto', ref: mapId, x, y, r, label} —
    * or, written by hand, as text: "kill:rat:5; have:hide:3; talk:npc_marta; goto:map_3:10:4:2".
    * label (optional) = how the goal reads in the game, instead of the words made up from its target.
+   * opt: true = an OPTIONAL goal: counted and shown, but the quest is ready without it (text: a leading "?", as in
+   * "kill:rat:5; ?have:hide:1").
    */
   var GOAL_TYPES = [
     { id: 'kill', name: 'Kill a monster', ref: 'monsters', count: true },
     { id: 'have', name: 'Bring items (taken when handed in)', ref: 'items', count: true },
+    { id: 'own', name: 'Have items in the bag (kept)', ref: 'items', count: true },
     { id: 'talk', name: 'Talk to someone', ref: 'npcs', count: false },
     { id: 'use', name: 'Use or consume an item', ref: 'items', count: true },
-    { id: 'drink', name: 'Drink (any water: a stream, a bottle…)', ref: 'none', count: true },
-    { id: 'eat', name: 'Eat (any food)', ref: 'none', count: true },
+    { id: 'drink', name: 'Drink (anything, or one drink)', ref: 'items', any: true, count: true },
+    { id: 'eat', name: 'Eat (anything, or one food)', ref: 'items', any: true, count: true },
     { id: 'goto', name: 'Go to a place', ref: 'place', count: false },
     { id: 'interact', name: 'Use an object (a lever, a sign, a chest…)', ref: 'objects', count: true },
     { id: 'craft', name: 'Craft an item', ref: 'items', count: true },
@@ -403,7 +412,7 @@ var Content = (function () {
     { id: 'walk', name: 'Walk (steps taken)', ref: 'none', count: true, quiet: true },
     { id: 'hit', name: 'Land a blow (on a creature, or on something breakable)', ref: 'none', count: true },
     { id: 'shoot', name: 'Fire a shot', ref: 'none', count: true },
-    { id: 'hold', name: 'Take something in hand (from the belt)', ref: 'none', count: false },
+    { id: 'hold', name: 'Take something in hand (anything, or one item)', ref: 'items', any: true, count: false },
     { id: 'ui', name: 'Open a window of the game', ref: 'ui', count: false }
   ];
   /** The windows a `ui` goal can ask for. The page reports one being opened: {type: 'quest', op: 'did', what: id}. */
@@ -418,18 +427,20 @@ var Content = (function () {
       var text = v.trim();
       if (text.charAt(0) === '[') list = json(text, []);
       else list = text.split(';').map(function (part) {
-        var a = part.split(':').map(function (x) { return x.trim(); });
-        if (a[0] === 'goto') return { type: 'goto', ref: a[1], x: a[2], y: a[3], r: a[4] };
-        if (goalType(a[0]) && goalType(a[0]).ref === 'none') return { type: a[0], need: a[1] };      // "drink" or "drink:2"
-        return { type: a[0], ref: a[1], need: a[2] };
+        var opt = part.trim().charAt(0) === '?', a = part.trim().replace(/^\?/, '').split(':').map(function (x) { return x.trim(); });
+        if (a[0] === 'goto') return { type: 'goto', ref: a[1], x: a[2], y: a[3], r: a[4], opt: opt };
+        if (goalType(a[0]) && goalType(a[0]).ref === 'none') return { type: a[0], need: a[1], opt: opt };      // "walk" or "walk:6"
+        if (goalType(a[0]) && goalType(a[0]).any && (!a[1] || /^\d+$/.test(a[1]))) return { type: a[0], need: a[1], opt: opt };   // "drink" or "drink:2": anything will do
+        return { type: a[0], ref: a[1], need: a[2], opt: opt };
       });
     }
     return (Array.isArray(list) ? list : []).map(function (g) {
-      var kind = g && goalType(str(g.type)), ref = !kind ? '' : kind.ref === 'none' ? '*' : str(g.ref);
+      var kind = g && goalType(str(g.type)), ref = !kind ? '' : kind.ref === 'none' || (kind.any && !str(g.ref)) ? '*' : str(g.ref);
       if (!kind || !ref) return null;
       var out = { type: kind.id, ref: ref, need: kind.count ? Math.max(1, Math.round(num(g.need, 1))) : 1 };
       if (kind.id === 'goto') { out.x = Math.round(num(g.x, 0)); out.y = Math.round(num(g.y, 0)); out.r = Math.max(0, Math.round(num(g.r, 1))); }
       if (str(g.label)) out.label = str(g.label);
+      if (g.opt === true || bool(g.opt)) out.opt = true;
       return out;
     }).filter(Boolean);
   }

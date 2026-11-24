@@ -78,6 +78,10 @@ var Panels = (function () {
       h('span', { className: 'lbl', text: 'Paint' }), subBtn('base', 'Base'), subBtn('overlay', 'Overlay')) : null;
     var view = h('div', { className: 'group' },
       toggle('grid', 'Grid (G)'),
+      h('button', { className: E.show.animate ? 'on' : '', title: 'Animate water, lava and waterfalls in the editor. Off = they stand still, which keeps the editor fast', text: 'Animate',
+        onclick: function () { E.show.animate = !E.show.animate; toolbar(); E.redraw(); } }),
+      h('button', { className: E.show.raised !== false ? 'on' : '', title: 'Raised view (H): ground with height is drawn as in the game, lifted, with its cliffs and waterfalls. Off = the flat map, with every tile in its own square', text: 'Raised',
+        onclick: function () { E.show.raised = E.show.raised === false; toolbar(); E.redraw(); } }),
       h('button', { title: 'Fit map in view (0)', onclick: E.fitView, text: 'Fit' }),
       h('button', { title: 'Undo (Ctrl+Z)', onclick: E.doUndo, text: '↶' }),
       h('button', { title: 'Redo (Ctrl+Y)', onclick: E.doRedo, text: '↷' }));
@@ -221,6 +225,20 @@ var Panels = (function () {
       if (E.brush.elev == null) E.brush.elev = 1;
       box.appendChild(h('p', { className: 'note',
         text: 'Height raises the ground in steps (one step = one tile high, two = a storey). Pick a level and paint with Brush (B) or Rectangle (R); Erase (E) puts a tile back to level 0. Where two tiles do not meet at the same height there is a cliff nobody can cross. A ramp joins the level you pick to the one above it: choose which way it climbs, and paint it on the LOWER level\'s tile.' }));
+      var hmode = E.brush.heightMode === 'fall' ? 'fall' : 'elev';
+      box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Paint' }),
+        [['elev', 'Height'], ['fall', 'Waterfalls']].map(function (o) { return h('button', { className: hmode === o[0] ? 'on' : '', text: o[1], onclick: function () { E.brush.heightMode = o[0]; all(); E.redraw(); } }); })));
+      if (hmode === 'fall') {
+        var tints = typeof Tint !== 'undefined' ? Object.keys(Tint.TINTS).filter(function (k) { return /^(water|lava)/.test(k); }) : [];
+        box.appendChild(h('p', { className: 'note',
+          text: 'Water on raised ground falls down the cliff to its south by itself. Here you add or remove falls by hand: paint the tile at the TOP of the cliff with Brush (B) or Rectangle (R). Erase (E) puts a tile back to "by itself". A fall only shows where the ground drops to the south of the tile (a grey W = no cliff under it). Press H to see the map raised, with the falls moving.' }));
+        box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Mark' }),
+          [['1', 'Waterfall here'], ['0', 'No waterfall here']].map(function (o) { return h('button', { className: (E.brush.fall || '1') === o[0] ? 'on' : '', text: o[1], onclick: function () { E.brush.fall = o[0]; all(); } }); })));
+        if ((E.brush.fall || '1') === '1') box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Colour' }),
+          h('select', { onchange: function (ev) { E.brush.fallTint = ev.target.value; } },
+            [h('option', { value: '', text: 'as the water it falls from', selected: !E.brush.fallTint })].concat(tints.map(function (k) { return h('option', { value: k, text: k.replace(/_/g, ' '), selected: E.brush.fallTint === k }); })))));
+        return;
+      }
       box.appendChild(h('div', { className: 'row' }, h('label', { text: 'Level' }),
         [0, 1, 2, 3, 4].map(function (n) {
           return h('button', { className: Number(E.brush.elev) === n ? 'on' : '', text: String(n), onclick: function () { E.brush.elev = n; all(); } });
@@ -384,6 +402,8 @@ var Panels = (function () {
           var label = src[id].name ? src[id].name + ' (' + id + ')' : id;
           return h('option', { value: id, text: label + (id === def ? ' (default)' : ''), selected: id === cur });
         })));
+    } else if (type === 'item_list') {
+      return itemListField(label, prop, value === undefined ? def : value, changed);
     } else if (type === 'map_pos') {
       return mapPosField(label, name, value, changed, ctx);
     } else if (type === 'entity_list') {
@@ -397,6 +417,40 @@ var Panels = (function () {
     }
     row = h('div', { className: 'field' }, label, input);
     if (prop.notes) row.appendChild(h('div', { className: 'note', text: prop.notes }));
+    return row;
+  }
+
+  /**
+   * A list of items (a chest's contents…): one row each — which item (a dropdown of every item, and gold) × how
+   * many. Stored as the text the rules read: "potion:2, gold:30". A row with nothing picked yet is not saved.
+   */
+  function itemListField(label, prop, value, changed) {
+    var items = E.content.items || {}, box = h('div', {});
+    var rows = String(value == null ? '' : value).split(/[,;]/).map(function (part) {
+      var a = part.trim().split(':'), q = parseInt(a[1], 10);
+      return a[0] ? { item: a[0], qty: q > 0 ? q : 1 } : null;
+    }).filter(Boolean);
+    var ids = Object.keys(items).sort(function (a, b) { return String(items[a].name || a).localeCompare(String(items[b].name || b)); });
+    function commit() { changed(rows.filter(function (r) { return r.item; }).map(function (r) { return r.item + ':' + r.qty; }).join(', ')); }
+    function draw() {
+      box.innerHTML = '';
+      rows.forEach(function (r, i) {
+        var known = !r.item || r.item === 'gold' || !!items[r.item];
+        var sel = h('select', { style: 'flex:1;min-width:0;width:auto', title: known ? 'Which item' : 'There is no item with this id', onchange: function () { r.item = sel.value; commit(); } },
+          [h('option', { value: '', text: '— pick an item —' }),
+            known ? null : h('option', { value: r.item, text: r.item + ' (missing item)', selected: true }),
+            items.gold ? null : h('option', { value: 'gold', text: 'Gold', selected: r.item === 'gold' })]
+            .concat(ids.map(function (id) { return h('option', { value: id, text: (items[id].name || id) + ' (' + id + ')', selected: id === r.item }); })).filter(Boolean));
+        var qty = h('input', { type: 'number', min: 1, step: 1, value: r.qty, className: 'num', title: 'How many',
+          onchange: function () { var q = parseInt(qty.value, 10); r.qty = q > 0 ? q : 1; qty.value = r.qty; commit(); } });
+        box.appendChild(h('div', { className: 'inline', style: 'margin-bottom:4px;flex-wrap:nowrap' }, sel, h('span', { text: '×' }), qty,
+          h('button', { text: '✕', title: 'Remove', onclick: function () { rows.splice(i, 1); commit(); draw(); } })));
+      });
+      box.appendChild(h('button', { text: '+ Add item', onclick: function () { rows.push({ item: '', qty: 1 }); draw(); } }));
+    }
+    draw();
+    var row = h('div', { className: 'field' }, label, box);
+    if (prop.notes) row.appendChild(h('div', { className: 'note', text: String(prop.notes).replace(/,? ?e\.g\..*$/, '') }));
     return row;
   }
 
@@ -545,6 +599,16 @@ var Panels = (function () {
       wrap.appendChild(h('div', { className: 'field' }, h('label', { text: 'facing' }), fSel));
     }
 
+    if (o && o.properties && o.properties.layer === 'cliff') {  // on a cliff face: where on the face
+      wrap.appendChild(h('div', { className: 'sub', text: 'On the cliff face' }));
+      wrap.appendChild(h('div', { className: 'help', text: 'With Select (V), drag it along the cliff faces. Or set it exactly here.' }));
+      wrap.appendChild(field('up', { type: 'number', 'default': 0, notes: 'How far its foot is above the foot of the cliff, in tiles (0 = standing at the bottom; fractions allowed)' },
+        e.data.up, function (v) { setProp(e.key, E.mapId, 'up', v); inspector(); E.redraw(); }, { entity: e }));
+      wrap.appendChild(field('dx', { type: 'number', 'default': 0, notes: 'Sideways from the middle of the tile, in tiles (-0.5 = its left edge, 0.5 = its right edge)' },
+        e.data.dx, function (v) { setProp(e.key, E.mapId, 'dx', v); inspector(); E.redraw(); }, { entity: e }));
+      wrap.appendChild(field('flip', { type: 'bool', 'default': false, notes: 'Mirrored left to right' },
+        e.data.flip, function (v) { setProp(e.key, E.mapId, 'flip', v || undefined); inspector(); E.redraw(); }, { entity: e }));
+    }
     if (o && o.properties && o.properties.layer === 'wall') {   // wall-mounted object: standing on the wall base, raised in tiles
       wrap.appendChild(h('div', { className: 'sub', text: 'Wall mount' }));
       wrap.appendChild(field('mount', { type: 'number', 'default': 0,
@@ -577,7 +641,7 @@ var Panels = (function () {
       h('p', { text: 'Pick terrain or an object on the left, then paint. Use Select (V) and click an object to set its properties, such as a chest\'s contents or where a door leads.' }),
       h('p', { text: 'Terrain has two layers: paint a plain ground on Base, then autotiles (grass, roads) on Overlay. Right-drag copies tiles into a stamp; Shift+Left stamps them (or an autotile\'s plain centre tile).' }),
       h('table', {}, [['B', 'brush'], ['R', 'rectangle'], ['F', 'fill'], ['I', 'eyedropper'], ['E', 'erase'], ['V', 'select / drag to move'],
-        ['1 / 2 / 3', 'terrain / objects / monsters'], ['G', 'grid'], ['0', 'fit map'], ['Space / middle-drag', 'pan'], ['Wheel', 'zoom'],
+        ['1 / 2 / 3', 'terrain / objects / monsters'], ['G', 'grid'], ['H', 'raised / flat ground'], ['0', 'fit map'], ['Space / middle-drag', 'pan'], ['Wheel', 'zoom'],
         ['Right-drag', 'copy tiles to the stamp (both layers)'], ['Shift+Right-drag', 'also copy exact autotile shapes'],
         ['Shift+Left', 'stamp the copy, or an autotile\'s centre tile'],
         ['Ctrl+Z / Ctrl+Y', 'undo / redo'], ['Ctrl+S', 'save'], ['Del', 'delete selected object'], ['Esc', 'cancel']].map(function (r) {

@@ -1282,6 +1282,9 @@ var World = (function () {
       if (onto2 && onto2.item !== src.item) to = { w: 'bag' };   // (never a swap into a take-only container)
     }
     var id = src.item, other = '', max = stackMaxOf(c, id);
+    // Out of a cooker's "comes out" cell into the bag: whoever takes it out made it (a fire cooks with nobody
+    // there, so this is the one moment a player can be named), for quests that ask for it to be crafted.
+    var cooked = !!(e && e._cook && from.w === 'box' && to.w === 'bag' && src.s === 2), hadBefore = cooked ? count(p, id) : 0;
     var qty = Math.max(1, Math.min(src.qty, Math.round(Number(a.qty)) || src.qty));
     if (to.s === undefined || to.s === null || to.s === '') {            // wherever it fits
       if (fromL === toL) return;
@@ -1310,6 +1313,7 @@ var World = (function () {
     goneFromBag(p, id); if (other) goneFromBag(p, other);
     if (typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);     // what is in hand may have just left (or come back)
     if (e && e._cook) cookTick(c, ws, p.map, e.key, now);       // (its picture follows what is in it)
+    if (cooked && count(p, id) > hadBefore) questCount(c, p, 'craft', id, now, ev, count(p, id) - hadBefore);
     if (emptiedWild(c, ws, p, e, ev)) return;
     if (e) { ws.dirty = true; storageEvent(c, p, e, ev); }
   }
@@ -1759,7 +1763,7 @@ var World = (function () {
   function questNeeds(c, p, questId, item) {
     var q = (c.quests || {})[questId];
     if (!q || !p || !(p.quests || {})[questId]) return false;
-    return q.goals.some(function (g) { return g.type === 'have' && g.ref === item && count(p, item) < g.need; });
+    return q.goals.some(function (g) { return (g.type === 'have' || g.type === 'own') && g.ref === item && count(p, item) < g.need; });
   }
   // Weighted pick: returns the index of one item by its weight, or -1 when the weights sum to <= 0.
   // `extra` is an optional extra weight for a "none" outcome that maps to index -1.
@@ -2078,6 +2082,86 @@ var World = (function () {
    * Keeps the OTHER floors of a building moving while somebody is in it, so what a player watches from a window or
    * a balcony is alive — for a world held whole in memory (offline play, a LAN host). playersOn(mapId) = who is there.
    */
+  // ------------------------------------------------------------ things that appear on the ground by themselves
+  // Two sources, both leaving ordinary pickups (the built-in '_drop', as a hen's egg):
+  //   - an OBJECT with properties.drops (an item list) lets one of them fall on a free tile within drop_radius (2)
+  //     every drop_s seconds, while fewer than drop_max (3) of its items lie within that radius. A felled one drops nothing.
+  //   - a TERRAIN with 'grows' (an item list) grows one per 100 of its tiles every grow_s seconds, on a tile where it
+  //     is the ground you see (the overlay, else the base), while fewer than grow_max (2) of that item lie within
+  //     GROW_NEAR tiles (an 11x11 square, about 100 tiles).
+  // A map only runs while someone is on it, so the time away is caught up on return (Config growth_catchup_s, 1800).
+  // Nothing here grows with the size of the map: a round (every Config growth_round_s, 10) looks at GROW_TRIES
+  // sources of each kind, picked at random, and Config ground_item_cap (150) bounds what lies on one map.
+  var GROW_TRIES = 4, GROW_NEAR = 5;
+  /** What can drop or grow on a map, worked out once from the authored map: { objs: [entity], tiles: [{ id, cells }] }. */
+  function growSources(c, mapId) {
+    var base = c.maps[mapId];
+    if (!base) return { objs: [], tiles: [] };
+    if (base._grow) return base._grow;
+    var objs = [], by = {}, tiles = [], ov = base.overlay && base.overlay.length ? base.overlay : null;
+    (base.entities || []).forEach(function (e) { var o = objOf(c, e), pr = o && o.properties; if (pr && pr.drops && Number(pr.drop_s) > 0) objs.push(e); });
+    for (var y = 0; y < base.height; y++) for (var x = 0; x < base.width; x++) {
+      var tid = (ov && ov[y] && ov[y][x]) || (base.terrain[y] && base.terrain[y][x]), t = tid && c.terrain[tid];
+      if (t && t.grows && t.growS > 0) (by[tid] = by[tid] || []).push(y * base.width + x);
+    }
+    Object.keys(by).forEach(function (k) { tiles.push({ id: k, cells: by[k] }); });
+    var out = { objs: objs, tiles: tiles };
+    Object.defineProperty(base, '_grow', { value: out, enumerable: false, writable: true, configurable: true });
+    return out;
+  }
+  function growStep(c, ws, mapId, map, ms, now, rng) {
+    var src = growSources(c, mapId), drop = c.objects._drop;
+    if (!drop || (!src.objs.length && !src.tiles.length)) return;
+    var roundMs = Math.max(2, cfgNum(c, 'growth_round_s', 10)) * 1000;
+    if (!ms.growAt) { ms.growAt = now + roundMs; ws.dirty = true; return; }
+    if (now < ms.growAt) return;
+    var rounds = Math.min(1 + Math.floor((now - ms.growAt) / roundMs), Math.max(1, Math.round(cfgNum(c, 'growth_catchup_s', 1800) * 1000 / roundMs)));
+    ms.growAt = now + roundMs; ws.dirty = true;
+    var st = structOf(ws, mapId), cap = cfgNum(c, 'ground_item_cap', 150), sec = roundMs / 1000, changed = false;
+    var lying = st.ents.filter(function (b) { return b.ref === drop.id; });
+    function what(b) { return String((b.data && b.data.pickup) || '').split(':')[0]; }
+    function near(ids, x, y, r) { var n = 0; for (var i = 0; i < lying.length; i++) if (cheb(lying[i].x, lying[i].y, x, y) <= r && ids.indexOf(what(lying[i])) >= 0) n++; return n; }
+    function free(x, y) { return x >= 0 && y >= 0 && x < map.width && y < map.height && Rl().standable(c, map, x, y) && !Rl().entitiesAt(map, x, y).length && !lying.some(function (b) { return b.x === x && b.y === y; }); }
+    function put(x, y, g) {
+      var b = { key: mapId + '.b' + (++st.n), x: x, y: y, ref: drop.id, data: { pickup: g.item + ':' + (g.qty || 1) }, hp: 0, max: 0, bp: '', by: null, built: now, prog: 0, need: 0, wild: true };
+      st.ents.push(b); lying.push(b); changed = true;
+    }
+    for (var r = 0; r < rounds && lying.length < cap; r++) {
+      var n = src.objs.length, k = Math.min(n, GROW_TRIES);
+      for (var i = 0; i < k && lying.length < cap; i++) {
+        var e = src.objs[rint(rng, 0, n - 1)], pr = props(c, e), every = Number(pr.drop_s) || 0;
+        if (!(every > 0) || rng() >= sec / every * n / k) continue;              // (each one gets its turn once in drop_s, on average)
+        if (st.gone && st.gone[e.key]) continue;                                 // cut down: nothing falls from it
+        var items = list(pr.drops); if (!items.length) continue;
+        var rad = Math.max(1, Math.min(6, Math.round(Number(pr.drop_radius) || 2))), max = Math.max(1, Math.round(Number(pr.drop_max) || 3));
+        if (near(items.map(function (g) { return g.item; }), e.x, e.y, rad) >= max) continue;
+        // It lands on ground at the height the thing stands at (a tree on a ledge keeps its branches on the ledge);
+        // only when no such tile turns up does it settle for any free tile nearby.
+        var lvl = Rl().groundHeight(map, e.x + 0.5, e.y + 0.5), same = [], other = [];
+        for (var y = e.y - rad; y <= e.y + rad; y++) for (var x = e.x - rad; x <= e.x + rad; x++) {
+          if ((x === e.x && y === e.y) || !free(x, y)) continue;
+          (Math.abs(Rl().groundHeight(map, x + 0.5, y + 0.5) - lvl) < 0.5 ? same : other).push({ x: x, y: y });
+        }
+        var spots = same.length ? same : other;
+        if (spots.length) { var sp = spots[rint(rng, 0, spots.length - 1)]; put(sp.x, sp.y, items[rint(rng, 0, items.length - 1)]); }
+      }
+      for (var j = 0; j < src.tiles.length; j++) {
+        var T = src.tiles[j], tt = c.terrain[T.id], grows = tt ? list(tt.grows) : [];
+        if (!grows.length) continue;
+        var want = T.cells.length / 100 * sec / tt.growS, tries = Math.min(GROW_TRIES, Math.floor(want) + (rng() < want % 1 ? 1 : 0));
+        for (var q = 0; q < tries && lying.length < cap; q++) {
+          var cell = T.cells[rint(rng, 0, T.cells.length - 1)], gx = cell % map.width, gy = Math.floor(cell / map.width);
+          var seen = (map.overlay && map.overlay[gy] && map.overlay[gy][gx]) || (map.terrain[gy] && map.terrain[gy][gx]);
+          if (seen !== T.id) continue;                                           // built over since
+          var g = grows[rint(rng, 0, grows.length - 1)];
+          if (near([g.item], gx, gy, GROW_NEAR) >= tt.growMax || !free(gx, gy)) continue;
+          put(gx, gy, g);
+        }
+      }
+    }
+    if (changed) touchStruct(st);
+  }
+
   function advanceFloors(c, ws, mapId, playersOn, now, rng, ev) {
     floorsOf(c, mapId).forEach(function (f) {
       if (f.id !== mapId && c.maps[f.id]) advance(c, ws, f.id, (playersOn && playersOn(f.id)) || [], now, rng, ev);
@@ -2548,6 +2632,7 @@ var World = (function () {
       else setState(ws, mapId, k, t.state);
       delete ms.timers[k];
     });
+    growStep(c, ws, mapId, map, ms, now, rng);                 // branches under trees, fibres in the grass
     if (ms.cookers) Object.keys(ms.cookers).forEach(function (k) { if (ms.cookers[k].lit) cookTick(c, ws, mapId, k, now); });
     var here = players.filter(function (p) { return p.map === mapId && p.hp > 0; });
     giveCredits(c, ws, mapId, ms, players.filter(function (p) { return p.map === mapId; }), now, rng, ev);   // kills others finished while these players had a hand in them
@@ -2700,7 +2785,7 @@ var World = (function () {
     p.thirst = Math.min(100, thi + cfgNum(c, 'water_thirst', 25));
     var tox = wt.toxicity == null ? cfgNum(c, 'water_toxicity', 8) : wt.toxicity;
     say('You drink from the ' + name + '.' + (tox > 0 ? ' It is not clean.' : ''));
-    questCount(c, p, 'drink', '*', Date.now(), ev);
+    questCount(c, p, 'drink', '', Date.now(), ev);              // (from a stream: no item, so only "drink anything" counts)
     addTox(c, p, tox, ev);
   }
 
@@ -3633,10 +3718,13 @@ var World = (function () {
   var UI_GOALS = { bag: 1, quests: 1, craft: 1, build: 1 };  // the windows a `ui` goal may name (Content.UI_PARTS)
   function goalCount(p, q, i) {
     var g = q.goals[i], st = (p.quests || {})[q.id];
-    return Math.min(g.need, g.type === 'have' ? count(p, g.ref) : Number(((st && st.n) || [])[i]) || 0);
+    var kept = Number(((st && st.n) || [])[i]) || 0;
+    // have = what is in the bag right now (it is taken at hand-in). own = the most that was ever in the bag at once
+    // while on the quest (questSweep keeps the mark): once had, it stays ticked even if the item is then eaten or used.
+    return Math.min(g.need, g.type === 'have' ? count(p, g.ref) : g.type === 'own' ? Math.max(kept, count(p, g.ref)) : kept);
   }
   function questState(c, p, q, now) {
-    if ((p.quests || {})[q.id]) return q.goals.every(function (g, i) { return goalCount(p, q, i) >= g.need; }) ? 'ready' : 'active';
+    if ((p.quests || {})[q.id]) return q.goals.every(function (g, i) { return g.opt || goalCount(p, q, i) >= g.need; }) ? 'ready' : 'active';   // (an optional goal never holds it back)
     var done = (p.questsDone || {})[q.id];
     if (done) { if (!(q.repeatS > 0)) return 'done'; if (now < done + q.repeatS * 1000) return 'wait'; }
     return check(c, p, q.requires) ? 'open' : 'closed';
@@ -3658,15 +3746,15 @@ var World = (function () {
   function goalText(c, g) {
     if (g.label) return g.label;
     if (g.type === 'kill' || g.type === 'tame') return (c.monsters[g.ref] ? c.monsters[g.ref].name : g.ref);
-    if (g.type === 'have' || g.type === 'use' || g.type === 'craft') return itemName(c, g.ref);
+    if (g.type === 'have' || g.type === 'own' || g.type === 'use' || g.type === 'craft') return itemName(c, g.ref);
     if (g.type === 'build') return ((c.blueprints || {})[g.ref] ? c.blueprints[g.ref].name : g.ref);
     if (g.type === 'goto') return (c.maps[g.ref] ? c.maps[g.ref].name : g.ref);
-    if (g.type === 'drink') return 'Drink some water';
-    if (g.type === 'eat') return 'Eat something';
+    if (g.type === 'drink') return g.ref === '*' ? 'Drink some water' : 'Drink ' + lower(itemName(c, g.ref));
+    if (g.type === 'eat') return g.ref === '*' ? 'Eat something' : 'Eat ' + lower(itemName(c, g.ref));
     if (g.type === 'walk') return 'Walk around';
     if (g.type === 'hit') return 'Hit something';
     if (g.type === 'shoot') return 'Fire a shot';
-    if (g.type === 'hold') return 'Take something in hand';
+    if (g.type === 'hold') return g.ref === '*' ? 'Take something in hand' : 'Take the ' + lower(itemName(c, g.ref)) + ' in hand';
     if (g.type === 'ui') return 'Open the ' + ({ bag: 'bag', quests: 'quest log', craft: 'crafting window', build: 'build bar' }[g.ref] || g.ref);
     if (g.type === 'interact') return (c.objects[g.ref] ? c.objects[g.ref].name : g.ref);
     return 'Talk to ' + (c.objects[g.ref] ? c.objects[g.ref].name : g.ref);
@@ -3688,7 +3776,7 @@ var World = (function () {
     Object.keys(p.quests).forEach(function (id) {
       var q = qs[id], st = p.quests[id]; if (!q) return;
       q.goals.forEach(function (g, i) {
-        if (g.type !== type || g.ref !== ref) return;
+        if (g.type !== type || (g.ref !== ref && g.ref !== '*')) return;   // ("*" = anything will do)
         st.n = Array.isArray(st.n) ? st.n : [];
         var have = Number(st.n[i]) || 0; if (have >= g.need) return;
         var was = questState(c, p, q, now);
@@ -3762,7 +3850,7 @@ var World = (function () {
   }
   /** Hand a ready quest in: what was asked for is taken, it is marked done, the rewards are given. */
   function questFinish(c, ws, p, q, pick, now, ev) {
-    q.goals.forEach(function (g) { if (g.type === 'have') take(p, g.ref, g.need); });
+    q.goals.forEach(function (g) { if (g.type === 'have' && (!g.opt || count(p, g.ref) >= g.need)) take(p, g.ref, g.need); });   // (an optional bring-me is taken only if it was brought in full)
     delete p.quests[q.id];
     p.questsDone[q.id] = now;
     if (p.intro) { p.intro = p.intro.filter(function (x) { return x !== q.id; }); if (!p.intro.length) delete p.intro; }   // (finished before its window was read: nothing left to announce)
@@ -3779,6 +3867,16 @@ var World = (function () {
   function questSweep(c, ws, p, now, ev) {
     if (!p || !p.quests) return;
     questPlaces(c, p, now, ev);
+    var qs0 = c.quests || {};
+    Object.keys(p.quests).forEach(function (id) {                // `own` goals: remember the most that was in the bag
+      var q = qs0[id], st = p.quests[id]; if (!q) return;
+      q.goals.forEach(function (g, i) {
+        if (g.type !== 'own') return;
+        st.n = Array.isArray(st.n) ? st.n : [];
+        var has = Math.min(g.need, count(p, g.ref));
+        if (has > (Number(st.n[i]) || 0)) st.n[i] = has;
+      });
+    });
     // A TUTORIAL step with nobody to hand it to (and nothing to choose) does finish by itself: the next step, started
     // by its rewards, opens at once. (Bounded: a step may finish the one it starts, never round in a ring for ever.)
     var qs = c.quests || {};
@@ -4178,10 +4276,10 @@ var World = (function () {
         ev.push({ type: 'mana', to: p.id, map: p.map, x: p.x, y: p.y, amount: Math.round(g), text: 'You use the ' + lower(it.name) + '. +' + Math.round(g) + ' MP' });
       }
       if (it.hunger) {
-        var fe = Math.min(it.hunger, 100 - hun); if (fe > 0) { p.hunger = hun + fe; ev.push({ type: 'info', to: p.id, text: 'You eat the ' + lower(it.name) + '.' }); questCount(c, p, 'eat', '*', now, ev); }
+        var fe = Math.min(it.hunger, 100 - hun); if (fe > 0) { p.hunger = hun + fe; ev.push({ type: 'info', to: p.id, text: 'You eat the ' + lower(it.name) + '.' }); questCount(c, p, 'eat', it.id, now, ev); }
       }
       if (it.thirst) {
-        var dr = Math.min(it.thirst, 100 - thi); if (dr > 0) { p.thirst = thi + dr; ev.push({ type: 'info', to: p.id, text: 'You drink the ' + lower(it.name) + '.' }); questCount(c, p, 'drink', '*', now, ev); }
+        var dr = Math.min(it.thirst, 100 - thi); if (dr > 0) { p.thirst = thi + dr; ev.push({ type: 'info', to: p.id, text: 'You drink the ' + lower(it.name) + '.' }); questCount(c, p, 'drink', it.id, now, ev); }
       }
       if (it.toxicity) { if (cures && !it.heal && !it.mp && !it.hunger && !it.thirst) ev.push({ type: 'info', to: p.id, text: 'You use the ' + lower(it.name) + '.' }); addTox(c, p, it.toxicity, ev); }
       if (it.onUse) run(c, ws, p, it.onUse, now, ev);
@@ -4272,7 +4370,7 @@ var World = (function () {
     else if (action.type === 'inv') invAct(c, ws, p, action, now, ev);
     else if (action.type === 'claim') claimAct(c, ws, p, action, now, ev, players);
     else if (action.type === 'loadout') setLoadout(c, p, action.bar, action.slot, action.entry, ev);
-    else if (action.type === 'hold') { holdSlot(c, p, action.slot, ev); if (heldItem(c, p)) questCount(c, p, 'hold', '*', now, ev); }
+    else if (action.type === 'hold') { holdSlot(c, p, action.slot, ev); if (heldItem(c, p)) questCount(c, p, 'hold', heldItem(c, p).id, now, ev); }
     else if (action.type === 'quest') questAct(c, ws, p, action, now, ev);
     questSweep(c, ws, p, now, ev);                             // wherever that left them: a place a quest sends them to? a quest that is simply done?
     return ev;

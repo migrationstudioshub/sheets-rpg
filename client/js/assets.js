@@ -37,6 +37,7 @@ var Assets = (function () {
         row.forEach(function (tid) {
           var t = content.terrain[tid]; if (!t) return;
           if (t.sprite) paths[t.sprite] = 1;
+          if (t.fall) { paths[t.fall] = 1; paths[t.fall.replace(/\.png$/i, '.tint.png')] = 1; }   // its waterfall strip (and tint mask)
           if (t.sprite && map.elev && map.elev.length && /\.png$/i.test(t.sprite) && !/^https?:/i.test(t.sprite)) paths[t.sprite.replace(/\.png$/i, '_face.png')] = 1;   // a plain tile's cliff picture, if there is one
           if (t.autotile && content.tilesets[t.autotile]) {
             var img = content.tilesets[t.autotile].image;
@@ -49,6 +50,10 @@ var Assets = (function () {
       });
     }
     scanTerrain(map.terrain);
+    if (map.elev && map.elev.length) {                 // raised ground: the waterfall strip water falls down its cliffs with
+      var fs0 = (content.config && content.config.waterfall_sprite) || 'art/tilesets/waterfall_anim.png';
+      paths[fs0] = 1; paths[fs0.replace(/\.png$/i, '.tint.png')] = 1;
+    }
     scanTerrain(map.overlay);   // overlay layer too — a terrain painted only on the overlay (e.g. grass) is otherwise never preloaded
     map.entities.forEach(function (e) {
       var o = content.objects[e.ref]; if (!o) return;

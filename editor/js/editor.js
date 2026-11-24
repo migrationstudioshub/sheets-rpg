@@ -10,7 +10,7 @@ var E = {
   brushFacing: 'S',     // which way the next turnable object (a chair) faces: T or Shift+wheel turns it
   wallSide: 'cursor',   // N-S walls: 'center' straddles the line; 'cursor' snaps the wall onto whichever tile the cursor is nearer
   view: { zoom: 2, x: 40, y: 40 },
-  show: { terrain: true, objects: true, grid: true },
+  show: { terrain: true, objects: true, grid: true, raised: true, animate: false },   // animate: water, lava and waterfalls move (off = still, and the map is only redrawn when something changes);   // raised: ground height drawn as in the game (cliffs and all)
   selected: null, hover: null, mode: null,
   stamp: null,   // shift-click clipboard: { w, h, cells:[{base, overlay, baseMask, overlayMask}] }
   dirty: { maps: {}, tabs: {}, deleted: [] },
@@ -106,6 +106,26 @@ var E = {
     var g = E.ensureElev(m); if (g[y][x] === v) return false;
     g[y][x] = v; return true;
   }
+  // Waterfalls by hand: a W×H grid ('' = by itself, '1' = a fall here, a tint name = a fall in that colour, '0' = none
+  // here). Painted from the Height tab (Paint: Waterfalls); see Render.fallAt.
+  E.ensureFalls = function (map) {
+    map = map || E.map();
+    var r = map.falls;
+    if (!r || r.length !== map.height || (r[0] && r[0].length !== map.width)) {
+      var g = [];
+      for (var y = 0; y < map.height; y++) { var row = []; for (var x = 0; x < map.width; x++) row.push((r && r[y] && r[y][x]) || ''); g.push(row); }
+      map.falls = g;
+    }
+    return map.falls;
+  };
+  function setFall(x, y, v) {
+    var m = E.map(); if (x < 0 || y < 0 || x >= m.width || y >= m.height) return false;
+    if (!v && !(m.falls && m.falls.length)) return false;
+    var g = E.ensureFalls(m); if (g[y][x] === v) return false;
+    g[y][x] = v; return true;
+  }
+  function fallMode() { return (E.brush || {}).heightMode === 'fall'; }
+  function fallToken() { var b = E.brush || {}; return b.fall === '0' ? '0' : (b.fallTint || '1'); }
   function elevToken() { var b = E.brush || {}, h = Math.max(0, Math.min(9, Number(b.elev) || 0)), r = b.ramp || ''; return r ? h + r : (h ? String(h) : ''); }
   // ---- random hills (the Height tab's generator). Smooth noise at several sizes laid over each other, cut into
   // whole levels; then no step is ever more than one level (terraces, not towers), and ramps are cut into them.
@@ -233,7 +253,7 @@ var E = {
   // to. Returns {orient:'h'|'v', x, y} indexing the matching wall grid, or null when outside the map.
   E.edgeAt = function (ev) {
     var r = canvas.getBoundingClientRect(), s = cellSize(), m = E.map();
-    var fx = (ev.clientX - r.left - E.view.x) / s, fy = (ev.clientY - r.top - E.view.y) / s;
+    var pt = mapPt(ev), fx = pt.fx, fy = pt.fy;
     var cx = Math.floor(fx), cy = Math.floor(fy), rx = fx - cx, ry = fy - cy;
     // Each candidate edge also carries `side`: the tile the cursor is on, used to offset N-S walls.
     // left edge of the hovered cell → cursor is to its right ('r'); right edge → cursor to its left ('l').
@@ -273,7 +293,7 @@ var E = {
     var ov = map.overlay;
     var hasOv = ov && ov.some(function (r) { return r && r.some(function (c) { return c; }); });
     if (hasOv) row.overlay = JSON.stringify(ov); else delete row.overlay;   // keep overlay-free maps clean
-    ['vWalls', 'hWalls', 'roof', 'nobuild', 'elev'].forEach(function (k) {           // edge walls + roof cover + no-build mask, dropped when all-empty
+    ['vWalls', 'hWalls', 'roof', 'nobuild', 'elev', 'falls'].forEach(function (k) {           // edge walls + roof cover + no-build mask, dropped when all-empty
       var grid = map[k], has = grid && grid.some(function (r) { return r && r.some(function (c) { return c; }); });
       if (has) row[k] = JSON.stringify(grid); else delete row[k];
     });
@@ -320,11 +340,25 @@ var E = {
     Object.keys(c.wallStyles || {}).forEach(function (k) {
       var w = c.wallStyles[k]; [w.cap, w.face].forEach(function (p) { if (p) paths.push(p); });
     });
+    // raised ground (the Raised view): cliff faces, the tint masks of water and lava, and the waterfall strips
+    var mask = function (p) { return p.replace(/[.]png$/i, '.tint.png'); }, local = function (p) { return /[.]png$/i.test(p) && !/^https?:/i.test(p); };
+    Object.keys(c.terrain).forEach(function (k) {
+      var t = c.terrain[k], ts = t.autotile && c.tilesets[t.autotile];
+      if (t.sprite && local(t.sprite)) paths.push(t.sprite.replace(/[.]png$/i, '_face.png'));
+      if (t.fall) { paths.push(t.fall); if (local(t.fall)) paths.push(mask(t.fall)); }
+      if (ts && ts.image) {
+        if (t.tint && local(ts.image)) paths.push(mask(ts.image));
+        var info = typeof Scatter !== 'undefined' && Scatter.tileInfo ? Scatter.tileInfo(ts.image) : null;
+        if (info && info.cliff) paths.push(info.cliff);
+      }
+    });
+    var fall = (c.config && c.config.waterfall_sprite) || Render.FALL_SPRITE;
+    if (fall) { paths.push(fall); if (local(fall)) paths.push(mask(fall)); }
     return Promise.all(paths.map(Assets.load));
   };
 
-  E.markDirty = function (what) {
-    if (what === 'map') { E.dirty.maps[E.mapId] = true; E.groundDirty = true; }
+  E.markDirty = function (what, sameGround) {                // sameGround: the painted ground did not change (an object moved): no need to paint it again
+    if (what === 'map') { E.dirty.maps[E.mapId] = true; if (!sameGround) E.groundDirty = true; }
     else E.dirty.tabs[what] = true;
     E.redraw(); Panels.status(); scheduleWip();
   };
@@ -337,7 +371,7 @@ var E = {
       terrain: JSON.parse(JSON.stringify(m.terrain)), overlay: JSON.parse(JSON.stringify(m.overlay || [])),
       vWalls: JSON.parse(JSON.stringify(m.vWalls || [])), hWalls: JSON.parse(JSON.stringify(m.hWalls || [])),
       roof: JSON.parse(JSON.stringify(m.roof || [])), roof_color: m.roof_color || '',
-      nobuild: JSON.parse(JSON.stringify(m.nobuild || [])), elev: JSON.parse(JSON.stringify(m.elev || [])),
+      nobuild: JSON.parse(JSON.stringify(m.nobuild || [])), elev: JSON.parse(JSON.stringify(m.elev || [])), falls: JSON.parse(JSON.stringify(m.falls || [])),
       spawn: m.spawn ? JSON.parse(JSON.stringify(m.spawn)) : null,
       shapes: JSON.parse(JSON.stringify(m.shapes || {})), overlayShapes: JSON.parse(JSON.stringify(m.overlayShapes || {})),
       entities: JSON.parse(JSON.stringify(m.entities)) };
@@ -347,7 +381,7 @@ var E = {
     if (E.mapId !== s.mapId) E.openMap(s.mapId);
     m.width = s.width; m.height = s.height; m.name = s.name; m.terrain = s.terrain; m.overlay = s.overlay || [];
     m.vWalls = s.vWalls || []; m.hWalls = s.hWalls || []; m.roof = s.roof || []; m.roof_color = s.roof_color || '';
-    m.nobuild = s.nobuild || []; m.elev = s.elev || [];
+    m.nobuild = s.nobuild || []; m.elev = s.elev || []; m.falls = s.falls || [];
     m.spawn = s.spawn || null;
     m.shapes = s.shapes || {}; m.overlayShapes = s.overlayShapes || {}; m.entities = s.entities;
     if (E.selected && !E.entityByKey(E.selected)) E.selected = null;
@@ -374,7 +408,7 @@ var E = {
     if (E.layer === 'spawn') return clearSpawn();
     if (E.layer === 'roof') return setRoof(x, y, '');
     if (E.layer === 'nobuild') return setNoBuild(x, y, '');
-    if (E.layer === 'height') return setElev(x, y, '');
+    if (E.layer === 'height') return fallMode() ? setFall(x, y, '') : setElev(x, y, '');
     if (E.layer === 'terrain') return setTerrain(x, y, '');
     return removeObject(x, y);
   }
@@ -457,6 +491,51 @@ var E = {
     if (E.selected === e.key) E.selected = null;
     return true;
   }
+  // ---- things on cliff faces (object defs with properties.layer === 'cliff'); see Render.cliffRect ----
+  function isCliffObj(o) { return !!(o && o.properties && o.properties.layer === 'cliff'); }
+  /** The current object brush, if it goes on cliff faces; else null. */
+  E.cliffBrush = function () {
+    if (E.layer !== 'objects' || E.paletteTab === 'monsters' || E.paletteTab === 'items' || !E.brush.object) return null;
+    var o = E.content.objects[E.brush.object];
+    return isCliffObj(o) ? o : null;
+  };
+  /** The spot on a cliff face under the pointer, for object o: { x, y, up, dx } (the middle of its picture lands on
+   *  the pointer, in steps of an eighth of a tile), or null when the pointer is not on a face (or the view is flat). */
+  E.cliffSpotAt = function (ev, o) {
+    if (!raisedView()) return null;
+    var r = canvas.getBoundingClientRect(), s = cellSize(), m = E.map(), px = ev.clientX - r.left - E.view.x, py = ev.clientY - r.top - E.view.y;
+    var x = Math.floor(px / s); if (x < 0 || x >= m.width) return null;
+    var img = o && o.sprite && Assets.get(o.sprite), hT = img ? img.height / 32 : 1;
+    for (var y = Math.min(m.height - 1, Math.floor(py / s) + Render.maxElev(m) + 1); y >= 0 && y >= Math.floor(py / s) - 1; y--) {
+      var f = Render.cliffFoot(m, x, y, 0, s);
+      if (f.drop < 0.01 || py < f.top || py >= f.foot) continue;
+      var snap = function (v) { return Math.round(v * 8) / 8; };
+      return { x: x, y: y, up: Math.max(0, snap((f.foot - py) / s - hT / 2)), dx: snap(px / s - x - 0.5) };
+    }
+    return null;
+  };
+  /** The cliff thing drawn under the pointer (the last placed wins: it is drawn on top), or null. */
+  E.cliffEntAt = function (ev) {
+    if (!raisedView()) return null;
+    var r = canvas.getBoundingClientRect(), s = cellSize(), m = E.map(), px = ev.clientX - r.left - E.view.x, py = ev.clientY - r.top - E.view.y;
+    for (var i = m.entities.length - 1; i >= 0; i--) {
+      var e = m.entities[i], o = e.ref && E.content.objects[e.ref]; if (!isCliffObj(o)) continue;
+      var q = Render.cliffRect(m, o, e, 0, 0, s, 0);
+      if (q && px >= q.x && px < q.x + q.w && py >= q.y && py < q.y + q.h) return e;
+    }
+    return null;
+  };
+  function placeCliffObject(spot, ref) {
+    if (!spot || !ref) return false;
+    var m = E.map(), d = {};
+    if (spot.up) d.up = spot.up; if (spot.dx) d.dx = spot.dx;
+    m.entities.push({ key: E.newKey(m), x: spot.x, y: spot.y, ref: ref, data: d });
+    return true;
+  }
+  function removeEntity(e) {
+    var m = E.map(), i = m.entities.indexOf(e); if (i < 0) return false;
+    m.entities.splice(i, 1); if (E.selected === e.key) E.selected = null; return true;
+  }
   // ---- wall-mounted objects (object defs with properties.layer === 'wall') ----
   // The current object brush, if it is a wall-mount object; else null.
   E.wallMountBrush = function () {
@@ -471,7 +550,7 @@ var E = {
   // map). ev = pointer event.
   E.mountCellAt = function (ev) {
     var r = canvas.getBoundingClientRect(), s = cellSize(), m = E.map();
-    var fx = (ev.clientX - r.left - E.view.x) / s, fy = (ev.clientY - r.top - E.view.y) / s;
+    var pt = mapPt(ev), fx = pt.fx, fy = pt.fy;
     var hC = { x: Math.floor(fx), y: Math.round(fy), side: 'N' };       // nearest E-W line; the cell south of it
     var vC = { x: Math.round(fx), y: Math.floor(fy), side: 'W' };       // nearest N-S line; the cell east of it
     function ok(c) { return c.x >= 0 && c.x < m.width && c.y >= 0 && c.y < m.height; }
@@ -556,7 +635,7 @@ var E = {
   // 'cursor' mode the same side): the cursor only chooses how far along that line. lock = the stroke's first edge.
   E.edgeOnLine = function (ev, lock) {
     var r = canvas.getBoundingClientRect(), s = cellSize(), m = E.map();
-    var fx = (ev.clientX - r.left - E.view.x) / s, fy = (ev.clientY - r.top - E.view.y) / s;
+    var pt = mapPt(ev), fx = pt.fx, fy = pt.fy;
     if (lock.orient === 'h') return { orient: 'h', x: Math.max(0, Math.min(m.width - 1, Math.floor(fx))), y: lock.y, side: lock.side };
     return { orient: 'v', x: lock.x, y: Math.max(0, Math.min(m.height - 1, Math.floor(fy))), side: lock.side };
   };
@@ -592,7 +671,7 @@ var E = {
     if (E.layer === 'spawn') return setSpawn(x, y);
     if (E.layer === 'roof') return setRoof(x, y, '1');
     if (E.layer === 'nobuild') return setNoBuild(x, y, '1');
-    if (E.layer === 'height') return setElev(x, y, elevToken());
+    if (E.layer === 'height') return fallMode() ? setFall(x, y, fallToken()) : setElev(x, y, elevToken());
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
     if (E.paletteTab === 'monsters') return placeMonster(x, y, E.brush.monster);
     if (E.paletteTab === 'items') return placeItem(x, y, E.brush.item);
@@ -646,7 +725,7 @@ var E = {
     if (E.layer === 'spawn') return setSpawn(x, y);
     if (E.layer === 'roof') return floodRoof(x, y);
     if (E.layer === 'nobuild') return setNoBuild(x, y, '1');
-    if (E.layer === 'height') return setElev(x, y, elevToken());
+    if (E.layer === 'height') return fallMode() ? setFall(x, y, fallToken()) : setElev(x, y, elevToken());
     if (E.layer === 'objects') return rect({ x: x, y: y }, { x: x, y: y }, paint);
     var cells = E.cells();
     var from = cells[y][x], to = (E.tool === 'erase' && E.terrainLayer === 'overlay') ? '' : E.brush.terrain;
@@ -807,6 +886,7 @@ var E = {
     if (m.roof && m.roof.length) m.roof = resizeWalls(m.roof, h, w);
     if (m.nobuild && m.nobuild.length) m.nobuild = resizeWalls(m.nobuild, h, w);
     if (m.elev && m.elev.length) m.elev = resizeWalls(m.elev, h, w);
+    if (m.falls && m.falls.length) m.falls = resizeWalls(m.falls, h, w);
     m.width = w; m.height = h;
     m.entities = m.entities.filter(function (e) { return e.x < w && e.y < h; });
     ['shapes', 'overlayShapes'].forEach(function (k) {         // drop frozen shapes outside the new bounds
@@ -872,14 +952,30 @@ var E = {
 
   function frame() {
     requestAnimationFrame(frame);
+    var nowF = performance.now();
+    if (E.animates && E.show.animate && nowF - (E.lastAnim || 0) > 100) E.needsDraw = true;      // water, lava and waterfalls keep moving
     if (!E.needsDraw || !E.content) return;
-    E.needsDraw = false;
+    E.needsDraw = false; E.lastAnim = nowF;
+    var animT = E.show.animate ? nowF : 0;                                     // still pictures unless Animate is on
     var wrap = canvas.parentElement;
     if (canvas.width !== wrap.clientWidth || canvas.height !== wrap.clientHeight) {
       canvas.width = wrap.clientWidth; canvas.height = wrap.clientHeight;
     }
     var m = E.map(), c = E.content, t = T(), s = cellSize(), vx = E.view.x, vy = E.view.y;
-    if (E.groundDirty) { E.ground = Render.bakeGround(c, m); E.moving = Render.animatedCells ? Render.animatedCells(c, m) : []; E.groundDirty = false; }
+    // Raised view: ground with height is drawn as the game draws it, each tile lifted by its height with its cliff
+    // face under it, and everything that stands on it lifted the same (LF). Off (H), the map is flat, with relief.
+    var up = raisedView();
+    if (E.groundDirty || E.groundUp !== up) {
+      E.ground = Render.bakeGround(c, m, up); E.groundUp = up; E.groundDirty = false;
+      E.moving = Render.animatedCells ? Render.animatedCells(c, m) : [];
+      E.fallList = Render.fallCells ? Render.fallCells(c, m) : [];
+      E.animates = !!(E.moving.length || E.fallList.length);
+    }
+    function LF(x, y) { return up ? Render.liftAt(m, Math.max(0, Math.min(m.width - 1, x)), Math.max(0, Math.min(m.height - 1, y)), s) : 0; }
+    function cy(x, y) { return vy + y * s - LF(x, y); }                       // where a tile's top edge is drawn
+    var hovY = E.hover ? cy(E.hover.x, E.hover.y) : 0, hovVy = E.hover ? vy - LF(E.hover.x, E.hover.y) : vy;
+    var cx0 = Math.max(0, Math.floor(-vx / s) - 1), cx1 = Math.min(m.width - 1, Math.ceil((canvas.width - vx) / s) + 1);
+    var cy0 = Math.max(0, Math.floor(-vy / s) - 1), cy1 = Math.min(m.height - 1, Math.ceil((canvas.height - vy) / s) + 1 + (up ? Render.maxElev(m) : 0));
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#101216'; g.fillRect(0, 0, canvas.width, canvas.height);
     g.fillStyle = '#1b1e25'; g.fillRect(vx - 1, vy - 1, m.width * s + 2, m.height * s + 2);
@@ -898,8 +994,19 @@ var E = {
       g.globalAlpha = 0.35; if (Render.wall25) Render.wall25(c, under).forEach(function (p) { Render.drawPrim25(g, c, p, vx, uy, s); });
       g.globalAlpha = 1;
     }
-    if (E.show.terrain) g.drawImage(E.ground, vx, vy, m.width * s, m.height * s);
-    if (E.show.terrain && E.moving && E.moving.length) Render.drawAnimated(g, c, E.moving, vx, vy, s, performance.now());   // water, lava… move here as in the game
+    var gpad = (E.ground.pad || 0) * s / t;                                    // (a raised bake has room on top for the lift)
+    if (E.show.terrain) g.drawImage(E.ground, vx, vy - gpad, m.width * s, m.height * s + gpad);
+    if (E.show.terrain && E.moving && E.moving.length) Render.drawAnimated(g, c, E.moving, vx, vy, s, animT, null, null, null, null, up ? LF : null);   // water, lava… move here as in the game
+    if (E.show.terrain && up && E.fallList && E.fallList.length) Render.drawFalls(g, c, m, E.fallList, vx, vy, s, animT);
+    if (E.show.objects && up) {                                               // what hangs on the cliff faces
+      g.globalAlpha = E.layer === 'terrain' && E.tool !== 'select' ? 0.55 : 1;
+      Render.drawCliffThings(g, c, m, vx, vy, s, animT);
+      g.globalAlpha = 1;
+      var cbr = E.cliffBrush();
+      if (cbr && E.cliffHover && !E.mode && E.tool !== 'erase' && E.tool !== 'select') {
+        g.globalAlpha = 0.55; Render.drawCliffThing(g, m, cbr, { x: E.cliffHover.x, y: E.cliffHover.y, data: { up: E.cliffHover.up, dx: E.cliffHover.dx } }, vx, vy, s, 0); g.globalAlpha = 1;
+      }
+    }
 
     // Objects and 2.5D edge walls share ONE back-to-front pass (by south edge), exactly as the game draws
     // them, so a thing north of a wall is hidden behind it and one south of it sits in front — live, as you
@@ -909,11 +1016,12 @@ var E = {
     var items = [];
     if (E.show.objects) m.entities.forEach(function (e) {
       var eo = c.objects[e.ref];
+      if (up && isCliffObj(eo)) return;                                      // on a cliff face: drawn with the ground (flat view: on its tile, like any object)
       if (eo && Render.wallMountPlace && Render.layerOf(eo) === 'wall') {              // hung on a wall edge
         var mp = Render.wallMountPlace(m, eo, e, vx, vy, s);                           // screen position (with view offset)
         var ms = Render.wallMountPlace(m, eo, e, 0, 0, s);                             // sort key in the no-offset space the other items use
-        items.push({ sortY: ms.sortY, ent: e, o: eo, dx: mp.dx, dy: mp.dy, flip: mp.flip });
-      } else items.push({ sortY: Math.round(e.y * s) + s, ent: e, o: eo, dx: vx + e.x * s, dy: vy + e.y * s, face: eo && e.data && e.data.facing ? Rules.facingSprite(eo, e) : null });
+        items.push({ sortY: ms.sortY, ent: e, o: eo, dx: mp.dx, dy: mp.dy - LF(e.x, e.y), flip: mp.flip });
+      } else items.push({ sortY: Math.round(e.y * s) + s, ent: e, o: eo, dx: vx + e.x * s, dy: cy(e.x, e.y), face: eo && e.data && e.data.facing ? Rules.facingSprite(eo, e) : null });
     });
     if (Render.wall25) Render.wall25(c, m).forEach(function (p) {
       var isCap = p.kind === 'hcap' || p.kind === 'vcap';
@@ -921,22 +1029,22 @@ var E = {
     });
     items.sort(function (a, b) { return a.sortY - b.sortY; });
     items.forEach(function (it) {
-      if (it.prim) { g.globalAlpha = wallAlpha; Render.drawPrim25(g, c, it.prim, vx, vy, s); g.globalAlpha = 1; return; }
+      if (it.prim) { g.globalAlpha = wallAlpha; Render.drawPrim25(g, c, it.prim, vx, vy - LF(it.prim.x, it.prim.y), s); g.globalAlpha = 1; return; }
       g.globalAlpha = objDim;
-      var e = it.ent, o = it.o;
+      var e = it.ent, o = it.o, vyE = vy - LF(e.x, e.y);
       if (!o) g.drawImage(Assets.placeholder('?', '#a33', t), it.dx, it.dy, s, s);
-      else if (o.kind === 'stairs') { Render.drawStairs(g, c, o, e, vx, vy, s, 0); stairArrow(e, o, vx, vy, s); }
+      else if (o.kind === 'stairs') { Render.drawStairs(g, c, o, e, vx, vyE, s, 0); stairArrow(e, o, vx, vyE, s); }
       else if (o.kind === 'spawn' && !o.sprite) drawSpawn(e, o, it.dx, it.dy, s);   // spriteless: editor-only marker
       else {
         var sde = Render.sideDoorEdges ? Render.sideDoorEdges(o, e) : [];
-        if (sde.length && sde.every(function (q) { return Render.drawDoorstep(g, m, o, e.data && e.data.state === 'open', vx, vy, q.x, q.y, s); })) { g.globalAlpha = 1; return; }
+        if (sde.length && sde.every(function (q) { return Render.drawDoorstep(g, m, o, e.data && e.data.state === 'open', vx, vyE, q.x, q.y, s); })) { g.globalAlpha = 1; return; }
         var path = (e.data && e.data.state && o.spriteStates[e.data.state]) || (it.face ? it.face.path : o.sprite);
         if (!(e.data && e.data.state && o.spriteStates[e.data.state]) && !it.face) path = Rules.lookSprite(o, e) || path;   // one of its other looks
         if (o.id === '_drop') { var lying = World.list((e.data || {}).pickup)[0], lit = lying && c.items[lying.item]; path = (lit && lit.sprite) || '#built'; }   // an item on the ground: its own picture
         var flp = it.flip || !!(it.face && it.face.flip);                    // turned objects show the way they face
         Render.drawObject(g, o, path, it.dx, it.dy, s, 'base', 0, flp);
         Render.drawObject(g, o, path, it.dx, it.dy, s, 'top', 0, flp);   // overflow (no-op when the sprite is one tile)
-        if (o.kind === 'spawn') drawSpawnBadge(e, o, vx + e.x * s, vy + e.y * s, s);   // a sprited spawner (nest…): show what it spawns
+        if (o.kind === 'spawn') drawSpawnBadge(e, o, vx + e.x * s, cy(e.x, e.y), s);   // a sprited spawner (nest…): show what it spawns
       }
       g.globalAlpha = 1;
     });
@@ -946,19 +1054,47 @@ var E = {
     if (m.roof && m.roof.length && E.layer === 'roof') {              // only while the Roof tab is active; otherwise the cover is fully transparent
       g.fillStyle = 'rgba(66,105,200,0.5)';
       for (var ry = 0; ry < m.height; ry++) { var rrow = m.roof[ry] || [];
-        for (var rx = 0; rx < m.width; rx++) if (rrow[rx]) g.fillRect(vx + rx * s, vy + ry * s, s, s); }
+        for (var rx = 0; rx < m.width; rx++) if (rrow[rx]) g.fillRect(vx + rx * s, cy(rx, ry), s, s); }
     }
 
     // ground height: relief as the game shows it, with the numbers while the Height tab is active
-    if (m.elev && m.elev.length && Render.drawRelief) Render.drawRelief(g, m, vx, vy, s, null, null, null, null, E.layer === 'height');
+    if (!up && m.elev && m.elev.length && Render.drawRelief) Render.drawRelief(g, m, vx, vy, s, null, null, null, null, E.layer === 'height');
+    if (E.layer === 'height') {
+      var hx, hy;
+      if (up) {                                                            // raised: the height written on each raised tile
+        g.font = 'bold ' + Math.max(9, Math.round(s * 0.34)) + 'px sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top';
+        for (hy = cy0; hy <= cy1; hy++) for (hx = cx0; hx <= cx1; hx++) {
+          var eh = Rules.heightAt(m, hx, hy), er = Rules.rampAt(m, hx, hy); if (!eh && !er) continue;
+          var lab = String(eh) + (er ? { N: '▲', E: '▶', S: '▼', W: '◀' }[er] : '');
+          g.fillStyle = 'rgba(0,0,0,.6)'; g.fillText(lab, vx + hx * s + 3, cy(hx, hy) + 2);
+          g.fillStyle = 'rgba(255,255,255,.95)'; g.fillText(lab, vx + hx * s + 2, cy(hx, hy) + 1);
+        }
+        g.textBaseline = 'alphabetic';
+      }
+      // waterfalls: on the flat map a blue band along the edge the water falls from (raised, the fall itself shows);
+      // a ring on the ones put by hand, a cross where one is forbidden, a grey W on a mark with no cliff under it.
+      var bw = Math.max(3, Math.round(s * 0.22)), seenF = {};
+      (E.fallList || []).forEach(function (f) {
+        seenF[f.x + ',' + f.y] = 1;
+        if (!up) { g.fillStyle = 'rgba(70,170,255,.85)'; g.fillRect(vx + f.x * s, vy + (f.y + 1) * s - bw, s, bw); }
+        if (f.hand) { g.strokeStyle = '#7fd0ff'; g.lineWidth = 2; g.strokeRect(vx + f.x * s + 2, cy(f.x, f.y) + 2, s - 4, s - 4); }
+      });
+      if (m.falls && m.falls.length) for (hy = cy0; hy <= cy1; hy++) for (hx = cx0; hx <= cx1; hx++) {
+        var fm = m.falls[hy] && m.falls[hy][hx]; if (!fm) continue;
+        var fX = vx + hx * s, fY = cy(hx, hy);
+        if (fm === '0') { g.strokeStyle = '#ff7a6a'; g.lineWidth = 2; g.beginPath(); g.moveTo(fX + s * 0.25, fY + s * 0.25); g.lineTo(fX + s * 0.75, fY + s * 0.75); g.moveTo(fX + s * 0.75, fY + s * 0.25); g.lineTo(fX + s * 0.25, fY + s * 0.75); g.stroke(); }
+        else if (!seenF[hx + ',' + hy]) { g.fillStyle = 'rgba(200,200,200,.8)'; g.font = 'bold ' + Math.max(9, Math.round(s * 0.4)) + 'px sans-serif'; g.textAlign = 'center'; g.fillText('W', fX + s / 2, fY + s * 0.65); g.textAlign = 'left'; }
+      }
+      g.lineWidth = 1;
+    }
 
     // no-build tiles (authoring aid): a red hatch, shown while the No-build tab is active
     if (m.nobuild && m.nobuild.length && E.layer === 'nobuild') {
       g.fillStyle = 'rgba(220,70,60,0.35)'; g.strokeStyle = 'rgba(255,120,110,0.9)'; g.lineWidth = 1;
       for (var ny = 0; ny < m.height; ny++) { var nrow = m.nobuild[ny] || [];
         for (var nx = 0; nx < m.width; nx++) if (nrow[nx]) {
-          g.fillRect(vx + nx * s, vy + ny * s, s, s);
-          g.beginPath(); g.moveTo(vx + nx * s, vy + (ny + 1) * s); g.lineTo(vx + (nx + 1) * s, vy + ny * s); g.stroke();
+          g.fillRect(vx + nx * s, cy(nx, ny), s, s);
+          g.beginPath(); g.moveTo(vx + nx * s, cy(nx, ny) + s); g.lineTo(vx + (nx + 1) * s, cy(nx, ny)); g.stroke();
         } }
     }
 
@@ -966,7 +1102,7 @@ var E = {
     // so the start point shows from any tab; brighter while the Start tab is active.
     if (m.spawn) {
       var spActive = E.layer === 'spawn';
-      var cxp = vx + m.spawn.x * s + s / 2, cyp = vy + m.spawn.y * s + s / 2, rad = Math.max(4, s * 0.3);
+      var cxp = vx + m.spawn.x * s + s / 2, cyp = cy(m.spawn.x, m.spawn.y) + s / 2, rad = Math.max(4, s * 0.3);
       g.globalAlpha = spActive ? 1 : 0.65; g.fillStyle = '#3fd27a'; g.strokeStyle = '#0b3b22'; g.lineWidth = 2;
       g.beginPath(); g.arc(cxp, cyp, rad, 0, Math.PI * 2); g.fill(); g.stroke();
       var fd = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] }[(m.spawn.facing || 'S')] || [0, 1];
@@ -977,7 +1113,10 @@ var E = {
       g.globalAlpha = 1;
     }
 
-    if (E.show.grid && s >= 8) {
+    if (E.show.grid && s >= 8 && up) {                                     // raised: each tile's own outline, where it is drawn
+      g.strokeStyle = 'rgba(255,255,255,.12)'; g.lineWidth = 1;
+      for (var gy = cy0; gy <= cy1; gy++) for (var gx = cx0; gx <= cx1; gx++) g.strokeRect(vx + gx * s + .5, cy(gx, gy) + .5, s, s);
+    } else if (E.show.grid && s >= 8) {
       g.strokeStyle = 'rgba(255,255,255,.12)'; g.lineWidth = 1; g.beginPath();
       for (var x = 0; x <= m.width; x++) { g.moveTo(vx + x * s + .5, vy); g.lineTo(vx + x * s + .5, vy + m.height * s); }
       for (var y = 0; y <= m.height; y++) { g.moveTo(vx, vy + y * s + .5); g.lineTo(vx + m.width * s, vy + y * s + .5); }
@@ -989,12 +1128,13 @@ var E = {
       var he = E.hoverEdge, ws = c.wallStyles && c.wallStyles[E.brush.wall];
       g.strokeStyle = E.tool === 'erase' ? '#ff7a6a' : (ws && ws.color) || '#6fe08a';
       g.lineWidth = Math.max(3, Math.round(s * 0.18)); g.lineCap = 'round'; g.beginPath();
-      if (he.orient === 'h') { g.moveTo(vx + he.x * s, vy + he.y * s); g.lineTo(vx + (he.x + 1) * s, vy + he.y * s); }
+      var hvy = vy - LF(he.orient === 'v' && he.side === 'l' ? he.x - 1 : he.x, he.orient === 'h' && he.side === 'n' ? he.y - 1 : he.y);   // (lifted with the tile the cursor is on)
+      if (he.orient === 'h') { g.moveTo(vx + he.x * s, hvy + he.y * s); g.lineTo(vx + (he.x + 1) * s, hvy + he.y * s); }
       else {
         // In 'cursor' mode nudge the preview onto the tile the wall will occupy, matching the render offset.
         var hd = Math.round(Math.max(4, Math.round(s * 0.32)) / 2);
         var off = E.wallSide === 'cursor' && he.side === 'r' ? hd : E.wallSide === 'cursor' && he.side === 'l' ? -hd : 0;
-        g.moveTo(vx + he.x * s + off, vy + he.y * s); g.lineTo(vx + he.x * s + off, vy + (he.y + 1) * s);
+        g.moveTo(vx + he.x * s + off, hvy + he.y * s); g.lineTo(vx + he.x * s + off, hvy + (he.y + 1) * s);
       }
       g.stroke(); g.lineWidth = 1; g.lineCap = 'butt';
     }
@@ -1002,9 +1142,9 @@ var E = {
     // objects layer, wall-mount brush: ghost the object on the south-facing wall + highlight that wall line
     var wmb = E.wallMountBrush();
     if (wmb && E.mountHover && !E.mode && (E.tool === 'brush' || E.tool === 'erase')) {
-      var mc = E.mountHover;
+      var mc = E.mountHover, mvy = vy - LF(mc.x, mc.y);
       if (E.tool !== 'erase') {
-        var gp = Render.wallMountPlace(m, wmb, { x: mc.x, y: mc.y, data: { side: mc.side || 'N' } }, vx, vy, s);
+        var gp = Render.wallMountPlace(m, wmb, { x: mc.x, y: mc.y, data: { side: mc.side || 'N' } }, vx, mvy, s);
         g.globalAlpha = 0.5;
         Render.drawObject(g, wmb, wmb.sprite, gp.dx, gp.dy, s, 'base', 0, gp.flip);
         Render.drawObject(g, wmb, wmb.sprite, gp.dx, gp.dy, s, 'top', 0, gp.flip);
@@ -1012,8 +1152,8 @@ var E = {
       }
       g.strokeStyle = E.tool === 'erase' ? '#ff7a6a' : '#ffd27a';
       g.lineWidth = Math.max(3, Math.round(s * 0.18)); g.lineCap = 'round'; g.beginPath();
-      g.moveTo(vx + mc.x * s, vy + mc.y * s);                                                  // the cell's north wall line, or its west one
-      if (mc.side === 'W') g.lineTo(vx + mc.x * s, vy + (mc.y + 1) * s); else g.lineTo(vx + (mc.x + 1) * s, vy + mc.y * s);
+      g.moveTo(vx + mc.x * s, mvy + mc.y * s);                                                  // the cell's north wall line, or its west one
+      if (mc.side === 'W') g.lineTo(vx + mc.x * s, mvy + (mc.y + 1) * s); else g.lineTo(vx + (mc.x + 1) * s, mvy + mc.y * s);
       g.stroke(); g.lineWidth = 1; g.lineCap = 'butt';
     }
 
@@ -1023,10 +1163,13 @@ var E = {
       Panels.links(sel).forEach(function (l) {
         if (l.map !== m.id) return;
         g.strokeStyle = '#f2c14e'; g.setLineDash([5, 4]); g.lineWidth = 2; g.beginPath();
-        g.moveTo(vx + (sel.x + .5) * s, vy + (sel.y + .5) * s); g.lineTo(vx + (l.x + .5) * s, vy + (l.y + .5) * s); g.stroke();
-        g.setLineDash([]); g.strokeRect(vx + l.x * s + 3, vy + l.y * s + 3, s - 6, s - 6);
+        g.moveTo(vx + (sel.x + .5) * s, cy(sel.x, sel.y) + .5 * s); g.lineTo(vx + (l.x + .5) * s, cy(l.x, l.y) + .5 * s); g.stroke();
+        g.setLineDash([]); g.strokeRect(vx + l.x * s + 3, cy(l.x, l.y) + 3, s - 6, s - 6);
       });
-      g.strokeStyle = '#4ea1ff'; g.lineWidth = 2; g.strokeRect(vx + sel.x * s + 1, vy + sel.y * s + 1, s - 2, s - 2);
+      g.strokeStyle = '#4ea1ff'; g.lineWidth = 2;
+      var selR = up && isCliffObj(c.objects[sel.ref]) ? Render.cliffRect(m, c.objects[sel.ref], sel, vx, vy, s, 0) : null;
+      if (selR) g.strokeRect(selR.x - 1, selR.y - 1, selR.w + 2, selR.h + 2);                // on a cliff face: round its picture
+      else g.strokeRect(vx + sel.x * s + 1, cy(sel.x, sel.y) + 1, s - 2, s - 2);
     }
 
     // pick modes: highlight what can be clicked
@@ -1035,7 +1178,7 @@ var E = {
       m.entities.forEach(function (e) {
         var on = E.mode.keys.indexOf(e.key) >= 0;
         g.strokeStyle = on ? '#f2c14e' : 'rgba(242,193,78,.35)';
-        g.strokeRect(vx + e.x * s + 2, vy + e.y * s + 2, s - 4, s - 4);
+        g.strokeRect(vx + e.x * s + 2, cy(e.x, e.y) + 2, s - 4, s - 4);
       });
     }
 
@@ -1045,29 +1188,32 @@ var E = {
       g.strokeStyle = erasing ? '#ff7a6a' : copy ? '#f2c14e' : '#4ea1ff'; g.lineWidth = 1;
       var rx = vx + Math.min(a.x, b.x) * s, ry = vy + Math.min(a.y, b.y) * s;
       var rw = (Math.abs(a.x - b.x) + 1) * s, rh = (Math.abs(a.y - b.y) + 1) * s;
-      g.fillRect(rx, ry, rw, rh); g.strokeRect(rx + .5, ry + .5, rw - 1, rh - 1);
+      if (up) {                                                            // raised: tile by tile, each where it is drawn
+        for (var qy = Math.max(0, Math.min(a.y, b.y)); qy <= Math.min(m.height - 1, Math.max(a.y, b.y)); qy++)
+          for (var qx = Math.max(0, Math.min(a.x, b.x)); qx <= Math.min(m.width - 1, Math.max(a.x, b.x)); qx++) { g.fillRect(vx + qx * s, cy(qx, qy), s, s); g.strokeRect(vx + qx * s + .5, cy(qx, qy) + .5, s - 1, s - 1); }
+      } else { g.fillRect(rx, ry, rw, rh); g.strokeRect(rx + .5, ry + .5, rw - 1, rh - 1); }
     } else if (E.stamp && E.layer === 'terrain' && E.hover && E.inside(E.hover.x, E.hover.y)) {
       g.strokeStyle = '#f2c14e'; g.lineWidth = 1;                       // paste footprint of the clipboard
-      g.strokeRect(vx + E.hover.x * s + .5, vy + E.hover.y * s + .5, E.stamp.w * s - 1, E.stamp.h * s - 1);
+      g.strokeRect(vx + E.hover.x * s + .5, hovY + .5, E.stamp.w * s - 1, E.stamp.h * s - 1);
     } else if (E.hover && E.inside(E.hover.x, E.hover.y)) {
       g.strokeStyle = E.mode ? '#f2c14e' : 'rgba(255,255,255,.8)'; g.lineWidth = 1;
-      g.strokeRect(vx + E.hover.x * s + .5, vy + E.hover.y * s + .5, s - 1, s - 1);
+      g.strokeRect(vx + E.hover.x * s + .5, hovY + .5, s - 1, s - 1);
       if (!E.mode && (E.tool === 'brush' || E.tool === 'rect')) {     // ghost of what will be painted
         g.globalAlpha = .5;
         if (E.layer === 'objects' && E.paletteTab === 'monsters' && E.brush.monster) {
           var bm = c.monsters[E.brush.monster], bmi = bm && Assets.get(bm.sprite);
-          if (bmi) g.drawImage(bmi, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
+          if (bmi) g.drawImage(bmi, vx + E.hover.x * s, hovY, s, s);
         } else if (E.layer === 'objects' && E.paletteTab === 'items') {
           var bit = c.items[E.brush.item], biti = bit && bit.sprite && Assets.get(bit.sprite);
-          if (biti) g.drawImage(biti, vx + E.hover.x * s, vy + E.hover.y * s, s, s);
+          if (biti) g.drawImage(biti, vx + E.hover.x * s, hovY, s, s);
         } else if (E.layer === 'objects' && E.brush.object) {
           var bo = c.objects[E.brush.object], bfs = bo && Rules.turnable(bo) ? Rules.facingSprite(bo, E.brushFacing) : null;
-          if (bo && bo.kind === 'stairs') { var ge = { x: E.hover.x, y: E.hover.y, data: { facing: E.brushFacing } }; Render.drawStairs(g, c, bo, ge, vx, vy, s, 0); g.globalAlpha = 1; stairArrow(ge, bo, vx, vy, s); bo = null; }
-          var bi = bo && Assets.get(bfs ? bfs.path : (Rules.lookSprite(bo, E.brushLook) || bo.sprite)), bgx = vx + E.hover.x * s, bgy = vy + E.hover.y * s;
+          if (bo && bo.kind === 'stairs') { var ge = { x: E.hover.x, y: E.hover.y, data: { facing: E.brushFacing } }; Render.drawStairs(g, c, bo, ge, vx, hovVy, s, 0); g.globalAlpha = 1; stairArrow(ge, bo, vx, hovVy, s); bo = null; }
+          var bi = bo && Assets.get(bfs ? bfs.path : (Rules.lookSprite(bo, E.brushLook) || bo.sprite)), bgx = vx + E.hover.x * s, bgy = hovY;
           if (bi && bfs && bfs.flip) { g.save(); g.translate(bgx + s, bgy); g.scale(-1, 1); g.drawImage(bi, 0, 0, s, s); g.restore(); }
           else if (bi) g.drawImage(bi, bgx, bgy, s, s);
         } else if (E.layer === 'terrain') {
-          var tt = c.terrain[E.brush.terrain], gx = vx + E.hover.x * s, gy = vy + E.hover.y * s, gts, gimg;
+          var tt = c.terrain[E.brush.terrain], gx = vx + E.hover.x * s, gy = hovY, gts, gimg;
           if (tt && tt.autotile && (gts = c.tilesets[tt.autotile]) && (gimg = Assets.get(gts.image))) {
             var full = (c.autotile[gts.layout] || {})[255], gn = (full ? full[0] : 1) - 1, gc = gts.columns || 8, gz = gts.tileSize || 32;
             g.drawImage(gimg, (gn % gc) * gz, Math.floor(gn / gc) * gz, gz, gz, gx, gy, s, s);
@@ -1113,10 +1259,18 @@ var E = {
   }
 
   // ------------------------------------------------------------ input
-  function cellAt(ev) {
-    var r = canvas.getBoundingClientRect(), s = cellSize();
-    return { x: Math.floor((ev.clientX - r.left - E.view.x) / s), y: Math.floor((ev.clientY - r.top - E.view.y) / s) };
+  /** Is the open map drawn with its ground raised (the Raised view, on a map that has height)? */
+  function raisedView() { var m = E.map(); return !!(E.show.raised !== false && m && Render.elevOn && Render.elevOn(m)); }
+  /** Where on the map the pointer is, in tiles with fractions. On raised ground that is the tile DRAWN under it. */
+  function mapPt(ev) {
+    var r = canvas.getBoundingClientRect(), s = cellSize(), px = ev.clientX - r.left - E.view.x, py = ev.clientY - r.top - E.view.y;
+    if (!raisedView()) return { fx: px / s, fy: py / s };
+    var m = E.map(), cell = Render.pickCells(m, px, py, s)[0];
+    if (!cell || cell.x < 0 || cell.y < 0 || cell.x >= m.width || cell.y >= m.height) return { fx: px / s, fy: py / s };
+    var fy = (py + Render.liftAt(m, cell.x, cell.y, s)) / s;
+    return { fx: px / s, fy: Math.max(cell.y, Math.min(cell.y + 0.999, fy)) };
   }
+  function cellAt(ev) { var pt = mapPt(ev); return { x: Math.floor(pt.fx), y: Math.floor(pt.fy) }; }
 
   E.setTool = function (t) {
     E.tool = t;   // erase works on whatever layer is active: base or overlay terrain, or objects
@@ -1161,13 +1315,22 @@ var E = {
     }
 
     if (E.tool === 'select') {
-      var e = E.inside(cell.x, cell.y) && E.entityAt(cell.x, cell.y);
+      var e = E.cliffEntAt(ev) || (E.inside(cell.x, cell.y) && E.entityAt(cell.x, cell.y));   // (what hangs on a cliff face is picked by its picture)
       E.selected = e ? e.key : null;
       Panels.inspector(cell);
       if (e) drag = { kind: 'move', key: e.key, from: cell, moved: false };
       E.redraw(); return;
     }
     if (E.tool === 'pick') { eyedrop(cell.x, cell.y); return; }
+    if (E.layer === 'objects' && E.tool === 'erase' && E.cliffEntAt(ev)) {     // erasing on a cliff face: the thing under the pointer, one per click
+      E.checkpoint(); removeEntity(E.cliffEntAt(ev)); E.markDirty('map', true); Panels.inspector(); return;
+    }
+    if (E.cliffBrush() && E.tool !== 'erase') {                                // things for cliff faces go on a face, anywhere on it, as many as you like
+      if (!raisedView()) { Panels.status('this goes on a cliff face: turn on Raised (H) to see the cliffs', true); return; }
+      var cspot = E.cliffSpotAt(ev, E.cliffBrush());
+      if (!cspot) { Panels.status('this goes on a cliff face: click on the face of raised ground', true); return; }
+      E.checkpoint(); placeCliffObject(cspot, E.brush.object); E.markDirty('map', true); return;
+    }
     if (E.wallMountBrush() && (E.tool === 'brush' || E.tool === 'erase')) {   // snap wall-mount objects to the south-facing wall
       E.checkpoint();
       var wcell = E.mountCellAt(ev), wok = E.tool === 'erase' ? eraseWallObject(wcell) : placeWallObject(wcell, E.brush.object);
@@ -1194,6 +1357,8 @@ var E = {
     if (E.layer === 'walls') {   // track the nearest edge for the walls-layer highlight (and to paint while dragging)
       var ed = drag && drag.kind === 'wall' && drag.lock ? E.edgeOnLine(ev, drag.lock) : E.edgeAt(ev), he = E.hoverEdge;
       if (!he || !ed || he.orient !== ed.orient || he.x !== ed.x || he.y !== ed.y || he.side !== ed.side) { E.hoverEdge = ed; E.redraw(); }
+    } else if (E.cliffBrush()) {       // the ghost of a cliff thing follows the pointer over the faces
+      E.cliffHover = E.cliffSpotAt(ev, E.cliffBrush()); E.redraw();
     } else if (E.wallMountBrush()) {   // track the mount cell (south-facing wall) for the wall-mount ghost
       var mc = E.mountCellAt(ev), mh = E.mountHover;
       if (!mh || !mc || mh.x !== mc.x || mh.y !== mc.y || mh.side !== mc.side) { E.mountHover = mc; E.redraw(); }
@@ -1221,9 +1386,21 @@ var E = {
     } else if (drag.kind === 'rect' || drag.kind === 'copy') { drag.end = cell; E.redraw(); }
     else if (drag.kind === 'move') {
       var e = E.entityByKey(drag.key);
+      if (e && isCliffObj(E.content.objects[e.ref])) {                         // along the cliff faces, wherever the pointer goes
+        var cs = E.cliffSpotAt(ev, E.content.objects[e.ref]);
+        if (cs && (cs.x !== e.x || cs.y !== e.y || cs.up !== ((e.data || {}).up || 0) || cs.dx !== ((e.data || {}).dx || 0))) {
+          if (!drag.moved) { E.checkpoint(); drag.moved = true; }
+          e.x = cs.x; e.y = cs.y; e.data = e.data || {};
+          if (cs.up) e.data.up = cs.up; else delete e.data.up;
+          if (cs.dx) e.data.dx = cs.dx; else delete e.data.dx;
+          E.markDirty('map', true); Panels.inspector();
+        }
+        return;
+      }
       if (e && E.inside(cell.x, cell.y) && !E.entityAt(cell.x, cell.y)) {
         if (!drag.moved) { E.checkpoint(); drag.moved = true; }
-        e.x = cell.x; e.y = cell.y; E.markDirty('map'); Panels.inspector();
+        var eo = E.content.objects[e.ref], onGround = !!(eo && Render.layerOf && Render.layerOf(eo) === 'ground_decal');   // (a decal is part of the painted ground)
+        e.x = cell.x; e.y = cell.y; E.markDirty('map', !onGround); Panels.inspector();
       }
     }
   });
@@ -1238,7 +1415,7 @@ var E = {
   }
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
-  canvas.addEventListener('pointerleave', function () { E.hover = null; E.hoverEdge = null; E.mountHover = null; E.redraw(); });
+  canvas.addEventListener('pointerleave', function () { E.hover = null; E.hoverEdge = null; E.mountHover = null; E.cliffHover = null; E.redraw(); });
 
   // Turn a turnable object: the selected one if there is one, else the one about to be placed. dir 1 = clockwise.
   E.turn = function (dir) {
@@ -1298,6 +1475,7 @@ var E = {
     if (k === 't') { if (!E.turn(1)) Panels.status('nothing to turn: pick or select an object that has pictures for other directions', true); return; }
     if (KEYS[k]) { E.setTool(KEYS[k]); return; }
     if (k === 'g') { E.show.grid = !E.show.grid; Panels.toolbar(); E.redraw(); return; }
+    if (k === 'h') { E.show.raised = E.show.raised === false; Panels.toolbar(); E.redraw(); return; }
     if (k === '1') { E.setPaletteTab('terrain'); Panels.all(); E.redraw(); return; }
     if (k === '2') { E.setPaletteTab(E.paletteTab === 'monsters' ? 'monsters' : 'objects'); Panels.all(); E.redraw(); return; }
     if (k === '3') { E.setPaletteTab('monsters'); Panels.all(); E.redraw(); return; }

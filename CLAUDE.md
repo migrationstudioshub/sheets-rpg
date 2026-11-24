@@ -160,6 +160,20 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
 - **Waterfalls** (draw-only, `client/js/render.js`): water on raised ground falls down the cliff to its south. `Render.fallAt` is the one question (a terrain that is `water` or has a `fall` picture, unless Config `waterfalls` = off; the map's `falls` grid, painted on the editor's Height tab, forces `1` / a tint name or forbids `0`); `fallCells` + `drawFalls` draw the moving strip (default `art/tilesets/waterfall_anim.png`, 4 tiles per frame: single, left, middle, right) over the baked face. A new map grid must be added in `shared/content.js`, `editor/js/editor.js` (mapRows, snapshot, resize), `editor/js/store.js` and `functions/index.js` (both ways). The map editor draws ground raised like the game (`E.show.raised`, H; `mapPt` turns the pointer into the tile drawn under it).
 - **Things on cliff faces** (draw-only): an object with `properties.layer: 'cliff'` is placed on the south face of a raised tile (entity `x, y` = that tile; `data.up` tiles above the foot, `data.dx` sideways from the middle, `data.flip`); any number per face. `Render.cliffRect` is the one place that works out where it is drawn (game, editor ghost, editor picking). To the rules it is a walkable object on the tile above. Cliff face pictures: `<tileset>_face.png` = single, left, middle, right (+ an optional 5th = a second middle).
 - **Things that appear on the ground** (`World` `growStep`, called from `advance`): an object with `properties.drops` (+ `drop_s`, `drop_radius` 2, `drop_max` 3) and a terrain with `grows` (+ `grow_s` = seconds per item per 100 tiles, `grow_max` 2; base or overlay, wherever it is the ground you see) leave `_drop` pickups in the struct layer. `ms.growAt` is the map's clock; time away is caught up (Config `growth_catchup_s`). A round (Config `growth_round_s`) tries `GROW_TRIES` random sources of each kind, never all, and Config `ground_item_cap` bounds a map. `growSources` caches the sources on the authored map (`_grow`).
+- **Appearance sets** (paper-doll monsters): the `Appearances` tab (Content Studio → Appearances, `appearanceForm`) = an ordered
+  list of layers, bottom to top; each layer picks one sprite per spawn by weight (or none, its `empty` weight) and may have its
+  own pool of `tints`. Monsters `appearance` = one or more sets, `set` or `set:weight, set2:weight2`; `World.rollLook` picks a set
+  and rolls it once per spawn, the look is kept on the monster and sent as `look: [{path, tint}]`; the page draws it with the
+  player paper-doll code (`monsterLayers` in `main.js`, `client/js/tint.js`). Empty = the flat `sprite`. The Studio's sprite
+  pickers read `art/manifest.json` (a published page cannot list a folder): after adding art run
+  `node tools/build_art_manifest.js` and commit both. `tools/build_gamedata.py` (Sheets era) does not know this tab: the
+  offline seed `data/tables.json` is kept by hand.
+- **Art by file name** (no data needed): a tileset `<key>_auto.png` (`…_auto_anim.png` = animated) finds its base tile
+  `<key>.png`, its variety sheets (`scatter.json`), its cliff face `<key>_face.png` and, with a tint, its mask `….tint.png`;
+  a wall top `wall_<m>_top_auto.png` finds its face `wall_<m>_face.png` (`Scatter.tileInfo`). A tintable picture `foo.png`
+  has its mask `foo.tint.png` next to it. The art generators (Asset Studio, `/studio/`) are local only: they need Python and a
+  Gemini key in `tools/google_api_key.txt` (never committed), and run the vendored pipelines as subprocesses of
+  `tools/asset_server.py`. Not built: blocking a multi-tile object's whole footprint (the author paints the terrain impassable).
 - **Planned, not built:** mines (shared in the overworld, private in bases), digging, and terrain elevation (height per tile,
   drawn raised with cut-away) are designed in `docs/UNDERGROUND_AND_ELEVATION.md`. No voxels. Decide elevation before floors stage 3.
 - **Quests** (Nov 2026; design and what is still planned in `docs/QUESTS_INSTANCES_SERVER.md`): the `Quests` tab (Content
@@ -216,6 +230,14 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   unused hook for a hearing sense). The client decides all occlusion in `Render.makeSight`: roof grid = "indoors",
   unknown indoor cells get the roof, out-of-sight cells a fog veil, and `cutH` drops E-W walls to stubs. Config:
   `sight` on|off, `sight_radius`, `fog_alpha`, `wall_cut_radius`, `wall_cut_alpha`, `roof_color`.
+  **What the owner chose (17 Nov 2026, after asking to rethink walls from scratch; they like how Project Zomboid decides what
+  is visible):** walls in the player's way drop to low stubs, never see-through walls; on a stub, doors, windows and usable
+  things stay visible (faint) so they can be found, pure decoration drops; rooms already seen stay revealed but dimmed;
+  creatures show only in line of sight, outdoors too; walls keep an illusion of depth even if faked (the flat top-down style
+  was dropped). A hearing sense that outlines unseen creatures is wanted later (`sensed` is its hook). The owner values **one
+  consistent rule over many configurable special cases**: extend the single edge question and the single sight decision, do
+  not add a parallel mechanism. Put off, not rejected: cutting thin N-S walls, fixtures on a wall's north face, fog dimming
+  objects (only the ground is dimmed), remembering seen cells across a reload.
 
 **Important:** the owner now edits the live Game Data spreadsheet. `tools/build_gamedata.py` and `data/*.xlsx`
 only describe the *starting* data. **Never tell the owner to re-import GameData.xlsx** once they have made edits — it would
@@ -254,6 +276,18 @@ for offline mode by updating `build_gamedata.py` too.
 - **To see the live data:** `GET <FUNCTIONS_URL>?action=content` (built content) or `?action=records` / `?action=maps`
   (raw). The cloud sandbox can't reach Google hosts; fetch from the owner's built-in browser pane instead.
 - Explain things in plain terms; the owner reads summaries, not diffs. Test in a real browser before handing over.
+- **Commit and push only when the owner says so** (a commit request is not a push request). The owner is hands-on — runs git,
+  the Firebase CLI and deploys themselves — and **works in the repo in parallel**: files you did not touch may be changed or
+  uncommitted, so look at the working tree before any git step, never discard what you do not recognise, and say what in a
+  commit was not yours. `.claude/` (local settings, with machine paths) stays out of commits.
+- **Never write to the live game.** Reading live data (`GET ?action=content|records|maps`) is fine; publishing, deleting or
+  saving anything needs the owner and their editor key — do not handle the key, do not press Publish / Save in the Content
+  Studio or map editor, and do not create a character or act in the live (online) game. Browser checks use `?offline` or a
+  locally run host, with the page's storage writes blocked or every test draft removed afterwards (`sheetsrpg.*` keys).
+- The owner is **cost-conscious** (they watch the Firebase free-tier limits): answer cost questions with numbers and the metric
+  that matters, and keep anything per step from growing with the map. They like to **see how a big change feels** before
+  committing to it: a prototype or a measurement first, the live site kept safe meanwhile.
+- A new session knows only this file and the docs: when a design choice is agreed, write it here.
 
 ## Testing (in Claude's cloud workspace)
 - `node tools/test.js` (server, fake SpreadsheetApp/CacheService), `node tools/test_world.js` (game rules) and

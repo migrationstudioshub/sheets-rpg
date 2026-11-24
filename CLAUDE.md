@@ -97,6 +97,19 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
 - **Building:** the `Blueprints` tab (a wall style or an object, cost, work, tool). `World.canBuild` decides a spot (ghost and referee); built things live in the map's `struct` layer with keys `<map>.b<n>`; maps carry a `nobuild` grid (map editor, No-build tab). In game: B build, C craft. A N-S wall may carry a draw-only offset (`style:height:l|r`, the editor's cursor-side mode): `build` takes `off`, and `{type:'shift', target, off}` moves a built one; collision stays on the grid line. Holding the button keeps a wall stroke on its line (editor and game).
 - **Claims:** a built object of kind `claim` (`properties.claim_radius`) makes the land around it its builder's base; `World.mayUse` / `claimAt` (on a live map) gate building, built doors/crates/stations and damage for non-members. Members are added by name from the flag's panel. Config: `claim_max_per_player`, `claim_max_members`, `claim_open_land`, `pvp_structures` (on = raids).
 - **Crafting:** the `Recipes` tab (inputs → outputs, optional `station` and `tool`); a station is a kind-`craft` object with `properties.station`; items carry `tool` tags. `World.recipesFor` decides what can be made (panel and referee). Objects with `properties.harvest` yield items when broken and grow back.
+- **Cookers** (campfire, furnace): a kind-`craft` object with `properties.cooks` makes its station's recipes over time, with fuel
+  (Items `fuel_s`). It holds three runs of cells in one list — raw, fuel, cooked — `raw_slots` / `fuel_slots` / `out_slots` each
+  (20 when not said; `rec.lay` in `ms.cookers[key]`, an old three-cell record is re-laid when opened). It cooks ONLY its job, `rec.job = {id, n}`
+  (batches of one recipe, set by the Cook button — never what merely lies in the raw cells); `cookPick` says whether the job can go on
+  (every input in the raw cells, room for every output); `cookTick` counts the time. Actions: `inv` moves (a cell picks
+  the run), `store` ops `light` / `douse` / `load` (`recipe`, `qty`: sets or adds to the job, moves what is missing from the bag into
+  the raw cells, lights it if there is fuel) / `cancel`. Page: `cookWindow` in `main.js` (bag | recipes on a sheet of paper drawn in CSS, `.ck-paper` | the cells), drawn from `storage.cook`.
+- **What is worn:** an item's `slot` = `weapon` (in hand), `helm` (head), `armor` (chest), `pants`, `feet`, `gloves`, `back`
+  (`World.WORN_SLOTS`), or `accessory` — four at once, in `p.equipment.accessory1…4`. `World.wornAt` / `slotFor` are the only
+  two that know the accessory places; `use` takes `slot` (which place; a worn accessory dropped on another place moves).
+  Page: with no container open the inventory is `invWindow` in `main.js` — bag | hand recipes on the sheet (`recipeSheet`,
+  shared with the cooking window) | the worn slots as cells over a body picture (`BODY_CELLS`; `art/ui/body_male.png` /
+  `body_female.png`, picked by `me.body`; without the files the cells show alone).
 - **Item types:** the `ItemTypes` tab (Content Studio → Item Types) gives each type ticks (`equip` + default `slot`, `shoot`,
   `consume` + `cooldown_s`, `throw`; `ammo`/`tool` only pick which item fields the form shows) and its own `properties`.
   `Content.build` turns them into `item.can`, `item.cooldownMs`, `item.props`; rules ask **`World.itemCan(it, what)`**, never

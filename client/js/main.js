@@ -40,7 +40,7 @@
 
   // Paper-doll stacking order (low = drawn first / behind). The base body sits near the
   // bottom; worn gear draws over it, weapon last. Unknown slots land on top.
-  var SLOT_Z = { back: 0, body: 1, legs: 2, armor: 3, head: 4, helm: 5, offhand: 6, weapon: 7 };
+  var SLOT_Z = { back: 0, body: 1, legs: 2, pants: 2, feet: 2.5, armor: 3, gloves: 3.5, head: 4, helm: 5, accessory: 5.5, offhand: 6, weapon: 7 };
   function maskOf(path) { return path ? path.replace(/\.png$/i, '.tint.png') : ''; }   // sibling grey tint mask
   /** Ordered layer descriptors for a player, lowest slot first: the class base body, the hair
    *  (head slot, hidden when anything is worn in `helm`), then each equipped item with a worn
@@ -66,7 +66,8 @@
         if (wst === 'reload') wpath = it.wornReload || it.wornEmpty || wpath; else if (wst === 'empty') wpath = it.wornEmpty || wpath;
         else if (p === me && aiming && it.wornAim) wpath = it.wornAim;   // loaded and aimed (yours only: nobody is told where another player aims)
       }
-      out.push({ z: SLOT_Z[slot] != null ? SLOT_Z[slot] : 9, path: wpath, slot: slot, skin: slot === 'weapon' || slot === 'offhand' ? (p.skin || '') : '',
+      var zk = SLOT_Z[slot] != null ? slot : slot.replace(/\d+$/, '');   // (accessory1…4)
+      out.push({ z: SLOT_Z[zk] != null ? SLOT_Z[zk] : 9, path: wpath, slot: slot, skin: slot === 'weapon' || slot === 'offhand' ? (p.skin || '') : '',
         mask: ramp ? maskOf(wpath) : '', ramp: ramp, aimPoints: it.aim || null });
     });
     out.sort(function (a, b) { return a.z - b.z; });
@@ -1923,13 +1924,19 @@
   var invDrag = null, invDirty = false, invSel = -1, INV_COLS = 8, invPress = false, invSig = '';
   addEventListener('mouseup', function () { if (invPress) { invPress = false; if (invDirty && !invDrag) { invDirty = false; bag(); } } });
   setInterval(function () { if (bagOpen && storage && storage.cook && storage.cook.lit && !invDrag && !document.hidden) send({ type: 'store', key: storage.key, op: 'look' }); }, 1500);
+  /** Where you wear this item ('' = you do not): its slot, or one of the accessory places. */
+  function wornKey(id) {
+    var it = content.items[id], eq = (me && me.equipment) || {};
+    if (!it || !it.slot) return '';
+    return World.wornAt ? World.wornAt(me, it) : (eq[it.slot] === id ? it.slot : '');
+  }
   function invCell(id, qty, from, slot) {
     var it = id ? (content.items[id] || { name: id, type: '' }) : null, d = document.createElement('div');
     d.className = 'icell' + (it ? ' has' : '') + (from === 'bag' && it && slot === invSel ? ' sel' : '');
     if (!it) return d;
     d.appendChild(icon({ kind: 'item', id: id }));
     if (qty !== 1 || from === 'belt') { var q = document.createElement('span'); q.className = 'qty'; q.textContent = qty > 0 ? '×' + qty : '0'; d.appendChild(q); }
-    if (from !== 'belt' && it.slot && me.equipment[it.slot] === id) d.classList.add('equipped');
+    if (from !== 'belt' && wornKey(id)) d.classList.add('equipped');
     d.title = it.name + ' — ' + describe(it);
     d.draggable = true;
     d.onmousedown = function () { invPress = true; };
@@ -1961,15 +1968,17 @@
     send(a);
   }
   function invPart(g, e) { return e && e.shiftKey ? Math.ceil(g.qty / 2) : e && e.ctrlKey ? 1 : 0; }   // Shift = half, Ctrl = one, else all
-  function invGrid(stacks, w, size) {
+  // cols = how many across (INV_COLS); lo = show only the `size` cells from cell lo on (one run of a cooker's cells).
+  function invGrid(stacks, w, size, cols, lo) {
     var g = document.createElement('div'); g.className = 'igrid';
-    var at = {}, top = -1;
+    var at = {}, top = -1, part = lo != null;
+    cols = cols || INV_COLS; lo = lo || 0;
     (stacks || []).forEach(function (st, i) { var c = st.s >= 0 ? st.s : i; at[c] = st; if (c > top) top = c; });
-    var n = Math.max(INV_COLS, Math.ceil(Math.max(size || 0, top + 1) / INV_COLS) * INV_COLS);
-    for (var i = 0; i < n; i++) (function (i) {
+    var n = part ? size : Math.max(cols, Math.ceil(Math.max(size || 0, top + 1) / cols) * cols), end = size ? lo + size : 0;
+    for (var k = 0; k < n; k++) (function (i) {
       var st = at[i], c = invCell(st && st.item, st && st.qty, w, i);
-      if (size && i >= size) c.classList.add(st ? 'extra' : 'off');             // past the last cell: overflow, or not a cell at all
-      if (!(size && i >= size)) invTarget(c, function (d) { return (d.from === 'bag' && !(w === 'box' && storage && storage.takeOnly)) || d.from === 'box' || ((d.from === 'belt' || d.from === 'worn') && w === 'bag'); }, function (d, e) {   // (nothing is dropped into a take-only container)
+      if (end && i >= end) c.classList.add(st ? 'extra' : 'off');             // past the last cell: overflow, or not a cell at all
+      if (!(end && i >= end)) invTarget(c, function (d) { return (d.from === 'bag' && !(w === 'box' && storage && storage.takeOnly)) || d.from === 'box' || ((d.from === 'belt' || d.from === 'worn') && w === 'bag'); }, function (d, e) {   // (nothing is dropped into a take-only container)
         if (d.from === 'belt') send({ type: 'loadout', bar: 'belt', slot: d.slot, entry: '' });
         else if (d.from === 'worn') useItem(d.item);
         else invMove(d.from, d.slot, w, i, invPart(d, e));
@@ -1982,19 +1991,209 @@
         if (w === 'bag') c.ondblclick = function () { var it = content.items[st.item]; if (it && (World.itemCan(it, 'consume') || it.slot)) useItem(st.item); };
       }
       g.appendChild(c);
-    })(i);
+    })(lo + k);
     return g;
+  }
+  // ---- the cooking window (a cooker is open): your bag, its recipes on a sheet of paper, and its cells — raw
+  // materials, fuel, what comes out — with the fire's switch. Nothing is decided here: Cook is the 'store' op 'load',
+  // the switch 'light' / 'douse', every drag an 'inv' action; what the fire is making and how far along it is comes
+  // with each answer (storage.cook: cells, rid, prog / need, fuel, recipes). A referee that sends no `cells` has the
+  // old three cells, and no recipe list.
+  var cookSt = { sel: '', enough: false, page: 0 }, handSt = { sel: '', enough: false, page: 0 }, COOK_COLS = 10, COOK_PER_PAGE = 35;
+  function clock(ms) {
+    var s = Math.max(0, Math.ceil(ms / 1000));
+    function two(n) { return (n < 10 ? '0' : '') + n; }
+    return two(Math.floor(s / 3600)) + ':' + two(Math.floor(s / 60) % 60) + ':' + two(s % 60);
+  }
+  /** The bag as the left column of the inventory and cooking windows. */
+  function bagColumn(el) {
+    var bagSize = World.bagSlots ? World.bagSlots(content) : INV_COLS * 4, used = (me.inventory || []).length;
+    var left = el('div', 'ck-col'), lbar = el('div', 'ck-bar');
+    left.appendChild(el('div', 'ck-tab', 'Inventory'));
+    lbar.appendChild(el('span', used > bagSize ? 'lack' : '', used + ' / ' + bagSize));
+    var sort = el('button', 'hbtn', 'Sort'); sort.title = 'Put the bag in order: the same things joined into full stacks, kinds together';
+    sort.disabled = !used; sort.onclick = function () { invSel = -1; send({ type: 'inv', op: 'sort' }); };
+    lbar.appendChild(sort); left.appendChild(lbar);
+    left.appendChild(invGrid(me.inventory, 'bag', bagSize, COOK_COLS));
+    return left;
+  }
+  /** The sheet of paper in the middle of the inventory and cooking windows: the picked recipe (what it takes, what the
+   *  result gives, how long), its buttons, a filter, and every recipe as a cell. o = {recs: [{id, name, ins: [{item,
+   *  qty, have}], outs: [{item, qty}], can, secs, why}], st: {sel, enough, page} (the caller keeps it), cur (the one
+   *  shown when none was picked), enoughLabel, none (text with no recipes), action(wrap, sel) (puts the buttons in)}. */
+  function recipeSheet(el, o) {
+    var st = o.st, recs = o.recs, paper = el('div', 'ck-paper'), det = el('div', 'ck-det');
+    var shown = st.enough ? recs.filter(function (x) { return x.can; }) : recs;
+    var pages = Math.max(1, Math.ceil(shown.length / COOK_PER_PAGE)); st.page = Math.max(0, Math.min(st.page, pages - 1));
+    function byId(id) { return id ? recs.filter(function (x) { return x.id === id; })[0] : null; }
+    var sel = byId(st.sel) || byId(o.cur) || shown[0] || recs[0] || null;
+    if (!sel) det.appendChild(el('div', 'ck-none', o.none));
+    else {
+      var out = sel.outs[0] || { item: '', qty: 1 }, oit = content.items[out.item] || { name: sel.name };
+      var head = el('div', 'ck-name'); head.appendChild(itemPicEl(oit, 32)); head.appendChild(el('b', '', sel.name + ' (x' + out.qty + ')'));
+      det.appendChild(head);
+      var needs = el('div', 'ck-needs'), lst = el('div', 'ck-ins');
+      sel.ins.forEach(function (g) {
+        var it = content.items[g.item] || { name: g.item }, one = el('span', 'ck-in' + (g.have >= g.qty ? '' : ' lack'));
+        one.appendChild(itemPicEl(it, 20)); one.appendChild(el('span', '', 'x ' + g.qty));
+        one.title = it.name + ' — you have ' + g.have; lst.appendChild(one);
+      });
+      needs.appendChild(lst); needs.appendChild(el('span', 'ck-fx', describe(oit)));
+      det.appendChild(needs);
+      det.appendChild(el('div', 'ck-time', sel.secs > 0 ? sel.secs + ' seconds' : 'Instant'));
+      var act = el('div', 'ck-act'); o.action(act, sel); det.appendChild(act);
+      if (sel.why) det.appendChild(el('div', 'ck-why', sel.why));
+    }
+    paper.appendChild(det);
+    var filt = el('label', 'ck-filter'), cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = st.enough; cb.onchange = function () { st.enough = cb.checked; st.page = 0; bag(); };
+    filt.appendChild(el('span', '', 'Filter by:')); filt.appendChild(cb); filt.appendChild(el('span', '', o.enoughLabel));
+    paper.appendChild(filt);
+    var rgrid = el('div', 'ck-recs'), page = shown.slice(st.page * COOK_PER_PAGE, (st.page + 1) * COOK_PER_PAGE);
+    for (var i = 0; i < COOK_PER_PAGE; i++) (function (x) {
+      var c = el('div', 'ck-rc' + (x ? ' has' : '') + (x && sel && x.id === sel.id ? ' sel' : '') + (x && !x.can ? ' cant' : ''));
+      if (x) {
+        c.appendChild(icon({ kind: 'item', id: (x.outs[0] || {}).item }));
+        c.title = x.name + (x.can ? '' : ' — ' + (x.why || 'you do not have what it takes'));
+        c.onclick = function () { st.sel = x.id; bag(); };
+      }
+      rgrid.appendChild(c);
+    })(page[i]);
+    paper.appendChild(rgrid);
+    var pager = el('div', 'ck-pager'), prev = el('button', '', '◀'), next = el('button', '', '▶');
+    prev.title = 'Previous page'; next.title = 'Next page';
+    prev.disabled = st.page <= 0; next.disabled = st.page >= pages - 1;
+    prev.onclick = function () { st.page--; bag(); }; next.onclick = function () { st.page++; bag(); };
+    pager.appendChild(prev); if (pages > 1) pager.appendChild(el('span', '', (st.page + 1) + ' / ' + pages)); pager.appendChild(next);
+    paper.appendChild(pager);
+    return paper;
+  }
+  // ---- the inventory window with no container open: your bag | what you can make with your hands, on the sheet | what
+  // you wear, on a picture of the body. A worn slot is a cell over the body (BODY_CELLS: the middle of each, in the
+  // .ck-body box): drag something from the bag onto it ('use', with `slot` for the accessory places), drag it back or
+  // double-click it to take it off. What may go where is the item's `slot`; the referee has the last word.
+  var BODY_CELLS = [
+    { key: 'accessory1', x: 83, y: 29 }, { key: 'accessory2', x: 154, y: 29 }, { key: 'accessory3', x: 227, y: 29 }, { key: 'accessory4', x: 308, y: 29 },
+    { key: 'helm', x: 179, y: 94 }, { key: 'armor', x: 167, y: 191 }, { key: 'back', x: 294, y: 173 }, { key: 'gloves', x: 69, y: 310 },
+    { key: 'pants', x: 173, y: 296 }, { key: 'feet', x: 192, y: 477 }];
+  var SLOT_NAMES = { helm: 'Head', armor: 'Chest', pants: 'Pants', feet: 'Feet', gloves: 'Gloves', back: 'Back', accessory: 'Accessory' };
+  function invWindow(box, el) {
+    var cols = el('div', 'ck-cols');
+    cols.appendChild(bagColumn(el));
+    // made by hand
+    var job = me.craft, jr = job && content.recipes && content.recipes[job.id];
+    var recs = World.recipesFor(content, mapOf(), me, lookup()).filter(function (r) { return !r.station; }).map(function (r) {
+      return { id: r.id, name: r.name, ins: r.inputs, outs: r.outputs, can: r.can, secs: r.timeS, why: !r.can && r.reason && !/^Not enough/.test(r.reason) ? r.reason : '' };
+    });
+    var mid = el('div', 'ck-col ck-mid');
+    mid.appendChild(el('div', 'ck-title', 'Recipes'));
+    mid.appendChild(recipeSheet(el, { recs: recs, st: handSt, cur: job && job.id, enoughLabel: 'Enough materials', none: 'You know nothing that can be made without a workbench.', action: function (wrap, sel) {
+      if (job) {                                               // one thing at a time: what is being made, and Stop
+        wrap.appendChild(el('span', 'ck-job', 'Making ' + ((jr && jr.name) || job.id) + (job.qty > 1 ? ' (' + (job.made + 1) + ' of ' + job.qty + ')' : '')));
+        var stop = el('button', 'ck-go', 'Stop'); stop.title = 'Stop and take back what was not used';
+        stop.onclick = function () { send({ type: 'craft', cancel: true }); };
+        wrap.appendChild(stop); return;
+      }
+      // how many: the arrows (or the wheel), from 1 up to what the materials in the bag allow
+      var most = !sel.can ? 0 : Math.min.apply(null, [World.CRAFT_MAX || 20].concat(sel.ins.map(function (g) { return g.qty > 0 ? Math.floor(g.have / g.qty) : Infinity; })));
+      var n = Math.max(1, Math.min(most || 1, craftQty[sel.id] || 1));
+      var step = el('div', 'ck-step'), up = el('button', '', '▲'), num = el('span', '', n), dn = el('button', '', '▼'), go = el('button', 'ck-go', 'Craft');
+      function setN(v) { n = Math.max(1, Math.min(most || 1, v)); num.textContent = n; dn.disabled = most < 1 || n <= 1; up.disabled = most < 1 || n >= most; }
+      up.title = 'One more'; dn.title = 'One less';
+      up.onclick = function () { setN(n + 1); }; dn.onclick = function () { setN(n - 1); };
+      wrap.onwheel = function (e) { if (most < 1) return; e.preventDefault(); setN(n + (e.deltaY < 0 ? 1 : -1)); };
+      go.disabled = most < 1; go.title = most < 1 ? (sel.why || 'You do not have what it takes') : '';
+      go.onclick = function () { craftQty[sel.id] = n; send({ type: 'craft', recipe: sel.id, qty: n }); };
+      step.appendChild(up); step.appendChild(num); step.appendChild(dn); setN(n);
+      wrap.appendChild(step); wrap.appendChild(go);
+    } }));
+    cols.appendChild(mid);
+    // what you wear
+    var right = el('div', 'ck-col'), rbar = el('div', 'ck-bar'), body = el('div', 'ck-body'), pic = document.createElement('img');
+    right.appendChild(el('div', 'ck-tab', 'Equipment'));
+    rbar.appendChild(el('span', '', (content.classes[me['class']] ? content.classes[me['class']].name + ' · ' : '') + 'Attack ' + me.atk + ' · Defence ' + me.def));
+    rbar.appendChild(el('span', '', me.gold + ' gold')); right.appendChild(rbar);
+    pic.src = '../art/ui/body_' + (me.body === 'female' ? 'female' : 'male') + '.png'; pic.alt = ''; pic.draggable = false;
+    pic.onerror = function () { pic.style.display = 'none'; };   // (no picture: the cells alone)
+    body.appendChild(pic);
+    BODY_CELLS.forEach(function (q) {
+      var kind = q.key.replace(/\d+$/, ''), label = SLOT_NAMES[kind] || kind, id = (me.equipment || {})[q.key];
+      var c = invCell(id && content.items[id] ? id : '', 1, 'worn', q.key);
+      c.classList.remove('equipped'); c.classList.add('ck-slot'); c.style.left = q.x + 'px'; c.style.top = q.y + 'px';
+      if (!c.firstChild) { c.title = label + ': drag something you can wear here'; c.appendChild(el('span', 'ck-slotname', kind === 'accessory' ? 'Acc.' : label)); }
+      else c.ondblclick = function () { useItem(id); };                    // take it off (it stays in the bag)
+      invTarget(c, function (d) { var it = content.items[d.item]; return (d.from === 'bag' || d.from === 'worn') && !!it && it.slot === kind; },
+        function (d) { if ((me.equipment || {})[q.key] !== d.item) send({ type: 'use', item: d.item, slot: q.key }); });
+      body.appendChild(c);
+    });
+    right.appendChild(body); cols.appendChild(right);
+    box.appendChild(cols);
+  }
+  function cookWindow(box, el) {
+    var ck = storage.cook, cells = ck.cells || [1, 1, 1], inv = Array.isArray(storage.inv) ? storage.inv : [], key = storage.key;
+    var bagSize = World.bagSlots ? World.bagSlots(content) : INV_COLS * 4, used = (me.inventory || []).length;
+    function have(id) {                                       // in the bag, and already in its raw cells
+      var n = 0; (me.inventory || []).forEach(function (st) { if (st.item === id) n += st.qty; });
+      inv.forEach(function (st) { if (st.item === id && st.s < cells[0]) n += st.qty; });
+      return n;
+    }
+    var cols = el('div', 'ck-cols');
+    cols.appendChild(bagColumn(el));
+    // its recipes, on the sheet
+    var recs = (ck.recipes || []).map(function (id) { return content.recipes && content.recipes[id]; }).filter(Boolean).map(function (r) {
+      var ins = World.list(r.inputs).map(function (g) { return { item: g.item, qty: g.qty, have: have(g.item) }; });
+      return { id: r.id, name: r.name, ins: ins, outs: World.list(r.outputs), can: ins.every(function (g) { return g.have >= g.qty; }), secs: r.timeS || World.COOK_S || 5 };
+    });
+    var mid = el('div', 'ck-col ck-mid');
+    mid.appendChild(el('div', 'ck-title', 'Recipes'));
+    mid.appendChild(recipeSheet(el, { recs: recs, st: cookSt, cur: ck.rid, enoughLabel: 'Enough ingredients', none: 'Nothing you know can be made here yet.', action: function (wrap, sel) {
+      var go = el('button', 'ck-go', 'Cook'); go.disabled = !sel.can;
+      go.title = sel.can ? 'Cook one (hold Shift: as many as you have the things for). What it takes goes from your bag into the raw materials; with fuel in it, the fire is lit.' : 'You do not have what it takes';
+      go.onclick = function (e) { send({ type: 'store', key: key, op: 'load', recipe: sel.id, qty: e.shiftKey ? 99 : 1 }); };
+      wrap.appendChild(go);
+    } }));
+    cols.appendChild(mid);
+    // the cooker itself
+    var right = el('div', 'ck-col'), rbar = el('div', 'ck-bar'), sw = el('button', 'ck-sw' + (ck.lit ? ' on' : ''));
+    right.appendChild(el('div', 'ck-tab', storage.name));
+    rbar.appendChild(el('span', '', ck.lit ? 'Burning' : 'Not lit'));
+    sw.appendChild(el('span', '', ck.lit ? 'ON' : 'OFF')); sw.title = ck.lit ? 'Put the fire out' : 'Light the fire (it needs fuel)';
+    sw.onclick = function () { send({ type: 'store', key: key, op: ck.lit ? 'douse' : 'light' }); };
+    rbar.appendChild(sw); right.appendChild(rbar);
+    var lo = 0;
+    function zone(label, z) { right.appendChild(el('h4', '', label)); right.appendChild(invGrid(inv, 'box', cells[z], COOK_COLS, lo)); lo += cells[z]; }
+    zone('Raw materials', 0); zone('Fuel', 1);
+    right.appendChild(el('div', 'ck-fuel', 'Fuel left: ' + clock(ck.fuel != null ? ck.fuel : ck.burn)));
+    var nowRow = el('div', 'ck-now'), cur = ck.rid && content.recipes && content.recipes[ck.rid], ncell = el('div', 'icell');
+    var pct = ck.need ? Math.max(0, Math.min(100, Math.round(100 * ck.prog / ck.need))) : 0;
+    if (cur) {
+      ncell.appendChild(icon({ kind: 'item', id: (World.list(cur.outputs)[0] || {}).item }));
+      if (ck.left > 1) ncell.appendChild(el('span', 'qty', '×' + ck.left));
+      ncell.title = cur.name + (ck.left > 1 ? ' — ' + ck.left + ' to go' : '') + (ck.lit ? ' — ' + pct + '%' : ' — the fire is not lit');
+    } else ncell.title = 'Nothing is being cooked: pick a recipe and press Cook';
+    var arrow = el('div', 'ck-arrow'), fill = el('div', 'ck-arrow-fill'); fill.style.height = pct + '%'; arrow.appendChild(fill);
+    var stopB = el('button', 'hbtn ck-stop', 'Cancel'); stopB.title = 'Stop cooking this (what is in the cells stays there)';
+    stopB.onclick = function () { send({ type: 'store', key: key, op: 'cancel' }); };
+    if (!cur) stopB.style.visibility = 'hidden';
+    nowRow.appendChild(ncell); nowRow.appendChild(arrow); nowRow.appendChild(stopB); right.appendChild(nowRow);
+    zone('Cooked materials', 2);
+    cols.appendChild(right);
+    box.appendChild(cols);
+    box.appendChild(el('div', 'empty', 'Nothing cooks by itself: pick a recipe and press Cook. Drag things between your bag and the cells, or Shift+click a stack to send it across (Shift while dropping moves half, Ctrl one).'));
   }
   function bag() {
     if (invDrag || invPress) { invDirty = true; return; }    // never redraw under a drag (or a press about to become one): the thing held would vanish
     // …nor when nothing it shows has changed: answers arrive several times a second
-    var sig = JSON.stringify([me.inventory, me.belt, me.held, me.equipment, me.atk, me.def, me.gold, me.abilities, me.skills, storage && [storage.key, storage.inv, storage.slots, storage.cook, storage.takeOnly], invSel, me.craft && [me.craft.id, me.craft.qty, me.craft.made]]);
+    var sig = JSON.stringify([me.inventory, me.belt, me.held, me.equipment, me.atk, me.def, me.gold, me.abilities, me.skills, storage && [storage.key, storage.inv, storage.slots, storage.cook, storage.takeOnly], cookSt, handSt, craftQty, invSel, me.craft && [me.craft.id, me.craft.qty, me.craft.made]]);
     var box = $('bag-items');
     if (sig === invSig && box.firstChild) return;
     invSig = sig; box.innerHTML = '';
     function el(tag, cls, text) { var d = document.createElement(tag); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
     var bagSize = World.bagSlots ? World.bagSlots(content) : INV_COLS * 4, used = (me.inventory || []).length;
     $('bag-title').textContent = storage ? storage.name : 'Inventory';
+    var cooking = !!(storage && storage.cook);
+    $('bag').classList.toggle('cookwin', cooking || !storage);
+    if (cooking) { cookWindow(box, el); return; }
     $('bag-stats').textContent = (content.classes[me['class']] ? content.classes[me['class']].name + ' · ' : '') +
       'Attack ' + me.atk + ' · Defence ' + me.def + ' · ' + me.gold + ' gold';
     var cols = el('div', 'inv-cols');
@@ -2011,57 +2210,16 @@
       var inv = Array.isArray(storage.inv) ? storage.inv : Object.keys(storage.inv || {}).map(function (id, i) { return { item: id, qty: storage.inv[id], s: i }; });   // (an older referee sends {item: qty})
       var theirs = el('div', 'inv-col');
       theirs.appendChild(el('h4', '', storage.name + (storage.slots ? ' (' + inv.length + '/' + storage.slots + ')' : '')));
-      if (!storage.cook) headBtn(theirs.firstChild, 'Take all', 'Everything in it, into your bag', function () { send({ type: 'inv', op: 'takeall', key: storage.key }); }).disabled = !inv.length;
-      var sgrid = invGrid(inv, 'box', storage.slots || INV_COLS * 2);
-      if (storage.cook) {                                       // a cooker: three named cells, and the fire
-        ['In', 'Fuel', 'Out'].forEach(function (lab, ci) { if (sgrid.children[ci]) sgrid.children[ci].appendChild(el('span', 'key', lab)); });
-        sgrid.classList.add('cook');
-        theirs.firstChild.textContent = storage.name + (storage.cook.lit ? ' — burning' : '');
-      }
-      theirs.appendChild(sgrid);
-      if (storage.cook) {
-        var ck = storage.cook, fire = el('div', 'inv-info'), note = el('span', 'empty', !ck.lit ? 'Put fuel in the middle cell and something to cook in the first, then light it.'
-          : 'Fuel piece: ' + Math.ceil(ck.burn / 1000) + ' s left' + (ck.need ? ' · cooking ' + Math.min(100, Math.round(100 * ck.prog / ck.need)) + '%' : ' · nothing to cook'));
-        var fb = el('button', '', ck.lit ? 'Put out' : 'Light');
-        fb.onclick = function () { send({ type: 'store', key: storage.key, op: ck.lit ? 'douse' : 'light' }); };
-        fire.appendChild(note); fire.appendChild(fb); theirs.appendChild(fire);
-      }
+      headBtn(theirs.firstChild, 'Take all', 'Everything in it, into your bag', function () { send({ type: 'inv', op: 'takeall', key: storage.key }); }).disabled = !inv.length;
+      theirs.appendChild(invGrid(inv, 'box', storage.slots || INV_COLS * 2));
       cols.appendChild(theirs);
-    } else {
-      // what you wear, and what you can make with your hands
-      var side = el('div', 'inv-col inv-side');
-      side.appendChild(el('h4', '', 'Equipment'));
-      var worn = el('div', 'igrid worn');
-      EQUIP_CELLS.forEach(function (q) {
-        var id = (me.equipment || {})[q.slot], c = invCell(id && content.items[id] ? id : '', 1, 'worn', q.slot);
-        c.classList.remove('equipped');
-        c.appendChild(el('span', 'key', q.label));
-        if (!id) c.title = q.label + ': drag something you can wear here';
-        else c.ondblclick = function () { useItem(id); };                    // take it off (it stays in the bag)
-        invTarget(c, function (d) { var it = content.items[d.item]; return d.from === 'bag' && !!it && it.slot === q.slot; }, function (d) { if (me.equipment[q.slot] !== d.item) useItem(d.item); });
-        worn.appendChild(c);
-      });
-      side.appendChild(worn);
-      var hand = World.recipesFor(content, mapOf(), me, lookup()).filter(function (r) { return !r.station; });
-      side.appendChild(el('h4', '', 'Make by hand'));
-      var list = el('div', 'inv-craft'), job = me.craft, jr = job && content.recipes && content.recipes[job.id];
-      if (job) {
-        var jrow = el('div', 'slot rcp'), jn = el('div', 'name'), jbt = el('div', 'btns'), stop = el('button', '', 'Stop');
-        jn.appendChild(el('b', '', 'Making ' + ((jr && jr.name) || job.id) + (job.qty > 1 ? ' (' + (job.made + 1) + ' of ' + job.qty + ')' : '')));
-        stop.title = 'Stop and take back what was not used'; stop.onclick = function () { send({ type: 'craft', cancel: true }); };
-        jbt.appendChild(stop); jrow.appendChild(el('div', 'pic')); jrow.appendChild(jn); jrow.appendChild(jbt); list.appendChild(jrow);
-      }
-      hand.sort(function (x, y) { return (y.can ? 1 : 0) - (x.can ? 1 : 0); }).forEach(function (r) { list.appendChild(recipeRow(r, job)); });
-      if (!hand.length) list.appendChild(el('div', 'empty', 'You know nothing that can be made without a workbench.'));
-      side.appendChild(list);
-      cols.appendChild(side);
     }
-    box.appendChild(cols);
+    if (storage) box.appendChild(cols); else invWindow(box, el);
     // what is picked in the bag: what it is, and what can be done with it
     var info = el('div', 'inv-info'), sel = invSel >= 0 ? (me.inventory || []).filter(function (s) { return s.s === invSel; })[0] : null;
     if (!sel) { invSel = -1; info.appendChild(el('span', 'empty', (storage && storage.takeOnly ? 'Drag what you want out of the ' + storage.name.toLowerCase() + ' into your bag. Nothing can be put in it; emptied, it is gone.' : storage ? 'Drag things between your bag and the ' + storage.name.toLowerCase() + ', onto another cell, or onto a slot of the belt at the bottom of the screen.' : 'Drag a stack to another cell, or onto a slot of the belt at the bottom of the screen to carry it there.') + ' Hold Shift while dropping to move half, Ctrl for one.' + (storage ? ' Shift+click sends a stack across.' : ' Double-click uses or equips.'))); }
     else {
-      var it = content.items[sel.item] || { name: sel.item, type: '' }, equipped = it.slot && me.equipment[it.slot] === sel.item;
+      var it = content.items[sel.item] || { name: sel.item, type: '' }, equipped = !!wornKey(sel.item);
       var nm = el('div', 'name'); nm.appendChild(el('b', '', it.name + (sel.qty > 1 ? ' ×' + sel.qty : ''))); nm.appendChild(el('span', '', describe(it) + (equipped ? ' · equipped' : '') + (World.stackMaxOf ? ' · stacks to ' + World.stackMaxOf(content, sel.item) : '')));
       info.appendChild(nm);
       var eats = World.itemCan(it, 'consume');
@@ -2094,6 +2252,8 @@
     if (it.mp) bits.push('+' + it.mp + ' MP');
     if (it.atk) bits.push('+' + it.atk + ' attack');
     if (it.def) bits.push('+' + it.def + ' defence');
+    if (it.hunger) bits.push((it.hunger > 0 ? '+' : '') + it.hunger + ' hunger');
+    if (it.thirst) bits.push((it.thirst > 0 ? '+' : '') + it.thirst + ' thirst');
     if (!bits.length) bits.push(it.type || 'item');
     return bits.join(', ');
   }

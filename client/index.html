@@ -211,7 +211,72 @@
   .inv-col { display: grid; gap: 6px; }
   .igrid { display: grid; grid-template-columns: repeat(8, 44px); gap: 4px; padding: 6px; background: #14161b; border: 1px solid #3a3f4b; border-radius: 6px; width: max-content; }
   .igrid.belt { grid-template-columns: repeat(10, 44px); }
-  .igrid.cook { grid-template-columns: repeat(3, 44px); }
+  /* the cooking window: bag | recipes on a sheet of paper | the cooker's cells */
+  #bag.cookwin #bag-title, #bag.cookwin #bag-stats { display: none; }
+  #bag.cookwin #bag-head { justify-content: flex-end; margin-bottom: -34px; position: relative; z-index: 1; pointer-events: none; }
+  #bag.cookwin #bag-head button { pointer-events: auto; }
+  #bag.cookwin .panel { max-height: 92%; background: #33363d; border: 1px solid #14161b; }
+  .ck-cols { display: flex; gap: 14px; align-items: flex-start; justify-content: center; flex-wrap: wrap; }
+  .ck-col { display: grid; gap: 6px; align-content: start; }
+  #bag .ck-col h4 { margin: 2px 0 -2px; font-size: 15px; font-weight: 500; text-transform: none; letter-spacing: 0; color: inherit; }
+  .ck-tab { padding: 9px 12px; text-align: center; font-size: 16px; background: #50545e; border: 1px solid #14161b; border-radius: 4px; }
+  .ck-col:last-child .ck-tab { margin-right: 108px; }      /* (room for the Close button beside it) */
+  .ck-bar { display: flex; justify-content: space-between; align-items: center; min-height: 24px; font-size: 12px; color: #b9b6b0; }
+  .ck-bar .lack { color: #e0563f; }
+  .ck-bar .hbtn { padding: 1px 8px; font-size: 11px; }
+  #bag.cookwin .igrid { grid-template-columns: repeat(10, 34px); gap: 2px; padding: 4px; }
+  #bag.cookwin .icell { width: 34px; height: 34px; border-radius: 2px; }
+  #bag.cookwin .icell .ico { width: 30px; height: 30px; }
+  .ck-sw { width: 54px; height: 22px; padding: 0; border: 1px solid #14161b; border-radius: 3px; background: #1d2027; display: flex; }
+  .ck-sw span { width: 28px; height: 100%; display: grid; place-items: center; font-size: 10px; background: #50545e; color: #e9e6df; border-radius: 2px; }
+  .ck-sw.on { justify-content: flex-end; background: #6b3a1a; }
+  .ck-sw.on span { background: #ff6a1a; color: #1a1208; font-weight: 700; }
+  .ck-fuel { text-align: right; font-size: 11px; color: #c9c6c0; font-variant-numeric: tabular-nums; }
+  .ck-now { display: grid; grid-template-columns: 1fr auto 1fr; justify-items: center; align-items: center; gap: 8px; padding: 10px 0 2px; }
+  .ck-now .icell { grid-column: 2; }
+  .ck-now .ck-arrow { grid-column: 2; }
+  .ck-now .ck-stop { grid-column: 3; grid-row: 1; justify-self: start; padding: 1px 8px; font-size: 11px; }
+  #bag.cookwin .ck-now .icell { width: 46px; height: 46px; border: 2px solid #14161b; }
+  .ck-arrow { width: 40px; height: 62px; position: relative; background: #1d2027; clip-path: polygon(28% 0, 72% 0, 72% 58%, 100% 58%, 50% 100%, 0 58%, 28% 58%); }
+  .ck-arrow-fill { position: absolute; left: 0; right: 0; top: 0; background: #ff4a00; }
+  .ck-title { text-align: center; font-size: 20px; padding: 26px 0 0; }
+  .ck-paper { width: 384px; min-height: 544px; box-sizing: border-box; padding: 78px 16px 14px; background: repeating-linear-gradient(transparent 0 85px, rgba(170,150,80,.3) 85px 86px), linear-gradient(90deg, transparent 0 13px, rgba(170,150,80,.3) 13px 14px, transparent 14px), #efeedd; -webkit-mask: radial-gradient(circle 13px at 50% 20px, transparent 97%, #000) 0 0 / calc(100% / 7) 100%; mask: radial-gradient(circle 13px at 50% 20px, transparent 97%, #000) 0 0 / calc(100% / 7) 100%; color: #2b2a26; display: grid; gap: 8px; align-content: start; }
+  .ck-det { display: grid; gap: 8px; min-height: 150px; align-content: start; }
+  .ck-name { display: flex; align-items: center; gap: 12px; font-size: 20px; padding-bottom: 4px; border-bottom: 1px solid rgba(110,100,60,.35); }
+  .ck-name b { font-weight: 500; }
+  .ck-paper .pic { width: 32px; height: 32px; image-rendering: pixelated; }
+  .ck-needs { display: flex; justify-content: space-between; gap: 10px; align-items: center; font-size: 13px; min-height: 30px; }
+  .ck-ins { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .ck-in { display: inline-flex; align-items: center; gap: 6px; color: #1f9d2c; font-weight: 600; }
+  .ck-in.lack { color: #c2331f; }
+  .ck-in .pic { width: 20px; height: 20px; }
+  .ck-fx { text-align: right; }
+  .ck-time { text-align: right; font-size: 13px; padding-top: 4px; border-top: 1px solid rgba(110,100,60,.35); }
+  .ck-act { display: flex; justify-content: center; align-items: center; gap: 10px; min-height: 38px; }
+  .ck-step { display: grid; justify-items: center; font-size: 13px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .ck-step button { background: none; border: 0; padding: 0 4px; font-size: 8px; line-height: 1; color: #14161b; }
+  .ck-step button:disabled { opacity: .3; }
+  .ck-job { font-size: 13px; }
+  .ck-why { font-size: 12px; color: #c2331f; text-align: center; }
+  .ck-body { position: relative; width: 384px; height: 520px; }
+  .ck-body img { position: absolute; left: 190px; top: 63px; height: 449px; transform: translateX(-50%); pointer-events: none; user-select: none; }
+  #bag.cookwin .ck-slot { position: absolute; transform: translate(-50%, -50%); background: #50545e; border: 2px solid #14161b; }
+  #bag.cookwin .ck-slot.over { border-color: #6fb7ff; }
+  .ck-slotname { font-size: 8px; color: #d9d6cf; pointer-events: none; }
+  .ck-go { justify-self: center; padding: 4px 16px; background: #50545e; color: #f1eee7; border: 2px solid #14161b; border-radius: 2px; }
+  .ck-go:disabled { opacity: .45; }
+  .ck-none { font-size: 13px; padding-top: 10px; }
+  .ck-filter { display: flex; align-items: center; gap: 6px; font-size: 13px; padding-top: 4px; border-top: 1px solid rgba(110,100,60,.35); }
+  .ck-filter input { margin: 0 0 0 8px; }
+  .ck-recs { display: grid; grid-template-columns: repeat(7, 46px); gap: 4px; justify-content: center; }
+  .ck-rc { width: 46px; height: 46px; box-sizing: border-box; border: 2px solid #14161b; display: grid; place-items: center; }
+  .ck-rc.has { cursor: pointer; }
+  .ck-rc.sel { background: rgba(255,106,26,.25); border-color: #c2531a; }
+  .ck-rc.cant .ico { opacity: .45; }
+  .ck-rc .ico { width: 32px; height: 32px; image-rendering: pixelated; display: grid; place-items: center; font-size: 11px; }
+  .ck-pager { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .ck-pager button { background: none; border: 0; color: #14161b; padding: 0 2px; font-size: 14px; }
+  .ck-pager button:disabled { opacity: .3; }
   .igrid.over, .icell.over { border-color: #6fb7ff; }
   .icell { width: 44px; height: 44px; position: relative; background: #1d2027; border: 1px solid #2c303a; border-radius: 4px; display: grid; place-items: center; user-select: none; }
   .icell.has { cursor: grab; }

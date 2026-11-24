@@ -3272,6 +3272,26 @@ test('animals: a chicken is tamed with seeds, settles at a coop, lays eggs there
   assert.ok(!s.ws.maps.field.monsters.includes(hen), 'killed, a tame one does not come back');
 });
 
+// ---------------------------------------------------------------- what is worn
+test('worn: pants, feet, gloves and back each hold one thing; four accessories are worn at once, each where it was put', () => {
+  const s = hero('warrior'), eq = () => Object.keys(s.p.equipment).filter(k => !/weapon|armor|helm/.test(k)).sort().map(k => k + '=' + s.p.equipment[k]).join(' ');
+  const mk = (id, slot) => { s.c.items[id] = Object.assign({}, s.c.items.leather_armor, { id, name: id, slot, def: 1 }); World.give(s.c, s.p, id, 1, []); };
+  const def0 = World.stats(s.c, s.p).def;
+  mk('jeans', 'pants'); mk('boots', 'feet'); mk('mitts', 'gloves'); mk('pack', 'back');
+  ['ring1', 'ring2', 'ring3', 'ring4', 'ring5'].forEach(id => mk(id, 'accessory'));
+  ['jeans', 'boots', 'mitts', 'pack', 'ring1', 'ring2'].forEach(id => act(s, { type: 'use', item: id }));
+  assert.strictEqual(eq(), 'accessory1=ring1 accessory2=ring2 back=pack feet=boots gloves=mitts pants=jeans');
+  assert.strictEqual(World.stats(s.c, s.p).def, def0 + 6, 'everything worn counts');
+  act(s, { type: 'use', item: 'ring3', slot: 'accessory4' });                 // dropped on a place of its own
+  act(s, { type: 'use', item: 'ring1', slot: 'accessory3' });                 // a worn one, dragged to another place
+  assert.strictEqual(eq(), 'accessory2=ring2 accessory3=ring1 accessory4=ring3 back=pack feet=boots gloves=mitts pants=jeans');
+  act(s, { type: 'use', item: 'ring4' }); act(s, { type: 'use', item: 'ring5' });   // the free place, then — all taken — the first
+  assert.strictEqual(eq(), 'accessory1=ring5 accessory2=ring2 accessory3=ring1 accessory4=ring3 back=pack feet=boots gloves=mitts pants=jeans');
+  assert.strictEqual(World.wornAt(s.p, s.c.items.ring4), '', 'the one it took the place of is back in the bag');
+  act(s, { type: 'use', item: 'ring2' }); act(s, { type: 'use', item: 'jeans' });   // used again: taken off
+  assert.strictEqual(eq(), 'accessory1=ring5 accessory3=ring1 accessory4=ring3 back=pack feet=boots gloves=mitts');
+});
+
 // ---------------------------------------------------------------- cookers
 test('a campfire cooks: fuel and food go in their cells, lit it burns and cooks over time, and goes out with the fuel', () => {
   const tb = JSON.parse(JSON.stringify(tables)), row = Array(5).fill('til_1');
@@ -3286,7 +3306,7 @@ test('a campfire cooks: fuel and food go in their cells, lit it burns and cooks 
   const cellOf = id => p.inventory.find(st => st.item === id).s;
   let ev = go({ type: 'interact', x: 2, y: 1 });
   const box = ev.find(e => e.type === 'storage');
-  assert.ok(box && box.slots === 3 && box.cook && !box.cook.lit, 'using it opens its three cells');
+  assert.ok(box && box.slots === 60 && box.cook && !box.cook.lit && box.cook.cells.join() === '20,20,20' && box.cook.recipes.includes('r_cooked_meat'), 'using it opens its cells: raw, fuel, cooked');
   assert.ok(!ev.some(e => e.type === 'craft'), 'not the crafting panel');
   assert.strictEqual(state(), 'empty');
   World.give(c, p, 'raw_meat', 3, []); World.give(c, p, 'wood', 2, []); World.give(c, p, 'seeds', 1, []);
@@ -3296,24 +3316,49 @@ test('a campfire cooks: fuel and food go in their cells, lit it burns and cooks 
   assert.match(texts(go({ type: 'store', key: fire.key, op: 'light' })), /nothing in it to burn/);
   go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('raw_meat') }, to: { w: 'box' } });
   go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('wood') }, to: { w: 'box' } });
-  assert.deepStrictEqual(cells(), { 0: 'raw_meat:3', 1: 'wood:2' }, 'each to its own cell');
+  assert.deepStrictEqual(cells(), { 0: 'raw_meat:3', 20: 'wood:2' }, 'each to its own run of cells');
   assert.match(texts(go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('seeds') }, to: { w: 'box' } })), /Nothing can be made of that here/);
-  assert.match(texts(go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('seeds') }, to: { w: 'box', s: 1 } })), /will not burn/);
-  assert.match(texts(go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('seeds') }, to: { w: 'box', s: 2 } })), /where things come out/);
+  assert.match(texts(go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('seeds') }, to: { w: 'box', s: 21 } })), /will not burn/);
+  assert.match(texts(go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('seeds') }, to: { w: 'box', s: 40 } })), /where things come out/);
   assert.strictEqual(state(), 'fueled');
   ev = go({ type: 'store', key: fire.key, op: 'light' });
   assert.ok(ev.find(e => e.type === 'storage').cook.lit);
   assert.strictEqual(state(), 'burning');
   assert.strictEqual(World.view(c, ws, 'kitchen', p, [p], -1).states['kitchen.e1'], 'burning', 'the page is told, for the picture');
   World.advance(c, ws, 'kitchen', [p], now += 9000, mid, []);
-  assert.deepStrictEqual(cells(), { 0: 'raw_meat:2', 1: 'wood:1', 2: 'cooked_meat:1' }, 'nine seconds on: one cooked, one piece of wood burning');
+  assert.deepStrictEqual(cells(), { 0: 'raw_meat:3', 20: 'wood:1' }, 'lit, but told to make nothing: what lies in it is not cooked by itself');
+  ev = go({ type: 'store', key: fire.key, op: 'load', recipe: 'r_cooked_meat', qty: 9 });   // the Cook button: what is already in it counts
+  assert.deepStrictEqual([ev.find(e => e.type === 'storage').cook.rid, ev.find(e => e.type === 'storage').cook.left], ['r_cooked_meat', 3]);
+  ev = go({ type: 'store', key: fire.key, op: 'cancel' });
+  assert.strictEqual(ev.find(e => e.type === 'storage').cook.rid, '', 'and it can be told to stop');
+  go({ type: 'store', key: fire.key, op: 'load', recipe: 'r_cooked_meat', qty: 9 });
+  World.advance(c, ws, 'kitchen', [p], now += 9000, mid, []);
+  assert.deepStrictEqual(cells(), { 0: 'raw_meat:2', 20: 'wood:1', 40: 'cooked_meat:1' }, 'nine seconds on: one cooked, one piece of wood burning');
   World.advance(c, ws, 'kitchen', [p], now += 3600000, mid, []);                          // left alone for an hour
-  assert.deepStrictEqual(cells(), { 2: 'cooked_meat:3' }, 'all cooked, the fuel spent');
+  assert.deepStrictEqual(cells(), { 40: 'cooked_meat:3' }, 'all cooked, the fuel spent');
   assert.deepStrictEqual([state(), ws.maps.kitchen.cookers['kitchen.e1'].lit], ['empty', false], 'and the fire went out');
   assert.strictEqual(made(), 'active:0/0', 'cooked, but still in the fire: nobody has made it yet');
-  go({ type: 'inv', key: fire.key, from: { w: 'box', s: 2 }, to: { w: 'bag' } });
+  go({ type: 'inv', key: fire.key, from: { w: 'box', s: 40 }, to: { w: 'bag' } });
   assert.strictEqual(World.count(p, 'cooked_meat'), 3);
   assert.strictEqual(made(), 'active:2/0', 'taken out of the fire: whoever takes it made it (raw meat put in and taken back would not count)');
+  // the Cook button: what a recipe takes goes from the bag into the raw cells, and the fire is lit when there is fuel
+  World.give(c, p, 'raw_meat', 5, []); World.give(c, p, 'wood', 1, []);
+  assert.match(texts(go({ type: 'store', key: fire.key, op: 'load', recipe: 'r_hammer' })), /can't be made here/);
+  assert.match(texts(ev = go({ type: 'store', key: fire.key, op: 'load', recipe: 'r_cooked_meat', qty: 2 })), /needs fuel/);
+  assert.deepStrictEqual([cells(), World.count(p, 'raw_meat'), ev.find(e => e.type === 'storage').cook.lit], [{ 0: 'raw_meat:2' }, 3, false]);
+  go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('wood') }, to: { w: 'box', s: 25 } });
+  go({ type: 'inv', key: fire.key, from: { w: 'bag', s: cellOf('raw_meat') }, to: { w: 'box', s: 3 }, qty: 1 });
+  go({ type: 'inv', key: fire.key, from: { w: 'box', s: 3 }, to: { w: 'box', s: 7 } });
+  go({ type: 'inv', key: fire.key, from: { w: 'box', s: 7 }, to: { w: 'box', s: 22 } });
+  assert.deepStrictEqual(cells(), { 0: 'raw_meat:2', 7: 'raw_meat:1', 25: 'wood:1' }, 'a stack moves inside its own run of cells, never to another');
+  ev = go({ type: 'store', key: fire.key, op: 'load', recipe: 'r_cooked_meat', qty: 9 });
+  const ck = ev.find(e => e.type === 'storage').cook;
+  assert.deepStrictEqual([ck.lit, ck.rid, ck.left, World.count(p, 'raw_meat')], [true, 'r_cooked_meat', 5, 0], 'as many as the bag and its cells have, and it is lit');
+  assert.match(texts(go({ type: 'store', key: fire.key, op: 'load', recipe: 'r_cooked_meat' })), /Not enough raw meat/);
+  // a fire saved when it had three cells: its stacks move to their runs when it is next opened
+  ws.maps.kitchen.cookers['kitchen.e1'] = { inv: [{ item: 'raw_meat', qty: 1, s: 0 }, { item: 'wood', qty: 2, s: 1 }, { item: 'cooked_meat', qty: 4, s: 2 }], lit: false, burn: 0, prog: 0, at: 0, st: 'campfire' };
+  go({ type: 'store', key: fire.key, op: 'look' });
+  assert.deepStrictEqual(cells(), { 0: 'raw_meat:1', 20: 'wood:2', 40: 'cooked_meat:4' });
   // what a cooker makes is not made by hand
   const recs = World.recipesFor(c, World.liveMap(c, ws, 'kitchen'), p, World.viewLookup(c, c.maps.kitchen, { states: {}, monsters: [], players: [] }, p));
   assert.ok(!recs.some(r => r.id === 'r_cooked_meat') && recs.some(r => r.id === 'r_hammer'));

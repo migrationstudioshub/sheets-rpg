@@ -1016,9 +1016,13 @@ var CStudio = (function () {
         h('div', { className: 'help', text: 'Optional. Empty = recipes name this object itself as their station. Give several objects the same id (e.g. workbench) when any of them should do for a recipe.' })));
       // A cooker (campfire, furnace): its recipes are made in it over time, with fuel
       form.appendChild(h('div', { className: 'field' },
-        h('label', {}, h('input', { type: 'checkbox', checked: !!p.cooks, onchange: function (e) { setProp(o, 'cooks', e.target.checked ? true : undefined); objForm(); } }), ' cooks over time (input, fuel, output)'),
-        h('div', { className: 'help', text: 'Ticked: using it opens three cells — what goes in, the fuel, what comes out. Lit, it burns fuel (Items → fuel_s) and turns what is in it into the result of the recipe that has this station and that item as its first input, one piece every time_s seconds. Those recipes are then no longer made by hand in the crafting panel.' })));
+        h('label', {}, h('input', { type: 'checkbox', checked: !!p.cooks, onchange: function (e) { setProp(o, 'cooks', e.target.checked ? true : undefined); objForm(); } }), ' cooks over time (raw materials, fuel, cooked)'),
+        h('div', { className: 'help', text: 'Ticked: using it opens the cooking window — your bag, its recipes, and its cells for raw materials, fuel and what comes out. Turned on, it burns fuel (Items → fuel_s) and makes the recipe the player picked in it (Cook) out of what is in its raw cells, one batch every time_s seconds. Nothing is cooked that was not picked. Those recipes are then no longer made by hand in the crafting panel.' })));
       if (p.cooks) {
+        [['raw_slots', 'Raw material cells'], ['fuel_slots', 'Fuel cells'], ['out_slots', 'Cooked cells']].forEach(function (q) {
+          form.appendChild(h('div', { className: 'field' }, h('label', { text: q[1] }),
+            h('input', { type: 'number', min: 1, max: 60, value: p[q[0]] || '', placeholder: '20', oninput: function (e) { var v = Math.round(Number(e.target.value)); setProp(o, q[0], v > 0 ? Math.min(60, v) : undefined); } })));
+        });
         var ckPairs = function () { var out = []; String(o.sprite_states || '').split(';').forEach(function (q) { var i = q.indexOf('='); if (i > 0) out.push([q.slice(0, i).trim(), q.slice(i + 1).trim()]); }); return out; };
         var ckPick = function (key, label, help) {
           var now = (ckPairs().filter(function (q) { return q[0] === key; })[0] || [])[1] || '';

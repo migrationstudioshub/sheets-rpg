@@ -341,11 +341,12 @@ var E = {
       var w = c.wallStyles[k]; [w.cap, w.face].forEach(function (p) { if (p) paths.push(p); });
     });
     // raised ground (the Raised view): cliff faces, the tint masks of water and lava, and the waterfall strips
+    var foamOf = function (p) { if (Render.foamPaths) { var f = Render.foamPaths(p); paths.push(f.top, f.small, f.big); } };
     var mask = function (p) { return p.replace(/[.]png$/i, '.tint.png'); }, local = function (p) { return /[.]png$/i.test(p) && !/^https?:/i.test(p); };
     Object.keys(c.terrain).forEach(function (k) {
       var t = c.terrain[k], ts = t.autotile && c.tilesets[t.autotile];
       if (t.sprite && local(t.sprite)) paths.push(t.sprite.replace(/[.]png$/i, '_face.png'));
-      if (t.fall) { paths.push(t.fall); if (local(t.fall)) paths.push(mask(t.fall)); }
+      if (t.fall) { paths.push(t.fall); if (local(t.fall)) paths.push(mask(t.fall)); foamOf(t.fall); }
       if (ts && ts.image) {
         if (t.tint && local(ts.image)) paths.push(mask(ts.image));
         var info = typeof Scatter !== 'undefined' && Scatter.tileInfo ? Scatter.tileInfo(ts.image) : null;
@@ -353,7 +354,7 @@ var E = {
       }
     });
     var fall = (c.config && c.config.waterfall_sprite) || Render.FALL_SPRITE;
-    if (fall) { paths.push(fall); if (local(fall)) paths.push(mask(fall)); }
+    if (fall) { paths.push(fall); if (local(fall)) paths.push(mask(fall)); foamOf(fall); }
     return Promise.all(paths.map(Assets.load));
   };
 

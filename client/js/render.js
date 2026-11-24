@@ -63,7 +63,16 @@ var Render = (function () {
   //   - by hand: map.falls[y][x] (the map editor) = '1' a fall here whatever the ground, a tint name = a fall in
   //     that colour, '0' = none here even over water. '' = by itself.
   // The picture is the terrain's 'fall', else Config waterfall_sprite, else FALL_SPRITE; its colour the terrain's tint.
+  // Foam: three more strips next to the fall's own (same frames, same four pieces, never tinted), found by name:
+  // <fall>_foam_top_anim.png (a tile, on the top of the fall), <fall>_foam_bottom_small_anim.png and
+  // <fall>_foam_bottom_anim.png (a tile and a half each way: on the ground tile at the foot of the fall, reaching
+  // half a tile up over it and a quarter out to the sides). A fall of Config waterfall_foam_tall (4) tiles or more
+  // gets the big one, a lower fall the small one. Config waterfall_foam = off: none. A missing picture: none of that one.
   var FALL_SPRITE = 'art/tilesets/waterfall_anim.png';
+  function foamPaths(sprite) {
+    var b = String(sprite || '').replace(/(_anim)?[.]png$/i, '');
+    return { top: b + '_foam_top_anim.png', small: b + '_foam_bottom_small_anim.png', big: b + '_foam_bottom_anim.png' };
+  }
   function isOff(v) { return v === false || /^(off|false|0|no)$/i.test(String(v == null ? '' : v)); }
   /** How far the ground falls at the south edge of a tile: [left, right, own left, own right] (in tiles). */
   function southDrop(map, x, y) {
@@ -98,17 +107,17 @@ var Render = (function () {
   /** Draws the falls at their frame for `now`, over the raised ground (ox, oy = where the map's flat origin is on screen). */
   function drawFalls(g, content, map, cells, ox, oy, size, now, x0, y0, x1, y1) {
     if (!cells || !cells.length) return;
-    var ms = Number((content.config || {}).waterfall_ms) || 110;
+    var cfgF = content.config || {}, ms = Number(cfgF.waterfall_ms) || 110, foam = !isOff(cfgF.waterfall_foam), tall = Number(cfgF.waterfall_foam_tall) || 4;
     for (var i = 0; i < cells.length; i++) {
       var a = cells[i];
       if (x0 != null && (a.x < x0 || a.x > x1 || a.y < y0 - 1 || a.y > y1 + 12)) continue;
-      var img = Assets.get(a.sprite); if (!img) continue;
+      var img = Assets.get(a.sprite), plain = img; if (!img) continue;
       var ramp = a.tint && typeof Tint !== 'undefined' && Tint.tintedOver ? Tint.TINTS[a.tint] : null;
       if (ramp) img = Tint.tintedOver(img, Assets.get(a.sprite.replace(/\.png$/i, '.tint.png')), ramp);
       var n = Math.max(1, Math.round(img.width / (4 * NT))), fr = Math.floor((now || 0) / ms) % n;
       var d = southDrop(map, a.x, a.y), X = ox + a.x * size;
       var Yl = oy + (a.y + 1 - d[2]) * size, Yr = oy + (a.y + 1 - d[3]) * size, Bl = Yl + d[0] * size, Br = Yr + d[1] * size;
-      var topY = Math.round(Math.min(Yl, Yr)), botY = Math.round(Math.max(Bl, Br));
+      var topY = Math.round(Math.min(Yl, Yr)), botY = Math.round(Math.max(Bl, Br)), fullBot = botY;
       for (var y2 = a.y + 2; y2 < map.height && y2 <= a.y + 12; y2++) {                 // nearer raised ground stands in front of it
         var top2 = Math.round(oy + (y2 - Rules.heightAt(map, a.x, y2) - (Rules.rampAt(map, a.x, y2) ? 1 : 0)) * size);
         if (top2 < botY) botY = top2;
@@ -117,6 +126,11 @@ var Render = (function () {
       g.save(); g.beginPath(); g.moveTo(X, Yl); g.lineTo(X + size, Yr); g.lineTo(X + size, Math.min(Br, botY)); g.lineTo(X, Math.min(Bl, botY)); g.closePath(); g.clip();
       for (var fy = topY; fy < botY; fy += size) g.drawImage(img, fr * 4 * NT + a.col * NT, 0, NT, Math.min(NT, img.height), X, fy, size, size);
       g.restore();
+      if (!foam) continue;
+      var fp = foamPaths(a.sprite), k = size / NT, tImg = Assets.get(fp.top);
+      if (tImg) { var tw = tImg.width / n / 4; g.drawImage(tImg, (fr * 4 + a.col) * tw, 0, tw, tImg.height, X, topY - Math.round(3 * k), tw * k, tImg.height * k); }   // (3 px up: the foam line sits on the edge the water goes over)
+      var bImg = botY < fullBot ? null : Assets.get((fullBot - topY) / size >= tall - 0.01 ? fp.big : fp.small) || Assets.get(fp.small) || Assets.get(fp.big);   // (its foot hidden behind nearer ground: no splash)
+      if (bImg) { var bw = bImg.width / n / 4, bh = bImg.height; g.drawImage(bImg, (fr * 4 + a.col) * bw, 0, bw, bh, Math.round(X - (bw - NT) / 2 * k), fullBot + size - bh * k, bw * k, bh * k); }
     }
   }
 
@@ -1724,7 +1738,7 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
+  return { Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

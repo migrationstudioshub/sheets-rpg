@@ -1092,66 +1092,131 @@ var World = (function () {
     var o = objOf(c, e), out = { type: 'storage', to: p.id, key: e.key, name: o.name, slots: boxSlots(c, e), inv: boxInv(c, e, p) };
     if (e.wild) out.takeOnly = true;                          // a carcass: things come out of it, nothing goes in
     if (e._cook) {                                           // a cooker: how the fire stands, for the page to show and count on from
-      var k = e._cook, inp = stackAt(k.inv, 0), r = inp && cookRecipe(c, e._station, inp.item);
-      out.cook = { lit: !!k.lit, burn: Math.max(0, Math.round(k.burn || 0)), prog: Math.round(k.prog || 0), need: r ? Math.max(1, (r.timeS || COOK_S) * 1000) : 0 };
+      // cells = how many raw / fuel / done cells (one after another in `inv`); rid = the recipe it was told to make and
+      // left = how many batches of it are still to come; fuel = ms all the fuel in it will last; recipes = what this
+      // player can make here (ids).
+      var k = e._cook, r = cookJob(c, k), fuel = Math.max(0, k.burn || 0);
+      zoneStacks(k, 1).forEach(function (st) { fuel += ((c.items[st.item] || {}).fuelS || 0) * 1000 * st.qty; });
+      out.cook = { lit: !!k.lit, burn: Math.max(0, Math.round(k.burn || 0)), prog: Math.round(k.prog || 0), need: r ? Math.max(1, (r.timeS || COOK_S) * 1000) : 0,
+        cells: k.lay.slice(), rid: r ? r.id : '', left: r ? k.job.n : 0, fuel: Math.round(fuel), station: e._station,
+        recipes: cookRecs(c, e._station).filter(function (x) { return !x.unlock || check(c, p, x.unlock); }).map(function (x) { return x.id; }) };
     }
     ev.push(out);
   }
   // ------------------------------------------------------------ cookers (a campfire, a furnace)
-  // A crafting station whose object says `cooks` does its recipes over time instead of at once. It holds three cells:
-  // 0 what goes in, 1 the fuel, 2 what comes out. Lit, it burns one piece of fuel after another (an item's fuel_s =
-  // how long a piece lasts) and, while there is something in cell 0 that one of ITS recipes takes (station = the
-  // cooker's station id; the recipe's first input, its first output, its time_s per piece), turns it into cell 2.
-  // It goes out when the fuel does. Its state lives in the map's own record, ms.cookers[key] = {inv, lit, burn (ms
-  // of the piece now burning), prog (ms on the piece being made), at, st: station}; time is counted when someone is
-  // on the map or opens it, and all the time between is made up then — so a fire left alone keeps cooking.
+  // A crafting station whose object says `cooks` does its recipes over time instead of at once. It holds three runs
+  // of cells, one after another in one list: what goes in (raw), the fuel, what comes out. How many of each: the
+  // object's raw_slots / fuel_slots / out_slots (COOK_CELLS each when not said); rec.lay remembers the three numbers
+  // its stacks are laid out by. Lit, it burns one piece of fuel after another (an item's fuel_s = how long a piece
+  // lasts). It cooks ONLY what it was told to: rec.job = {id, n} = so many batches of one of ITS recipes (station = the
+  // cooker's station id; its inputs, its outputs, its time_s per batch), set by the 'load' op (the Cook button). What
+  // merely lies in the raw cells is never cooked by itself — it may be an ingredient of something else. cookPick says
+  // whether the job can go on now (everything it takes is in the raw cells, and there is room for what it gives).
+  // It goes out when the fuel does. Its state lives in the map's own record, ms.cookers[key] = {inv, lay, lit, burn (ms
+  // of the piece now burning), prog (ms on the batch being made), job, at, st: station}; time is counted
+  // when someone is on the map or opens it, and all the time between is made up then — so a fire left alone keeps cooking.
   // The object's state for its picture (sprite_states): 'burning', 'fueled' (fuel in it, not burning) or 'empty'.
-  var COOK_S = 5;
+  var COOK_S = 5, COOK_CELLS = 20;
   function cookerOf(c, e) {
     var o = objOf(c, e); if (!o || o.kind !== 'craft') return null;
-    var pr = props(c, e); return yes(pr.cooks) ? { station: pr.station || o.id } : null;
+    var pr = props(c, e);
+    function n(v) { v = Math.round(Number(v)); return v > 0 ? Math.min(60, v) : COOK_CELLS; }
+    return yes(pr.cooks) ? { station: pr.station || o.id, cells: [n(pr.raw_slots), n(pr.fuel_slots), n(pr.out_slots)] } : null;
   }
+  /** A cooker's recipes (kept on the content object: asked on every turn of a lit fire). */
+  function cookRecs(c, station) {
+    var by = c._cookRecs;
+    if (!by) {
+      by = {}; var recs = c.recipes || {};
+      Object.keys(recs).forEach(function (id) { var r = recs[id]; if (r.station && list(r.inputs).length && list(r.outputs).length) (by[r.station] = by[r.station] || []).push(r); });
+      try { Object.defineProperty(c, '_cookRecs', { value: by, enumerable: false, configurable: true, writable: true }); } catch (x) { c._cookRecs = by; }
+    }
+    return by[station] || [];
+  }
+  /** A recipe of this cooker that takes the item (so: may it go in the raw cells). */
   function cookRecipe(c, station, itemId) {
-    var recs = c.recipes || {}, hit = null;
-    Object.keys(recs).forEach(function (id) {
-      var r = recs[id], inp = r.station === station ? list(r.inputs)[0] : null;
-      if (!hit && inp && inp.item === itemId && list(r.outputs)[0]) hit = r;
+    return cookRecs(c, station).filter(function (r) { return list(r.inputs).some(function (g) { return g.item === itemId; }); })[0] || null;
+  }
+  // The three runs of cells: z = 0 raw, 1 fuel, 2 done.
+  function cookZone(rec, z) { var L = rec.lay, lo = z > 0 ? L[0] + (z > 1 ? L[1] : 0) : 0; return { lo: lo, hi: lo + L[z] }; }
+  function zoneOfCell(rec, s) { for (var z = 0; z < 3; z++) { var b = cookZone(rec, z); if (s >= b.lo && s < b.hi) return z; } return -1; }
+  function zoneStacks(rec, z) {
+    var b = cookZone(rec, z);
+    return rec.inv.filter(function (st) { return st.s >= b.lo && st.s < b.hi; }).sort(function (x, y) { return x.s - y.s; });
+  }
+  /** addStacks, inside cells lo..hi-1 only. Returns how many did not fit. */
+  function zoneAdd(c, inv, id, qty, lo, hi) {
+    var max = stackMaxOf(c, id), used = {};
+    inv.slice().sort(function (x, y) { return x.s - y.s; }).forEach(function (st) {
+      if (!(st.s >= lo && st.s < hi)) return;
+      used[st.s] = 1;
+      if (qty > 0 && st.item === id && st.qty < max) { var n = Math.min(qty, max - st.qty); st.qty += n; qty -= n; }
     });
-    return hit;
+    for (var s = lo; s < hi && qty > 0; s++) if (!used[s]) { var m = Math.min(qty, max); inv.push({ item: id, qty: m, s: s }); qty -= m; }
+    return qty;
+  }
+  function zoneTake(rec, z, id, qty) {
+    zoneStacks(rec, z).forEach(function (st) {
+      if (qty <= 0 || st.item !== id) return;
+      var n = Math.min(qty, st.qty); st.qty -= n; qty -= n;
+      if (st.qty <= 0) rec.inv.splice(rec.inv.indexOf(st), 1);
+    });
+  }
+  /** The recipe it was told to make (with batches still to come), or null. */
+  function cookJob(c, rec) {
+    var job = rec.job; if (!job || !(job.n > 0)) return null;
+    return cookRecs(c, rec.st).filter(function (r) { return r.id === job.id; })[0] || null;
+  }
+  /** What the fire makes now: its job, while everything that takes is in the raw cells and what it gives has room. */
+  function cookPick(c, rec) {
+    var r = cookJob(c, rec); if (!r) return null;
+    var have = {}, ob = cookZone(rec, 2);
+    zoneStacks(rec, 0).forEach(function (st) { have[st.item] = (have[st.item] || 0) + st.qty; });
+    if (!list(r.inputs).every(function (g) { return (have[g.item] || 0) >= g.qty; })) return null;
+    var copy = zoneStacks(rec, 2).map(function (st) { return { item: st.item, qty: st.qty, s: st.s }; });
+    return list(r.outputs).every(function (g) { return zoneAdd(c, copy, g.item, g.qty, ob.lo, ob.hi) === 0; }) ? r : null;
   }
   function cookBox(c, ws, mapId, e, ck) {
     var ms = mapState(ws, mapId); ms.cookers = ms.cookers || {};
-    var rec = ms.cookers[e.key] || (ms.cookers[e.key] = { inv: [], lit: false, burn: 0, prog: 0, at: 0, st: ck.station });
+    var rec = ms.cookers[e.key] || (ms.cookers[e.key] = { inv: [], lay: ck.cells.slice(), lit: false, burn: 0, prog: 0, at: 0, st: ck.station });
     rec.st = ck.station;
-    return { key: e.key, x: e.x, y: e.y, ref: e.ref, inv: rec.inv, _slots: 3, _cook: rec, _station: ck.station };
+    var old = rec.lay || [1, 1, 1];                            // (one saved before it had runs of cells: in, fuel, out)
+    if (old.join() !== ck.cells.join()) {                      // the object's cell counts changed: every stack moves to its own run
+      rec.lay = old;
+      var moved = rec.inv.map(function (st) { return { item: st.item, qty: st.qty, z: zoneOfCell(rec, st.s) }; });
+      rec.inv.length = 0; rec.lay = ck.cells.slice();
+      moved.forEach(function (st) { if (st.z >= 0) { var b = cookZone(rec, st.z); zoneAdd(c, rec.inv, st.item, st.qty, b.lo, b.hi); } });
+    }
+    return { key: e.key, x: e.x, y: e.y, ref: e.ref, inv: rec.inv, _slots: rec.lay[0] + rec.lay[1] + rec.lay[2], _cook: rec, _station: ck.station };
   }
   function cookTick(c, ws, mapId, key, now) {
     var ms = mapState(ws, mapId), rec = ms.cookers && ms.cookers[key]; if (!rec) return;
-    var dt = rec.lit ? Math.max(0, now - (rec.at || now)) : 0, guard = 0;
+    rec.lay = rec.lay || [1, 1, 1];
+    var dt = rec.lit ? Math.max(0, now - (rec.at || now)) : 0, guard = 0, ob = cookZone(rec, 2);
     rec.at = now;
-    function drop(st) { if (st.qty <= 0) rec.inv.splice(rec.inv.indexOf(st), 1); }
+    function fuelStack() { return zoneStacks(rec, 1).filter(function (st) { return (c.items[st.item] || {}).fuelS > 0; })[0] || null; }
     while (rec.lit && dt > 0 && guard++ < 5000) {
       if (!(rec.burn > 0)) {                                  // the next piece of fuel, or the fire is out
-        var f = stackAt(rec.inv, 1), fi = f && c.items[f.item];
-        if (!f || !(fi && fi.fuelS > 0)) { rec.lit = false; rec.prog = 0; break; }
-        rec.burn = fi.fuelS * 1000; f.qty--; drop(f);
+        var f = fuelStack();
+        if (!f) { rec.lit = false; rec.prog = 0; break; }
+        rec.burn = c.items[f.item].fuelS * 1000; f.qty--; if (f.qty <= 0) rec.inv.splice(rec.inv.indexOf(f), 1);
       }
-      var inp = stackAt(rec.inv, 0), r = inp && cookRecipe(c, rec.st, inp.item), out = stackAt(rec.inv, 2);
-      var need = r ? Math.max(1, (r.timeS || COOK_S) * 1000) : 0, takes = r ? list(r.inputs)[0].qty : 0, gives = r ? list(r.outputs)[0] : null;
-      var can = !!(r && inp.qty >= takes && (!out || (out.item === gives.item && out.qty + gives.qty <= stackMaxOf(c, gives.item))));
-      if (!can) rec.prog = 0;
-      var step = Math.min(dt, rec.burn, can ? need - (rec.prog || 0) : Infinity);
+      var r = cookPick(c, rec), need = r ? Math.max(1, (r.timeS || COOK_S) * 1000) : 0;
+      if (!r) rec.prog = 0;
+      var step = Math.min(dt, rec.burn, r ? need - (rec.prog || 0) : Infinity);
       rec.burn -= step; dt -= step;
-      if (can) {
+      if (r) {
         rec.prog = (rec.prog || 0) + step;
         if (rec.prog >= need) {
-          rec.prog = 0; inp.qty -= takes; drop(inp);
-          if (out) out.qty += gives.qty; else rec.inv.push({ item: gives.item, qty: gives.qty, s: 2 });
+          rec.prog = 0;
+          list(r.inputs).forEach(function (g) { zoneTake(rec, 0, g.item, g.qty); });
+          list(r.outputs).forEach(function (g) { zoneAdd(c, rec.inv, g.item, g.qty, ob.lo, ob.hi); });
+          rec.job.n--; if (rec.job.n <= 0) delete rec.job;
         }
       }
     }
     // ('burning', not 'lit': the craft kind's own default state is called lit, and a default state is never sent to the page)
-    var state = rec.lit ? 'burning' : (stackAt(rec.inv, 1) || rec.burn > 0) ? 'fueled' : 'empty';
+    var state = rec.lit ? 'burning' : (zoneStacks(rec, 1).length || rec.burn > 0) ? 'fueled' : 'empty';
     if (ms.states[key] !== state) setState(ws, mapId, key, state);
     ws.dirty = true;
   }
@@ -1191,8 +1256,38 @@ var World = (function () {
     if (e._cook && (a.op === 'light' || a.op === 'douse')) {     // the fire itself
       var k = e._cook;
       if (a.op === 'douse') k.lit = false;
-      else if (!stackAt(k.inv, 1) && !(k.burn > 0)) return say('There is nothing in it to burn.');
+      else if (!zoneStacks(k, 1).length && !(k.burn > 0)) return say('There is nothing in it to burn.');
       else { k.lit = true; k.at = now; }
+      cookTick(c, ws, p.map, e.key, now); storageEvent(c, p, e, ev); return;
+    }
+    // {op:'load', recipe, qty}: the Cook button — it is told to make so many batches of one of its recipes (more of
+    // the one it is on are added to it; another recipe takes its place). What that takes and is not yet in its raw
+    // cells comes out of the bag; as many batches as there are things and room for. With fuel in it, the fire is lit.
+    // {op:'cancel'}: it stops making it (what is in its cells stays there).
+    if (e._cook && a.op === 'cancel') { delete e._cook.job; e._cook.prog = 0; cookTick(c, ws, p.map, e.key, now); storageEvent(c, p, e, ev); return; }
+    if (e._cook && a.op === 'load') {
+      var lk = e._cook, lr = (c.recipes || {})[String(a.recipe || '')], rb = cookZone(lk, 0);
+      if (!lr || cookRecs(c, e._station).indexOf(lr) < 0 || (lr.unlock && !check(c, p, lr.unlock))) return say('That can\'t be made here.');
+      var ins = list(lr.inputs), on = lk.job && lk.job.id === lr.id && lk.job.n > 0 ? lk.job.n : 0, inRaw = {};
+      zoneStacks(lk, 0).forEach(function (st) { inRaw[st.item] = (inRaw[st.item] || 0) + st.qty; });
+      function missing(g, n) { return Math.max(0, g.qty * (on + n) - (inRaw[g.item] || 0)); }   // of g, still to come out of the bag for n more batches
+      var more = Math.max(1, Math.min(CRAFT_MAX - on, Math.round(Number(a.qty)) || 1));
+      ins.forEach(function (g) { if (g.qty > 0) more = Math.min(more, Math.floor(((inRaw[g.item] || 0) + count(p, g.item)) / g.qty) - on); });
+      if (more < 1) {
+        var lacks = ins.filter(function (g) { return (inRaw[g.item] || 0) + count(p, g.item) < g.qty * (on + 1); });
+        return say('Not enough ' + lacks.map(function (g) { return lower(itemName(c, g.item)); }).join(', ') + '.');
+      }
+      for (; more >= 1; more--) {
+        var copy = lk.inv.map(function (st) { return { item: st.item, qty: st.qty, s: st.s }; });
+        if (ins.every(function (g) { var m = missing(g, more); return !m || zoneAdd(c, copy, g.item, m, rb.lo, rb.hi) === 0; })) break;
+      }
+      if (more < 1) return say('There is no room for it.');
+      ins.forEach(function (g) { var m = missing(g, more); if (m) { take(p, g.item, m); zoneAdd(c, lk.inv, g.item, m, rb.lo, rb.hi); } });
+      if (!on) lk.prog = 0;
+      lk.job = { id: lr.id, n: on + more };
+      if (typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);
+      syncLoadout(c, p);
+      if (!lk.lit) { if (zoneStacks(lk, 1).length || lk.burn > 0) { lk.lit = true; lk.at = now; } else say('It needs fuel to cook.'); }
       cookTick(c, ws, p.map, e.key, now); storageEvent(c, p, e, ev); return;
     }
     if (e._cook && a.op !== 'look') return;                     // (things go in and out of a cooker by its cells: the 'inv' action)
@@ -1262,18 +1357,21 @@ var World = (function () {
     var toSize = to.w === 'box' ? boxSlots(c, e) : bagSlots(c), fromSize = from.w === 'box' ? boxSlots(c, e) : bagSlots(c);
     var src = stackAt(fromL, Math.floor(Number(from.s)));
     if (!src) return say('There is nothing there.');
+    var zone = null;                                          // into a cooker with no cell to go to: anywhere in this run of its cells
     if (e && e._cook) {                                       // a cooker's cells take only what belongs in them
+      var ck = e._cook, given = !(to.s === undefined || to.s === null || to.s === '');
       if (to.w === 'box') {
         var fuel = (c.items[src.item] || {}).fuelS > 0, cooks = !!cookRecipe(c, e._station, src.item);
-        var cell = to.s === undefined || to.s === null || to.s === '' ? (cooks ? 0 : fuel ? 1 : -1) : Math.floor(Number(to.s));
-        if (from.w === 'box') return;                           // (no shuffling between its own cells)
-        if (cell === 2) return say('That is where things come out.');
-        if (cell === 1 && !fuel) return say('That will not burn.');
-        if (cell !== 1 && !(cell === 0 && cooks)) return say('Nothing can be made of that here.');
-        var there = stackAt(box, cell);
-        if (there && there.item !== src.item) return say('Take out what is in there first.');
-        to = { w: 'box', s: cell };
-      } else if (to.s !== undefined && to.s !== null && to.s !== '') {
+        var z = given ? zoneOfCell(ck, Math.floor(Number(to.s))) : (cooks ? 0 : fuel ? 1 : -1);
+        if (from.w === 'box') { if (!given || z !== zoneOfCell(ck, src.s)) return; }   // (inside it: only about its own run of cells)
+        else {
+          if (z === 2) return say('That is where things come out.');
+          if (z === 1 && !fuel) return say('That will not burn.');
+          if (z !== 1 && !(z === 0 && cooks)) return say('Nothing can be made of that here.');
+          var there = given ? stackAt(box, Math.floor(Number(to.s))) : null;
+          if (!given || (there && (there.item !== src.item || there.qty >= stackMaxOf(c, src.item)))) zone = cookZone(ck, z);   // (never a swap out of the cooker)
+        }
+      } else if (given) {
         var onto = stackAt(bag, Math.floor(Number(to.s)));
         if (onto && onto.item !== src.item) to = { w: 'bag' };  // (never a swap INTO the cooker: it goes wherever it fits)
       }
@@ -1285,9 +1383,13 @@ var World = (function () {
     var id = src.item, other = '', max = stackMaxOf(c, id);
     // Out of a cooker's "comes out" cell into the bag: whoever takes it out made it (a fire cooks with nobody
     // there, so this is the one moment a player can be named), for quests that ask for it to be crafted.
-    var cooked = !!(e && e._cook && from.w === 'box' && to.w === 'bag' && src.s === 2), hadBefore = cooked ? count(p, id) : 0;
+    var cooked = !!(e && e._cook && from.w === 'box' && to.w === 'bag' && zoneOfCell(e._cook, src.s) === 2), hadBefore = cooked ? count(p, id) : 0;
     var qty = Math.max(1, Math.min(src.qty, Math.round(Number(a.qty)) || src.qty));
-    if (to.s === undefined || to.s === null || to.s === '') {            // wherever it fits
+    if (zone) {
+      var zl = zoneAdd(c, toL, id, qty, zone.lo, zone.hi);
+      if (zl >= qty) return say('It is full.');
+      src.qty -= qty - zl;
+    } else if (to.s === undefined || to.s === null || to.s === '') {            // wherever it fits
       if (fromL === toL) return;
       var left = addStacks(c, toL, id, qty, toSize);
       if (left >= qty) return say(to.w === 'box' ? 'It is full.' : 'Your bag is full.');
@@ -1528,7 +1630,8 @@ var World = (function () {
     // equip the first weapon/armor they start with, so e.g. a survivor spawns with the pistol in hand
     list(classOf(c, p).startItems).forEach(function (s) {
       var it = c.items[s.item];
-      if (it && it.slot && !p.equipment[it.slot] && (!it.equipIf || check(c, p, it.equipIf))) p.equipment[it.slot] = s.item;
+      var k0 = it && it.slot ? slotFor(p, it) : '';
+      if (k0 && !p.equipment[k0] && !wornAt(p, it) && (!it.equipIf || check(c, p, it.equipIf))) p.equipment[k0] = s.item;
     });
     var wep0 = rangedWeapon(c, p); if (wep0) loadMag(c, p, wep0);   // a spawned gun starts with a full magazine
     fillLoadout(c, p);
@@ -4248,7 +4351,26 @@ var World = (function () {
     }
   }
 
-  function useItem(c, ws, p, id, now, ev) {
+  // ---- what is worn. An item's `slot` says where it goes: 'weapon' (in hand: holdSlot), one of WORN_SLOTS, any other
+  // name the content uses, or 'accessory' — of which ACC_SLOTS are worn at once, in p.equipment.accessory1…N.
+  // p.equipment[place] = item id, as ever; wornAt / slotFor are the only two that know about the accessory places.
+  var WORN_SLOTS = [{ id: 'helm', name: 'Head' }, { id: 'armor', name: 'Chest' }, { id: 'pants', name: 'Pants' }, { id: 'feet', name: 'Feet' },
+    { id: 'gloves', name: 'Gloves' }, { id: 'back', name: 'Back' }], ACC_SLOTS = 4;
+  function accKeys() { var out = []; for (var i = 1; i <= ACC_SLOTS; i++) out.push('accessory' + i); return out; }
+  /** Where p wears this item ('' = nowhere). */
+  function wornAt(p, it) {
+    var eq = (p && p.equipment) || {}; if (!it || !it.slot) return '';
+    if (it.slot !== 'accessory') return eq[it.slot] === it.id ? it.slot : '';
+    return accKeys().filter(function (k) { return eq[k] === it.id; })[0] || '';
+  }
+  /** Where it would go: its slot; an accessory = the place asked for, else the first free one, else the first. */
+  function slotFor(p, it, want) {
+    if (it.slot !== 'accessory') return it.slot;
+    var ks = accKeys(), eq = p.equipment || {};
+    return ks.indexOf(want) >= 0 ? want : (ks.filter(function (k) { return !eq[k]; })[0] || ks[0]);
+  }
+  // want (the action's `slot`) = which accessory place; a worn accessory dropped on another place moves there.
+  function useItem(c, ws, p, id, now, ev, want) {
     var it = c.items[id];
     if (!it || count(p, id) < 1) { ev.push({ type: 'info', to: p.id, text: 'You don\'t have that.' }); return; }
     var mx = stats(c, p).maxHp;
@@ -4285,7 +4407,9 @@ var World = (function () {
       if (it.toxicity) { if (cures && !it.heal && !it.mp && !it.hunger && !it.thirst) ev.push({ type: 'info', to: p.id, text: 'You use the ' + lower(it.name) + '.' }); addTox(c, p, it.toxicity, ev); }
       if (it.onUse) run(c, ws, p, it.onUse, now, ev);
     } else if (it.slot) {
-      if (p.equipment[it.slot] === id) { delete p.equipment[it.slot]; if (it.slot === 'weapon') p.held = -1; ev.push({ type: 'info', to: p.id, text: 'You put away the ' + lower(it.name) + '.' }); }
+      var at = wornAt(p, it), moving = at && it.slot === 'accessory' && accKeys().indexOf(want) >= 0 && want !== at;
+      if (moving) { delete p.equipment[at]; p.equipment[want] = id; }
+      else if (at) { delete p.equipment[at]; if (it.slot === 'weapon') p.held = -1; ev.push({ type: 'info', to: p.id, text: 'You put away the ' + lower(it.name) + '.' }); }
       else {
         if (it.equipIf && !check(c, p, it.equipIf)) {
           var req = /level:(\d+)/.exec(it.equipIf);
@@ -4293,7 +4417,7 @@ var World = (function () {
           return;
         }
         if (it.slot === 'weapon') p.held = beltSlotFor(p, id);            // a weapon is worn by holding its belt slot
-        p.equipment[it.slot] = id; ev.push({ type: 'info', to: p.id, text: 'You equip the ' + lower(it.name) + '.' });
+        p.equipment[slotFor(p, it, want)] = id; ev.push({ type: 'info', to: p.id, text: 'You equip the ' + lower(it.name) + '.' });
         if (itemCan(it, 'shoot') && Number(it.clip) > 0 && (!p.mags || p.mags[id] == null)) loadMag(c, p, it);   // a gun drawn for the first time comes loaded (an emptied one is reloaded the slow way)
       }
       syncLoadout(c, p);
@@ -4348,7 +4472,7 @@ var World = (function () {
       else if (wallHere) ev.push({ type: 'info', to: p.id, text: Rl().cliffReach(amap, p.x, p.y, ax, ay) ? 'You can\'t reach it: the ground is at another height.' : 'A wall is in the way.' });
       else { faceTo(p, ax, ay); attack(c, ws, p.map, p, am, now, rng, ev); }
     }
-    else if (action.type === 'use') useItem(c, ws, p, action.item, now, ev);
+    else if (action.type === 'use') useItem(c, ws, p, action.item, now, ev, action.slot);
     else if (action.type === 'face' && Rl().DIRS[action.dir]) p.facing = action.dir;
     else if (action.type === 'cast') cast(c, ws, p, action, now, rng, ev, players);
     else if (action.type === 'shoot') shoot(c, ws, p, action, now, rng, ev, players);
@@ -4549,7 +4673,8 @@ var World = (function () {
     roofZoneAt: roofZoneAt, roofZones: roofZones, covered: covered, asRoof: asRoof, roofSteps: roofSteps, roofSpan: roofSpan, roofSupport: roofSupport,
     liveMap: liveMap, liveMapFromStruct: liveMapFromStruct, structOf: structOf, publicStruct: publicStruct,
     structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure,
-    recipesFor: recipesFor, hasTool: hasTool, craftingHere: craftingHere, CRAFT_MAX: CRAFT_MAX, heldItem: heldItem, weaponState: weaponState, cookRecipe: cookRecipe, hitMonster: hitMonster, bagSlots: bagSlots, stackMaxOf: stackMaxOf, take: take, harvestWith: harvestWith, stationName: stationName,
+    WORN_SLOTS: WORN_SLOTS, ACC_SLOTS: ACC_SLOTS, wornAt: wornAt,
+    recipesFor: recipesFor, hasTool: hasTool, craftingHere: craftingHere, CRAFT_MAX: CRAFT_MAX, heldItem: heldItem, weaponState: weaponState, cookRecipe: cookRecipe, COOK_S: COOK_S, hitMonster: hitMonster, bagSlots: bagSlots, stackMaxOf: stackMaxOf, take: take, harvestWith: harvestWith, stationName: stationName,
     canBuild: canBuild, buildUnlocked: buildUnlocked, blueprintsFor: blueprintsFor, noBuild: noBuild, buildSpot: buildSpot,
     claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, canRemove: canRemove, canMove: canMove, leaveBag: leaveBag, bagObject: bagObject, waterAt: waterAt, fillables: fillables, itemCan: itemCan, beltItems: beltItems, BELT_SIZE: BELT_SIZE, skillsOn: skillsOn, holdSlot: holdSlot,
     groundId: groundId, floorId: floorId, floorsOf: floorsOf, deliver: deliver,

@@ -107,7 +107,7 @@ var Schema = (function () {
     itemTypes: { collection: 'itemTypes', id: 'id', label: 'Item Types', singular: 'item type', authored: 'studio', fields: [
       f('id', 'text', '', 'Short name the items refer to: lower-case letters, numbers and _'), f('name', 'text', '', 'Heading shown in the Items list'),
       f('equip', 'bool', false, 'Can be equipped: worn or held in a slot. Shows slot, worn art, attack, defence'),
-      f('slot', 'text', '', 'Where items of this type go when equipped (weapon, armor, helm…). An item can name its own slot'),
+      f('slot', 'text', '', 'Where items of this type go when equipped: weapon, helm (head), armor (chest), pants, feet, gloves, back, or accessory (four can be worn). An item can name its own slot'),
       f('shoot', 'bool', false, 'A ranged weapon when equipped and given a range: fires on click. Shows range, ammo, magazine, aim'),
       f('consume', 'bool', false, 'Can be used: one is used up each time. Shows heal, mana, hunger, thirst, on_use'),
       f('cooldown_s', 'number', 0, 'Seconds to wait before using another of the same item (0 = none). An item can set its own'),
@@ -120,7 +120,7 @@ var Schema = (function () {
     items: { collection: 'items', id: 'id', label: 'Items', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('sprite', 'image', ''),
       f('type', 'select', 'material', '', { options: ['material', 'weapon', 'armor', 'consumable', 'throwable', 'ammo', 'key'] }),
-      f('slot', 'text', '', 'Equip slot (weapon, armor, helm…). Empty = the slot of its type'),
+      f('slot', 'text', '', 'Equip slot: weapon, helm (head), armor (chest), pants, feet, gloves, back, or accessory (four can be worn). Empty = the slot of its type'),
       f('worn_sprite', 'image', '', 'Paper-doll layer when equipped. For a weapon that shoots: loaded and held at rest (a bow with an arrow on the string, not drawn)'),
       f('worn_empty', 'image', '', 'A weapon with a magazine (clip), held with nothing loaded: a bow with no arrow on the string. Also shown while the next one is being loaded, unless there is a reloading picture. Empty = the worn sprite'),
       f('worn_aim', 'image', '', 'The weapon loaded and being aimed (right mouse button held): a bow drawn back. Empty = the worn sprite. Draw them all on the same canvas, so the aim points fit every one'),

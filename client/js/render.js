@@ -213,6 +213,99 @@ var Render = (function () {
     }
     g.restore();
   }
+  // ---- shallow water ----
+  // The map's `shallow` grid marks overlay water that can be waded through (Rules.terrainAt). It is drawn see-through,
+  // so the ground painted under it shows: Config shallow_alpha (0.45) of the water shows over shallow ground. Where
+  // shallow meets deep water the two fade into each other over Config shallow_blend (2) tiles, half on each side of
+  // the line you can walk to, and the fade wobbles a little so it never runs straight along the grid. Built from a
+  // signed distance per water cell (+ inside the shallows, - out in the deep), smoothed across tiles, plus a fixed
+  // noise (worked out from where it is, never chance). Shoreline shapes are the water's own autotile, untouched.
+  // Each see-through cell is drawn live (in the moving-ground list), never into the bake, so the water is laid once
+  // over the baked ground and never twice over itself.
+  function shallowAlpha(content) {
+    var raw = content.config.shallow_alpha, v = Number(raw);
+    if (raw === '' || raw == null || !isFinite(v)) v = 0.45;
+    if (v > 1) v /= 100;                                            // (written as a percentage)
+    return Math.max(0, Math.min(1, v));
+  }
+  function nHash(ix, iy) { var n = (ix * 374761393 + iy * 668265263) | 0; n = Math.imul(n ^ (n >>> 13), 1274126177); return ((n ^ (n >>> 16)) >>> 0) / 4294967296; }
+  function vNoise(u, v) {                                           // smooth value noise, -1..1
+    var i = Math.floor(u), j = Math.floor(v), fu = u - i, fv = v - j;
+    fu = fu * fu * (3 - 2 * fu); fv = fv * fv * (3 - 2 * fv);
+    var a = nHash(i, j), b = nHash(i + 1, j), c = nHash(i, j + 1), d = nHash(i + 1, j + 1);
+    return (a + (b - a) * fu + (c - a) * fv + (a - b - c + d) * fu * fv) * 2 - 1;
+  }
+  /** The overlay water cells drawn see-through: { "x,y": {a} (all of it at one strength) or {mask} (a tile-sized
+   *  alpha picture) }, or null when the map has none. */
+  function shallowCells(content, map) {
+    var sg = map.shallow, ov = map.overlay && map.overlay.length ? map.overlay : null;
+    if (!sg || !sg.length || !ov || typeof Rules === 'undefined' || !Rules.isWater) return null;
+    var W = map.width, H = map.height, wet = new Uint8Array(W * H), sh = new Uint8Array(W * H), any = false, x, y, i;
+    for (y = 0; y < H; y++) for (x = 0; x < W; x++) {
+      var t = content.terrain[ov[y] && ov[y][x]]; i = y * W + x;
+      if (t && Rules.isWater(t)) { wet[i] = 1; if (sg[y] && sg[y][x] === '1') { sh[i] = 1; any = true; } }
+    }
+    if (!any) return null;
+    var cfg = content.config, blend = Number(cfg.shallow_blend); if (!(blend > 0)) blend = 2;
+    var half = blend / 2, NZ = Math.min(0.35, half * 0.4), LIM = half + NZ + 1, SA = shallowAlpha(content), T = cfg.tile_size || 32;
+    var S = new Float32Array(W * H), rad = Math.ceil(LIM) + 1;
+    for (y = 0; y < H; y++) for (x = 0; x < W; x++) {               // signed distance to the shallow / deep line
+      i = y * W + x; if (!wet[i]) continue;
+      var best = Infinity;
+      for (var dy = -rad; dy <= rad; dy++) for (var dx = -rad; dx <= rad; dx++) {
+        var nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        var j = ny * W + nx; if (!wet[j] || sh[j] === sh[i]) continue;
+        var d = Math.sqrt(dx * dx + dy * dy); if (d < best) best = d;
+      }
+      var s = Math.min(LIM, best - 0.5); S[i] = sh[i] ? s : -s;
+    }
+    var N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for (y = 0; y < H; y++) for (x = 0; x < W; x++) {               // land by the water: what the water beside it says (so the smoothing ignores the shore)
+      i = y * W + x; if (wet[i]) continue;
+      var sum = 0, n = 0;
+      for (var q4 = 0; q4 < 4; q4++) { var ax = x + N4[q4][0], ay = y + N4[q4][1]; if (ax < 0 || ay < 0 || ax >= W || ay >= H) continue; var k = ay * W + ax; if (wet[k]) { sum += S[k]; n++; } }
+      S[i] = n ? sum / n : -LIM;
+    }
+    function at(ax, ay) { ax = ax < 0 ? 0 : ax >= W ? W - 1 : ax; ay = ay < 0 ? 0 : ay >= H ? H - 1 : ay; return S[ay * W + ax]; }
+    function smooth(e0, e1, v) { var k = Math.max(0, Math.min(1, (v - e0) / (e1 - e0))); return k * k * (3 - 2 * k); }
+    var out = {};
+    for (y = 0; y < H; y++) for (x = 0; x < W; x++) {
+      if (!wet[y * W + x]) continue;
+      var lo = Infinity, hi = -Infinity;
+      for (var qy = -1; qy <= 1; qy++) for (var qx = -1; qx <= 1; qx++) { var q = at(x + qx, y + qy); if (q < lo) lo = q; if (q > hi) hi = q; }
+      if (hi <= -half - NZ) continue;                               // deep all over: drawn as it always was
+      if (lo >= half + NZ) { out[x + ',' + y] = { a: SA }; continue; }   // shallow all over: one strength
+      if (typeof document === 'undefined') continue;
+      var cv = document.createElement('canvas'); cv.width = cv.height = T;
+      var cg = cv.getContext('2d'), img = cg.createImageData(T, T), px = img.data;
+      for (var py = 0; py < T; py++) for (var pq = 0; pq < T; pq++) {
+        var u = x + (pq + 0.5) / T, v = y + (py + 0.5) / T, gu = u - 0.5, gv = v - 0.5, i0 = Math.floor(gu), j0 = Math.floor(gv), fu = gu - i0, fv = gv - j0;
+        var sv = (at(i0, j0) * (1 - fu) + at(i0 + 1, j0) * fu) * (1 - fv) + (at(i0, j0 + 1) * (1 - fu) + at(i0 + 1, j0 + 1) * fu) * fv;
+        sv += NZ * (0.7 * vNoise(u * 1.7, v * 1.7) + 0.3 * vNoise(u * 4.1 + 17, v * 4.1 + 31));
+        var o = (py * T + pq) * 4; px[o] = px[o + 1] = px[o + 2] = 255;
+        px[o + 3] = Math.round(255 * (1 - smooth(-half, half, sv) * (1 - SA)));
+      }
+      cg.putImageData(img, 0, 0);
+      out[x + ',' + y] = { mask: cv };
+    }
+    return out;
+  }
+  var shScratch = null;
+  /** Draws one see-through water cell: draw(ctx, x, y, size) paints it as usual, sc says how much of it shows. */
+  function drawShallow(g, sc, dx, dy, size, draw) {
+    if (!sc.mask) { var ga = g.globalAlpha; g.globalAlpha = ga * sc.a; draw(g, dx, dy, size); g.globalAlpha = ga; return; }
+    var n = Math.max(1, Math.ceil(size));
+    if (!shScratch) shScratch = document.createElement('canvas');
+    if (shScratch.width < n || shScratch.height < n) { shScratch.width = Math.max(n, shScratch.width); shScratch.height = Math.max(n, shScratch.height); }
+    var s = shScratch.getContext('2d');
+    s.setTransform(1, 0, 0, 1, 0, 0); s.globalCompositeOperation = 'source-over'; s.clearRect(0, 0, n, n); s.imageSmoothingEnabled = false;
+    draw(s, 0, 0, size);
+    s.globalCompositeOperation = 'destination-in'; s.imageSmoothingEnabled = true;
+    s.drawImage(sc.mask, 0, 0, sc.mask.width, sc.mask.height, 0, 0, size, size);
+    s.globalCompositeOperation = 'source-over';
+    g.drawImage(shScratch, 0, 0, size, size, dx, dy, size, size);
+  }
+
   // ---- animated ground (water, lava…) ----
   // The baked ground holds every cell's first frame. The cells that move are listed once per map (animatedCells) and
   // drawn again every frame over the bake (drawAnimated), all on one clock so a whole lake ripples together. A cell
@@ -233,13 +326,15 @@ var Render = (function () {
     }
     function baseGrid() { return auto || (auto = Autotile.gridFor(content, map.terrain, edgeSame, map.shapes)); }
     function overGrid() { return autoOv || (autoOv = Autotile.gridFor(content, overlay, edgeSame, map.overlayShapes)); }
+    var shal = shallowCells(content, map);                      // shallow water: drawn see-through, here and never in the bake
     for (var y = 0; y < map.height; y++) for (var x = 0; x < map.width; x++) {
       var bt = content.terrain[map.terrain[y] && map.terrain[y][x]], ot = overlay ? content.terrain[overlay[y] && overlay[y][x]] : null;
       var baseMoves = !!bt && (moving(bt) || (bt.frames > 1 && !!bt.sprite && !bt.autotile)), overMoves = moving(ot);
-      if (!baseMoves && !overMoves) continue;
+      var sc = shal && shal[x + ',' + y];
+      if (!baseMoves && !overMoves && !sc) continue;
       var parts = [];
       if (baseMoves) { var bp = part(baseGrid, map.terrain, x, y); if (bp) parts.push(bp); }
-      if (ot && (overMoves || baseMoves)) { var op = part(overGrid, overlay, x, y); if (op) parts.push(op); }
+      if (ot && (overMoves || baseMoves || sc)) { var op = part(overGrid, overlay, x, y); if (op) { if (sc) op.sh = sc; parts.push(op); } }
       if (parts.length) out.push({ x: x, y: y, parts: parts });
     }
     return out;
@@ -252,18 +347,24 @@ var Render = (function () {
       var dx = ox + a.x * size, dy = oy + a.y * size - (lift ? lift(a.x, a.y) : 0);
       for (var k = 0; k < a.parts.length; k++) {
         var p = a.parts[k];
-        if (p.ts) {
-          var sheet = groundSheet(content, p.t, p.ts); if (!sheet) continue;
-          var own = p.ts.frames > 1, n = Math.max(1, (own ? p.ts.frames : p.t.frames) || 1), ms = (own ? p.ts.frameMs : p.t.frameMs) || 200;
-          if (sheet.width < n * p.ts.columns * p.ts.tileSize) n = 1;                 // the picture does not hold that many sheets: a still one
-          tileFromSheet(sheet, p.ts, p.tile, g, dx, dy, size, n > 1 ? Math.floor(now / ms) % n : 0);
-        } else {
-          var img = Assets.get(p.t.sprite); if (!img) continue;
-          var f = frameOf(img, p.t.frames, p.t.frameMs, now);
-          g.drawImage(img, f.sx, 0, f.sw, f.fh, dx, dy, size, size);
-        }
+        if (p.sh) drawShallow(g, p.sh, dx, dy, size, partDrawer(content, p, now));   // see-through shallow water
+        else partDrawer(content, p, now)(g, dx, dy, size);
       }
     }
+  }
+  function partDrawer(content, p, now) {                   // one layer of a moving cell, at its frame for `now`
+    return function (g, dx, dy, size) {
+      if (p.ts) {
+        var sheet = groundSheet(content, p.t, p.ts); if (!sheet) return;
+        var own = p.ts.frames > 1, n = Math.max(1, (own ? p.ts.frames : p.t.frames) || 1), ms = (own ? p.ts.frameMs : p.t.frameMs) || 200;
+        if (sheet.width < n * p.ts.columns * p.ts.tileSize) n = 1;                 // the picture does not hold that many sheets: a still one
+        tileFromSheet(sheet, p.ts, p.tile, g, dx, dy, size, n > 1 ? Math.floor(now / ms) % n : 0);
+      } else {
+        var img = Assets.get(p.t.sprite); if (!img) return;
+        var f = frameOf(img, p.t.frames, p.t.frameMs, now);
+        g.drawImage(img, f.sx, 0, f.sw, f.fh, dx, dy, size, size);
+      }
+    };
   }
 
   function drawSprite(g, path, label, color, dx, dy, size) {
@@ -851,7 +952,7 @@ var Render = (function () {
   }
 
   /** Paints base colours, terrain, the variety layer, wall faces and flat ground decals once. */
-  function bakeGround(content, map, raised) {                 // raised: draw the ground's height (the game); the editor keeps it flat
+  function bakeGround(content, map, raised, live) {           // raised: draw the ground's height (the game); the editor keeps it flat. live: the caller draws the moving ground (animatedCells) over it
     var T = content.config.tile_size || 32, sc = T / NT;
     var c = document.createElement('canvas');
     var up = raised && elevOn(map), pad = up ? maxElev(map) * T : 0;
@@ -863,6 +964,16 @@ var Render = (function () {
     var auto = Autotile.gridFor(content, base, edgeSame, map.shapes);           // shapes = frozen overrides
     var autoOv = overlay ? Autotile.gridFor(content, overlay, edgeSame, map.overlayShapes) : null;
     var Sc = typeof Scatter !== 'undefined' ? Scatter : null;
+    // Shallow water is see-through: live, it is left out here (the moving-ground list lays it over this bake);
+    // otherwise (a floor seen from above) it is baked see-through, still.
+    var shal = overlay ? shallowCells(content, map) : null;
+    function drawOver(x, y, dx, dy) {
+      var sc = shal && shal[x + ',' + y];
+      if (!sc) return drawCell(overlay, autoOv, x, y, dx, dy, false, map.overlayShapes);
+      if (live) return;
+      var into = G;
+      drawShallow(into, sc, dx, dy, T, function (cg, X, Y) { G = cg; drawCell(overlay, autoOv, x, y, X, Y, false, map.overlayShapes); G = into; });
+    }
 
     // Draw one terrain layer at a cell. `underlay` = this is the opaque ground layer (draws the base-tile
     // underlay so edges aren't holes, and a flat-colour fallback for artless terrain). The overlay layer
@@ -900,7 +1011,7 @@ var Render = (function () {
       for (var x = 0; x < map.width; x++) {
         var dx = x * T, dy = y * T;
         drawCell(base, auto, x, y, dx, dy, true, map.shapes);            // ground layer (opaque)
-        if (autoOv) drawCell(overlay, autoOv, x, y, dx, dy, false, map.overlayShapes);   // overlay (transparent)
+        if (autoOv) drawOver(x, y, dx, dy);                               // overlay (transparent; shallow water see-through)
       }
     }
     else {
@@ -933,7 +1044,7 @@ var Render = (function () {
         if ((base[ry] && base[ry][rx]) || (overlay && overlay[ry] && overlay[ry][rx])) {
           sg.clearRect(0, 0, T, T); G = sg;
           drawCell(base, auto, rx, ry, 0, 0, true, map.shapes);
-          if (autoOv) drawCell(overlay, autoOv, rx, ry, 0, 0, false, map.overlayShapes);
+          if (autoOv) drawOver(rx, ry, 0, 0);
           G = g;
           if (!er) g.drawImage(scr, X, pad + (ry - eh) * T);
           else if (er === 'N') g.drawImage(scr, 0, 0, T, T, X, pad + (ry - eh - 1) * T, T, 2 * T);
@@ -1042,7 +1153,7 @@ var Render = (function () {
   Renderer.prototype.setMap = function (map, floorMaps) {   // floorMaps = { floorId: that floor's live map } (optional)
     this.map = map;
     this.mapId = map.id;
-    this.ground = bakeGround(this.content, map, true);          // (with the ground's height drawn)
+    this.ground = bakeGround(this.content, map, true, true);    // (with the ground's height drawn; the moving ground, shallow water too, is drawn live over it)
     this.elevTop = maxElev(map);
     var content = this.content;
     this.wall25 = wall25(content, map);                                              // every wall as cap + face pieces
@@ -1439,21 +1550,66 @@ var Render = (function () {
       g.restore();
     }
     /** Draw one character (a player or a monster) with its tile's top-left at (ax, ay): figure, status tint, health bar, name. */
-    function paintActor(a, ax, ay, isDark) {
+    /** The figure alone, its tile's top-left at (ax, ay), on gg; answers the top of what was drawn. */
+    function drawFigure(gg, a, ax, ay) {
       var top = ay;                                                  // top of the drawn figure (busts rise above the tile)
-      dim(isDark);
       if (a.layers && a.layers.length) {
-        top = drawLayers(g, a.layers, ax, ay, T, a.facing === 'W', a.aim, a.swing);
+        top = drawLayers(gg, a.layers, ax, ay, T, a.facing === 'W', a.aim, a.swing);
       } else if (a.sprite !== undefined) {
         var img = a.sprite && Assets.get(a.sprite);
         if (img) {
-          g.save();
-          if (a.facing === 'W') { g.translate(ax + T, ay); g.scale(-1, 1); g.drawImage(img, 0, 0, T, T); }
-          else g.drawImage(img, ax, ay, T, T);
-          g.restore();
-        } else g.drawImage(Assets.placeholder(a.name, '#8a2f2f', T), ax, ay);
-      } else g.drawImage(Assets.hero(a.facing, a.tint || '#3d6fb6', T), ax, ay);
+          gg.save();
+          if (a.facing === 'W') { gg.translate(ax + T, ay); gg.scale(-1, 1); gg.drawImage(img, 0, 0, T, T); }
+          else gg.drawImage(img, ax, ay, T, T);
+          gg.restore();
+        } else gg.drawImage(Assets.placeholder(a.name, '#8a2f2f', T), ax, ay);
+      } else gg.drawImage(Assets.hero(a.facing, a.tint || '#3d6fb6', T), ax, ay);
+      return top;
+    }
+    // Wading: how deep a character stands in shallow water, 0..1 — smooth while it glides in or out (the shallow
+    // tiles around where it is drawn, weighed by how near it is to each).
+    function wadeAt(x, y) {
+      if (!map.shallow || !map.shallow.length || !Rules.shallowAt) return 0;
+      var x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
+      function s(ax2, ay2) { return Rules.shallowAt(c, map, ax2, ay2) ? 1 : 0; }
+      var a00 = s(x0, y0), a10 = fx ? s(x0 + 1, y0) : a00, a01 = fy ? s(x0, y0 + 1) : a00, a11 = fx && fy ? s(x0 + 1, y0 + 1) : (fx ? a10 : a01);
+      return (a00 * (1 - fx) + a10 * fx) * (1 - fy) + (a01 * (1 - fx) + a11 * fx) * fy;
+    }
+    function waterColour(x, y) {
+      var t = Rules.terrainAt(c, map, Math.round(x), Math.round(y)), ramp = t && t.tint && typeof Tint !== 'undefined' && Tint.TINTS[t.tint];
+      return (ramp && ramp[2]) || (t && t.color) || '#2a4a4a';
+    }
+    var wadeCv = null;
+    /** A character standing in shallow water: the figure drawn on a scratch canvas, its part under the waterline
+     *  faded and tinted the water's colour, then a ripple ring where it meets the water. Config wade_depth (0.22: up to where the bust's pedestal meets its chest) =
+     *  how much of the figure, from its feet, is under. Answers the top of the figure. */
+    function drawWading(a, ax, ay, wade, isDark) {
+      var W3 = 3 * T, H5 = 5 * T;                                    // room for busts and weapons: the tile sits at (T, 4T)
+      if (!wadeCv) wadeCv = document.createElement('canvas');
+      if (wadeCv.width !== W3 || wadeCv.height !== H5) { wadeCv.width = W3; wadeCv.height = H5; }
+      var sg = wadeCv.getContext('2d');
+      sg.globalCompositeOperation = 'source-over'; sg.clearRect(0, 0, W3, H5); sg.imageSmoothingEnabled = false;
+      var top0 = drawFigure(sg, a, T, 4 * T);
+      var dep = Number(c.config.wade_depth); if (!(dep > 0)) dep = 0.22;
+      var line = Math.round(H5 - Math.min(H5 - top0, 2 * T) * Math.min(0.9, dep) * wade);   // the waterline, on the scratch canvas
+      sg.globalCompositeOperation = 'destination-out'; sg.fillStyle = 'rgba(0,0,0,' + (0.5 * wade) + ')'; sg.fillRect(0, line, W3, H5 - line);   // under water: faded…
+      sg.globalCompositeOperation = 'source-atop'; sg.globalAlpha = 0.6 * wade; sg.fillStyle = waterColour(a.x, a.y); sg.fillRect(0, line, W3, H5 - line);   // …and the water's colour
+      sg.globalAlpha = 1; sg.globalCompositeOperation = 'source-over';
+      dim(isDark);
+      g.drawImage(wadeCv, ax - T, ay - 4 * T);
       dim(false);
+      var wy = ay - 4 * T + line, t = performance.now() / 600, cx = ax + T / 2, rw = T * (0.34 + 0.03 * Math.sin(t)), rh = Math.max(2, T * 0.09);
+      g.save();                                                      // the ring where the body meets the water
+      g.globalAlpha = 0.55 * wade; g.strokeStyle = 'rgba(220,240,245,.9)'; g.lineWidth = Math.max(1, T / 32);
+      g.beginPath(); g.ellipse(cx, wy, rw, rh, 0, 0, Math.PI); g.stroke();   // (the front half only: the back half would show through the body)
+      g.globalAlpha = 0.25 * wade; g.beginPath(); g.ellipse(cx, wy + 1, rw * (1.25 + 0.08 * Math.sin(t * 1.7)), rh * 1.4, 0, 0, Math.PI); g.stroke();
+      g.restore();
+      return ay - 4 * T + top0;
+    }
+    function paintActor(a, ax, ay, isDark) {
+      var top, wade = wadeAt(a.x, a.y);
+      if (wade > 0.02) top = drawWading(a, ax, ay, wade, isDark);
+      else { dim(isDark); top = drawFigure(g, a, ax, ay); dim(false); }
       if (a.statusColor) {                                           // tinted while burning, chilled, stunned...
         g.globalAlpha = .35; g.fillStyle = a.statusColor; g.fillRect(ax + 4, top + 4, T - 8, ay + T - top - 8); g.globalAlpha = 1;
       }
@@ -1744,7 +1900,7 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
+  return { Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

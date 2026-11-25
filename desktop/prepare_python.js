@@ -8,7 +8,7 @@
  * PINNED Pillow + numpy into it. electron-builder then bundles desktop/python/ as resources/python.
  * The result: the art tool uses this exact interpreter + library versions on every machine, while
  * still running the REPO's own tools/asset_server.py + tools/*pipe scripts (so art logic tracks the
- * owner's checkout). Needs internet; run once before `npm run dist`. Windows only (uses Expand-Archive).
+ * owner's checkout). Needs internet; run once before `npm run dist`. Windows only.
  */
 'use strict';
 const fs = require('fs');
@@ -43,7 +43,15 @@ function download(url, dest) {
   });
 }
 
-function ps(cmd) { execFileSync('powershell', ['-NoProfile', '-Command', cmd], { stdio: 'inherit' }); }
+/** Unzip with Windows' own tar.exe (in every Windows 10+). Without it, Windows PowerShell's Expand-Archive, with
+ *  PSModulePath cleared: launched from PowerShell 7 (a GitHub Actions runner), Windows PowerShell would otherwise load
+ *  PowerShell 7's Archive module and fail ("Cannot find an overload for ExtractToDirectory"). */
+function unzip(zip, dir) {
+  const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+  if (fs.existsSync(tar)) { execFileSync(tar, ['-xf', zip, '-C', dir], { stdio: 'inherit' }); return; }
+  const env = Object.assign({}, process.env); delete env.PSModulePath;
+  execFileSync('powershell', ['-NoProfile', '-Command', "Expand-Archive -Force -LiteralPath '" + zip + "' -DestinationPath '" + dir + "'"], { stdio: 'inherit', env: env });
+}
 
 /** Embeddable Python ships with `import site` commented out; turn it on so site-packages works. */
 function enableSitePackages() {
@@ -73,7 +81,7 @@ async function main() {
   console.log('Downloading embeddable Python ' + PY + '…');
   await download(EMBED_URL, zip);
   console.log('Extracting…');
-  ps("Expand-Archive -Force -LiteralPath '" + zip + "' -DestinationPath '" + DIR + "'");
+  unzip(zip, DIR);
   fs.rmSync(zip, { force: true });
 
   enableSitePackages();

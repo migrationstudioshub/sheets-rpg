@@ -2427,7 +2427,7 @@ var World = (function () {
     if (dx && dy) dirs.unshift((dy > 0 ? 'S' : 'N') + (dx > 0 ? 'E' : 'W'));
     for (var i = 0; i < dirs.length; i++) {
       var r = Rl().tryMove(c, map, m.x, m.y, dirs[i], moveOpts(c, ws, mapId, here, m));
-      if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = Rl().faceFor(dirs[i], m.facing); m.last += (Rl().stepCost(dirs[i]) - 1) * stepMs; return true; }
+      if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = Rl().faceFor(dirs[i], m.facing); m.last += (Rl().stepCost(dirs[i], c, map, m.x, m.y) - 1) * stepMs; return true; }
     }
     return false;
   }
@@ -2440,7 +2440,7 @@ var World = (function () {
       if (d > bd) { bd = d; best = { r: r, dir: dir }; }
     });
     if (!best) return false;
-    m.x = best.r.x; m.y = best.r.y; m.facing = Rl().faceFor(best.dir, m.facing); m.last += (Rl().stepCost(best.dir) - 1) * stepMs;
+    m.x = best.r.x; m.y = best.r.y; m.facing = Rl().faceFor(best.dir, m.facing); m.last += (Rl().stepCost(best.dir, c, map, m.x, m.y) - 1) * stepMs;
     return true;
   }
   function coopNear(c, map, x, y, range) {
@@ -2770,7 +2770,7 @@ var World = (function () {
       var dirs = stepsToward(m, goal.x, goal.y); if (dirs.length > 2) dirs.length = 2; else if (dirs.length === 2 && !R.DIAG[dirs[0]]) dirs.length = 1;
       for (i = 0; i < dirs.length; i++) {
         r = R.tryMove(c, map, m.x, m.y, dirs[i], opts);
-        if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = R.faceFor(dirs[i], m.facing); m.last += (R.stepCost(dirs[i]) - 1) * stepMs; ai.p = ''; return; }
+        if (r.ok && !r.map) { m.x = r.x; m.y = r.y; m.facing = R.faceFor(dirs[i], m.facing); m.last += (R.stepCost(dirs[i], c, map, m.x, m.y) - 1) * stepMs; ai.p = ''; return; }
       }
     }
     // …otherwise along a way it works out
@@ -2910,7 +2910,7 @@ var World = (function () {
             var r = Rl().tryMove(c, map, m.x, m.y, dirs[i], moveOpts(c, ws, mapId, here, m));
             if (r.ok && !r.map) {                                 // (monsters do not change floor yet: FLOORS.md stage 2b)
               m.x = r.x; m.y = r.y; m.facing = Rl().faceFor(dirs[i], m.facing);
-              m.last += (Rl().stepCost(dirs[i]) - 1) * stepMs;                                   // a diagonal takes longer, as it does for players
+              m.last += (Rl().stepCost(dirs[i], c, map, m.x, m.y) - 1) * stepMs;                                   // a diagonal takes longer, as it does for players
               break;
             }
           }
@@ -4649,14 +4649,14 @@ var World = (function () {
     if (action.type === 'move') {
       // Walking speed is the referee's to enforce, not the page's. Each player has a budget of steps that refills
       // with time (one per move_ms, with some slack for uneven connections) up to move_burst; a straight step
-      // costs 1, a diagonal 1.4. Steps the budget cannot pay for are dropped, so a doctored page gains nothing.
+      // costs 1, a diagonal 1.4 (times Config shallow_slow into shallow water). Steps the budget cannot pay for are dropped, so a doctored page gains nothing.
       var dirs = (action.dirs || []).slice(0, 20), walked = 0;
       var perStep = Math.max(20, cfgNum(c, 'move_ms', 140)) * 0.85, burst = Math.max(2, cfgNum(c, 'move_burst', 6));
       p.mvB = Math.min(burst, (p.mvB == null ? burst : Number(p.mvB) || 0) + Math.max(0, now - (Number(p.mvT) || now)) / perStep);
       p.mvT = now;
       for (var i = 0; i < dirs.length; i++) {
         var dir = dirs[i]; if (!Rl().isDir(dir)) continue;
-        var cost = Rl().stepCost(dir);
+        var dd = Rl().DIRS[dir] || Rl().DIAG[dir], cost = Rl().stepCost(dir, c, liveMap(c, ws, p.map), p.x + dd.dx, p.y + dd.dy);   // (wading into shallow water costs more)
         if (p.mvB < cost) break;
         p.facing = Rl().faceFor(dir, p.facing);
         var r = Rl().tryMove(c, liveMap(c, ws, p.map), p.x, p.y, dir, moveOpts(c, ws, p.map, players, p));

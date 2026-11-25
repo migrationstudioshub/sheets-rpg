@@ -124,6 +124,26 @@ var E = {
     var g = E.ensureFalls(m); if (g[y][x] === v) return false;
     g[y][x] = v; return true;
   }
+  // Shallow water: a W×H grid ('1' = the water there is shallow). Painted with the water itself, from the Terrain tab
+  // (Depth: Deep / Shallow, shown when a water terrain is picked); see Rules.terrainAt and Render.shallowCells.
+  E.ensureShallow = function (map) {
+    map = map || E.map();
+    var r = map.shallow;
+    if (!r || r.length !== map.height || (r[0] && r[0].length !== map.width)) {
+      var g = [];
+      for (var y = 0; y < map.height; y++) { var row = []; for (var x = 0; x < map.width; x++) row.push((r && r[y] && r[y][x]) || ''); g.push(row); }
+      map.shallow = g;
+    }
+    return map.shallow;
+  };
+  function setShallow(x, y, v) {
+    var m = E.map(); if (x < 0 || y < 0 || x >= m.width || y >= m.height) return false;
+    if (!v && !(m.shallow && m.shallow.length)) return false;
+    var g = E.ensureShallow(m); if (g[y][x] === v) return false;
+    g[y][x] = v; return true;
+  }
+  /** What painting terrain `id` leaves in the shallow grid: water takes the brush's depth, anything else (or erasing) clears it. */
+  function depthFor(id) { var t = id && E.content.terrain[id]; return t && Rules.isWater(t) && E.brush.shallow ? '1' : ''; }
   function fallMode() { return (E.brush || {}).heightMode === 'fall'; }
   function fallToken() { var b = E.brush || {}; return b.fall === '0' ? '0' : (b.fallTint || '1'); }
   function elevToken() { var b = E.brush || {}, h = Math.max(0, Math.min(9, Number(b.elev) || 0)), r = b.ramp || ''; return r ? h + r : (h ? String(h) : ''); }
@@ -293,7 +313,7 @@ var E = {
     var ov = map.overlay;
     var hasOv = ov && ov.some(function (r) { return r && r.some(function (c) { return c; }); });
     if (hasOv) row.overlay = JSON.stringify(ov); else delete row.overlay;   // keep overlay-free maps clean
-    ['vWalls', 'hWalls', 'roof', 'nobuild', 'elev', 'falls'].forEach(function (k) {           // edge walls + roof cover + no-build mask, dropped when all-empty
+    ['vWalls', 'hWalls', 'roof', 'nobuild', 'elev', 'falls', 'shallow'].forEach(function (k) {           // edge walls + roof cover + no-build mask, dropped when all-empty
       var grid = map[k], has = grid && grid.some(function (r) { return r && r.some(function (c) { return c; }); });
       if (has) row[k] = JSON.stringify(grid); else delete row[k];
     });
@@ -372,7 +392,7 @@ var E = {
       terrain: JSON.parse(JSON.stringify(m.terrain)), overlay: JSON.parse(JSON.stringify(m.overlay || [])),
       vWalls: JSON.parse(JSON.stringify(m.vWalls || [])), hWalls: JSON.parse(JSON.stringify(m.hWalls || [])),
       roof: JSON.parse(JSON.stringify(m.roof || [])), roof_color: m.roof_color || '',
-      nobuild: JSON.parse(JSON.stringify(m.nobuild || [])), elev: JSON.parse(JSON.stringify(m.elev || [])), falls: JSON.parse(JSON.stringify(m.falls || [])),
+      nobuild: JSON.parse(JSON.stringify(m.nobuild || [])), elev: JSON.parse(JSON.stringify(m.elev || [])), falls: JSON.parse(JSON.stringify(m.falls || [])), shallow: JSON.parse(JSON.stringify(m.shallow || [])),
       spawn: m.spawn ? JSON.parse(JSON.stringify(m.spawn)) : null,
       shapes: JSON.parse(JSON.stringify(m.shapes || {})), overlayShapes: JSON.parse(JSON.stringify(m.overlayShapes || {})),
       entities: JSON.parse(JSON.stringify(m.entities)) };
@@ -382,7 +402,7 @@ var E = {
     if (E.mapId !== s.mapId) E.openMap(s.mapId);
     m.width = s.width; m.height = s.height; m.name = s.name; m.terrain = s.terrain; m.overlay = s.overlay || [];
     m.vWalls = s.vWalls || []; m.hWalls = s.hWalls || []; m.roof = s.roof || []; m.roof_color = s.roof_color || '';
-    m.nobuild = s.nobuild || []; m.elev = s.elev || []; m.falls = s.falls || [];
+    m.nobuild = s.nobuild || []; m.elev = s.elev || []; m.falls = s.falls || []; m.shallow = s.shallow || [];
     m.spawn = s.spawn || null;
     m.shapes = s.shapes || {}; m.overlayShapes = s.overlayShapes || {}; m.entities = s.entities;
     if (E.selected && !E.entityByKey(E.selected)) E.selected = null;
@@ -397,7 +417,8 @@ var E = {
     if (!E.inside(x, y)) return false;
     var cells = E.cells();                        // base or overlay, whichever layer is active
     var had = E.shapeMap()[x + ',' + y] != null;
-    if (cells[y][x] === id && !had) return false;
+    var depth = depthFor(id), deep = (E.terrainLayer === 'overlay' || (id && Rules.isWater(E.content.terrain[id]))) ? setShallow(x, y, depth) : false;   // (painting the base under water leaves its depth alone)
+    if (cells[y][x] === id && !had) return deep;
     cells[y][x] = id;
     delete E.shapeMap()[x + ',' + y];             // normal painting re-autotiles the cell (unfreezes it)
     return true;
@@ -736,6 +757,7 @@ var E = {
       var p = stack.pop(), px = p[0], py = p[1];
       if (!E.inside(px, py) || cells[py][px] !== from) continue;
       cells[py][px] = to;
+      if (E.terrainLayer === 'overlay' || (to && Rules.isWater(E.content.terrain[to]))) setShallow(px, py, depthFor(to));
       stack.push([px + 1, py], [px - 1, py], [px, py + 1], [px, py - 1]);
     }
     return true;
@@ -747,7 +769,11 @@ var E = {
     if (E.layer === 'objects' && e && eo && eo.kind === 'spawn' && e.data.monster) { E.brush.monster = e.data.monster; E.setPaletteTab('monsters'); }
     else if (E.layer === 'objects' && e && e.ref === '_drop' && e.data.pickup) { E.brush.item = String(e.data.pickup).split(':')[0]; E.setPaletteTab('items'); }
     else if (E.layer === 'objects' && e) { E.brush.object = e.ref; E.setPaletteTab('objects'); }
-    else { var picked = E.cells()[y][x]; if (picked) E.brush.terrain = picked; E.setPaletteTab('terrain'); }
+    else {
+      var picked = E.cells()[y][x]; if (picked) E.brush.terrain = picked;
+      if (picked && Rules.isWater(E.content.terrain[picked])) { var sm = E.map().shallow; E.brush.shallow = !!(sm && sm[y] && sm[y][x] === '1'); }   // (and how deep it is)
+      E.setPaletteTab('terrain');
+    }
     E.setTool(E.paletteTab === 'terrain' ? 'rect' : 'brush'); Panels.palette();
   }
 
@@ -888,6 +914,7 @@ var E = {
     if (m.nobuild && m.nobuild.length) m.nobuild = resizeWalls(m.nobuild, h, w);
     if (m.elev && m.elev.length) m.elev = resizeWalls(m.elev, h, w);
     if (m.falls && m.falls.length) m.falls = resizeWalls(m.falls, h, w);
+    if (m.shallow && m.shallow.length) m.shallow = resizeWalls(m.shallow, h, w);
     m.width = w; m.height = h;
     m.entities = m.entities.filter(function (e) { return e.x < w && e.y < h; });
     ['shapes', 'overlayShapes'].forEach(function (k) {         // drop frozen shapes outside the new bounds
@@ -967,7 +994,7 @@ var E = {
     // face under it, and everything that stands on it lifted the same (LF). Off (H), the map is flat, with relief.
     var up = raisedView();
     if (E.groundDirty || E.groundUp !== up) {
-      E.ground = Render.bakeGround(c, m, up); E.groundUp = up; E.groundDirty = false;
+      E.ground = Render.bakeGround(c, m, up, true); E.groundUp = up; E.groundDirty = false;
       E.moving = Render.animatedCells ? Render.animatedCells(c, m) : [];
       E.fallList = Render.fallCells ? Render.fallCells(c, m) : [];
       E.animates = !!(E.moving.length || E.fallList.length);

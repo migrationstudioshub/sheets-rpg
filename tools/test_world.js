@@ -914,6 +914,49 @@ test('an overlay terrain governs passability: a blocking overlay over walkable g
   assert.ok(!Rules.tryMove(c, map, 0, 0, 'E').ok, 'cannot step onto the water overlay');
 });
 
+test('shallow water (the map\'s shallow grid) is walked through; deep water and marked land are unchanged', () => {
+  const c = Content.build({
+    Terrain: [
+      { id: 'grass', name: 'Grass', color: '#3a5', pass_n: 1, pass_e: 1, pass_s: 1, pass_w: 1 },
+      { id: 'rock', name: 'Rock', color: '#555', pass_n: 0, pass_e: 0, pass_s: 0, pass_w: 0 },
+      { id: 'water', name: 'Water', color: '#36c', pass_n: 0, pass_e: 0, pass_s: 0, pass_w: 0 }
+    ],
+    Maps: [{ id: 'm', name: 'M', width: 5, height: 1,
+      terrain: JSON.stringify([['grass', 'grass', 'grass', 'grass', 'rock']]),
+      overlay: JSON.stringify([['', 'water', 'water', '', '']]),
+      shallow: JSON.stringify([['', '1', '', '', '1']]) }]
+  });
+  const map = c.maps.m;
+  assert.ok(Rules.tryMove(c, map, 0, 0, 'E').ok, 'onto the shallow water');
+  assert.ok(Rules.standable(c, map, 1, 0) && Rules.shallowAt(c, map, 1, 0), 'it can be stood in');
+  assert.ok(!Rules.tryMove(c, map, 1, 0, 'E').ok, 'the deep water next to it still blocks');
+  assert.ok(!Rules.standable(c, map, 4, 0), 'a shallow mark on ground that is not water changes nothing');
+  assert.strictEqual(Rules.terrainAt(c, map, 1, 0).id, 'water', 'it is still that water');
+  assert.ok(Rules.terrainAt(c, map, 1, 0).water, '…and still a water source');
+  assert.ok(!c.terrain.water.pass.e, 'the terrain itself is not changed');
+  assert.strictEqual(Rules.stepCost('E', c, map, 1, 0), 2, 'wading in costs twice a step (Config shallow_slow not said)');
+  assert.strictEqual(Rules.stepCost('E', c, map, 0, 0), 1, 'dry ground costs one');
+  assert.strictEqual(Rules.stepCost('NE', c, map, 1, 0), 2.8, 'a diagonal into it, 1.4 times that');
+  c.config.shallow_slow = 1.5;
+  assert.strictEqual(Rules.stepCost('E', c, map, 1, 0), 1.5, 'Config shallow_slow sets it');
+});
+
+test('a player wading into shallow water pays for the slower step out of the walking budget', () => {
+  const s = fresh();
+  const map = s.c.maps.map_3, x = s.p.x, y = s.p.y;
+  map.shallow = map.terrain.map(r => r.map(() => ''));
+  map.shallow[y][x + 1] = '1'; map.shallow[y][x + 2] = '1';
+  const ov = map.overlay && map.overlay.length ? map.overlay : (map.overlay = map.terrain.map(r => r.map(() => '')));
+  ov[y][x + 1] = 'water'; ov[y][x + 2] = 'water';
+  if (!s.c.terrain.water) s.c.terrain.water = { id: 'water', name: 'Water', water: true, pass: { n: false, e: false, s: false, w: false } };
+  map._at = null; map._block = null;
+  assert.ok(Rules.tryMove(s.c, map, x, y, 'E').ok, 'the shallow water east of the start can be walked into');
+  s.p.mvB = 3; s.p.mvT = 1000;
+  act(s, { type: 'move', dirs: ['E', 'E', 'E'] }, 1000);
+  assert.strictEqual(s.p.x, x + 1, 'a budget of 3 pays for one step into the water (2) but not the next (2)');
+  assert.ok(Math.abs(s.p.mvB - 1) < 1e-9, 'one left');
+});
+
 test('a walkable overlay does not block, and a map with no overlay is unchanged', () => {
   const c = Content.build({
     Terrain: [

@@ -340,6 +340,16 @@ var Panels = (function () {
           ondblclick: function () { if (type !== 'item') editDef(type, d.id); } }, thumb(type, d.id), h('span', { text: d.name }));
       }
       if (paletteTab === 'terrain') {
+        var bt = E.content.terrain[E.brush.terrain];
+        if (bt && Rules.isWater(bt)) {                                  // water: how deep to paint it
+          listBox.appendChild(h('div', { className: 'row', style: 'grid-column:1/-1;margin:0',
+              title: 'Shallow water can be walked through, and the ground painted under it shows through. Where it meets deep water the two fade into each other. Paint over existing water to change its depth' },
+            h('label', { text: 'Depth' }),
+            [[false, 'Deep'], [true, 'Shallow']].map(function (o) {
+              return h('button', { className: !!E.brush.shallow === o[0] ? 'on' : '', text: o[1], onclick: function () { E.brush.shallow = o[0]; list(); } }); })));
+          if (E.brush.shallow) listBox.appendChild(h('p', { className: 'note', style: 'grid-column:1/-1;margin:0 0 4px',
+            text: 'Walkable; the ground under it shows. Paint over water to change its depth. Config shallow_alpha = how much water shows (0.45), shallow_blend = tiles the fade into deep takes (2).' }));
+        }
         var terrains = Object.keys(E.content.terrain).map(function (k) { return E.content.terrain[k]; }).filter(match);
         [['Tiles', function (t) { return !t.autotile; }], ['Autotiles', function (t) { return !!t.autotile; }]].forEach(function (grp) {
           var members = terrains.filter(grp[1]);

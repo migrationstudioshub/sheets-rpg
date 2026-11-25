@@ -56,8 +56,7 @@ Nothing below was added. Each needs a decision first; the UI part is already the
 6. **Condition / durability**: per item instance, which stacks do not have today. UI: ready (`condition`).
 7. **Bag upgrades** (a back-slot item that adds rows). UI: ready (`lockedRow`).
 8. **A craft / cook queue** (today: one hand job, one cooker job with batches). UI: cells ready (`queue`).
-9. **Item descriptions**: an Items `description` column (flavour text on the item card and the notebook page). The
-   page already shows `item.description` when there is one; `shared/schema.js` / `Content.build` do not carry it yet.
+9. ~~Item descriptions~~: done (Items `description`, shown on the item card and on the page of a recipe that makes it).
 10. **Recipe categories**: Recipes `category` exists but is empty in `data/game/`; with two or more filled in, the filter
     buttons (All / Tools / Weapons / …) appear by themselves.
 11. **Split a stack with a button** (the mock's SPLIT): there is no `split` action; Shift / Ctrl while dropping do it today.
@@ -67,6 +66,11 @@ Nothing below was added. Each needs a decision first; the UI part is already the
 15. **Journal / Map / Skills tabs** on the inventory window: there is one tab (the window's name). The quest log stays on L.
 16. **Art**: item pictures for things that still show two letters (pistol, bandage, arrows…).
 
+## Window height
+The inventory window and a cooker's window (`#bag.tall`) take the whole height of the view, less the belt: the parts marked
+`.fill` (recipe list, notebook page, item card) share what is left, never below their min-height. A chest's window stays compact.
+
 ## Changed in the game data
 `data/game/tables.json`: the campfire now has `raw_slots: 6`, `fuel_slots: 4`, `out_slots: 6` (it had none, so 20 each).
 A cooker with other counts just gets more rows.
+The backpack is Config `bag_slots` = 56 (7 rows of 8; it was the default 32).

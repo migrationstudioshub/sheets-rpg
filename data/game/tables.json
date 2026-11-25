@@ -1,5 +1,6 @@
 {
 "Config": [
+  {"key":"bag_slots","value":56,"notes":"Backpack cells: 7 rows of 8 (the inventory window shows 8 across)"},
   {"key":"tile_size","value":32,"notes":"Pixels per tile in the art"},
   {"key":"view_w","value":22,"notes":"Tiles visible across (panoramic)"},
   {"key":"view_h","value":13,"notes":"Tiles visible down"},

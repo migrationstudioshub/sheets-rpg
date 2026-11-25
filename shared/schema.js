@@ -119,6 +119,7 @@ var Schema = (function () {
     items: { collection: 'items', id: 'id', label: 'Items', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('sprite', 'image', ''),
       f('type', 'select', 'material', '', { options: ['material', 'weapon', 'armor', 'consumable', 'throwable', 'ammo', 'key'] }),
+      f('description', 'textarea', '', 'A line or two about it: shown on its card in the bag and on the page of a recipe that makes it'),
       f('slot', 'text', '', 'Equip slot: weapon, helm (head), armor (chest), pants, feet, gloves, back, or accessory (four can be worn). Empty = the slot of its type'),
       f('worn_sprite', 'image', '', 'Paper-doll layer when equipped. For a weapon that shoots: loaded and held at rest (a bow with an arrow on the string, not drawn)'),
       f('worn_empty', 'image', '', 'A weapon with a magazine (clip), held with nothing loaded: a bow with no arrow on the string. Also shown while the next one is being loaded, unless there is a reloading picture. Empty = the worn sprite'),

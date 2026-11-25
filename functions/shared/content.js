@@ -208,9 +208,11 @@ var Content = (function () {
       var elev = decodeGrid(json(r.elev, []));
       // Waterfalls put (or forbidden) by hand: a W×H grid ('' = by itself, '1' = one here, a tint name = one in that colour, '0' = none). Draw-only.
       var falls = decodeGrid(json(r.falls, []));
+      // Shallow water: a W×H grid ('1' = the water on this tile is shallow: walked through, drawn see-through). See Rules.terrainAt.
+      var shallow = decodeGrid(json(r.shallow, []));
       // Frozen autotile shapes from shift-click mapping: sparse { "x,y": mask } per layer, render-only.
       c.maps[id] = { id: id, name: str(r.name) || id, width: num(r.width, grid[0] ? grid[0].length : 0),
-        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls, roof: roof, nobuild: nobuild, elev: elev, falls: falls,
+        height: num(r.height, grid.length), terrain: grid, overlay: overlay, vWalls: vWalls, hWalls: hWalls, roof: roof, nobuild: nobuild, elev: elev, falls: falls, shallow: shallow,
         roof_color: str(r.roof_color),
         // A floor of a multi-storey map (docs/FLOORS.md): the ground map's id and this floor's level. Linked below.
         floorOf: str(r.floor_of), z: num(r.z, 0),
@@ -266,6 +268,7 @@ var Content = (function () {
         // ammo: the chance (0..1; authored 0-100 %) a spent one can be had back (World shoot: stuck in the monster, or on the ground)
         recover: Math.max(0, Math.min(100, num(r.recover, 0))) / 100,
         // weapons and tools: uses before it breaks (0 = never); each one carries what it has left (stack.dur, World wear)
+        description: str(r.description),                        // a line or two about it (the bag's item card, a recipe's page)
         durability: Math.max(0, Math.round(num(r.durability, 0))),
         // what mending it takes, what taking it apart gives (item lists; empty = from its recipe: World repairInfo / salvageInfo)
         repairCost: str(r.repair_cost), repairStation: str(r.repair_station), salvage: str(r.salvage),

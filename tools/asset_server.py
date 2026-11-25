@@ -489,6 +489,106 @@ def object_save(req):
     return {"saved": ["art/sprites/objects/" + dest + ".png"]}
 
 
+# ---- the game as project files (local mode; the layout is described in client/js/localdata.js) ----
+# The Content Studio and the map editor save here instead of publishing. Writes go only inside data/game/,
+# one at a time (a lock: the server is threaded), and each file is written whole to a temp file, then renamed.
+GAME_DIR = os.path.join(ROOT, "data", "game")
+GAME_MAPS = os.path.join(GAME_DIR, "maps")
+DATA_LOCK = threading.Lock()
+MAP_ID = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def _dump(v):
+    return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+
+
+def _tables_text(defs):                 # one row per line (same as LocalData.tablesText)
+    parts = []
+    for k, v in defs.items():
+        if isinstance(v, list):
+            body = ("\n" + ",\n".join("  " + _dump(r) for r in v) + "\n") if v else ""
+            parts.append(_dump(k) + ": [" + body + "]")
+        else:
+            parts.append(_dump(k) + ": " + _dump(v))
+    return "{\n" + ",\n".join(parts) + "\n}\n"
+
+
+def _map_text(doc):                     # one entity per line (same as LocalData.mapText)
+    parts = []
+    for k, v in doc.items():
+        if k == "entities" and isinstance(v, list):
+            body = ("\n" + ",\n".join("  " + _dump(e) for e in v) + "\n") if v else ""
+            parts.append('"entities": [' + body + "]")
+        else:
+            parts.append(_dump(k) + ": " + _dump(v))
+    return "{\n" + ",\n".join(parts) + "\n}\n"
+
+
+def _write(fp, text):
+    os.makedirs(os.path.dirname(fp), exist_ok=True)
+    tmp = fp + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    os.replace(tmp, fp)
+
+
+def _read_json(fp, default):
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def data_ping():
+    return {"ok": True, "local": True, "game": os.path.isfile(os.path.join(GAME_DIR, "tables.json"))}
+
+
+def data_save_tabs(req):
+    """{tabs: {Name: rows}, all?: true} -> data/game/tables.json. Merged tab by tab (all = replace the file)."""
+    tabs = req.get("tabs")
+    if not isinstance(tabs, dict):
+        raise ValueError("save-tabs needs tabs")
+    for k in tabs:
+        if k in ("Maps", "MapEntities"):
+            raise ValueError("maps are saved one by one (save-map), not as a tab")
+    with DATA_LOCK:
+        fp = os.path.join(GAME_DIR, "tables.json")
+        defs = {} if req.get("all") else _read_json(fp, {})
+        defs.update(tabs)
+        _write(fp, _tables_text(defs))
+    return {"ok": True, "tabs": list(tabs.keys())}
+
+
+def data_save_map(req):
+    doc = req.get("map")
+    if not isinstance(doc, dict) or not MAP_ID.match(str(doc.get("id") or "")):
+        raise ValueError("bad map id")
+    mid = str(doc["id"])
+    with DATA_LOCK:
+        _write(os.path.join(GAME_MAPS, mid + ".json"), _map_text(doc))
+        ix = _read_json(os.path.join(GAME_MAPS, "index.json"), {"maps": []})
+        ids = [str(x) for x in ix.get("maps", [])]
+        if mid not in ids:
+            ids.append(mid)
+            _write(os.path.join(GAME_MAPS, "index.json"), json.dumps({"maps": ids}, indent=1) + "\n")
+    return {"ok": True, "id": mid}
+
+
+def data_delete_map(req):
+    mid = str(req.get("id") or "")
+    if not MAP_ID.match(mid):
+        raise ValueError("bad map id")
+    with DATA_LOCK:
+        fp = os.path.join(GAME_MAPS, mid + ".json")
+        if os.path.isfile(fp):
+            os.remove(fp)
+        ix = _read_json(os.path.join(GAME_MAPS, "index.json"), {"maps": []})
+        ids = [str(x) for x in ix.get("maps", []) if str(x) != mid]
+        _write(os.path.join(GAME_MAPS, "index.json"), json.dumps({"maps": ids}, indent=1) + "\n")
+    return {"ok": True, "id": mid}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):          # keep the console quiet
         if self.path.startswith(("/gear/", "/tile/", "/object/")):
@@ -515,6 +615,8 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(self.path.split("?")[0])
         if path == "/gear/ping":
             return self._json({"ok": True, "has_key": bool(read_key())})
+        if path == "/data/ping":                # local mode: this server can save the game into data/game/
+            return self._json(data_ping())
         if path.endswith("/"):
             path += "index.html"
         fp = os.path.normpath(os.path.join(ROOT, path.lstrip("/")))
@@ -557,6 +659,12 @@ class Handler(BaseHTTPRequestHandler):
                 res = object_save(req)
             elif path == "/art/rebuild-manifest":       # rescan art/ on demand (the Content Studio button)
                 res = {"ok": True, "count": rebuild_art_manifest()}
+            elif path == "/data/save-tabs":
+                res = data_save_tabs(req)
+            elif path == "/data/save-map":
+                res = data_save_map(req)
+            elif path == "/data/delete-map":
+                res = data_delete_map(req)
             else:
                 return self.send_error(404, "not found")
         except Exception as e:                  # noqa: BLE001 -- report any pipeline failure to the view

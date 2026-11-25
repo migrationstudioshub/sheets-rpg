@@ -9,10 +9,12 @@
  *   node host/server.js            # port 3000
  *   PORT=4000 node host/server.js  # pick a port
  *
- * Content: the LIVE game's content, read once at start-up from the Cloud Function (the same read the game page
- * does — nothing is ever written there), so you host your real maps and monsters. With no internet it falls back to
- * the copy kept from the last good read (host/content.cache.json), then to data/tables.json (the starting content).
- *   CONTENT=local node host/server.js     # always data/tables.json
+ * Content: the project's own game, data/game/ (local mode: what the Content Studio and the map editor save; see
+ * client/js/localdata.js), read once at start-up — restart the host to pick up edits. A project with no data/game
+ * reads the LIVE game's content from the Cloud Function instead (read only — nothing is ever written there); with no
+ * internet it falls back to the copy kept from the last good read (host/content.cache.json), then to data/tables.json.
+ *   CONTENT=live node host/server.js      # the live game, even when data/game exists
+ *   CONTENT=local node host/server.js     # always data/tables.json (the sample world the tests use; also CONTENT=sample)
  *   CONTENT_URL=<url> node host/server.js # another content server
  * The game is kept in the folder host/save.live/ (host/save/ when playing the starting content), one small file per
  * character and per map, so stopping and restarting this host keeps everyone's characters and the world
@@ -52,8 +54,26 @@ function liveUrl() {
   catch (e) { return ''; }
 }
 function prepared(c) { if (Content.tidyMaps) Content.tidyMaps(c); return Content.autoFloors(c); }
+// The project's own game (local mode, client/js/localdata.js): data/game/tables.json + data/game/maps/*.json, which the
+// Content Studio and the map editor save into. Null when the project has none.
+function readGameFiles() {
+  const dir = path.join(ROOT, 'data', 'game');
+  if (!fs.existsSync(path.join(dir, 'tables.json'))) return null;
+  global.MapCode = global.MapCode || require(path.join(ROOT, 'shared', 'mapcode.js'));
+  const LocalData = require(path.join(ROOT, 'client', 'js', 'localdata.js'));
+  const defs = JSON.parse(fs.readFileSync(path.join(dir, 'tables.json'), 'utf8'));
+  let ids = [];
+  try { ids = JSON.parse(fs.readFileSync(path.join(dir, 'maps', 'index.json'), 'utf8')).maps || []; } catch (e) { /* no maps yet */ }
+  const docs = ids.map((id) => JSON.parse(fs.readFileSync(path.join(dir, 'maps', id + '.json'), 'utf8')));
+  return LocalData.assemble(defs, docs);
+}
 async function loadContent() {
-  const url = String(process.env.CONTENT || '').toLowerCase() === 'local' ? '' : liveUrl();
+  const want = String(process.env.CONTENT || '').toLowerCase();   // '' = the project's game | live | local/sample = data/tables.json
+  if (!want) {
+    const files = readGameFiles();
+    if (files) { CONTENT = prepared(Content.build(files)); CONTENT_FROM = 'game'; return; }
+  }
+  const url = want === 'local' || want === 'sample' ? '' : liveUrl();
   if (url && typeof fetch === 'function') {
     try {
       const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 20000);
@@ -430,7 +450,7 @@ loadContent().then(async () => {
   const ips = [].concat(...Object.values(os.networkInterfaces()))
     .filter(i => i && i.family === 'IPv4' && !i.internal).map(i => i.address);
   console.log('\n  Sheets RPG host is running.\n');
-  console.log('  Content: ' + (CONTENT_FROM === 'live' ? 'the live game, read just now' : CONTENT_FROM === 'cache' ? 'the live game, as last read (no connection now)' : 'the starting content (data/tables.json)')
+  console.log('  Content: ' + (CONTENT_FROM === 'game' ? 'your game, the project files in data/game/' : CONTENT_FROM === 'live' ? 'the live game, read just now' : CONTENT_FROM === 'cache' ? 'the live game, as last read (no connection now)' : 'the starting content (data/tables.json)')
     + ': ' + Object.keys(CONTENT.maps).filter(id => !CONTENT.maps[id].auto).length + ' maps, start on ' + CONTENT.config.start_map + '.\n');
   console.log('  On THIS computer:      http://localhost:' + PORT);
   ips.forEach(ip => console.log((isTailscale(ip) ? '  Friends on Tailscale:  ' : '  Others on your WiFi:   ') + 'http://' + ip + ':' + PORT));

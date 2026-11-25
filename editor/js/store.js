@@ -4,14 +4,45 @@
  *     definitions straight into the Game Data spreadsheet (needs the editor key).
  *   Offline: loads data/tables.json; Save keeps a draft in this browser, which the
  *     game's offline mode plays automatically. Export downloads tables.json.
+ *   Local (the project's own server answers: the desktop app, tools/asset_server.py — checked first): loads the
+ *     project files in data/game/; Save writes the maps that changed (and any tab) there. No key, nothing published.
+ *     See client/js/localdata.js.
  */
 var Store = (function () {
   var DRAFT_KEY = 'sheetsrpg.editorDraft', EDITOR_KEY = 'sheetsrpg.editorKey';
-  var WIP_KEY = 'sheetsrpg.editorWip';   // unsaved edits (online mode), so switching tools doesn't lose work
+  var WIP_KEY = 'sheetsrpg.editorWip';   // unsaved edits (online and local mode), so switching tools doesn't lose work
+  var LOCAL = false, freshLocal = false;  // set by load(): local mode; the project has no data/game yet (first save writes it all)
 
-  function online() { return !!(GAME_CONFIG.FUNCTIONS_URL || GAME_CONFIG.API_URL); }
+  function local() { return LOCAL; }
+  function online() { return !LOCAL && !!(GAME_CONFIG.FUNCTIONS_URL || GAME_CONFIG.API_URL); }
 
   function load() {
+    return LocalData.probe().then(function (pr) {
+      if (!pr.local) return loadOld();
+      LOCAL = true;
+      return LocalData.load().then(function (files) {
+        if (files) return { tables: files, source: 'local' };
+        freshLocal = true;
+        return fetch(GAME_CONFIG.OFFLINE_TABLES, { cache: 'no-cache' }).then(function (r) { return r.json(); })
+          .then(function (t) { return { tables: t, source: 'local' }; });
+      });
+    });
+  }
+  function saveLocal(changes, tables) {
+    if (freshLocal) return LocalData.saveAll(tables).then(function () { freshLocal = false; return { where: 'local' }; });
+    var jobs = [];
+    Object.keys(changes.maps).forEach(function (id) {
+      var mc = changes.maps[id];
+      jobs.push(function () { return LocalData.saveMap(LocalData.docOf(mc.row, mc.entities)); });
+    });
+    (changes.deletedMaps || []).forEach(function (id) { jobs.push(function () { return LocalData.deleteMap(id); }); });
+    var tabs = {};
+    Object.keys(changes.tabs).forEach(function (t) { if (t !== 'Maps' && t !== 'MapEntities') tabs[t] = changes.tabs[t]; });
+    jobs.push(function () { return LocalData.saveTabs(tabs); });
+    return jobs.reduce(function (p, job) { return p.then(job); }, Promise.resolve()).then(function () { return { where: 'local' }; });
+  }
+
+  function loadOld() {
     if (GAME_CONFIG.FUNCTIONS_URL) return loadFromFunction(GAME_CONFIG.FUNCTIONS_URL);
     if (online()) {
       return fetch(GAME_CONFIG.API_URL + '?action=tables').then(function (r) { return r.json(); })
@@ -71,6 +102,7 @@ var Store = (function () {
   }
 
   function save(changes, tables, base) {
+    if (LOCAL) return saveLocal(changes, tables);
     if (!online()) {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(tables));
       return Promise.resolve({ where: 'draft' });
@@ -207,7 +239,7 @@ var Store = (function () {
     });
   }
 
-  return { load: load, save: save, baseOf: baseOf, online: online, discardDraft: discardDraft, hasDraft: hasDraft,
+  return { load: load, save: save, baseOf: baseOf, online: online, local: local, discardDraft: discardDraft, hasDraft: hasDraft,
     exportFile: exportFile, DRAFT_KEY: DRAFT_KEY,
     saveWip: saveWip, loadWip: loadWip, clearWip: clearWip };
 })();

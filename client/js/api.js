@@ -17,6 +17,20 @@ var Api = (function () {
   // ---------- offline ----------
   function Offline() { this.mode = 'offline'; }
   Offline.prototype.loadContent = function () {
+    // Local mode (the project's own server: the desktop app, tools/asset_server.py): the game is the project files in
+    // data/game/, which the Content Studio and the map editor save into — drafts left in this browser are not used.
+    var self = this;
+    if (typeof LocalData === 'undefined') return this.loadDrafted();
+    return LocalData.probe().then(function (pr) {
+      if (!pr.local) return self.loadDrafted();
+      return LocalData.load().then(function (files) {
+        if (!files) return self.loadDrafted();
+        self.usingDraft = false; self.staleDraft = false; self.fromFiles = true;
+        return (self.content = Content.build(files));
+      });
+    });
+  };
+  Offline.prototype.loadDrafted = function () {
     // The Content Studio's draft wins over everything, so Play-test runs the real rules on your edits.
     var cdraft = (typeof ContentStore !== 'undefined') ? ContentStore.getDraft() : null;
     if (cdraft && Object.keys(cdraft).length) { this.usingDraft = true; return Promise.resolve(this.content = Content.build(cdraft)); }

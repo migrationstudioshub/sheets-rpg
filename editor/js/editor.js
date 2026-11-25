@@ -28,7 +28,7 @@ var E = {
   // paints is one write. Offline mode already persists through its own draft, so skip it there.
   var wipTimer = null;
   function scheduleWip() {
-    if (wipTimer || !E.tables || !Store.online()) return;
+    if (wipTimer || !E.tables || !(Store.online() || Store.local())) return;   // (local mode too: switching tools reloads the page)
     wipTimer = setTimeout(function () {
       wipTimer = null;
       if (!E.isDirty()) { Store.clearWip(); return; }
@@ -917,8 +917,8 @@ var E = {
     Panels.status('saving…');
     return Store.save(changes, E.tables, E.base).then(function (r) {
       E.dirty = { maps: {}, tabs: {}, deleted: [] };
-      if (r.where === 'server') { E.base = Store.baseOf(E.tables); Store.clearWip(); }  // published: tables are now the base
-      Panels.status(r.where === 'server' ? 'saved to Game Data' : 'saved as a draft in this browser');
+      if (r.where === 'server' || r.where === 'local') { E.base = Store.baseOf(E.tables); Store.clearWip(); }  // saved: tables are now the base
+      Panels.status(r.where === 'server' ? 'saved to Game Data' : r.where === 'local' ? 'saved in the project files (data/game/)' : 'saved as a draft in this browser');
     }).catch(function (e) { Panels.status('save failed: ' + e.message, true); });
   };
 
@@ -1505,15 +1505,19 @@ var E = {
   // ------------------------------------------------------------ start
   Store.load().then(function (res) {
     E.tables = res.tables; E.source = res.source;
-    E.base = res.source === 'server' ? Store.baseOf(res.tables) : null;   // what the sheet looked like when loaded
-    // Restore unsaved work-in-progress (autosaved locally in online mode) so switching tools or restarting
-    // the app doesn't lose edits. Only when loaded from the server — offline keeps its own draft.
-    if (res.source === 'server') {
+    var fromFiles = res.source === 'local';
+    E.base = res.source === 'server' || fromFiles ? Store.baseOf(res.tables) : null;   // what the sheet / the files looked like when loaded
+    // Restore unsaved work-in-progress (autosaved locally in online and local mode) so switching tools or restarting
+    // the app doesn't lose edits. Not offline — offline keeps its own draft.
+    if (res.source === 'server' || fromFiles) {
       var wip = Store.loadWip();
       if (wip && wip.tables) {
         var unchanged = JSON.stringify(wip.base) === JSON.stringify(E.base);   // server same as when editing began
-        var keep = unchanged || confirm('You have unsaved editor changes from before, but the published game data has changed since.\n\n' +
-          'OK: keep your unsaved changes (Save may then report a conflict to resolve).\nCancel: discard them and open the latest data.');
+        var keep = unchanged || confirm((fromFiles
+          ? 'You have unsaved map editor changes from before, but the project files have changed since (a git pull, or the Content Studio).\n\n' +
+            'OK: keep your unsaved changes (saving writes the maps you changed over the files).\nCancel: discard them and open the files as they are now.'
+          : 'You have unsaved editor changes from before, but the published game data has changed since.\n\n' +
+            'OK: keep your unsaved changes (Save may then report a conflict to resolve).\nCancel: discard them and open the latest data.'));
         if (keep) { E.tables = wip.tables; E.base = wip.base || E.base; E.dirty = wip.dirty || { maps: {}, tabs: {}, deleted: [] }; E.source = 'wip'; }
         else { Store.clearWip(); }
       }
@@ -1533,7 +1537,8 @@ var E = {
     E.mapId = E.content.maps[want] ? want : E.content.maps[last] ? last : Object.keys(E.content.maps)[0];
     Panels.all(); E.openMap(E.mapId);
     Panels.status(E.source === 'draft' ? 'opened your draft from this browser' :
-      E.source === 'wip' ? 'restored your unsaved changes (not yet published)' :
+      E.source === 'wip' ? (Store.local() ? 'restored your unsaved changes (not yet saved to the project files)' : 'restored your unsaved changes (not yet published)') :
+      E.source === 'local' ? 'opened the project files (data/game/)' :
       E.source === 'server' ? 'opened Game Data from the server' : 'opened the repository data (offline)');
   }).catch(function (e) { Panels.status('could not load: ' + e.message, true); console.error(e); });
 })();

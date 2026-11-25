@@ -38,11 +38,27 @@ browser (client/ editor/ content/)  --POST (join|load|poll|act)-->  Firebase Clo
 | `studio/` | **Asset Studio** (local only): art generators (Gear / Tileset / Objects) driven by `tools/asset_server.py` + the vendored pipelines |
 | `functions/` | **The live referee**: Firebase Cloud Function (`index.js`) running the same rules as the referee; `shared/` = **generated copies** of `/shared` (run `tools/sync_server.sh`; never edit the copies). Deployed with `firebase deploy --only functions`. `package-lock.json`/`node_modules` are npm's. |
 | `server/` | **Retired** Apps Script project (`Code.js`, `shared_*.js` copies) — kept as dormant history; no longer deployed and not on any critical path. `sync_server.sh` still regenerates its copies for reference. |
-| `data/` | `tables.json` — the seed/offline content (and what `tools/seed_firestore.js` published to Firestore). `GameData.xlsx`/`import/` are legacy snapshots from the Sheets era. |
+| `data/` | **`game/`** — the owner's game in local mode (below): `tables.json` (definitions) + `maps/<id>.json` + `maps/index.json`. `tables.json` — the sample world the tests use (and the offline fallback when there is no `game/`; also what `tools/seed_firestore.js` published to Firestore). `GameData.xlsx`/`import/` are legacy snapshots from the Sheets era. |
 | `art/` | `tilesets/fields_placeholder.png` (drawn by `tools/gen_placeholder_fields.py`, CraftPix layout), `sprites/` (placeholder monster/item sprites from `tools/gen_sprites.py`). Terrain/object sprites are imgur links in the data. |
 | `tools/` | `build_gamedata.py` (builds data/ from data/import + the demo content), `sync_server.sh` (**syncs `shared/` into both `server/shared_*.js` and `functions/shared/`**), `test.js` (server with fake Google services), `test_world.js` (game rules), generators |
 | `desktop/` | **Electron desktop app** ("Sheets RPG Studio"): wraps the authoring suite + offline Play + LAN host into one window. It *opens the repo folder* and serves it — primary server = the repo's Python `tools/asset_server.py` run by a **bundled frozen Python** (embeddable + pinned Pillow/numpy), Node static fallback with art off. Dev: `cd desktop && npm install && npm start`. Build the exe: `npm run prepare-python` then `npm run dist`. Does not change the web apps; art/data still commit → Pages as usual. See `desktop/README.md`. |
 | root | `firebase.json`, `database.rules.json` (RTDB rules: `world` public-read, everything else locked), `.firebaserc` (project `sheets-rpg-73de1`) |
+
+### Local mode — how the owner works now (25 Nov 2026)
+**The owner does not care about the live game yet**: they are building the Studio, and work locally only — nothing is
+published to Firestore/Firebase. Their game is **project files that travel with Git**: `data/game/tables.json` (every
+definition tab, one row per line; no maps) + `data/game/maps/<id>.json` (one map each: the "map document", terrain packed by
+`shared/mapcode.js`, one entity per line) + `data/game/maps/index.json` (the ids, in order). `client/js/localdata.js` is the
+one place that knows this layout (`assemble` files → tables, `docOf`/`split` back, `tablesText`/`mapText` the file format);
+`tools/pull_live.js` made the first copy from the live data (read-only). **Local mode switches on by itself** when the page's
+own server answers `GET /data/ping` — `tools/asset_server.py` (what the desktop app runs) and the desktop app's Node fallback
+`desktop/server.js`, which both take `POST /data/save-tabs` (`{tabs}` merged tab by tab, `all` = replace) / `save-map` /
+`delete-map`, write only inside `data/game/`, and write byte-identical files. Then: the **Content Studio** saves each change
+into the files a moment after it is made (only the tabs that changed; no draft, no Publish; an old browser draft is offered
+once), the **map editor**'s Save writes the maps that changed (unsaved edits still autosave as the WIP), **Play / Play-test**
+(`Offline.loadContent`) read the files and ignore drafts, and the **LAN host** reads `data/game/` by default (`CONTENT=live` /
+`CONTENT=local` = the sample). GitHub Pages and a plain static server are unchanged (online, as before). Default to local
+solutions; keep the live path working but do not steer the owner to Publish, deploys or live data unless they ask.
 
 ### Backends (all in `client/js/api.js`, same methods, same `{player, world, events, seq}` answers)
 `create()` picks one: `FUNCTIONS_URL` set → **Functions**; else `API_URL` set → **Online**; else **Offline**.

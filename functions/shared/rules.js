@@ -19,7 +19,14 @@ var Rules = (function () {
   };
   var DIAG_COST = 1.4;
   function isDir(dir) { return !!(DIRS[dir] || DIAG[dir]); }
-  function stepCost(dir) { return DIAG[dir] ? DIAG_COST : 1; }
+  // What a step costs, in straight steps of time. Given where it lands (content, map, x, y), wading into shallow water
+  // costs Config shallow_slow times as much (2 when not said; 1 = no slower). Players' walking budget, the page's
+  // pace and the monsters' turns all ask this, so they agree.
+  function stepCost(dir, content, map, x, y) {
+    var k = DIAG[dir] ? DIAG_COST : 1;
+    return content && map && shallowAt(content, map, x, y) ? k * wadeSlow(content) : k;
+  }
+  function wadeSlow(content) { var v = Number(content.config && content.config.shallow_slow); return v > 0 ? v : 2; }
   /** Which of the four ways a character faces after stepping dir: a diagonal keeps a facing it already agrees with, else looks sideways. */
   function faceFor(dir, cur) { var g = DIAG[dir]; if (!g) return dir; return cur === g.a || cur === g.b ? cur : g.b; }
 
@@ -52,11 +59,26 @@ var Rules = (function () {
 
   // The terrain that governs a cell: the overlay terrain if one sits here, else the base. So a walkable
   // overlay (decorative grass) changes nothing, but a blocking overlay (water over ground) blocks.
+  // Shallow water: the map's `shallow` grid ('1' = shallow, painted in the map editor) marks water anyone can wade
+  // through. It changes nothing for any other ground. terrainAt answers a shallow water cell with the same terrain
+  // made walkable on every side (and flagged `shallow`), so every rule that asks "can this be crossed" agrees.
   function terrainAt(content, map, x, y) {
-    var ov = map.overlay && map.overlay[y] && map.overlay[y][x];
-    if (ov && content.terrain[ov]) return content.terrain[ov];
-    var row = map.terrain[y];
-    return row ? content.terrain[row[x]] : undefined;
+    var ov = map.overlay && map.overlay[y] && map.overlay[y][x], t;
+    if (ov && content.terrain[ov]) t = content.terrain[ov];
+    else { var row = map.terrain[y]; t = row ? content.terrain[row[x]] : undefined; }
+    return t && map.shallow && map.shallow[y] && map.shallow[y][x] === '1' && isWater(t) ? shallowOf(t) : t;
+  }
+  /** Water (a water source, or a terrain drawn from the tinted water sheets) — the ground that can be made shallow. */
+  function isWater(t) { return !!t && (!!t.water || /^water/.test(t.tint || '')); }
+  /** Is this cell shallow water (wadeable)? */
+  function shallowAt(content, map, x, y) { if (x < 0 || y < 0 || x >= map.width || y >= map.height || !map.shallow || !map.shallow.length) return false; var t = terrainAt(content, map, x, y); return !!(t && t.shallow); }
+  function shallowOf(t) {
+    if (!Object.prototype.hasOwnProperty.call(t, '_shallow')) {
+      var s = {}; for (var k in t) if (Object.prototype.hasOwnProperty.call(t, k)) s[k] = t[k];
+      s.pass = { n: true, e: true, s: true, w: true }; s.shallow = true; s.seeThrough = true;
+      Object.defineProperty(t, '_shallow', { value: s, enumerable: false });   // (kept off JSON and key lists)
+    }
+    return t._shallow;
   }
 
   // ------------------------------------------------------------ edge walls
@@ -430,9 +452,9 @@ var Rules = (function () {
     return { x: x, y: y };
   }
 
-  return { WALL_H: WALL_H, DIRS: DIRS, DIAG: DIAG, isDir: isDir, stepCost: stepCost, faceFor: faceFor, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt, blockersAt: blockersAt,
+  return { WALL_H: WALL_H, DIRS: DIRS, DIAG: DIAG, isDir: isDir, stepCost: stepCost, wadeSlow: wadeSlow, faceFor: faceFor, tryMove: tryMove, applyMoves: applyMoves, entitiesAt: entitiesAt, blockersAt: blockersAt,
     heightAt: heightAt, rampAt: rampAt, cliffBetween: cliffBetween, groundHeight: groundHeight, cliffReach: cliffReach,
-    terrainAt: terrainAt, standable: standable, nearestStandable: nearestStandable,
+    terrainAt: terrainAt, isWater: isWater, shallowAt: shallowAt, standable: standable, nearestStandable: nearestStandable,
     parseWall: parseWall, wallAt: wallAt, wallEdge: wallEdge, wallBetween: wallBetween, wallBetweenCells: wallBetweenCells,
     wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight,
     edgeKey: edgeKey, edgeBlocked: edgeBlocked, sharedEdge: sharedEdge, blockedBetween: blockedBetween, reachBlocked: reachBlocked,

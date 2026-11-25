@@ -51,7 +51,7 @@ async function mergeMaps(content) {
     content.maps[m.id] = { id: m.id, name: m.name || m.id, width: m.width, height: m.height,
       terrain: MapCode.decode(m.terrain), overlay: MapCode.decode(m.overlay || []),
       vWalls: MapCode.decode(m.vWalls || []), hWalls: MapCode.decode(m.hWalls || []),
-      roof: MapCode.decode(m.roof || []), nobuild: MapCode.decode(m.nobuild || []), elev: MapCode.decode(m.elev || []), falls: MapCode.decode(m.falls || []), roof_color: m.roof_color || '', spawn: m.spawn || null,
+      roof: MapCode.decode(m.roof || []), nobuild: MapCode.decode(m.nobuild || []), elev: MapCode.decode(m.elev || []), falls: MapCode.decode(m.falls || []), shallow: MapCode.decode(m.shallow || []), roof_color: m.roof_color || '', spawn: m.spawn || null,
       floorOf: m.floor_of || '', z: Number(m.z) || 0,                 // a floor of a multi-storey map (docs/FLOORS.md)
       shapes: m.shapes || {}, overlayShapes: m.overlayShapes || {}, entities: m.entities || [] };
   });
@@ -101,7 +101,7 @@ async function publishMap(map, key) {
     width: Number(map.width) || 0, height: Number(map.height) || 0,
     terrain: map.terrain, overlay: map.overlay || null,
     vWalls: map.vWalls || null, hWalls: map.hWalls || null,
-    roof: map.roof || null, nobuild: map.nobuild || null, elev: map.elev || null, falls: map.falls || null, roof_color: map.roof_color || null, spawn: map.spawn || null,
+    roof: map.roof || null, nobuild: map.nobuild || null, elev: map.elev || null, falls: map.falls || null, shallow: map.shallow || null, roof_color: map.roof_color || null, spawn: map.spawn || null,
     shapes: map.shapes || null, overlayShapes: map.overlayShapes || null,
     floor_of: map.floor_of ? String(map.floor_of) : null, z: Number(map.z) || 0,
     entities: Array.isArray(map.entities) ? map.entities : [],

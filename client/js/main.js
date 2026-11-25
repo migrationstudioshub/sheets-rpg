@@ -479,7 +479,7 @@
       return;
     }
     me = Object.assign({}, me, { facing: Rules.faceFor(dir, me.facing) }, r.ok ? { x: r.x, y: r.y } : {});
-    lastCost = r.ok ? Rules.stepCost(dir) : 1;
+    lastCost = r.ok ? Rules.stepCost(dir, content, mapOf(), r.x, r.y) : 1;   // (wading in shallow water is slower)
     send({ type: 'move', dirs: [dir] });
   }
   function interact() { if (me) send({ type: 'interact' }); }
@@ -2298,7 +2298,7 @@
     function stat(ic, label, val, cls) { var r = qel('div', 'stat'); r.appendChild(UI.icon(ic, UI.COLOR.grey)); r.appendChild(qel('span', '', label)); r.appendChild(qel('b', cls || '', val)); stats.appendChild(r); }
     if (content.classes[me['class']] && Object.keys(content.classes).length > 1) stat('marker', 'Class', content.classes[me['class']].name);
     stat('sword', 'Attack', me.atk); stat('shield', 'Defence', me.def); stat('coin', 'Gold', me.gold, 'gold');
-    who.appendChild(stats);
+    stats.classList.add('tail'); who.appendChild(stats);
     var food = me.hunger == null ? 100 : me.hunger, water = me.thirst == null ? 100 : me.thirst, mb = qel('div', 'mebars');
     mb.appendChild(UI.bar('hp', { cls: 'hp', value: me.hp / me.maxHp }));
     mb.appendChild(UI.bar('thirst', { cls: 'tiny', value: water / 100 })); mb.appendChild(UI.bar('hunger', { cls: 'tiny', value: food / 100 })); mb.appendChild(qel('span'));
@@ -2307,7 +2307,7 @@
     who.appendChild(qel('div', 'tl dim', 'HP ' + Math.max(0, me.hp) + '/' + me.maxHp));
     cols.appendChild(who);
     // what you carry
-    var mine = bagColumn(); mine.appendChild(itemCard()); cols.appendChild(mine);
+    var mine = bagColumn(), card = itemCard(); card.classList.add('fill'); mine.appendChild(card); cols.appendChild(mine);
     // what you can make with your hands
     var job = me.craft, jr = job && content.recipes && content.recipes[job.id];
     var all = World.recipesFor(content, mapOf(), me, lookup()), near = all.filter(function (r) { return r.station && r.here; });
@@ -2327,12 +2327,12 @@
     var make = qel('div', 'wcol'), two = qel('div', 'wcols'), lcol = qel('div', 'wcol'), pcol = qel('div', 'wcol');
     make.style.width = '308rem'; two.style.gap = '6rem'; lcol.style.width = '150rem'; pcol.style.width = '152rem';
     make.appendChild(UI.head('Crafting', near.length ? World.stationName(content, near[0].station) : 'Hands only')); make.appendChild(book.bar);
-    book.list.style.height = job ? '122rem' : '146rem'; lcol.appendChild(book.list);
+    book.list.classList.add('fill'); lcol.appendChild(book.list);
     makingBar = null;
     if (job) lcol.appendChild(makingStrip(job, jr));
     if (UI.FLAGS.queue) { var qu = qel('div', 'queue'); qu.appendChild(qel('span', '', 'Queue')); var qg = qel('div', 'igrid'); for (var i = 0; i < 5; i++) qg.appendChild(qel('div', 'icell')); qu.appendChild(qg); lcol.appendChild(qu); }   // (off: one thing is made at a time)
-    book.paper.style.minHeight = '128rem'; pcol.appendChild(book.paper); pcol.appendChild(book.act);
-    two.appendChild(lcol); two.appendChild(pcol); make.appendChild(two); cols.appendChild(make);
+    book.paper.classList.add('fill'); pcol.appendChild(book.paper); pcol.appendChild(book.act);
+    two.classList.add('fill'); two.appendChild(lcol); two.appendChild(pcol); make.appendChild(two); cols.appendChild(make);
     box.appendChild(cols);
     box.appendChild(UI.hints([['Drag', 'move'], ['Shift', 'half'], ['Ctrl', 'one'], ['2x click', 'use / wear'], ['Drag to belt', 'keep at hand']]));
   }
@@ -2457,8 +2457,8 @@
     } });
     var right = qel('div', 'wcol'); right.style.width = '228rem';
     right.appendChild(UI.head('Recipes')); right.appendChild(book.bar);
-    book.list.style.height = '74rem'; right.appendChild(book.list);
-    book.paper.style.minHeight = '74rem'; right.appendChild(book.paper); right.appendChild(book.act);
+    book.list.classList.add('fill'); right.appendChild(book.list);
+    book.paper.classList.add('fill'); right.appendChild(book.paper); right.appendChild(book.act);
     cols.appendChild(right);
     box.appendChild(cols);
     box.appendChild(UI.hints([['R', 'take all cooked'], ['Drag', 'move'], ['Shift+click', 'send across'], ['Shift', 'half'], ['Ctrl', 'one']]));
@@ -2473,6 +2473,7 @@
     invSig = sig; box.innerHTML = '';
     var el = qel;
     $('bag-title').textContent = storage ? storage.name : 'Inventory';
+    $('bag').classList.toggle('tall', !storage || !!storage.cook);   // your own window and a cooker's use the whole height (a chest's stays compact)
     if (storage && storage.cook) cookWindow(box);
     else if (storage) storeWindow(box);
     else invWindow(box);
@@ -2570,7 +2571,7 @@
     }
     if (now - lastReply > pollMs) poll();
 
-    ease(shown, me, dt / moveMs);
+    ease(shown, me, dt / (moveMs * (lastCost || 1)));   // (a slow step, a diagonal or wading, glides slower too)
     if (harvesting) harvestSwing();
     // hold-to-fire: while aiming with the left button down, a semi/auto weapon keeps firing on its cadence
     if (aiming && leftHeld && hover) {
@@ -2611,7 +2612,7 @@
     setMarks(marks);
     view.players.forEach(function (q) {
       var s = shownOthers['p:' + q.id] || (shownOthers['p:' + q.id] = { x: q.x, y: q.y });
-      ease(s, q, dt / moveMs); seen['p:' + q.id] = 1;
+      ease(s, q, dt / (moveMs * Rules.stepCost('N', content, mapOf(), q.x, q.y))); seen['p:' + q.id] = 1;   // (wading: slower)
       var act = othersAct(q, tMark);
       actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp, swing: (tMark - act.t0) / SWING_MS });
     });
@@ -2830,5 +2831,7 @@
     plan: function () { return null; },    // kept for back-compat: there is no click-to-walk plan any more
     layers: function () { return me ? playerLayers(me) : null; },
     camera: function () { return lastCam; },
+    content: function () { return content; },                                  // (tests: change a map in memory, then remap())
+    remap: function () { if (renderer && me) renderer.setMap(mapOf(), floorMaps()); },
     aim: function () { return { aiming: aiming, aimAngle: aimAngle, facing: me && me.facing, armed: armed, throwing: throwing, hover: hover, check: armed && hover ? aimCheck(hover) : null }; } };
 })();

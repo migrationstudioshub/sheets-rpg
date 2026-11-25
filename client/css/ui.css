@@ -250,6 +250,20 @@ h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform:
 #bag { padding-bottom: 40rem; box-sizing: border-box; }                        /* the belt stays in view under the window */
 #bag .panel { max-height: 100%; overflow: auto; }
 #bag-items { display: grid; gap: 6rem; }
+/* your own window and a cooker's take the whole height of the view (less the belt under it): columns stretch down, and the
+   parts marked .fill (recipe list, notebook page, item card) share what is left; never less than their min-height */
+#bag.tall { padding-bottom: 58rem; }                    /* (the belt and the XP bar over it: 6 + 47, and a little air) */
+#bag.tall .win { height: calc(100% - 4rem); grid-template-rows: auto minmax(0, 1fr); }
+#bag.tall .panel { display: flex; flex-direction: column; min-height: 0; }
+#bag.tall #bag-items { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+#bag.tall .wcols { flex: 1 1 auto; min-height: 0; align-items: stretch; }
+#bag.tall .wcol { display: flex; flex-direction: column; min-height: 0; }
+#bag.tall .fill { flex: 1 1 0; }
+#bag.tall .rlist.fill { min-height: 48rem; }
+#bag.tall .kpaper.fill { min-height: 96rem; }
+#bag.tall .icard.fill { min-height: 50rem; display: flex; flex-direction: column; }
+#bag.tall .icard.fill .btns { margin-top: auto; }            /* (its buttons along the bottom of the card) */
+#bag.tall .tail { margin-top: auto; }
 .wcols { display: flex; gap: 8rem; align-items: flex-start; }
 .wcol { display: grid; gap: 4rem; align-content: start; }
 .wbar { display: flex; gap: 1rem; align-items: center; min-height: 13rem; }

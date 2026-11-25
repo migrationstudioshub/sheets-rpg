@@ -18,7 +18,7 @@
 var LocalData = (function () {
   var BASE = '../data/game/';          // the pages that use this live one folder down (client/, content/, editor/)
   var MAP_TABS = { Maps: 1, MapEntities: 1 };
-  var GRIDS = ['terrain', 'overlay', 'vWalls', 'hWalls', 'roof', 'nobuild', 'elev', 'falls'];
+  var GRIDS = ['terrain', 'overlay', 'vWalls', 'hWalls', 'roof', 'nobuild', 'elev', 'falls', 'shallow'];
 
   function MC() { return typeof MapCode !== 'undefined' ? MapCode : (typeof require === 'function' ? require('../../shared/mapcode.js') : null); }
   function parse(v) { if (v == null || v === '') return null; if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch (e) { return null; } }

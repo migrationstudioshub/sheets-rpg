@@ -1,0 +1,77 @@
+# Builds the desktop app's Windows installer ("Sheets RPG Studio", desktop/) on GitHub's own Windows machines.
+#
+#   - Push a tag named studio-v<version>, e.g.  git tag studio-v0.2.0  then  git push origin studio-v0.2.0
+#     -> builds that version and publishes both .exe files on a GitHub Release of that name.
+#   - Or Actions tab -> "Desktop installer" -> Run workflow (optionally type a version)
+#     -> builds it and leaves the .exe files as a download on the run's page (no release).
+#
+# Only desktop/ goes into the installer: the app opens the repo folder and serves the game from it, so game and
+# Studio changes reach players with git pull, not with a new installer. The .exe files are not code-signed
+# (Windows SmartScreen will say "unknown publisher" the first time).
+name: Desktop installer
+
+on:
+  push:
+    tags: ['studio-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number for this build (empty = the one in desktop/package.json)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write          # (to create the release on a tag)
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Which version
+        id: ver
+        run: |
+          $v = '${{ github.event.inputs.version }}'
+          if ('${{ github.ref_type }}' -eq 'tag') { $v = '${{ github.ref_name }}' -replace '^studio-v', '' }
+          if (-not $v) { $v = (Get-Content package.json -Raw | ConvertFrom-Json).version }
+          if ($v -notmatch '^\d+\.\d+\.\d+') { throw "Not a version number: $v (use something like 0.2.0)" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Building version $v"
+
+      - name: Install the desktop app's packages
+        run: npm ci
+
+      - name: The bundled Python (pinned Pillow + numpy)
+        run: npm run prepare-python
+
+      - name: The desktop app's own test
+        run: npm test
+
+      - name: Build the installer and the portable .exe
+        run: npx electron-builder --win --publish never "-c.extraMetadata.version=${{ steps.ver.outputs.version }}"
+
+      - name: Keep them on the run's page
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheets-rpg-studio-${{ steps.ver.outputs.version }}
+          path: desktop/dist/*.exe
+          if-no-files-found: error
+
+      - name: Publish a release (tags only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Sheets RPG Studio ${{ steps.ver.outputs.version }}
+          files: desktop/dist/*.exe
+          generate_release_notes: true

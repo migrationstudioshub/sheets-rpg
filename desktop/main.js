@@ -324,6 +324,8 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1100, height: 760, backgroundColor: '#14161b',
     title: 'Sheets RPG Studio',
+    // (the built app takes its icon from the .exe; this is for npm start, where Electron would show its own)
+    icon: fs.existsSync(path.join(__dirname, 'build', 'icon.ico')) ? path.join(__dirname, 'build', 'icon.ico') : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

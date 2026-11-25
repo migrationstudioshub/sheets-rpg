@@ -374,7 +374,8 @@ var Content = (function () {
       c.quests[id] = { id: id, name: str(r.name) || id, giver: str(r.giver), ender: str(r.ender) || str(r.giver), text: str(r.text),
         progressText: str(r.progress_text), doneText: str(r.done_text), goals: goals, requires: str(r.requires), rewards: str(r.rewards),
         choice: str(r.choice), repeatS: Math.max(0, num(r.repeat_h, 0)) * 3600, order: i,
-        image: str(r.image), tutorial: bool(r.tutorial) };      // image = a picture (a GIF plays) shown with its text; tutorial = a teaching step (World.questSweep, questSkip)
+        image: str(r.image), tutorial: bool(r.tutorial),        // image = a picture (a GIF plays) shown with its text; tutorial = a teaching step (World.questSweep, questSkip)
+        onStart: str(r.on_start) };                             // an action list run when it starts (quest:<tutorial> = show a tutorial now)
     });
     linkFloors(c);
     return c;
@@ -441,6 +442,8 @@ var Content = (function () {
       if (kind.id === 'goto') { out.x = Math.round(num(g.x, 0)); out.y = Math.round(num(g.y, 0)); out.r = Math.max(0, Math.round(num(g.r, 1))); }
       if (str(g.label)) out.label = str(g.label);
       if (g.opt === true || bool(g.opt)) out.opt = true;
+      var then = str(g.on_done != null ? g.on_done : g.onDone);   // an action list run once, the moment this goal is met (World.questSweep)
+      if (then) out.onDone = then;
       return out;
     }).filter(Boolean);
   }

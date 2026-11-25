@@ -570,6 +570,7 @@ var CStudio = (function () {
         if (g.type === 'goto') { o.x = parseInt(g.x, 10) || 0; o.y = parseInt(g.y, 10) || 0; o.r = Math.max(0, parseInt(g.r, 10) || 0); }
         if (g.label) o.label = g.label;
         if (g.opt) o.opt = true;
+        if (g.onDone) o.on_done = g.onDone;
         return o;
       });
       r[fl.key] = out.length ? JSON.stringify(out) : '';
@@ -611,6 +612,18 @@ var CStudio = (function () {
           h('label', { className: 'lootlbl', style: 'display:flex;align-items:center;gap:4px;white-space:nowrap', title: 'An optional objective is counted and shown, but the quest can be handed in without it' },
             h('input', { type: 'checkbox', checked: !!g.opt, onchange: function (e) { g.opt = e.target.checked; save(); } }), 'optional'));
         box.appendChild(more);
+        // When met: start a quest (a tutorial step) the moment this objective is done. Other actions written by hand are kept.
+        var then = String(g.onDone || '').split(';').map(function (x) { return x.trim(); }).filter(Boolean);
+        var startId = (then.filter(function (x) { return /^quest:[^:]+$/.test(x); })[0] || '').slice(6), rest = then.filter(function (x) { return !/^quest:[^:]+$/.test(x) || x.slice(6) !== startId; });
+        var quests = (T.Quests || []).filter(function (x) { return x.id && x.id !== r.id; });
+        box.appendChild(h('div', { className: 'row', style: 'margin:-4px 0 10px 0' },
+          h('span', { className: 'lootlbl', text: 'When met, start' }),
+          h('select', { style: 'flex:1;min-width:0', title: 'A quest that starts the moment this objective is done (a tutorial step, say). It is shown in a "New quest" window, and closed with this quest if the player gives it up',
+            onchange: function (e) { g.onDone = (e.target.value ? ['quest:' + e.target.value] : []).concat(rest).join('; '); save(); } },
+            h('option', { value: '', text: '— nothing —' }),
+            startId && !quests.some(function (x) { return x.id === startId; }) ? h('option', { value: startId, text: startId + ' (missing quest)', selected: true }) : null,
+            quests.map(function (x) { return h('option', { value: x.id, text: (x.name || x.id) + '  (' + x.id + ')' + (x.tutorial === true || x.tutorial === 'TRUE' || x.tutorial === 'true' ? ' · tutorial' : ''), selected: x.id === startId }); })),
+          rest.length ? h('span', { className: 'lootlbl', title: 'Written by hand; kept as it is', text: '+ ' + rest.join('; ') }) : null));
         if (!opts.length && kind.ref !== 'place' && kind.ref !== 'none' && !kind.any) box.appendChild(h('div', { className: 'help', style: 'color:var(--bad);margin:-4px 0 8px', text: kind.ref === 'npcs'
           ? 'Nobody to pick yet: make an object of kind npc under Objects, and place it with the map editor.' : 'Nothing to pick yet: make one under ' + (kind.ref.charAt(0).toUpperCase() + kind.ref.slice(1)) + '.' }));
       });
@@ -651,7 +664,7 @@ var CStudio = (function () {
       list.forEach(function (g, i) {
         var itemId = g.what.slice(0, 5) === 'item:' ? g.what.slice(5) : '', known = !itemId || items.some(function (x) { return x.id === itemId; });
         var second = g.what === 'quest'
-          ? h('select', { style: 'flex:1;min-width:0', title: 'The quest that starts when this one is handed in. It is shown to the player in a "New quest" window', onchange: function (e) { g.id = e.target.value; save(); } },
+          ? h('select', { style: 'flex:1;min-width:0', title: 'The quest that starts ' + (fl.when || 'when this one is handed in') + '. It is shown to the player in a "New quest" window', onchange: function (e) { g.id = e.target.value; save(); } },
               h('option', { value: '', text: '— pick a quest —' }),
               g.id && !quests.some(function (x) { return x.id === g.id; }) ? h('option', { value: g.id, text: g.id + ' (missing quest)', selected: true }) : null,
               quests.map(function (x) { return h('option', { value: x.id, text: (x.name || x.id) + '  (' + x.id + ')', selected: x.id === g.id }); }))
@@ -670,7 +683,7 @@ var CStudio = (function () {
           second,
           h('button', { text: '✕', title: 'Remove', onclick: function () { list.splice(i, 1); save(); draw(); } })));
       });
-      box.appendChild(h('button', { text: '+ Add reward', onclick: function () { list.push({ what: list.some(function (g) { return g.what === 'xp'; }) ? 'gold' : 'xp', qty: 10 }); save(); draw(); } }));
+      box.appendChild(h('button', { text: fl.when ? '+ Add' : '+ Add reward', onclick: function () { list.push({ what: list.some(function (g) { return g.what === 'xp'; }) ? 'gold' : 'xp', qty: 10 }); save(); draw(); } }));
       box.appendChild(h('div', { className: 'row', style: 'margin-top:6px' },
         h('span', { className: 'lootlbl', text: 'Other actions' }),
         h('input', { type: 'text', value: other.join('; '), placeholder: 'optional, e.g. flag:met_mayor; message:Well done', style: 'flex:1;min-width:0',

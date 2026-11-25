@@ -4016,6 +4016,49 @@ test('tutorial: steps count the basics, finish by themselves, lead into the firs
   assert.strictEqual(e.log(e.p), 't_talk:ready:1');
 });
 
+test('quest hooks: on_start and an objective\'s on_done start tutorial steps, one window at a time; abandon closes them; skip stays skipped', () => {
+  const Q = [
+    { id: 'q0', name: 'Water', on_start: 'quest:t_move', rewards: 'quest:q1',
+      objectives: JSON.stringify([{ type: 'goto', ref: 'field', x: 3, y: 5, r: 0, label: 'Reach the river bank', on_done: 'quest:t_click' }, { type: 'drink' }]) },
+    { id: 't_move', name: 'Move', tutorial: true, objectives: 'walk:2' },
+    { id: 't_click', name: 'Click', tutorial: true, objectives: 'drink' },
+    { id: 'q1', name: 'Next', objectives: 'kill:rat:1' }];
+  const cfg = tb => { tb.Config = tb.Config.filter(r => r.key !== 'start_quests'); tb.Config.push({ key: 'start_quests', value: 'q0' }); };
+  const s = village(Q, cfg);
+  assert.deepStrictEqual([s.c.quests.q0.onStart, s.c.quests.q0.goals[0].onDone, s.c.quests.q0.goals[1].onDone], ['quest:t_move', 'quest:t_click', undefined]);
+  assert.deepStrictEqual(s.p.intro, ['q0', 't_move'], 'the quest, then the tutorial its start shows');
+  assert.strictEqual(s.p.quests.t_move.by, 'q0');
+  s.as(s.p, { type: 'quest', op: 'seen', id: 'q0' });
+  assert.deepStrictEqual(s.p.intro, ['t_move'], 'read one window: the next still waits');
+  Object.assign(s.p, { x: 0, y: 5 });
+  s.as(s.p, { type: 'move', dirs: ['E', 'E'] });
+  assert.ok(s.p.questsDone.t_move && !s.p.quests.t_click, 'walked: the movement step is done; not at the bank yet');
+  s.as(s.p, { type: 'move', dirs: ['E'] });
+  assert.strictEqual((s.p.quests.t_click || {}).by, 'q0', 'the bank reached: the click step starts');
+  s.as(s.p, { type: 'move', dirs: ['W', 'E'] });
+  assert.strictEqual(s.p.intro.filter(x => x === 't_click').length, 1, 'an objective\'s hook runs once');
+  s.c.maps.field.terrain[5][4] = 'l_water'; s.p.thirst = 20;
+  s.as(s.p, { type: 'interact', x: 4, y: 5, verb: 'drink' });
+  assert.ok(s.p.questsDone.t_click, 'one drink finishes the click step...');
+  assert.strictEqual(s.log(s.p), 'q0:ready:1/1', '...and the quest\'s own drink');
+  s.as(s.p, { type: 'quest', op: 'turnin', id: 'q0' });
+  assert.ok(s.p.questsDone.q0 && s.p.quests.q1 && s.p.intro.indexOf('q1') >= 0, 'claimed: the next quest starts');
+
+  // giving the quest up closes the steps it started (not done: they come back with it)
+  const a = village(Q, cfg);
+  a.as(a.p, { type: 'quest', op: 'abandon', id: 'q0' });
+  assert.deepStrictEqual([Object.keys(a.p.quests), a.p.intro, !!a.p.questsDone.t_move], [[], undefined, false]);
+  World.run(a.c, a.ws, a.p, 'quest:q0', a.t, []);
+  assert.deepStrictEqual([Object.keys(a.p.quests).sort(), a.p.intro], [['q0', 't_move'], ['q0', 't_move']]);
+
+  // Skip tutorial: the quest goes on, and a step its hooks start later is skipped too, with no window
+  const k = village(Q, cfg);
+  k.as(k.p, { type: 'quest', op: 'skip' });
+  assert.deepStrictEqual([Object.keys(k.p.quests), k.p.intro, k.p.tutOff], [['q0'], ['q0'], true]);
+  Object.assign(k.p, { x: 2, y: 5 }); k.as(k.p, { type: 'move', dirs: ['E'] });
+  assert.deepStrictEqual([Object.keys(k.p.quests), k.p.intro, !!k.p.questsDone.t_click], [['q0'], ['q0'], true]);
+});
+
 test('quests: an optional objective is counted and shown, but the quest is ready without it', () => {
   assert.deepStrictEqual(Content.parseGoals('kill:rat:2; ?have:bone:2; ?drink'),
     [{ type: 'kill', ref: 'rat', need: 2 }, { type: 'have', ref: 'bone', need: 2, opt: true }, { type: 'drink', ref: '*', need: 1, opt: true }]);

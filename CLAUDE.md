@@ -206,6 +206,15 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   basics: `walk` (steps, quiet), `hit`, `shoot`, `hold` (no target) and `ui` (`ref` from `Content.UI_PARTS`: bag, quests, craft,
   build — only the page knows, it sends quest op `did` + `what`; `didUi` in `main.js`). Quests `image` = a picture above the text
   (`questPic`; a GIF plays); `[W]` in quest text or a goal label is drawn as a key (`qtext`).
+  **Quest hooks** (Nov 2026; how tutorials are shown — the owner chose this over listing them in Config): a quest's
+  **`on_start`** (an action list, run by `questBegin` when it starts, start_quests included) and each objective's
+  **`on_done`** (JSON goals only; run once by `questSweep` → `goalHook` the first time the goal is met, marked in
+  `p.quests[id].f`) are the same action lists as `rewards`; `quest:<tutorial step>` there = show that step now. A quest
+  started by a hook remembers its starter (`p.quests[id].by`); abandoning the starter closes it (`questDrop`, not done).
+  `questStart(c, ws, p, id, now, ev, {announce, by})` is the one way to start one. "New quest" windows show **one at a
+  time**, in the order things started (`p.intro`; quest op `seen` takes the `id` read). **Skip tutorial** sets `p.tutOff`:
+  the chain is closed, and every tutorial step a hook starts later is skipped the same way (`skipSteps`). Studio: the
+  `on_start` field (rewards editor) and a "When met, start" picker under each objective (`goalsField`).
   More goal rules: **`have`** (bring) is what is in the bag right now, and the full amount must be there at hand-in, when it is
   taken. **`own`** (have in the bag, kept) is the most that was in the bag at once while on the quest — `questSweep` keeps the
   mark, so once met it stays ticked when the item is then eaten or used (the owner's "kill, pick up the meat, eat it" quest).

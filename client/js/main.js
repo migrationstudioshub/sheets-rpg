@@ -1568,7 +1568,13 @@
     return img;
   }
   function isTutorial(id) { var q = (content.quests || {})[id]; return !!(q && q.tutorial); }
-  function skipTutorial() { introOpen = false; introAck = ''; $('npcp').hidden = true; send({ type: 'quest', op: 'skip' }); }
+  function skipTutorial() {
+    introOpen = false; $('npcp').hidden = true;
+    var qs = content.quests || {};
+    ((me && me.questIntro) || []).forEach(function (id) { if (qs[id] && qs[id].tutorial) introRead[id] = 1; });   // (the referee drops them all; other new quests still show)
+    send({ type: 'quest', op: 'skip' });
+    introPanel(); claimPanel();
+  }
   /** A window of the page was opened: a quest that asks for exactly that (a `ui` goal) is told, as only the page knows. */
   function didUi(what) {
     var qs = content.quests || {};
@@ -1763,16 +1769,19 @@
       marks.push({ id: mk.id, kind: mk.kind, x: mk.x, y: mk.y, up: T * 0.5 + 4 });
     });
   }
-  // The welcome: quests a new character starts with (Config start_quests) are shown once, in a window, the first
-  // time they enter the game. me.questIntro lists them until the referee hears the window was read.
-  var introOpen = false, introAck = '';                     // introAck = the list last read (a new one may come later: a quest started by an action)
+  // "New quest": quests a new character starts with (Config start_quests), and every quest started since by an action
+  // or by another quest (its rewards, on_start, a goal's on_done). me.questIntro lists them in the order they started;
+  // they are shown ONE window at a time, each closed one told to the referee (quest op `seen` + id), then the next.
+  var introOpen = false, introId = '', introRead = {};      // introRead = closed here, until the referee's answer drops them from the list
   function introPanel() {
-    var ids = ((me && me.questIntro) || []).filter(function (id) { return (content.quests || {})[id]; });
-    if (introOpen || !ids.length || ids.join() === introAck) return;
-    introOpen = true; claimQuest = ''; npcTalk = null; npcQuest = '';
+    var all = (me && me.questIntro) || [];
+    Object.keys(introRead).forEach(function (id) { if (all.indexOf(id) < 0) delete introRead[id]; });   // (gone from the list: a later start of it is shown again)
+    var ids = all.filter(function (id) { return (content.quests || {})[id] && !introRead[id]; }).slice(0, 1);
+    if (introOpen || !ids.length) return;
+    introOpen = true; introId = ids[0]; claimQuest = ''; npcTalk = null; npcQuest = '';
     var box = $('npc-body'); box.innerHTML = '';
-    var teach = ids.some(isTutorial);
-    $('npc-title').textContent = ids.every(isTutorial) ? 'Tutorial' : ids.length > 1 ? 'New quests' : 'New quest';
+    var teach = isTutorial(introId);
+    $('npc-title').textContent = teach ? 'Tutorial' : 'New quest';
     ids.forEach(function (id) {
       var q = content.quests[id], rw = rewardText(q);
       box.appendChild(qel('h4', '', q.name));
@@ -1790,8 +1799,9 @@
   }
   function closeIntro() {
     if (!introOpen) return;
-    introOpen = false; introAck = ((me && me.questIntro) || []).join(); $('npcp').hidden = true;
-    send({ type: 'quest', op: 'seen' });
+    introOpen = false; introRead[introId] = 1; $('npcp').hidden = true;
+    send({ type: 'quest', op: 'seen', id: introId });
+    introPanel();                                               // the next one waiting, if any
     claimPanel();
   }
   // Quest complete: a quest with nobody to hand it to (no giver, no ender) is finished right where you stand. When

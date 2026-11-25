@@ -1605,10 +1605,10 @@ var World = (function () {
       hair: c.config.start_hair || '', hairColor: c.config.start_hair_color || 'hair_brown' };
     // Config start_quests: quests every new character begins with ("welcome" or "welcome, find_water"). They go
     // straight into the log; p.intro lists them until the page has shown its welcome window (quest op 'seen').
+    // Each one's on_start runs here too (no world yet: the actions that need one are left out — see run).
     String(c.config.start_quests || '').split(/[;,\s]+/).forEach(function (qid, i) {
       var q = (c.quests || {})[qid]; if (!q || p.quests[qid]) return;
-      p.quests[qid] = { n: q.goals.map(function () { return 0; }), at: Date.now() + i };
-      (p.intro = p.intro || []).push(qid);
+      questBegin(c, null, p, q, Date.now() + i, [], { announce: true });
     });
     if (look) {
       if (look.body === 'female') p.body = 'female';
@@ -3785,7 +3785,8 @@ var World = (function () {
   }
 
   /** "give:potion:2; gold:10; heal:20; flag:x; teleport:map_1:3:4; set_state:map_3.e7:open; message:Hello" */
-  function run(c, ws, p, script, now, ev) {
+  // by = the quest whose on_start / goal on_done is running it: a quest it starts remembers that (closed with it on abandon)
+  function run(c, ws, p, script, now, ev, by) {
     String(script || '').split(';').forEach(function (cmd) {
       cmd = cmd.trim(); if (!cmd) return;
       var i = cmd.indexOf(':'), verb = i < 0 ? cmd : cmd.slice(0, i), arg = i < 0 ? '' : cmd.slice(i + 1), a = arg.split(':');
@@ -3793,18 +3794,18 @@ var World = (function () {
       else if (verb === 'take') take(p, a[0], Number(a[1]) || 1);
       else if (verb === 'gold') { var g = Number(a[0]) || 0; if (g > 0) give(c, p, 'gold', g, ev); else p.gold = Math.max(0, p.gold + g); }
       else if (verb === 'heal') p.hp = Math.min(stats(c, p).maxHp, p.hp + (Number(a[0]) || 0));
-      else if (verb === 'damage') { p.hp -= Number(a[0]) || 0; if (p.hp <= 0) die(c, ws, p, ev); }
+      else if (verb === 'damage') { if (ws) { p.hp -= Number(a[0]) || 0; if (p.hp <= 0) die(c, ws, p, ev); } }   // (no world = a new character's first quest: nothing to die in)
       else if (verb === 'flag') p.flags[a[0]] = true;
       else if (verb === 'unflag') delete p.flags[a[0]];
       else if (verb === 'teleport') teleport(c, p, arg, ev);
-      else if (verb === 'set_state') setState(ws, p.map, a[0], a[1] || null);
+      else if (verb === 'set_state') { if (ws) setState(ws, p.map, a[0], a[1] || null); }
       else if (verb === 'xp') gainXp(c, p, Number(a[0]) || 0, ev);
       else if (verb === 'cure') {
         var which = a[0] || 'infection', before = (p.statuses || []).length;
         p.statuses = (p.statuses || []).filter(function (s) { return s.id !== which; });
         if (p.statuses.length < before) ev.push({ type: 'info', to: p.id, text: which === 'infection' ? 'The infection fades.' : 'You feel better.' });
       }
-      else if (verb === 'quest') { if (questStart(c, p, a[0], now, ev)) (p.intro = p.intro || []).push(a[0]); }   // start a quest (from an object, an item, a trigger, another quest's rewards): the page shows it in its "New quest" window
+      else if (verb === 'quest') questStart(c, ws, p, a[0], now, ev, { announce: true, by: by });   // start a quest (from an object, an item, a trigger, another quest's rewards or hooks): the page shows it in its "New quest" window
       else if (verb === 'message') ev.push({ type: 'info', to: p.id, text: arg });
     });
   }
@@ -3907,18 +3908,41 @@ var World = (function () {
       });
     });
   }
-  function questStart(c, p, id, now, ev) {
+  /**
+   * Start a quest. o.announce = the page shows it in its "New quest" window (p.intro); o.by = the quest whose hook
+   * (on_start, a goal's on_done) starts it: it remembers that, and such a start says nothing when it cannot happen
+   * (a tutorial step already done, say). A tutorial step for a player who skipped the tutorial is skipped too.
+   */
+  function questStart(c, ws, p, id, now, ev, o) {
+    o = o || {};
     var q = (c.quests || {})[id]; if (!q) return false;
-    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    function say(x) { if (!o.by) ev.push({ type: 'info', to: p.id, text: x }); }
     var s = questState(c, p, q, now);
     if (s === 'active' || s === 'ready') { say('You are already on "' + q.name + '".'); return false; }
     if (s === 'done') { say('You have already done that.'); return false; }
     if (s === 'wait') { say('Not yet: come back later.'); return false; }
     if (s !== 'open') { say('You can\'t take that on yet.'); return false; }
+    if (q.tutorial && p.tutOff) { skipSteps(c, ws, p, [id], now, ev); return false; }
     if (Object.keys(p.quests).length >= cfgNum(c, 'quest_log_max', QUEST_LOG_MAX)) { say('Your quest log is full.'); return false; }
-    p.quests[id] = { n: q.goals.map(function () { return 0; }), at: now };
-    ev.push({ type: 'quest', to: p.id, text: 'New quest: ' + q.name });
+    questBegin(c, ws, p, q, now, ev, o);
     return true;
+  }
+  /** Into the log; announced (in the order things started: the quest before what its on_start starts); its on_start run. */
+  function questBegin(c, ws, p, q, now, ev, o) {
+    p.quests[q.id] = { n: q.goals.map(function () { return 0; }), at: now };
+    if (o.by) p.quests[q.id].by = o.by;
+    ev.push({ type: 'quest', to: p.id, text: 'New quest: ' + q.name });
+    if (o.announce) (p.intro = p.intro || []).push(q.id);
+    if (q.onStart) run(c, ws, p, q.onStart, now, ev, q.id);
+  }
+  /** Out of the log, not done (it can be taken again), with every quest its hooks started that is still open (and theirs). */
+  function questDrop(p, id) {
+    var gone = [id];
+    delete p.quests[id];
+    for (var k = 0; k < gone.length && k < 200; k++) Object.keys(p.quests).forEach(function (x) {
+      if (p.quests[x] && p.quests[x].by === gone[k]) { delete p.quests[x]; gone.push(x); }
+    });
+    if (p.intro) { p.intro = p.intro.filter(function (x) { return gone.indexOf(x) < 0; }); if (!p.intro.length) delete p.intro; }
   }
   /** Is one of that NPC object standing next to the player (any of the eight tiles, or the same one)? */
   function npcNear(c, ws, p, objId) {
@@ -3928,20 +3952,24 @@ var World = (function () {
   /** {type: 'quest', op: 'accept' | 'turnin' | 'abandon' | 'seen', id, choice?} — choice = which of the choose-one rewards (its place in the list). */
   function questAct(c, ws, p, a, now, ev) {
     function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
-    if (a.op === 'seen') { delete p.intro; return; }           // the welcome window has been read
+    if (a.op === 'seen') {                                     // a "New quest" window has been read: that one (id), or all of them (an older page)
+      if (a.id && p.intro) p.intro = p.intro.filter(function (x) { return x !== String(a.id); });
+      if (!a.id || (p.intro && !p.intro.length)) delete p.intro;
+      return;
+    }
     if (a.op === 'did') { if (UI_GOALS[String(a.what)]) questCount(c, p, 'ui', String(a.what), now, ev); return; }   // the page opened one of its windows (only the page can know)
-    if (a.op === 'skip') return questSkip(c, p, now, ev);
+    if (a.op === 'skip') return questSkip(c, ws, p, now, ev);
     var q = (c.quests || {})[String(a.id || '')];
     if (!q) return say('There is no such quest.');
     if (a.op === 'abandon') {
       if (!p.quests[q.id]) return;
-      delete p.quests[q.id];
+      questDrop(p, q.id);
       return say('You give up on "' + q.name + '".');
     }
     if (a.op === 'accept') {
       if (!q.giver) return say('Nobody offers that.');
       if (!npcNear(c, ws, p, q.giver)) return say('You need to be with ' + npcName(c, q.giver) + '.');
-      questStart(c, p, q.id, now, ev);
+      questStart(c, ws, p, q.id, now, ev);
       return;
     }
     if (a.op !== 'turnin') return;
@@ -3983,8 +4011,11 @@ var World = (function () {
     });
     // A TUTORIAL step with nobody to hand it to (and nothing to choose) does finish by itself: the next step, started
     // by its rewards, opens at once. (Bounded: a step may finish the one it starts, never round in a ring for ever.)
+    // A goal's on_done runs once, the first time the goal is met (st.f marks it): one at a time, so what it starts is
+    // announced in the order things happened, and anything it moves on is seen by the next round.
     var qs = c.quests || {};
     for (var turn = 0; turn < 20; turn++) {
+      if (goalHook(c, ws, p, now, ev)) continue;
       var id = Object.keys(p.quests).filter(function (k) {
         var q = qs[k];
         return q && q.tutorial && !q.ender && q.goals.length && !list(q.choice).length && questState(c, p, q, now) === 'ready';
@@ -3993,27 +4024,51 @@ var World = (function () {
       questFinish(c, ws, p, qs[id], null, now, ev);
     }
   }
+  function goalHook(c, ws, p, now, ev) {
+    var qs = c.quests || {}, ids = Object.keys(p.quests);
+    for (var k = 0; k < ids.length; k++) {
+      var q = qs[ids[k]], st = p.quests[ids[k]]; if (!q || !st) continue;
+      for (var i = 0; i < q.goals.length; i++) {
+        var g = q.goals[i];
+        if (!g.onDone || (st.f && st.f[i]) || goalCount(p, q, i) < g.need) continue;
+        st.f = Array.isArray(st.f) ? st.f : [];
+        st.f[i] = 1;
+        run(c, ws, p, g.onDone, now, ev, q.id);
+        return true;
+      }
+    }
+    return false;
+  }
   /**
    * Skip tutorial: every tutorial step in the log is closed as done, with no reward, and so is each step it would
    * have started; a quest that is NOT a tutorial step and would have been started by one (the real first quest at
    * the end of the chain) starts now.
    */
-  function questSkip(c, p, now, ev) {
-    var qs = c.quests || {}, todo = Object.keys(p.quests).filter(function (id) { return qs[id] && qs[id].tutorial; }), any = false, guard = 0;
+  // The choice stays with the character (p.tutOff): a tutorial step a quest's hook would show later is skipped the same way.
+  function questSkip(c, ws, p, now, ev) {
+    var qs = c.quests || {};
+    p.tutOff = true;
+    if (skipSteps(c, ws, p, Object.keys(p.quests).filter(function (id) { return qs[id] && qs[id].tutorial; }), now, ev))
+      ev.push({ type: 'quest', to: p.id, text: 'Tutorial skipped.' });
+  }
+  /** Close these tutorial steps as done, unrewarded, and each step they lead to (rewards, on_start, a goal's on_done). */
+  function skipSteps(c, ws, p, todo, now, ev) {
+    var qs = c.quests || {}, any = false, guard = 0;
+    todo = todo.slice();
     while (todo.length && guard++ < 200) {
       var q = qs[todo.shift()];
       if (!q || (p.questsDone[q.id] && !p.quests[q.id])) continue;
       delete p.quests[q.id]; p.questsDone[q.id] = now; any = true;
       if (p.intro) p.intro = p.intro.filter(function (x) { return x !== q.id; });
-      String(q.rewards || '').split(';').forEach(function (cmd) {
+      [q.rewards, q.onStart].concat(q.goals.map(function (g) { return g.onDone; })).join(';').split(';').forEach(function (cmd) {
         var a = cmd.trim().split(':'), next = a[0] === 'quest' && qs[a[1]];
         if (!next) return;
         if (next.tutorial) todo.push(next.id);
-        else if (questStart(c, p, next.id, now, ev)) (p.intro = p.intro || []).push(next.id);
+        else questStart(c, ws, p, next.id, now, ev, { announce: true });
       });
     }
     if (p.intro && !p.intro.length) delete p.intro;
-    if (any) ev.push({ type: 'quest', to: p.id, text: 'Tutorial skipped.' });
+    return any;
   }
   /** Talking to an NPC: quests that ask for a word with them move on, and the page is told to open their window. */
   function talkTo(c, ws, p, e, o, pr, now, ev) {

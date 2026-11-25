@@ -228,14 +228,14 @@ var World = (function () {
       bag = { key: mapId + '.b' + (++st.n), x: x, y: y, ref: o.id, data: {}, hp: 0, max: 0, bp: '', by: null, built: now, prog: 0, need: 0, wild: true, inv: [] };
       st.ents.push(bag);
     }
-    (stacks || []).forEach(function (g) { if (g && c.items[g.item] && g.qty > 0) addStacks(c, bag.inv, g.item, g.qty, 0); });
+    (stacks || []).forEach(function (g) { if (g && c.items[g.item] && g.qty > 0) addStacks(c, bag.inv, g.item, g.qty, 0, g); });
     mapState(ws, mapId).timers[bag.key] = { at: now + Math.max(10, cfgNum(c, 'loot_bag_rot_s', 900)) * 1000, rot: true };
     touchStruct(st); ws.dirty = true;
     return bag.key;
   }
   /** What a container holds, as plain [{item, qty}] (whatever shape it was kept in). */
   function plainStacks(inv) {
-    if (Array.isArray(inv)) return inv.filter(function (g) { return g && g.qty > 0; }).map(function (g) { return { item: g.item, qty: g.qty }; });
+    if (Array.isArray(inv)) return inv.filter(function (g) { return g && g.qty > 0; }).map(function (g) { return g.dur != null ? { item: g.item, qty: g.qty, dur: g.dur } : { item: g.item, qty: g.qty }; });
     return Object.keys(inv || {}).map(function (id) { return { item: id, qty: Number(inv[id]) || 0 }; }).filter(function (g) { return g.qty > 0; });
   }
 
@@ -1321,6 +1321,25 @@ var World = (function () {
       sortStacks(c, tidyStacks(c, p.inventory));
       return;
     }
+    if (a.op === 'repair' || a.op === 'salvage') {            // a weapon or tool in the bag: mend it to full, or take it apart
+      var rs = stackAt(tidyStacks(c, p.inventory), Math.floor(Number(a.s))), rit = rs && c.items[rs.item];
+      if (!rit) return say('There is nothing there.');
+      if (a.op === 'repair') {
+        var ri = repairInfo(c, liveMap(c, ws, p.map), p, serverLookup(c, ws, p.map, [p]), rs);
+        if (!ri.ok) return say(ri.reason);
+        ri.cost.forEach(function (g) { take(p, g.item, g.qty); });
+        delete rs.dur;                                         // (whole again)
+        if (typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);
+        return say('You repair the ' + lower(rit.name) + '.');
+      }
+      var si = salvageInfo(c, rs); if (!si.ok) return say(si.reason);
+      p.inventory.splice(p.inventory.indexOf(rs), 1);
+      goneFromBag(p, rs.item);
+      if (typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);
+      say('You take the ' + lower(rit.name) + ' apart.');
+      si.gives.forEach(function (g) { give(c, p, g.item, g.qty, ev); });
+      return;
+    }
     if (a.op === 'drop') {                                    // out of the bag, onto the ground: a loot bag at your feet
       var dbag = tidyStacks(c, p.inventory), ds = stackAt(dbag, Math.floor(Number(a.s)));
       if (!ds) return say('There is nothing there.');
@@ -1330,7 +1349,7 @@ var World = (function () {
       goneFromBag(p, did);
       if (typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);
       syncLoadout(c, p);
-      leaveBag(c, ws, p.map, p.x, p.y, [{ item: did, qty: dn }], now);
+      leaveBag(c, ws, p.map, p.x, p.y, [{ item: did, qty: dn, dur: ds.dur }], now);
       return say('You drop ' + (dn > 1 ? dn + ' × ' : 'the ') + lower(itemName(c, did)) + '.');
     }
     if (a.op === 'takeall') {                                 // everything in the open container, into the bag, as far as it fits
@@ -1338,7 +1357,7 @@ var World = (function () {
       if (e._cook) return;                                    // (a cooker's cells are taken one by one)
       var tb = tidyStacks(c, p.inventory), fb = boxInv(c, e, p), size = bagSlots(c), moved = 0, stuck = 0;
       fb.slice().sort(function (x, y) { return x.s - y.s; }).forEach(function (st) {
-        var left = addStacks(c, tb, st.item, st.qty, size);
+        var left = addStacks(c, tb, st.item, st.qty, size, st);
         moved += st.qty - left; stuck += left; st.qty = left;
         if (left <= 0) fb.splice(fb.indexOf(st), 1);
       });
@@ -1390,7 +1409,7 @@ var World = (function () {
       src.qty -= qty - zl;
     } else if (to.s === undefined || to.s === null || to.s === '') {            // wherever it fits
       if (fromL === toL) return;
-      var left = addStacks(c, toL, id, qty, toSize);
+      var left = addStacks(c, toL, id, qty, toSize, src);
       if (left >= qty) return say(to.w === 'box' ? 'It is full.' : 'Your bag is full.');
       src.qty -= qty - left;
     } else {
@@ -1400,7 +1419,7 @@ var World = (function () {
       var dst = stackAt(toL, t);
       if (!dst) {
         if (qty === src.qty && fromL === toL) src.s = t;                 // the whole stack, to another cell of the same grid
-        else { toL.push({ item: id, qty: qty, s: t }); src.qty -= qty; }
+        else { var mv = { item: id, qty: qty, s: t }; if (src.dur != null) mv.dur = src.dur; toL.push(mv); src.qty -= qty; }
       } else if (dst.item === id && dst.qty < max) {
         var n = Math.min(qty, max - dst.qty); dst.qty += n; src.qty -= n;
       } else {
@@ -1450,9 +1469,42 @@ var World = (function () {
     return hit ? { t: 'ent', key: hit.key } : null;
   }
   /** What the player strikes with: the belt slot in hand (a weapon or a tool), else the weapon worn (older characters). */
+  /** Which of p's stacks of an item is the one in use (in hand, swung, fired): the first in the bag. */
+  // (a whole one before a broken one: with two axes, the good one is the one swung)
+  function stackInUse(p, id) {
+    var best = null;
+    (p.inventory || []).forEach(function (st) {
+      if (st.item !== id) return;
+      var br = st.dur != null && Number(st.dur) <= 0, bb = best && best.dur != null && Number(best.dur) <= 0;
+      if (!best || (bb && !br) || (bb === br && st.s < best.s)) best = st;
+    });
+    return best;
+  }
+  /** A stack worn down to nothing: it stays, and is good for nothing until it is repaired. */
+  function isBroken(c, st) { var d = durOf(c, st); return !!d && d.left <= 0; }
+  /** p has one of this item that is not broken. */
+  function usable(c, p, id) { var st = stackInUse(p, id); return !!st && !isBroken(c, st); }
+  /** What is left of a stack's wear, and its most ({left, max}), or null when the item never wears out. */
+  function durOf(c, st) {
+    var it = st && c.items[st.item], max = it ? Number(it.durability) || 0 : 0;
+    return max > 0 ? { left: st.dur != null ? Math.max(0, Math.min(max, Math.ceil(Number(st.dur)))) : max, max: max } : null;
+  }
+  /** One use of a weapon or tool (a blow, a shot, a swing at a wall or a tree): its wear goes down by what the material
+   *  hit costs it (the item's material_wear; not listed, or no material = 1); at 0 it breaks. */
+  function wear(c, p, it, ev, material) {
+    if (!it || !(Number(it.durability) > 0)) return;
+    var st = stackInUse(p, it.id), d = durOf(c, st); if (!d) return;
+    var cost = material && it.wearVs && it.wearVs[material] >= 0 ? Number(it.wearVs[material]) : 1;
+    if (!(cost > 0)) return;
+    st.dur = (st.dur != null ? Number(st.dur) : d.max) - cost;
+    if (st.dur > 0) return;
+    st.dur = 0;                                               // broken: it stays (repair it, or take it apart), but is good for nothing
+    if (typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);
+    ev.push({ type: 'info', to: p.id, text: 'Your ' + lower(it.name) + ' is broken.' });
+  }
   function heldItem(c, p) {
     var id = p.held >= 0 && p.belt ? p.belt[p.held] : '';
-    if (id && c.items[id] && count(p, id) > 0) return c.items[id];
+    if (id && c.items[id] && count(p, id) > 0) return usable(c, p, id) ? c.items[id] : null;   // (broken: nothing in hand)
     return c.items[(p.equipment || {}).weapon] || null;
   }
   /**
@@ -1501,7 +1553,7 @@ var World = (function () {
     if (!res) ev.push({ type: 'info', to: p.id, text: 'You can\'t damage that.' });
     else if (!res.dealt) ev.push({ type: 'info', to: p.id, text: 'You can\'t even scratch the ' + res.tg.name + '.' });
     else if (!res.destroyed) ev.push({ type: 'info', to: p.id, text: 'You hit the ' + res.tg.name + ' for ' + res.dealt + '.' });
-    if (res && res.dealt) questCount(c, p, 'hit', '*', now, ev);
+    if (res && res.dealt) { questCount(c, p, 'hit', '*', now, ev); wear(c, p, inHand, ev, (res.tg && res.tg.material) || (tg0 && tg0.material)); }
     return true;
   }
 
@@ -1666,7 +1718,7 @@ var World = (function () {
     p.held = slot; p.equipment = p.equipment || {};
     delete p.reload;                                          // changing what is in hand drops a reload under way
     var id = slot >= 0 ? (p.belt || [])[slot] : '', it = id && c.items[id], was = p.equipment.weapon || '';
-    var wep = !!(it && it.slot === 'weapon' && count(p, id) > 0);
+    var wep = !!(it && it.slot === 'weapon' && count(p, id) > 0 && usable(c, p, id));   // (a broken one is not a weapon)
     if (wep && it.equipIf && !check(c, p, it.equipIf)) {
       wep = false;
       var req = /level:(\d+)/.exec(it.equipIf);
@@ -1771,7 +1823,12 @@ var World = (function () {
   // The bag has Config bag_slots cells (32). Things GIVEN to a player (loot, crafting, harvest) are never lost: with
   // no cell free they land past the last cell (the page shows them as overflow) — but nothing can be MOVED into a
   // bag or a container that is full. count / give / take stay the only ways the rest of the rules touch a bag.
-  function stackMaxOf(c, id) { var it = c.items[id], m = it ? Number(it.stackMax) : 0; return m > 0 ? m : 99; }
+  // Never stack, whatever the data says (each is a thing of its own, with its own wear): weapons, gear that is worn, and
+  // anything that wears out (a durability: every axe and pickaxe). A tool that is used up whole (a lockpick) still stacks.
+  function oneOfAKind(it) {
+    return !!it && (Number(it.durability) > 0 || it.type === 'weapon' || itemCan(it, 'shoot') || (!!it.slot && it.slot !== 'weapon'));
+  }
+  function stackMaxOf(c, id) { var it = c.items[id], m = it ? Number(it.stackMax) : 0; return oneOfAKind(it) ? 1 : m > 0 ? m : 99; }
   function bagSlots(c) { return Math.max(1, Math.round(cfgNum(c, 'bag_slots', 32))); }
   /** Every stack gets a cell of its own (older saves had none), and none is over its item's limit. */
   function tidyStacks(c, list) {
@@ -1791,13 +1848,18 @@ var World = (function () {
   /** Puts a list in order, in place: stacks of the same item are joined (each as full as it goes), then laid out from
    *  the first cell by kind of item, then name. */
   function sortStacks(c, list) {
-    var tot = {}, ids = [];
-    list.forEach(function (st) { if (!(st.item in tot)) { tot[st.item] = 0; ids.push(st.item); } tot[st.item] += st.qty; });
+    var tot = {}, ids = [], own = {};                        // own = the stacks of things that do not stack, kept as they are (their wear)
+    list.forEach(function (st) {
+      if (!(st.item in tot)) { tot[st.item] = 0; ids.push(st.item); }
+      tot[st.item] += st.qty;
+      if (stackMaxOf(c, st.item) === 1) (own[st.item] = own[st.item] || []).push(st);
+    });
     function k(id) { var it = c.items[id] || {}; return [String(it.type || '~'), String(it.name || id).toLowerCase(), id]; }
     ids.sort(function (x, y) { var a = k(x), b = k(y); for (var i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1; return 0; });
     list.length = 0;
     ids.forEach(function (id) {
       var max = stackMaxOf(c, id), n = tot[id];
+      if (own[id]) { own[id].forEach(function (st) { var q = Math.max(1, st.qty); st.qty = 1; st.s = list.length; list.push(st); n -= 1; while (--q > 0) { list.push({ item: id, qty: 1, s: list.length }); n -= 1; } }); }
       while (n > 0) { var q = Math.min(n, max); list.push({ item: id, qty: q, s: list.length }); n -= q; }
     });
     return list;
@@ -1806,7 +1868,8 @@ var World = (function () {
   function freeCell(list) { var used = {}; list.forEach(function (st) { used[st.s] = 1; }); for (var i = 0; ; i++) if (!used[i]) return i; }
   /** Puts qty of an item into a list: tops up its stacks, then starts new ones in the first free cells. size = how
    *  many cells there are (0 = no limit). Returns how many did not fit. */
-  function addStacks(c, list, id, qty, size) {
+  // keep = what a stack being moved carries besides item and qty (its wear, dur): new stacks made for it get it too.
+  function addStacks(c, list, id, qty, size, keep) {
     var max = stackMaxOf(c, id);
     if (list.some(function (st) { return !(st.s >= 0); })) tidyStacks(c, list);
     list.slice().sort(function (a, b) { return a.s - b.s; }).forEach(function (st) {
@@ -1814,7 +1877,9 @@ var World = (function () {
     });
     while (qty > 0) {
       var cell = freeCell(list); if (size && cell >= size) break;
-      var m = Math.min(qty, max); list.push({ item: id, qty: m, s: cell }); qty -= m;
+      var m = Math.min(qty, max), ns = { item: id, qty: m, s: cell };
+      if (keep && keep.dur != null) ns.dur = keep.dur;
+      list.push(ns); qty -= m;
     }
     return qty;
   }
@@ -1839,13 +1904,39 @@ var World = (function () {
       addStacks(c, p.inventory, id, qty, 0);
       if (ev && !over && p.inventory.some(function (st) { return st.s >= size; })) ev.push({ type: 'info', to: p.id, text: 'Your bag is overfull.' });
     }
-    if (!quiet) ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y, text: '+' + qty + ' ' + itemName(c, id) });
+    if (!quiet) ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y, item: id, qty: qty, text: '+' + qty + ' ' + itemName(c, id) });   // (every way into the bag says it like this: the page shows a card per item)
   }
   /** What is worn or held goes when the last of it leaves the bag. */
   function goneFromBag(p, id) {
     if (countIn(p.inventory, id) > 0) return;
     Object.keys(p.equipment || {}).forEach(function (k) { if (p.equipment[k] === id) delete p.equipment[k]; });
     if (Array.isArray(p.belt)) p.belt = p.belt.map(function (b) { return b === id ? '' : b; });   // none left: its belt slot is free again
+  }
+  /** Use up one of an item: from the stack in the cell it was used from (from.w 'bag'), else as take does. Returns
+   *  that stack's cell when it is now empty (so what it leaves can go there), else -1. */
+  function takeOne(p, id, from) {
+    var list = p.inventory || [], st = from && from.w === 'bag' ? list.filter(function (x) { return x.s === Number(from.s) && x.item === id; })[0] : null;
+    if (!st) st = list.filter(function (x) { return x.item === id; }).sort(function (a, b) { return b.s - a.s; })[0];   // (take's own order: the last stack first)
+    if (!st) return -1;
+    st.qty -= 1;
+    var cell = -1;
+    if (st.qty <= 0) { cell = st.s; list.splice(list.indexOf(st), 1); }
+    goneFromBag(p, id);
+    return cell;
+  }
+  /** What a used item leaves (an empty bottle): used from a belt slot that now holds nothing (the last one was used),
+   *  it takes that slot. Into the bag: 1. onto a stack of it with room, 2. into the cell the used one emptied,
+   *  3. into a free cell (give's way). */
+  function leaveItem(c, p, id, cell, from, ev) {
+    var list = p.inventory, max = stackMaxOf(c, id), qty = 1;
+    list.slice().sort(function (a, b) { return a.s - b.s; }).forEach(function (st) {
+      if (qty > 0 && st.item === id && st.qty < max) { st.qty += 1; qty = 0; }
+    });
+    if (qty > 0 && cell >= 0 && cell < bagSlots(c) && !list.some(function (st) { return st.s === cell; })) { list.push({ item: id, qty: 1, s: cell }); qty = 0; }
+    if (qty > 0) give(c, p, id, qty, ev, true);
+    ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y, item: id, qty: 1, text: '+1 ' + itemName(c, id) });
+    var b = from && from.w === 'belt' ? Number(from.s) : -1;
+    if (Array.isArray(p.belt) && b >= 0 && b < p.belt.length && !p.belt[b] && p.belt.indexOf(id) < 0) p.belt[b] = id;
   }
   function take(p, id, qty) {
     if (id === 'gold') { if (p.gold < qty) return false; p.gold -= qty; return true; }
@@ -2877,7 +2968,7 @@ var World = (function () {
     if (fm && !f) return say('You have nothing to fill.');
     if (f) {
       var slot = Array.isArray(p.belt) ? p.belt.indexOf(f.id) : -1, hadHeld = p.held;
-      take(p, f.id, f.qty); give(c, p, f.into, f.qty, ev, true);
+      take(p, f.id, f.qty); give(c, p, f.into, f.qty, ev);
       if (slot >= 0 && !p.belt[slot] && p.belt.indexOf(f.into) < 0) p.belt[slot] = f.into;      // it stays where it was on the belt
       syncLoadout(c, p);
       if (hadHeld === slot && slot >= 0 && p.belt[slot] === f.into) p.held = slot;
@@ -2954,6 +3045,7 @@ var World = (function () {
     var def = c.monsters[m.ref], dmg = damage(stats(c, p).atk, monStats(c, m).def, rng);
     noteAct(p, 'm', m.x, m.y, dmg);
     hitMonster(c, ws, mapId, p, m, dmg, now, rng, ev, 'You hit the ' + lower(def.name) + ' for ' + dmg + '.');
+    wear(c, p, heldItem(c, p), ev, def.material || 'flesh');   // a creature is flesh (unless the monster says otherwise)
     return true;
   }
   // WHO TOOK PART. A monster remembers who has hit it (m.hits = {playerId: when}, the last HIT_MAX of them); a blow
@@ -2999,6 +3091,33 @@ var World = (function () {
     });
     if (!ms.credits.length) delete ms.credits;
   }
+  /** Something shot into a monster that can be had back (an arrow): it stays in it until it dies (hitMonster). */
+  function stickIn(c, m, id, qty) {
+    if (!c.items[id] || !(qty > 0)) return;
+    m.stuck = m.stuck || [];
+    var same = m.stuck.filter(function (g) { return g.item === id; })[0];
+    if (same) same.qty += qty; else m.stuck.push({ item: id, qty: qty });
+  }
+  /** Lays qty of an item on the ground (a pickup, the built-in _drop) on the last of these cells it can lie on: joined to
+   *  the same thing already lying there, else on a free tile. None of them will do: it is lost. */
+  function layOnGround(c, ws, mapId, cells, id, qty, now) {
+    var drop = c.objects._drop, map = liveMap(c, ws, mapId); if (!drop || !map || !c.items[id] || !(qty > 0)) return false;
+    var st = structOf(ws, mapId);
+    for (var i = cells.length - 1; i >= 0; i--) {
+      var x = cells[i].x, y = cells[i].y;
+      var here = st.ents.filter(function (b) { return b.ref === drop.id && b.x === x && b.y === y && b.data && String(b.data.pickup || '').split(':')[0] === id; })[0];
+      if (here) {
+        var pk = String(here.data.pickup).split(':');
+        here.data.pickup = id + ':' + ((Number(pk[1]) || 1) + qty);
+      } else {
+        if (!Rl().standable(c, map, x, y) || Rl().entitiesAt(map, x, y).length) continue;
+        st.ents.push({ key: mapId + '.b' + (++st.n), x: x, y: y, ref: drop.id, data: { pickup: id + ':' + qty }, hp: 0, max: 0, bp: '', by: null, built: now, prog: 0, need: 0, wild: true });
+      }
+      touchStruct(st); ws.dirty = true;
+      return true;
+    }
+    return false;
+  }
   /** Damages a monster; if it dies, everyone who took part gets their share (see WHO TOOK PART above). */
   function hitMonster(c, ws, mapId, p, m, dmg, now, rng, ev, text) {
     var def = c.monsters[m.ref];
@@ -3014,7 +3133,10 @@ var World = (function () {
     // What it always gives lies in its carcass, for whoever takes it. Killed with no player in the fight (a wolf's
     // kill), the body also holds one roll of its loot table; with no carcass and a player's last blow, that player
     // is handed what it always gives.
-    var alone = !p && !part.length, key = leaveCarcass(c, ws, mapId, m, def, now, alone ? roll(c, def.lootTable, rng) : []);
+    // What was shot into it (arrows that can be had back, stickIn) lies with it: in its carcass, else in a loot bag where it fell.
+    var stuck = (m.stuck || []).filter(function (g) { return c.items[g.item] && g.qty > 0; }); delete m.stuck;
+    var alone = !p && !part.length, key = leaveCarcass(c, ws, mapId, m, def, now, (alone ? roll(c, def.lootTable, rng) : []).concat(stuck));
+    if (!key && stuck.length) leaveBag(c, ws, mapId, m.x, m.y, stuck, now);
     if (!key && p) list(def.loot).forEach(function (g) { give(c, p, g.item, g.qty, ev); });
     var share = { ref: m.ref, key: key || '', x: m.x, y: m.y };
     if (part.length) {
@@ -3540,19 +3662,26 @@ var World = (function () {
     else if (ammoId) take(p, ammoId, cost);
     p.cooldowns = p.cooldowns || {}; p.cooldowns._shoot = now + fire;
     questCount(c, p, 'shoot', '*', now, ev);
+    wear(c, p, w, ev);
     var pen = ammoIt ? (ammoIt.penetration || 1) : 1, fall = ammoIt ? (ammoIt.falloff || 0) : 0;
-    var base = stats(c, p).atk, ms = mapState(ws, p.map), hits = 0, end = { x: p.x, y: p.y };
+    var base = stats(c, p).atk, ms = mapState(ws, p.map), hits = 0, end = { x: p.x, y: p.y }, endAt = -1;
+    // What was spent that can be had back (the ammo's recover chance, rolled per round): stuck in the monster the shot
+    // ends in (it goes into its carcass or loot bag when it dies), else lying where the shot stopped.
+    var back = 0, rec = ammoIt ? Number(ammoIt.recover) || 0 : 0;
+    for (var ri = 0; rec > 0 && ri < cost; ri++) if (rng() < rec) back++;
     for (var i = 0; i < reach.cells.length; i++) {
-      end = reach.cells[i];
+      end = reach.cells[i]; endAt = i;
       if (hits >= pen) break;
       var m = monsterAt(ms, end.x, end.y); if (!m) continue;
       var dmg = Math.max(1, Math.round(damage(base, monStats(c, m).def, rng) * Math.pow(1 - fall, hits)));
       if (!hits) noteAct(p, 'r', m.x, m.y, dmg);
+      if (back && hits + 1 >= pen) { stickIn(c, m, ammoId, back); back = 0; }   // the shot ends in this one
       hitMonster(c, ws, p.map, p, m, dmg, now, rng, ev, 'You shoot the ' + lower(c.monsters[m.ref].name) + ' for ' + dmg + '.');
       hits++;
     }
     ev.push({ type: 'shoot', map: p.map, by: p.id, from: { x: p.x, y: p.y }, to: { x: end.x, y: end.y },
       aim: { x: tx, y: ty }, color: w.tint || '#ffd36b' });
+    if (back) layOnGround(c, ws, p.map, reach.cells.slice(0, endAt + 1), ammoId, back, now);   // it hit nothing: it lies where it stopped
     // A bullet that was stopped by a wall, door or solid object (rather than spent on a creature) damages it.
     if (reach.stop && hits < pen) {
       var st1 = map._struct, bt = null;
@@ -3684,7 +3813,7 @@ var World = (function () {
   function hasTool(c, p, tag) {
     var tags = toolTags(tag);
     if (!tags.length) return true;
-    return (p.inventory || []).some(function (s) { var it = c.items[s.item]; return it && it.tools && tags.some(function (g) { return it.tools.indexOf(g) >= 0; }); });
+    return (p.inventory || []).some(function (s) { var it = c.items[s.item]; return it && it.tools && !isBroken(c, s) && tags.some(function (g) { return it.tools.indexOf(g) >= 0; }); });
   }
   function toolsText(tag) { return toolTags(tag).map(aAn).join(' or '); }
   /** The crafting stations in reach: {stationId: object name}. A station is an object of kind craft; its id as a
@@ -3715,6 +3844,38 @@ var World = (function () {
     else if (r.tool && !hasTool(c, p, r.tool)) reason = 'Needs ' + aAn(r.tool) + '.';
     else if (missing.length) reason = 'Not enough ' + missing.map(function (m) { return lower(itemName(c, m.item)); }).join(', ') + '.';
     return { ok: !reason, reason: reason, missing: missing };
+  }
+  // ---- repair and take apart (a weapon or tool; the bag's item card). The page asks the same two questions to show
+  // the buttons, so both agree. Neither looks at whether the recipe is unlocked: knowing how to use it is enough.
+  /** The first recipe that makes this item, or null. */
+  function recipeMaking(c, id) {
+    var recs = c.recipes || {}, k = Object.keys(recs).filter(function (x) { return list(recs[x].outputs).some(function (g) { return g.item === id; }); })[0];
+    return k ? recs[k] : null;
+  }
+  /** Half of a recipe's inputs (up = rounded up), as [{item, qty}] with qty > 0. */
+  function halfOf(r, up) { return r ? list(r.inputs).map(function (g) { return { item: g.item, qty: up ? Math.ceil(g.qty / 2) : Math.floor(g.qty / 2) }; }).filter(function (g) { return g.qty > 0; }) : []; }
+  /** May p repair this stack here? {ok, reason, cost: [{item, qty, have}], station}. map/lk = the live map and its lookup. */
+  function repairInfo(c, map, p, lk, st) {
+    var it = st && c.items[st.item], d = durOf(c, st), r = it && recipeMaking(c, it.id);
+    var cost = (it && list(it.repairCost).length ? list(it.repairCost) : halfOf(r, true)).filter(function (g) { return c.items[g.item] && g.qty > 0; })
+      .map(function (g) { return { item: g.item, qty: g.qty, have: count(p, g.item) }; });
+    // where: its own repair_station, else its recipe's station, else anywhere. An item no recipe makes is mended with its
+    // own repair_cost (a repair kit); with neither it cannot be.
+    var station = (it && it.repairStation) || (r && r.station) || '';
+    var out = { ok: false, reason: '', cost: cost, station: station };
+    if (!d) out.reason = 'It does not wear out.';
+    else if (d.left >= d.max) out.reason = 'It is not worn.';
+    else if (!cost.length) out.reason = 'Nothing you know can mend it.';
+    else if (station && !stationsNear(c, map, p, lk)[station]) out.reason = 'Needs ' + aAn(stationName(c, station)) + ' nearby.';
+    else if (cost.some(function (g) { return g.have < g.qty; })) out.reason = 'Not enough ' + cost.filter(function (g) { return g.have < g.qty; }).map(function (g) { return lower(itemName(c, g.item)); }).join(', ') + '.';
+    else out.ok = true;
+    return out;
+  }
+  /** What taking this stack apart gives: {ok, reason, gives: [{item, qty}]}. */
+  function salvageInfo(c, st) {
+    var it = st && c.items[st.item];
+    var gives = (it && list(it.salvage).length ? list(it.salvage) : halfOf(it && recipeMaking(c, it.id), false)).filter(function (g) { return c.items[g.item] && g.qty > 0; });
+    return { ok: gives.length > 0, reason: gives.length ? '' : 'Nothing can be got out of it.', gives: gives };
   }
   /** Every recipe this player knows, with whether it can be made here and now. For the crafting panel. */
   function recipesFor(c, map, p, lk) {
@@ -3749,9 +3910,7 @@ var World = (function () {
     var need = Math.max(1, r.timeS * 1000), made = list(r.outputs), n = 0;
     while (j.made < j.qty && j.ms >= need) { j.ms -= need; j.made++; n++; }
     if (n) {
-      made.forEach(function (g) { give(c, p, g.item, g.qty * n, ev, true); questCount(c, p, 'craft', g.item, now, ev, g.qty * n); });
-      ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y,
-        text: 'You make ' + made.map(function (g) { return g.qty * n + ' ' + lower(itemName(c, g.item)); }).join(', ') + '.' });
+      made.forEach(function (g) { give(c, p, g.item, g.qty * n, ev); questCount(c, p, 'craft', g.item, now, ev, g.qty * n); });
     }
     if (j.made >= j.qty) delete p.craft;
   }
@@ -3762,7 +3921,7 @@ var World = (function () {
       var j = p.craft, jr = j && (c.recipes || {})[j.id];
       if (!j) return;
       delete p.craft;
-      if (jr) list(jr.inputs).forEach(function (g) { give(c, p, g.item, g.qty * (j.qty - j.made), ev, true); });
+      if (jr) list(jr.inputs).forEach(function (g) { give(c, p, g.item, g.qty * (j.qty - j.made), ev); });
       return say('You stop. What you had not used is back in your bag.');
     }
     var r = (c.recipes || {})[String(a.recipe || '')];
@@ -3778,9 +3937,7 @@ var World = (function () {
       p.craft = { id: r.id, qty: qty, made: 0, ms: 0, at: now, on: true };
       return say('You start on ' + (qty > 1 ? qty + ' × ' : '') + lower(r.name || itemName(c, (made[0] || {}).item)) + '.');
     }
-    made.forEach(function (g) { give(c, p, g.item, g.qty * qty, ev, true); questCount(c, p, 'craft', g.item, now, ev, g.qty * qty); });
-    ev.push({ type: 'loot', to: p.id, map: p.map, x: p.x, y: p.y,
-      text: 'You make ' + made.map(function (g) { return g.qty * qty + ' ' + lower(itemName(c, g.item)); }).join(', ') + '.' });
+    made.forEach(function (g) { give(c, p, g.item, g.qty * qty, ev); questCount(c, p, 'craft', g.item, now, ev, g.qty * qty); });
   }
 
   /** "give:potion:2; gold:10; heal:20; flag:x; teleport:map_1:3:4; set_state:map_3.e7:open; message:Hello" */
@@ -4424,7 +4581,8 @@ var World = (function () {
     return ks.indexOf(want) >= 0 ? want : (ks.filter(function (k) { return !eq[k]; })[0] || ks[0]);
   }
   // want (the action's `slot`) = which accessory place; a worn accessory dropped on another place moves there.
-  function useItem(c, ws, p, id, now, ev, want) {
+  // from (the action's `from`) = where it was used from: {w: 'bag', s: cell} or {w: 'belt', s: slot} (see leaveItem).
+  function useItem(c, ws, p, id, now, ev, want, from) {
     var it = c.items[id];
     if (!it || count(p, id) < 1) { ev.push({ type: 'info', to: p.id, text: 'You don\'t have that.' }); return; }
     var mx = stats(c, p).maxHp;
@@ -4440,9 +4598,9 @@ var World = (function () {
           it.thirst && !it.heal && !it.mp && !it.hunger ? 'You are not thirsty.' :
           it.mp && !it.heal ? 'Your mana is already full.' : 'You are already at full health.' }); return;
       }
-      take(p, id, 1);
+      var gone = takeOne(p, id, from);                           // (the cell it was used from, when that stack is now empty)
       questCount(c, p, 'use', id, now, ev);
-      if (it.leaves && c.items[it.leaves]) give(c, p, it.leaves, 1, ev, true);        // the empty bottle stays in the bag
+      if (it.leaves && c.items[it.leaves]) leaveItem(c, p, it.leaves, gone, from, ev);   // the empty bottle stays: where the full one was
       if (it.cooldownMs > 0) { p.cooldowns = p.cooldowns || {}; p.cooldowns['use:' + id] = now + it.cooldownMs; }
       if (it.heal) {
         var h = Math.min(it.heal, mx - p.hp); p.hp += h;
@@ -4526,7 +4684,7 @@ var World = (function () {
       else if (wallHere) ev.push({ type: 'info', to: p.id, text: Rl().cliffReach(amap, p.x, p.y, ax, ay) ? 'You can\'t reach it: the ground is at another height.' : 'A wall is in the way.' });
       else { faceTo(p, ax, ay); attack(c, ws, p.map, p, am, now, rng, ev); }
     }
-    else if (action.type === 'use') useItem(c, ws, p, action.item, now, ev, action.slot);
+    else if (action.type === 'use') useItem(c, ws, p, action.item, now, ev, action.slot, action.from);
     else if (action.type === 'face' && Rl().DIRS[action.dir]) p.facing = action.dir;
     else if (action.type === 'cast') cast(c, ws, p, action, now, rng, ev, players);
     else if (action.type === 'shoot') shoot(c, ws, p, action, now, rng, ev, players);
@@ -4728,7 +4886,7 @@ var World = (function () {
     liveMap: liveMap, liveMapFromStruct: liveMapFromStruct, structOf: structOf, publicStruct: publicStruct,
     structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure,
     WORN_SLOTS: WORN_SLOTS, ACC_SLOTS: ACC_SLOTS, wornAt: wornAt,
-    recipesFor: recipesFor, hasTool: hasTool, craftingHere: craftingHere, CRAFT_MAX: CRAFT_MAX, heldItem: heldItem, weaponState: weaponState, cookRecipe: cookRecipe, COOK_S: COOK_S, hitMonster: hitMonster, bagSlots: bagSlots, stackMaxOf: stackMaxOf, take: take, harvestWith: harvestWith, stationName: stationName,
+    recipesFor: recipesFor, hasTool: hasTool, craftingHere: craftingHere, CRAFT_MAX: CRAFT_MAX, heldItem: heldItem, weaponState: weaponState, cookRecipe: cookRecipe, COOK_S: COOK_S, hitMonster: hitMonster, bagSlots: bagSlots, stackMaxOf: stackMaxOf, durOf: durOf, stackInUse: stackInUse, isBroken: isBroken, repairInfo: repairInfo, salvageInfo: salvageInfo, recipeMaking: recipeMaking, take: take, harvestWith: harvestWith, stationName: stationName,
     canBuild: canBuild, buildUnlocked: buildUnlocked, blueprintsFor: blueprintsFor, noBuild: noBuild, buildSpot: buildSpot,
     claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, canRemove: canRemove, canMove: canMove, leaveBag: leaveBag, bagObject: bagObject, waterAt: waterAt, fillables: fillables, itemCan: itemCan, beltItems: beltItems, BELT_SIZE: BELT_SIZE, skillsOn: skillsOn, holdSlot: holdSlot,
     groundId: groundId, floorId: floorId, floorsOf: floorsOf, deliver: deliver,

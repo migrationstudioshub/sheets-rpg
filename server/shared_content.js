@@ -87,6 +87,11 @@ var Content = (function () {
    * is "tool", or it has the tool tick and is not something you equip (so not every weapon) — is a tool by its own id.
    * r = the item's row, ty = its type (a row or a built type; may be missing). The Content Studio lists the same.
    */
+  /** "wood:3, stone:0.5" -> {wood: 3, stone: 0.5} (a number per material; what is not a number of 0 or more is left out). */
+  function matMap(text) {
+    var o = {}; str(text).split(/[,;]/).forEach(function (part) { var b = part.split(':'), k = String(b[0] || '').trim(), v = Number(b[1]); if (k && b.length > 1 && v >= 0) o[k] = v; });
+    return o;
+  }
   function toolTags(r, ty) {
     var tags = str(r && r.tool).split(/[;,]/).map(function (x) { return x.trim(); }).filter(Boolean);
     if (tags.length || !r || !str(r.id)) return tags;
@@ -258,15 +263,19 @@ var Content = (function () {
         tint: str(r.tint),
         // ammo: how many enemies one shot pierces, losing `falloff` of its damage per extra hit (0..1)
         penetration: Math.max(1, num(r.penetration, 1)), falloff: Math.max(0, Math.min(1, num(r.falloff, 0))),
+        // ammo: the chance (0..1; authored 0-100 %) a spent one can be had back (World shoot: stuck in the monster, or on the ground)
+        recover: Math.max(0, Math.min(100, num(r.recover, 0))) / 100,
+        // weapons and tools: uses before it breaks (0 = never); each one carries what it has left (stack.dur, World wear)
+        durability: Math.max(0, Math.round(num(r.durability, 0))),
+        // what mending it takes, what taking it apart gives (item lists; empty = from its recipe: World repairInfo / salvageInfo)
+        repairCost: str(r.repair_cost), repairStation: str(r.repair_station), salvage: str(r.salvage),
         // type 'throwable' (grenade/molotov): area damage + status at a thrown spot, up to throw_range away
         throwRange: num(r.throw_range, 0), throwArea: num(r.throw_area, 0), throwPower: num(r.throw_power, 0),
         throwStatus: str(r.throw_status), throwStatusMs: num(r.throw_status_ms, 0),
         // damage to walls/objects per hit (0 = derived from attack); burns = a thrown blast also sets wood alight
         structureDmg: num(r.structure_dmg, 0), burns: bool(r.burns), fuelS: num(r.fuel_s, 0),
-        vsMaterial: (function () {                              // material_dmg "wood:3, stone:0.5" -> {wood: 3, stone: 0.5}
-          var o = {}; str(r.material_dmg).split(/[,;]/).forEach(function (part) { var b = part.split(':'), k = String(b[0] || '').trim(), v = Number(b[1]); if (k && v >= 0) o[k] = v; });
-          return o;
-        })(),
+        vsMaterial: matMap(r.material_dmg),                     // material_dmg "wood:3, stone:0.5" -> {wood: 3, stone: 0.5}
+        wearVs: matMap(r.material_wear),                        // material_wear "stone:2, metal:3": durability lost per hit on each (else 1)
         // tool tags this item counts as (hammer, axe, ...): recipes and harvestable objects can ask for one
         tools: toolTags(r, c.itemTypes[str(r.type)]),
         onUse: str(r.on_use) };

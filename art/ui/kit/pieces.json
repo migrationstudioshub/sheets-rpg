@@ -1,0 +1,1245 @@
+{
+ "art_px_per_screen_px": "UI_SCALE (integer, see PIECES.md)",
+ "slice_order": "left, top, right, bottom",
+ "pieces": {
+  "panel_metal": {
+   "group": "Panels",
+   "slice": [
+    6,
+    6,
+    6,
+    6
+   ],
+   "fill": "tile",
+   "use": "Main window body: inventory, campfire, any full-screen menu. Holds headers, slots and lists.",
+   "where": "Screens. In the mocks: 672x300 at (24,19), centred under the tab row.",
+   "notes": "Corner rivets live in the 6px corners. Lay content 8px in from the outer edge.",
+   "size": [
+    48,
+    48
+   ],
+   "nano_banana": true
+  },
+  "panel_plate": {
+   "group": "Panels",
+   "slice": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "fill": "stretch",
+   "use": "Small raised plate: HUD blocks, stat boxes, item detail card, belt backing, toasts, clock, quest card.",
+   "where": "HUD and inside windows.",
+   "notes": "Pad content 4-5px from the edge. Belt backing: 3px around the 10 hotbar slots.",
+   "size": [
+    24,
+    24
+   ],
+   "nano_banana": true
+  },
+  "panel_inset": {
+   "group": "Panels",
+   "slice": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "fill": "stretch",
+   "use": "Recessed tray that holds a grid or list: backpack grid, recipe list, campfire station, quantity box.",
+   "where": "Inside windows, under groups of slots.",
+   "notes": "Dark top/left edge, light bottom/right, so it reads as sunk in.",
+   "size": [
+    24,
+    24
+   ],
+   "nano_banana": true
+  },
+  "panel_paper": {
+   "group": "Panels",
+   "slice": [
+    3,
+    12,
+    3,
+    3
+   ],
+   "fill": "tile",
+   "use": "Notebook page for the selected recipe: icon, name, stats, needed ingredients, flavour text.",
+   "where": "Crafting and campfire, right column.",
+   "notes": "Ruled lines every 8px from y=12, so tile the middle vertically in steps of 8. Put `tape` on top at x=6 and x=w-22, y=-2. Text on paper is near-black #0e0d11.",
+   "size": [
+    64,
+    48
+   ],
+   "nano_banana": true
+  },
+  "panel_tooltip": {
+   "group": "Panels",
+   "slice": [
+    2,
+    2,
+    2,
+    2
+   ],
+   "fill": "stretch",
+   "use": "Hover tooltip for items, recipes and stats.",
+   "where": "Follows the cursor, 8px right and below it, kept on screen.",
+   "notes": "Silkscreen title in bone, Jersey 10 body, stat changes in rot green (+) or blood red (-).",
+   "size": [
+    24,
+    24
+   ],
+   "nano_banana": true
+  },
+  "tape": {
+   "group": "Panels",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Duct tape strip that holds paper panels.",
+   "where": "Two per paper panel, overlapping its top edge by 2px.",
+   "notes": "Draw after the paper.",
+   "size": [
+    16,
+    6
+   ],
+   "nano_banana": true
+  },
+  "header_plate": {
+   "group": "Panels",
+   "slice": [
+    11,
+    2,
+    2,
+    2
+   ],
+   "fill": "tile",
+   "use": "Section title bar: SURVIVOR, BACKPACK, CRAFTING, CAMPFIRE, RECIPES.",
+   "where": "Top of each column inside a window, full column width.",
+   "notes": "Height stays 14. Left 11px is the hazard stripe block, never stretch it. Title: Silkscreen Bold, bone, at (14,4) with a 1px olive shadow. Optional right-aligned counter (5/32) in Silkscreen at w-5.",
+   "size": [
+    64,
+    14
+   ],
+   "nano_banana": true
+  },
+  "tab_active": {
+   "group": "Panels",
+   "slice": [
+    2,
+    4,
+    2,
+    2
+   ],
+   "fill": "stretch",
+   "use": "Window tabs: INVENTORY / JOURNAL / MAP / SKILLS.",
+   "where": "Row above the window, starting 8px in from its left edge, 1px apart.",
+   "notes": "Width = label width + 12. Label: Silkscreen Bold at (6,5), bone when active, grey #837d7f when idle. Tabs overlap the window top by 2px: under the active tab, paint over the window's top border with olive #3e4331 so it opens into the panel.",
+   "size": [
+    40,
+    15
+   ],
+   "nano_banana": true
+  },
+  "tab_idle": {
+   "group": "Panels",
+   "slice": [
+    2,
+    4,
+    2,
+    2
+   ],
+   "fill": "stretch",
+   "use": "Window tabs: INVENTORY / JOURNAL / MAP / SKILLS.",
+   "where": "Row above the window, starting 8px in from its left edge, 1px apart.",
+   "notes": "Width = label width + 12. Label: Silkscreen Bold at (6,5), bone when active, grey #837d7f when idle. Tabs overlap the window top by 2px: under the active tab, paint over the window's top border with olive #3e4331 so it opens into the panel.",
+   "size": [
+    40,
+    15
+   ],
+   "nano_banana": true
+  },
+  "slot_empty": {
+   "group": "Slots",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Inventory, equipment, recipe and station cells. Swap the whole sprite per state: hover = cursor over it, selected = picked or being dragged, locked = not unlocked yet (bag upgrades), warn = something wrong (broken item, missing fuel).",
+   "where": "Grids at 21px pitch (20 + 1px gap).",
+   "notes": "Item icons (32x32 world sprites) are drawn at 1 screen px per sprite px, centred, so they fit the 40-screen-px slot with 4px to spare. Stack count: Silkscreen, bone with a near-black shadow, bottom-right at (n-2, n-8), right-aligned. Empty equipment slots can show a 9x9 icon in #423f46 as a ghost hint.",
+   "size": [
+    20,
+    20
+   ],
+   "nano_banana": true
+  },
+  "slot_hover": {
+   "group": "Slots",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Inventory, equipment, recipe and station cells. Swap the whole sprite per state: hover = cursor over it, selected = picked or being dragged, locked = not unlocked yet (bag upgrades), warn = something wrong (broken item, missing fuel).",
+   "where": "Grids at 21px pitch (20 + 1px gap).",
+   "notes": "Item icons (32x32 world sprites) are drawn at 1 screen px per sprite px, centred, so they fit the 40-screen-px slot with 4px to spare. Stack count: Silkscreen, bone with a near-black shadow, bottom-right at (n-2, n-8), right-aligned. Empty equipment slots can show a 9x9 icon in #423f46 as a ghost hint.",
+   "size": [
+    20,
+    20
+   ],
+   "nano_banana": true
+  },
+  "slot_selected": {
+   "group": "Slots",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Inventory, equipment, recipe and station cells. Swap the whole sprite per state: hover = cursor over it, selected = picked or being dragged, locked = not unlocked yet (bag upgrades), warn = something wrong (broken item, missing fuel).",
+   "where": "Grids at 21px pitch (20 + 1px gap).",
+   "notes": "Item icons (32x32 world sprites) are drawn at 1 screen px per sprite px, centred, so they fit the 40-screen-px slot with 4px to spare. Stack count: Silkscreen, bone with a near-black shadow, bottom-right at (n-2, n-8), right-aligned. Empty equipment slots can show a 9x9 icon in #423f46 as a ghost hint.",
+   "size": [
+    20,
+    20
+   ],
+   "nano_banana": true
+  },
+  "slot_locked": {
+   "group": "Slots",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Inventory, equipment, recipe and station cells. Swap the whole sprite per state: hover = cursor over it, selected = picked or being dragged, locked = not unlocked yet (bag upgrades), warn = something wrong (broken item, missing fuel).",
+   "where": "Grids at 21px pitch (20 + 1px gap).",
+   "notes": "Item icons (32x32 world sprites) are drawn at 1 screen px per sprite px, centred, so they fit the 40-screen-px slot with 4px to spare. Stack count: Silkscreen, bone with a near-black shadow, bottom-right at (n-2, n-8), right-aligned. Empty equipment slots can show a 9x9 icon in #423f46 as a ghost hint.",
+   "size": [
+    20,
+    20
+   ],
+   "nano_banana": true
+  },
+  "slot_warn": {
+   "group": "Slots",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Inventory, equipment, recipe and station cells. Swap the whole sprite per state: hover = cursor over it, selected = picked or being dragged, locked = not unlocked yet (bag upgrades), warn = something wrong (broken item, missing fuel).",
+   "where": "Grids at 21px pitch (20 + 1px gap).",
+   "notes": "Item icons (32x32 world sprites) are drawn at 1 screen px per sprite px, centred, so they fit the 40-screen-px slot with 4px to spare. Stack count: Silkscreen, bone with a near-black shadow, bottom-right at (n-2, n-8), right-aligned. Empty equipment slots can show a 9x9 icon in #423f46 as a ghost hint.",
+   "size": [
+    20,
+    20
+   ],
+   "nano_banana": true
+  },
+  "slot_hotbar": {
+   "group": "Slots",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Belt (hotbar) slots 1-0.",
+   "where": "Bottom centre of the HUD, 25px pitch, on a panel_plate backing.",
+   "notes": "Key number in Silkscreen, grey #5e5a60, at (3,3). Selected = the one in hand.",
+   "size": [
+    24,
+    24
+   ],
+   "nano_banana": true
+  },
+  "slot_hotbar_selected": {
+   "group": "Slots",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Belt (hotbar) slots 1-0.",
+   "where": "Bottom centre of the HUD, 25px pitch, on a panel_plate backing.",
+   "notes": "Key number in Silkscreen, grey #5e5a60, at (3,3). Selected = the one in hand.",
+   "size": [
+    24,
+    24
+   ],
+   "nano_banana": true
+  },
+  "button_normal_idle": {
+   "group": "Buttons",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "Any ordinary action: Sort, Split, filters, +/- steppers, close.",
+   "where": "Windows and dialogs.",
+   "notes": "Height 14 (13 for filter chips, 16 for the Craft/Cook bar). Label: Silkscreen, centred, 1px lower when pressed. Text bone on normal/danger, near-black on primary, #5e5a60 when disabled. An optional 9x9 icon sits 3px from the left. A pressed state also serves as 'toggled on' for filter chips.",
+   "size": [
+    32,
+    14
+   ],
+   "nano_banana": true
+  },
+  "button_normal_hover": {
+   "group": "Buttons",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "Any ordinary action: Sort, Split, filters, +/- steppers, close.",
+   "where": "Windows and dialogs.",
+   "notes": "Height 14 (13 for filter chips, 16 for the Craft/Cook bar). Label: Silkscreen, centred, 1px lower when pressed. Text bone on normal/danger, near-black on primary, #5e5a60 when disabled. An optional 9x9 icon sits 3px from the left. A pressed state also serves as 'toggled on' for filter chips.",
+   "size": [
+    32,
+    14
+   ],
+   "nano_banana": true
+  },
+  "button_normal_pressed": {
+   "group": "Buttons",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "Any ordinary action: Sort, Split, filters, +/- steppers, close.",
+   "where": "Windows and dialogs.",
+   "notes": "Height 14 (13 for filter chips, 16 for the Craft/Cook bar). Label: Silkscreen, centred, 1px lower when pressed. Text bone on normal/danger, near-black on primary, #5e5a60 when disabled. An optional 9x9 icon sits 3px from the left. A pressed state also serves as 'toggled on' for filter chips.",
+   "size": [
+    32,
+    14
+   ],
+   "nano_banana": true
+  },
+  "button_normal_disabled": {
+   "group": "Buttons",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "Any ordinary action: Sort, Split, filters, +/- steppers, close.",
+   "where": "Windows and dialogs.",
+   "notes": "Height 14 (13 for filter chips, 16 for the Craft/Cook bar). Label: Silkscreen, centred, 1px lower when pressed. Text bone on normal/danger, near-black on primary, #5e5a60 when disabled. An optional 9x9 icon sits 3px from the left. A pressed state also serves as 'toggled on' for filter chips.",
+   "size": [
+    32,
+    14
+   ],
+   "nano_banana": true
+  },
+  "button_primary_idle": {
+   "group": "Buttons",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "The one main action on a screen: Craft, Cook. Only one per screen.",
+   "where": "Windows and dialogs.",
+   "notes": "Height 14 (13 for filter chips, 16 for the Craft/Cook bar). Label: Silkscreen, centred, 1px lower when pressed. Text bone on normal/danger, near-black on primary, #5e5a60 when disabled. An optional 9x9 icon sits 3px from the left. A pressed state also serves as 'toggled on' for filter chips.",
+   "size": [
+    32,
+    14
+   ],
+   "nano_banana": true
+  },
+  "button_primary_hover": {
+   "group": "Buttons",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "The one main action on a screen: Craft, Cook. Only one per screen.",
+   "where": "Windows and dialogs.",
+   "notes": "Height 14 (13 for filter chips, 16 for the Craft/Cook bar). Label: Silkscreen, centred, 1px lower when pressed. Text bone on normal/danger, near-black on primary, #5e5a60 when disabled. An optional 9x9 icon sits 3px from the left. A pressed state also serves as 'toggled on' for filter chips.",
+   "size": [
+    32,
+    14
+   ],
+   "nano_banana": true
+  },
+  "button_primary_pressed": {
+   "group": "Buttons",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "The one main action on a screen: Craft, Cook. Only one per screen.",
+   "where": "Windows and dialogs.",
+   "notes": "Height 14 (13 for filter chips, 16 for the Craft/Cook bar). Label: Silkscreen, centred, 1px lower when pressed. Text bone on normal/danger, near-black on primary, #5e5a60 when disabled. An optional 9x9 icon sits 3px from the left. A pressed state also serves as 'toggled on' for filter chips.",
+   "size": [
+    32,
+    14
+   ],
+   "nano_banana": true
+  },
+  "button_danger_idle": {
+   "group": "Buttons",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "Destructive actions: Drop, Destroy, Abandon quest.",
+   "where": "Windows and dialogs.",
+   "notes": "Height 14 (13 for filter chips, 16 for the Craft/Cook bar). Label: Silkscreen, centred, 1px lower when pressed. Text bone on normal/danger, near-black on primary, #5e5a60 when disabled. An optional 9x9 icon sits 3px from the left. A pressed state also serves as 'toggled on' for filter chips.",
+   "size": [
+    32,
+    14
+   ],
+   "nano_banana": true
+  },
+  "button_danger_hover": {
+   "group": "Buttons",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "Destructive actions: Drop, Destroy, Abandon quest.",
+   "where": "Windows and dialogs.",
+   "notes": "Height 14 (13 for filter chips, 16 for the Craft/Cook bar). Label: Silkscreen, centred, 1px lower when pressed. Text bone on normal/danger, near-black on primary, #5e5a60 when disabled. An optional 9x9 icon sits 3px from the left. A pressed state also serves as 'toggled on' for filter chips.",
+   "size": [
+    32,
+    14
+   ],
+   "nano_banana": true
+  },
+  "button_danger_pressed": {
+   "group": "Buttons",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "Destructive actions: Drop, Destroy, Abandon quest.",
+   "where": "Windows and dialogs.",
+   "notes": "Height 14 (13 for filter chips, 16 for the Craft/Cook bar). Label: Silkscreen, centred, 1px lower when pressed. Text bone on normal/danger, near-black on primary, #5e5a60 when disabled. An optional 9x9 icon sits 3px from the left. A pressed state also serves as 'toggled on' for filter chips.",
+   "size": [
+    32,
+    14
+   ],
+   "nano_banana": true
+  },
+  "bar_frame": {
+   "group": "Bars",
+   "slice": [
+    1,
+    2,
+    1,
+    1
+   ],
+   "fill": "stretch",
+   "use": "Empty trough for every bar: HP, stamina, XP, quest progress, craft progress, fuel, load, condition.",
+   "where": "HUD and windows.",
+   "notes": "Any width; height 5-11 (HP 11, stamina 7, XP 6, small progress 5).",
+   "size": [
+    48,
+    8
+   ],
+   "nano_banana": true
+  },
+  "bar_fill_hp": {
+   "group": "Bars",
+   "slice": [
+    0,
+    1,
+    0,
+    1
+   ],
+   "fill": "tile",
+   "use": "Fill for the matching bar. hp red, stamina hazard yellow, hunger rust, thirst/temp cold blue, infection rot green, xp bone, fuel orange.",
+   "where": "Inside bar_frame, inset 1px.",
+   "notes": "Tile horizontally (10px period, dark tick every 10px) and clip to value x inner width. For thin bars (5-6px) you can turn ticks off. HP damage tail: after a hit, draw the lost part in #ada59f for ~0.5s, then shrink it.",
+   "size": [
+    20,
+    6
+   ],
+   "nano_banana": false
+  },
+  "bar_fill_stamina": {
+   "group": "Bars",
+   "slice": [
+    0,
+    1,
+    0,
+    1
+   ],
+   "fill": "tile",
+   "use": "Fill for the matching bar. hp red, stamina hazard yellow, hunger rust, thirst/temp cold blue, infection rot green, xp bone, fuel orange.",
+   "where": "Inside bar_frame, inset 1px.",
+   "notes": "Tile horizontally (10px period, dark tick every 10px) and clip to value x inner width. For thin bars (5-6px) you can turn ticks off. HP damage tail: after a hit, draw the lost part in #ada59f for ~0.5s, then shrink it.",
+   "size": [
+    20,
+    6
+   ],
+   "nano_banana": false
+  },
+  "bar_fill_hunger": {
+   "group": "Bars",
+   "slice": [
+    0,
+    1,
+    0,
+    1
+   ],
+   "fill": "tile",
+   "use": "Fill for the matching bar. hp red, stamina hazard yellow, hunger rust, thirst/temp cold blue, infection rot green, xp bone, fuel orange.",
+   "where": "Inside bar_frame, inset 1px.",
+   "notes": "Tile horizontally (10px period, dark tick every 10px) and clip to value x inner width. For thin bars (5-6px) you can turn ticks off. HP damage tail: after a hit, draw the lost part in #ada59f for ~0.5s, then shrink it.",
+   "size": [
+    20,
+    6
+   ],
+   "nano_banana": false
+  },
+  "bar_fill_thirst": {
+   "group": "Bars",
+   "slice": [
+    0,
+    1,
+    0,
+    1
+   ],
+   "fill": "tile",
+   "use": "Fill for the matching bar. hp red, stamina hazard yellow, hunger rust, thirst/temp cold blue, infection rot green, xp bone, fuel orange.",
+   "where": "Inside bar_frame, inset 1px.",
+   "notes": "Tile horizontally (10px period, dark tick every 10px) and clip to value x inner width. For thin bars (5-6px) you can turn ticks off. HP damage tail: after a hit, draw the lost part in #ada59f for ~0.5s, then shrink it.",
+   "size": [
+    20,
+    6
+   ],
+   "nano_banana": false
+  },
+  "bar_fill_infection": {
+   "group": "Bars",
+   "slice": [
+    0,
+    1,
+    0,
+    1
+   ],
+   "fill": "tile",
+   "use": "Fill for the matching bar. hp red, stamina hazard yellow, hunger rust, thirst/temp cold blue, infection rot green, xp bone, fuel orange.",
+   "where": "Inside bar_frame, inset 1px.",
+   "notes": "Tile horizontally (10px period, dark tick every 10px) and clip to value x inner width. For thin bars (5-6px) you can turn ticks off. HP damage tail: after a hit, draw the lost part in #ada59f for ~0.5s, then shrink it.",
+   "size": [
+    20,
+    6
+   ],
+   "nano_banana": false
+  },
+  "bar_fill_xp": {
+   "group": "Bars",
+   "slice": [
+    0,
+    1,
+    0,
+    1
+   ],
+   "fill": "tile",
+   "use": "Fill for the matching bar. hp red, stamina hazard yellow, hunger rust, thirst/temp cold blue, infection rot green, xp bone, fuel orange.",
+   "where": "Inside bar_frame, inset 1px.",
+   "notes": "Tile horizontally (10px period, dark tick every 10px) and clip to value x inner width. For thin bars (5-6px) you can turn ticks off. HP damage tail: after a hit, draw the lost part in #ada59f for ~0.5s, then shrink it.",
+   "size": [
+    20,
+    6
+   ],
+   "nano_banana": false
+  },
+  "bar_fill_temp": {
+   "group": "Bars",
+   "slice": [
+    0,
+    1,
+    0,
+    1
+   ],
+   "fill": "tile",
+   "use": "Fill for the matching bar. hp red, stamina hazard yellow, hunger rust, thirst/temp cold blue, infection rot green, xp bone, fuel orange.",
+   "where": "Inside bar_frame, inset 1px.",
+   "notes": "Tile horizontally (10px period, dark tick every 10px) and clip to value x inner width. For thin bars (5-6px) you can turn ticks off. HP damage tail: after a hit, draw the lost part in #ada59f for ~0.5s, then shrink it.",
+   "size": [
+    20,
+    6
+   ],
+   "nano_banana": false
+  },
+  "bar_fill_fuel": {
+   "group": "Bars",
+   "slice": [
+    0,
+    1,
+    0,
+    1
+   ],
+   "fill": "tile",
+   "use": "Fill for the matching bar. hp red, stamina hazard yellow, hunger rust, thirst/temp cold blue, infection rot green, xp bone, fuel orange.",
+   "where": "Inside bar_frame, inset 1px.",
+   "notes": "Tile horizontally (10px period, dark tick every 10px) and clip to value x inner width. For thin bars (5-6px) you can turn ticks off. HP damage tail: after a hit, draw the lost part in #ada59f for ~0.5s, then shrink it.",
+   "size": [
+    20,
+    6
+   ],
+   "nano_banana": false
+  },
+  "chip_frame": {
+   "group": "HUD",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Square vital gauge: thirst, hunger, temperature, infection (and fuel). Warn version has a red rim for critical values.",
+   "where": "HUD vitals block, 19px pitch.",
+   "notes": "Build at runtime: frame, then a fill from the bottom of the 14x14 inside (height = 14 x value) in the kind's dark colour with a 1px mid-colour top line, then the 9x9 icon at (3,3) in bone with a 1px near-black shadow at (+1,+1). Switch to chip_frame_warn below 20% (or above 80% for infection).",
+   "size": [
+    16,
+    16
+   ],
+   "nano_banana": true
+  },
+  "chip_frame_warn": {
+   "group": "HUD",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Square vital gauge: thirst, hunger, temperature, infection (and fuel). Warn version has a red rim for critical values.",
+   "where": "HUD vitals block, 19px pitch.",
+   "notes": "Build at runtime: frame, then a fill from the bottom of the 14x14 inside (height = 14 x value) in the kind's dark colour with a 1px mid-colour top line, then the 9x9 icon at (3,3) in bone with a 1px near-black shadow at (+1,+1). Switch to chip_frame_warn below 20% (or above 80% for infection).",
+   "size": [
+    16,
+    16
+   ],
+   "nano_banana": false
+  },
+  "chip_hp": {
+   "group": "HUD",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Previews of each chip at 65%. Reference only: build chips at runtime as above.",
+   "where": "-",
+   "notes": "",
+   "size": [
+    16,
+    16
+   ],
+   "nano_banana": false
+  },
+  "chip_stamina": {
+   "group": "HUD",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Previews of each chip at 65%. Reference only: build chips at runtime as above.",
+   "where": "-",
+   "notes": "",
+   "size": [
+    16,
+    16
+   ],
+   "nano_banana": false
+  },
+  "chip_hunger": {
+   "group": "HUD",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Previews of each chip at 65%. Reference only: build chips at runtime as above.",
+   "where": "-",
+   "notes": "",
+   "size": [
+    16,
+    16
+   ],
+   "nano_banana": false
+  },
+  "chip_thirst": {
+   "group": "HUD",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Previews of each chip at 65%. Reference only: build chips at runtime as above.",
+   "where": "-",
+   "notes": "",
+   "size": [
+    16,
+    16
+   ],
+   "nano_banana": false
+  },
+  "chip_infection": {
+   "group": "HUD",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Previews of each chip at 65%. Reference only: build chips at runtime as above.",
+   "where": "-",
+   "notes": "",
+   "size": [
+    16,
+    16
+   ],
+   "nano_banana": false
+  },
+  "chip_xp": {
+   "group": "HUD",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Previews of each chip at 65%. Reference only: build chips at runtime as above.",
+   "where": "-",
+   "notes": "",
+   "size": [
+    16,
+    16
+   ],
+   "nano_banana": false
+  },
+  "chip_temp": {
+   "group": "HUD",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Previews of each chip at 65%. Reference only: build chips at runtime as above.",
+   "where": "-",
+   "notes": "",
+   "size": [
+    16,
+    16
+   ],
+   "nano_banana": false
+  },
+  "chip_fuel": {
+   "group": "HUD",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Previews of each chip at 65%. Reference only: build chips at runtime as above.",
+   "where": "-",
+   "notes": "",
+   "size": [
+    16,
+    16
+   ],
+   "nano_banana": false
+  },
+  "clock": {
+   "group": "HUD",
+   "slice": [
+    3,
+    2,
+    3,
+    2
+   ],
+   "fill": "stretch",
+   "use": "Day counter, time and day/night track.",
+   "where": "HUD top-right, 6px from the edges (in the mock: 110 wide at x=604).",
+   "notes": "Draw on top: sun or moon icon at (4,3) (sun yellow, moon #86a3b8), 'DAY 3' in Silkscreen Bold at (16,5), time right-aligned at w-5. Track at y=14-16: blue night, yellow day, blue night (0-20%, 20-75%, 75-100% of the day). Now-marker: 1x5 bone line at x = 4 + (w-8) x day_fraction, y=13. Stretching breaks the track proportions, so redraw the track if you change width.",
+   "size": [
+    110,
+    20
+   ],
+   "nano_banana": true
+  },
+  "minimap_frame": {
+   "group": "HUD",
+   "slice": [
+    4,
+    4,
+    4,
+    4
+   ],
+   "fill": "stretch",
+   "use": "Minimap frame.",
+   "where": "HUD top-right, right under the clock (3px gap).",
+   "notes": "Map image in the 102x54 inside at (4,4). Player: bone arrow in the centre with a near-black outline. Zombies: 2x2 red #c1352d dots. Quest target: yellow diamond. North: 9x8 near-black notch at top centre with 'N'. Area name bottom-right in Silkscreen.",
+   "size": [
+    110,
+    62
+   ],
+   "nano_banana": true
+  },
+  "keycap": {
+   "group": "Controls",
+   "slice": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "fill": "stretch",
+   "use": "Key hints: interaction prompts ([E] Pick up), control hints along the window bottom, [ESC] Close.",
+   "where": "Prompts float next to the target object; hints sit along the window bottom.",
+   "notes": "Width = label width + 6. Label: Silkscreen Bold, near-black, at (3,2). Pair it with a panel_plate label to its right, 2px gap.",
+   "size": [
+    12,
+    11
+   ],
+   "nano_banana": true
+  },
+  "checkbox_off": {
+   "group": "Controls",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Filters (Can craft) and quest objectives.",
+   "where": "Windows and the quest tracker.",
+   "notes": "checkbox_on is 10 tall because the tick pokes 1px above the box: draw it 1px higher. Label 12px to the right.",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": true
+  },
+  "checkbox_on": {
+   "group": "Controls",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Filters (Can craft) and quest objectives.",
+   "where": "Windows and the quest tracker.",
+   "notes": "checkbox_on is 10 tall because the tick pokes 1px above the box: draw it 1px higher. Label 12px to the right.",
+   "size": [
+    9,
+    10
+   ],
+   "nano_banana": true
+  },
+  "toggle_off": {
+   "group": "Controls",
+   "slice": null,
+   "fill": "fixed",
+   "use": "On/off switches: campfire lit, settings.",
+   "where": "Campfire fuel section.",
+   "notes": "Label under or beside it; yellow 'LIT' when on.",
+   "size": [
+    24,
+    11
+   ],
+   "nano_banana": true
+  },
+  "toggle_on": {
+   "group": "Controls",
+   "slice": null,
+   "fill": "fixed",
+   "use": "On/off switches: campfire lit, settings.",
+   "where": "Campfire fuel section.",
+   "notes": "Label under or beside it; yellow 'LIT' when on.",
+   "size": [
+    24,
+    11
+   ],
+   "nano_banana": true
+  },
+  "scrollbar_track": {
+   "group": "Controls",
+   "slice": [
+    1,
+    1,
+    1,
+    1
+   ],
+   "fill": "stretch",
+   "use": "Scrollbar track for lists (recipes).",
+   "where": "Right edge inside the list's inset.",
+   "notes": "",
+   "size": [
+    6,
+    40
+   ],
+   "nano_banana": true
+  },
+  "scrollbar_thumb": {
+   "group": "Controls",
+   "slice": [
+    0,
+    1,
+    0,
+    1
+   ],
+   "fill": "stretch",
+   "use": "Scrollbar thumb.",
+   "where": "Inside the track, inset 1px.",
+   "notes": "Height = track height x visible fraction.",
+   "size": [
+    4,
+    12
+   ],
+   "nano_banana": true
+  },
+  "flow_arrow_empty": {
+   "group": "Controls",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Process arrow (raw > fire > cooked).",
+   "where": "Campfire station, either side of the fire.",
+   "notes": "Progress: draw empty, then draw full clipped to progress x 20px from the left.",
+   "size": [
+    20,
+    11
+   ],
+   "nano_banana": true
+  },
+  "flow_arrow_full": {
+   "group": "Controls",
+   "slice": null,
+   "fill": "fixed",
+   "use": "Process arrow (raw > fire > cooked).",
+   "where": "Campfire station, either side of the fire.",
+   "notes": "Progress: draw empty, then draw full clipped to progress x 20px from the left.",
+   "size": [
+    20,
+    11
+   ],
+   "nano_banana": false
+  },
+  "icon_heart": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "HP",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_drop": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "thirst, water, bleeding",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_meat": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "hunger, food filter",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_bolt": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "stamina",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_skull": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "infection, danger",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_temp": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "temperature, warmth stat",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_sun": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "day",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_moon": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "night, nightfall warning",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_flame": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "fuel, campfire, Cook button",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_hammer": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "crafting, Craft button, tools filter",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_pack": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "backpack, all-items filter, back slot ghost",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_lock": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "locked slot",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_shield": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "defence, chest slot ghost",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_sword": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "attack, weapons filter",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_ammo": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "ammo count",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_check": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "have enough, done",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_x": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "missing, close",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_left": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "page/arrow",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_right": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "page/arrow",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_up": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "sort/arrow",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_down": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "sort/arrow",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_marker": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "quest target",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_arrow": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "player on minimap",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_coin": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "gold",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_plus": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "stepper +, XP",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_minus": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "stepper -",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  },
+  "icon_eye": {
+   "group": "Icons",
+   "slice": null,
+   "fill": "fixed",
+   "use": "noise / visibility meter",
+   "where": "Anywhere",
+   "notes": "",
+   "size": [
+    9,
+    9
+   ],
+   "nano_banana": false
+  }
+ }
+}

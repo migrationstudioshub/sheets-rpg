@@ -1,0 +1,411 @@
+/* The game page's look: the UI kit in art/ui/kit/ (every piece is described in art/ui/kit/PIECES.md).
+   Two rules hold everywhere:
+   - 1rem = 1 art pixel. The root font size is --u screen pixels, a whole number set by client/js/ui.js, so every
+     piece is drawn at a whole scale and stays sharp. Never write px here (the strip's own minimums apart).
+   - no picture is named here: a piece is var(--k-<piece>), set by ui.js, which knows which set each one comes from. */
+@font-face { font-family: 'Silkscreen'; font-weight: 400; src: url(../../art/ui/fonts/Silkscreen-Regular.ttf); }
+@font-face { font-family: 'Silkscreen'; font-weight: 700; src: url(../../art/ui/fonts/Silkscreen-Bold.ttf); }
+@font-face { font-family: 'Jersey 10'; src: url(../../art/ui/fonts/Jersey10-Regular.ttf); }
+:root { color-scheme: dark; --u: 2; --top: max(24px, 18rem);
+  --ink: #0e0d11; --ink2: #141318; --ink3: #1c1b21; --ink4: #2c2a31; --grey1: #423f46; --grey2: #5e5a60; --grey3: #837d7f; --grey4: #ada59f;
+  --bone: #e7ddc2; --yellow: #c49b2a; --red: #c1352d; --red2: #8e1c22; --green: #a2a683; --green2: #3c4633; --olive: #3e4331; --blue: #86a3b8; }
+html { font-size: calc(1px * var(--u)); height: 100%; }
+body { height: 100%; margin: 0; background: #000; color: var(--bone); overflow: hidden; font: 10rem/1.1 'Jersey 10', system-ui, sans-serif;
+       display: grid; grid-template-rows: var(--top) minmax(0, 1fr); place-items: center; -webkit-font-smoothing: none; }
+/* the view fills the rest of the window, keeping its shape (--ar, set by main.js); everything the player needs is laid over it */
+#frame { position: relative; width: min(100vw, calc((100vh - var(--top)) * var(--ar, 1.6923))); image-rendering: pixelated; }
+canvas { display: block; image-rendering: pixelated; }
+#view { width: 100%; height: auto; touch-action: none; }
+[hidden] { display: none !important; }
+
+/* ---- text ---- */
+.th, .tl { font-family: 'Silkscreen', monospace; font-size: 8rem; line-height: 1; text-transform: uppercase; }
+.th { font-weight: 700; } .tl { font-weight: 400; }
+.tb { font: 400 10rem/1.1 'Jersey 10', sans-serif; text-transform: none; }
+.dim { color: var(--grey3); } .bad { color: var(--red); } .good { color: var(--green); } .gold { color: var(--yellow); }
+.shadow, .wsh { text-shadow: 1rem 1rem 0 var(--ink); }
+.empty { color: var(--grey3); }
+
+/* ---- the 9-slice frames ---- */
+.k { box-sizing: border-box; border-style: solid; border-color: transparent; image-rendering: pixelated; }
+.kplate { border-width: 2rem; border-image: var(--k-panel_plate) 2 fill / 2rem stretch; }
+.kinset { border-width: 1rem; border-image: var(--k-panel_inset) 1 fill / 1rem stretch; }
+.ktip { border-width: 2rem; border-image: var(--k-panel_tooltip) 2 fill / 2rem stretch; }
+.panel { box-sizing: border-box; border: 6rem solid transparent; border-image: var(--k-panel_metal) 6 fill / 6rem repeat; padding: 2rem; display: grid; gap: 6rem; min-width: 130rem; max-width: 96%; }
+.khead { box-sizing: border-box; height: 14rem; border-style: solid; border-color: transparent; border-width: 2rem 2rem 2rem 11rem; border-image: var(--k-header_plate) 2 2 2 11 fill / 2rem 2rem 2rem 11rem repeat;
+         display: flex; justify-content: space-between; align-items: center; gap: 6rem; padding: 0 3rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); white-space: nowrap; }
+.khead b { font-weight: 700; text-shadow: 1rem 1rem 0 var(--olive); overflow: hidden; text-overflow: clip; }
+.khead .bad { color: #ff8a7a; }
+/* the notebook page. Its top edge holds the tape: drawn in (the Nano Banana page, root.paper-taped) or laid on (the plain one) */
+.kpaper { position: relative; box-sizing: border-box; border-style: solid; border-color: transparent; border-width: 12rem 3rem 3rem; border-image: var(--k-panel_paper) 12 3 3 3 fill / 12rem 3rem 3rem repeat;
+          color: var(--ink); padding: 0 4rem 3rem; }
+.kpaper::before, .kpaper::after { content: ''; position: absolute; top: -14rem; left: 3rem; width: 16rem; height: 6rem; background: var(--k-tape) 0 0 / 100% 100% no-repeat; }
+.kpaper::after { left: auto; right: 3rem; }
+.paper-taped .kpaper { border-width: 14rem 3rem 3rem; border-image-slice: 14 3 3 3 fill; border-image-width: 14rem 3rem 3rem; }
+.paper-taped .kpaper::before, .paper-taped .kpaper::after { left: -3rem; width: 24rem; height: 14rem; background: var(--k-paper_ends, none) 0 0 / 64rem 50rem no-repeat; }
+.paper-taped .kpaper::after { left: auto; right: -3rem; background-position: 100% 0; }
+.kpaper > :first-child { margin-top: -5rem; }
+
+/* ---- buttons: every button is the kit's steel one; .primary = the one main action, .danger = it destroys something ---- */
+button { box-sizing: border-box; height: 14rem; padding: 0 5rem; margin: 0; border-style: solid; border-color: transparent; border-width: 2rem 2rem 3rem; border-radius: 0; background: none;
+         border-image: var(--k-button_normal_idle) 2 2 3 2 fill / 2rem 2rem 3rem repeat; image-rendering: pixelated;
+         font: 400 8rem/9rem 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); white-space: nowrap; cursor: pointer;
+         display: inline-flex; align-items: center; justify-content: center; gap: 3rem; }
+button:hover { border-image-source: var(--k-button_normal_hover); }
+button:active, button.on { border-image-source: var(--k-button_normal_pressed); padding-top: 1rem; }
+button:disabled { border-image-source: var(--k-button_normal_disabled); color: var(--grey2); cursor: default; padding-top: 0; }
+button.primary { border-image-source: var(--k-button_primary_idle); color: var(--ink); font-weight: 700; }
+button.primary:hover { border-image-source: var(--k-button_primary_hover); }
+button.primary:active { border-image-source: var(--k-button_primary_pressed); }
+button.primary:disabled { border-image-source: var(--k-button_normal_disabled); color: var(--grey2); }
+button.danger, #reset.arm { border-image-source: var(--k-button_danger_idle); }
+button.danger:hover { border-image-source: var(--k-button_danger_hover); }
+button.danger:active { border-image-source: var(--k-button_danger_pressed); }
+button.danger:disabled { border-image-source: var(--k-button_normal_disabled); }
+button.big { height: 16rem; }
+/* a button with no steel: just what is in it */
+button.bare, button.bare:hover, button.bare:active, button.bare:disabled { height: auto; padding: 0; border: 0; border-image: none; }
+.kcheck { position: relative; padding-left: 12rem !important; min-height: 10rem; color: var(--grey4); font-weight: 700; }
+.kcheck::before { content: ''; position: absolute; left: 0; top: calc(50% - 5rem); width: 9rem; height: 9rem; background: var(--k-checkbox_off) 0 0 / 100% 100% no-repeat; }
+.kcheck.on { color: var(--bone); }
+.kcheck.on::before { top: calc(50% - 6rem); height: 10rem; background-image: var(--k-checkbox_on); }
+.ktoggle { width: 24rem; height: 11rem !important; background: var(--k-toggle_off) 0 0 / 100% 100% no-repeat !important; }
+.ktoggle.on { background-image: var(--k-toggle_on) !important; }
+select, input[type=text], input:not([type]) { box-sizing: border-box; height: 14rem; padding: 0 3rem; border: 1rem solid var(--ink); border-radius: 0; background: var(--ink2); color: var(--bone); font: 400 10rem/1 'Jersey 10', sans-serif; outline: none; }
+input:focus, select:focus { border-color: var(--yellow); }
+kbd, .kkey { display: inline-block; box-sizing: border-box; height: 11rem; min-width: 12rem; padding: 0 1rem; margin: 0 1rem; vertical-align: middle; border-style: solid; border-color: transparent; border-width: 2rem 2rem 3rem;
+             border-image: var(--k-keycap) 2 2 3 2 fill / 2rem 2rem 3rem stretch; image-rendering: pixelated;
+             font: 700 8rem/6rem 'Silkscreen', monospace; text-transform: uppercase; text-align: center; color: var(--ink); text-shadow: none; white-space: nowrap; }
+.ki { display: inline-block; flex: none; width: 9rem; height: 9rem; background: center / 100% 100% no-repeat; image-rendering: pixelated; }
+.ki.sh { filter: drop-shadow(1rem 1rem 0 var(--ink)); }
+button:disabled .ki { opacity: .4; }
+
+/* ---- bars and chips ---- */
+.kbar { position: relative; box-sizing: border-box; height: 8rem; border-style: solid; border-color: transparent; border-width: 2rem 1rem 1rem; border-image: var(--k-bar_frame) 2 1 1 1 fill / 2rem 1rem 1rem stretch; image-rendering: pixelated; }
+.kbar .fill, .kbar .tail { position: absolute; inset: 0; }
+.kbar .fill { background: 0 0 / 20rem 100% repeat-x; }
+.kbar .tail { background: var(--grey4); transition: clip-path .45s ease-in .5s; }
+.kbar .txt { position: absolute; left: 4rem; top: 0; bottom: 0; display: flex; align-items: center; font: 700 8rem/1 'Silkscreen', monospace; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); white-space: nowrap; }
+.kbar.hp { height: 11rem; } .kbar.mid { height: 7rem; } .kbar.thin { height: 6rem; } .kbar.tiny { height: 5rem; }
+.kchip { position: relative; flex: none; width: 16rem; height: 16rem; background: var(--k-chip_frame) 0 0 / 100% 100% no-repeat; image-rendering: pixelated; }
+.kchip.warn { background-image: var(--k-chip_frame_warn); }
+.kchip .lv { position: absolute; left: 1rem; right: 1rem; bottom: 1rem; box-sizing: border-box; border-top: 1rem solid; transition: height .4s; }
+.kchip .ki { position: absolute; left: 3rem; top: 3rem; }
+.kchip.warn .lv { animation: pulse 1s steps(2) infinite; }
+@keyframes pulse { 50% { opacity: .5; } }
+
+/* ---- the strip above the view: where you are (left), the small buttons (right) ---- */
+#hud { justify-self: stretch; align-self: stretch; box-sizing: border-box; padding: 0 6rem; display: flex; justify-content: space-between; align-items: center; gap: 6rem;
+       color: var(--grey4); background: var(--ink2); border-bottom: 1rem solid var(--ink); overflow: hidden; }
+#hud .grp { display: flex; gap: 6rem; align-items: center; white-space: nowrap; min-width: 0; }
+#hud .grp:first-child { flex: 1 1 auto; overflow: hidden; } #hud .grp:last-child { flex: none; }   /* a big UI size: where you are gives way, the buttons stay whole */
+#hud strong { color: var(--bone); font-weight: 400; }
+#hud-net.bad { color: #ff8a7a; }
+#gold { color: var(--yellow); }
+.tag { padding: 0 4rem; background: var(--ink4); font: 400 8rem/10rem 'Silkscreen', monospace; text-transform: uppercase; }
+
+/* ---- the HUD: laid over the view. A layer lets clicks through to the game; its parts take them. ---- */
+.hudlayer { position: absolute; pointer-events: none; z-index: 2; }
+.hudlayer > *, .hudlayer .take { pointer-events: auto; }
+.hudlayer.above { z-index: 5; }
+/* top left / top centre: the nightfall warning and the noise meter (both off: UI.FLAGS) */
+#hud-tl { left: 6rem; top: 4rem; }
+#nightfall { height: 15rem; padding: 0 4rem; display: flex; align-items: center; gap: 4rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); }
+#hud-tc { left: 0; right: 0; top: 4rem; display: grid; justify-items: center; }
+#noise { width: 76rem; height: 15rem; padding: 0 4rem; display: grid; grid-template-columns: 9rem 1fr; gap: 4rem; align-items: center; }
+/* top right: clock, minimap (both off), then the quests you are on */
+#hud-tr { right: 6rem; top: 4rem; width: 110rem; display: grid; gap: 3rem; }
+#clock { position: relative; width: 110rem; height: 20rem; background: var(--k-clock) 0 0 / 100% 100% no-repeat; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); }
+#clock .ki { position: absolute; left: 4rem; top: 3rem; } #clock b { position: absolute; left: 16rem; top: 5rem; } #clock span { position: absolute; right: 5rem; top: 5rem; }
+#clock .now { position: absolute; top: 13rem; width: 1rem; height: 5rem; background: var(--bone); }
+#minimap { position: relative; width: 110rem; height: 62rem; box-sizing: border-box; border: 4rem solid transparent; border-image: var(--k-minimap_frame) 4 fill / 4rem stretch; }
+#minimap canvas { width: 102rem; height: 54rem; }
+#minimap-n { position: absolute; left: calc(50% - 5rem); top: -4rem; width: 9rem; height: 8rem; background: var(--ink); font: 700 8rem/8rem 'Silkscreen', monospace; text-align: center; color: var(--bone); }
+#minimap-name { position: absolute; right: 2rem; bottom: 1rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
+#tracker { display: grid; gap: 3rem; }
+.tq { padding: 2rem 3rem 3rem 6rem; display: grid; gap: 3rem; box-shadow: inset 2rem 0 0 var(--yellow); }
+.tq > b { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--yellow); }
+.tq.ready > b { color: var(--green); }
+.tq .tline { display: grid; grid-template-columns: 9rem 1fr auto; gap: 3rem; align-items: start; color: var(--bone); }
+.tq .tline.done { color: var(--green); }
+.tq .tline i.box { width: 9rem; height: 9rem; background: var(--k-checkbox_off) 0 0 / 100% 100% no-repeat; }
+.tq .tline.done i.box { height: 10rem; margin-top: -1rem; background-image: var(--k-checkbox_on); }
+.tq .tprog { display: grid; grid-template-columns: 1fr auto; gap: 4rem; align-items: center; padding-left: 12rem; font: 400 8rem/1 'Silkscreen', monospace; color: var(--grey4); }
+.tq.more { box-shadow: none; padding-left: 3rem; color: var(--grey4); }
+/* what you just picked up: over the lines of what happened (bottom left, below) */
+#toasts { display: grid; gap: 2rem; justify-items: start; pointer-events: none; }
+.toast { height: 20rem; padding: 0 6rem 0 3rem; display: flex; align-items: center; gap: 4rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); pointer-events: none !important; transition: opacity .7s; animation: toastin .15s steps(3); }
+.toast.old { opacity: 0; }
+.toast .pic { width: 16rem; height: 16rem; object-fit: contain; image-rendering: pixelated; }
+@keyframes toastin { from { transform: translateX(-12rem); opacity: 0; } }
+/* bottom left: what you picked up, what just happened (a few lines that fade), over thirst, hunger, what ails you and the health bar */
+#hud-bl { left: 6rem; bottom: 6rem; display: grid; gap: 3rem; justify-items: start; }
+#logbox { pointer-events: none; display: grid; gap: 1rem; justify-items: start; width: 250rem; }
+#log-toggle { pointer-events: auto; height: 9rem; padding: 0 3rem; font-size: 6rem; line-height: 4rem; border-width: 2rem 2rem 3rem; }
+#log { text-shadow: 1rem 1rem 0 var(--ink); color: var(--bone); }
+#logbox.shut #log { display: none; }
+#log .msg { pointer-events: none; transition: opacity 1.5s; }
+#log .msg.old { opacity: .35; }
+#log .hit { color: #ff9a8a; } #log .loot, #log .level { color: var(--yellow); } #log .heal { color: var(--green); } #log .death { color: var(--red); }
+#vitals { width: 150rem; padding: 3rem 4rem; display: grid; gap: 3rem; }
+#chips { display: flex; gap: 3rem; align-items: center; flex-wrap: wrap; }
+#statuses { display: flex; gap: 5rem; flex-wrap: wrap; margin-left: 3rem; }
+.st { display: grid; grid-template-columns: 16rem auto; gap: 3rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; }
+.st .kchip .lv { height: 14rem; border-top-width: 0; opacity: .55; }
+.st span { display: grid; gap: 1rem; } .st span i { font-style: normal; color: var(--grey4); }
+.vrow { display: grid; grid-template-columns: 9rem 1fr; gap: 4rem; align-items: center; }
+/* bottom centre: experience over the belt (keys 1-9, 0; Q and E before them when skills are on) */
+#hud-bc { left: 0; right: 0; bottom: 6rem; display: grid; justify-items: center; }
+#bcbox { display: grid; gap: 3rem; }
+#xp-row { display: grid; grid-template-columns: auto 1fr auto; gap: 3rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
+#xp-lv { padding: 1rem 3rem; font-weight: 700; color: var(--yellow); text-shadow: none; }
+#slots { display: flex; gap: 1rem; padding: 1rem; }
+#abilities, #belt { display: flex; gap: 1rem; }
+.hk { position: relative; width: 24rem; height: 24rem; background: var(--k-slot_hotbar) 0 0 / 100% 100% no-repeat; display: grid; place-items: center; cursor: pointer; user-select: none; }
+.hk.held, .hk.armed { background-image: var(--k-slot_hotbar_selected); }
+.hk.over { outline: 1rem solid var(--bone); outline-offset: -1rem; }
+.hk.low .ico { opacity: .4; }
+.ico { width: var(--ico, 32px); height: var(--ico, 32px); display: grid; place-items: center; image-rendering: pixelated; pointer-events: none; font: 700 8rem/1 'Silkscreen', monospace; color: var(--ink); }
+.hk .key { position: absolute; left: 3rem; top: 3rem; font: 400 8rem/1 'Silkscreen', monospace; color: var(--grey2); }
+.hk .qty, .hk .cost { position: absolute; right: 2rem; bottom: 2rem; font: 400 8rem/1 'Silkscreen', monospace; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
+.hk .cost { color: var(--blue); }
+.hk .cd { position: absolute; left: 1rem; right: 1rem; bottom: 1rem; background: rgba(14,13,17,.65); }
+.hk .cdt { position: absolute; inset: 0; display: grid; place-items: center; font: 700 8rem/1 'Silkscreen', monospace; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
+.hk.empty { cursor: default; }
+/* bottom right: what is in your hands when it shoots — rounds in it / rounds in the bag */
+#hud-br { right: 6rem; bottom: 6rem; }
+#weapon-set { width: 118rem; padding: 3rem 4rem; }
+#weapon { display: grid; grid-template-columns: 24rem 1fr; gap: 6rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; }
+#weapon .wside { display: grid; gap: 3rem; }
+#weapon .wname { font-weight: 700; color: var(--bone); white-space: nowrap; overflow: hidden; }
+#weapon .wline { display: flex; gap: 4rem; align-items: center; }
+#weapon .wammo { font-weight: 700; color: var(--bone); } #weapon .wammo.low { color: var(--red); }
+#weapon .wres { color: var(--grey3); }
+#weapon .wcond { display: grid; grid-template-columns: auto 1fr; gap: 4rem; align-items: center; color: var(--grey3); }
+
+/* ---- marks over heads and things: small signs that follow a spot of the world. main.js (setMarks) places them.
+   reload / craft = a ring that closes; alert "!" / search "?" over a monster; quest marks over an NPC;
+   prompt = the key that acts on what you face, and what it does ---- */
+#marks { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
+.mark { position: absolute; width: 12rem; transform: translate(-50%, -100%); pointer-events: none; }
+.mark svg { display: block; width: 100%; height: auto; filter: drop-shadow(0 1rem 0 var(--ink)); }
+.mark.reload { opacity: .5; }
+.mark.reload .track { fill: rgba(14,13,17,.55); stroke: rgba(231,221,194,.22); stroke-width: 4; }
+.mark.reload .arc { fill: none; stroke: var(--bone); stroke-width: 4; stroke-dasharray: 100.53; stroke-dashoffset: 100.53; }
+.mark.reload .round { fill: var(--bone); }
+.mark.alert, .mark.search, .mark.quest, .mark.questdone, .mark.questgo { text-align: center; font: 700 16rem/1 'Silkscreen', monospace;
+  text-shadow: -1rem 0 var(--ink), 1rem 0 var(--ink), 0 -1rem var(--ink), 0 1rem var(--ink), 1rem 1rem var(--ink); }
+.mark.alert, .mark.search { animation: markpop .18s steps(3); }
+.mark.alert, .mark.quest, .mark.questdone { color: var(--yellow); } .mark.search { color: var(--bone); } .mark.questgo { color: var(--grey4); }
+@keyframes markpop { from { transform: translate(-50%, -60%) scale(.4); opacity: 0; } }
+.mark.prompt { width: auto; transform: translate(0, -50%); display: flex; align-items: center; gap: 2rem; white-space: nowrap; }
+.mark.prompt span { padding: 1rem 4rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); }
+
+/* ---- the build bar (B): laid over the view. Top left, what you own; along the top, the kinds of construction and,
+   under them, the blueprints of the open kind ---- */
+#buildbar { inset: 0; }
+#bb-mats { position: absolute; left: 6rem; top: 24rem; display: grid; gap: 2rem; max-height: 60%; overflow: hidden; }
+.bb-mat { display: flex; align-items: center; gap: 4rem; padding: 1rem 5rem 1rem 2rem; min-width: 30rem; box-sizing: border-box; border: 2rem solid transparent; border-image: var(--k-panel_plate) 2 fill / 2rem stretch;
+          font: 400 8rem/1 'Silkscreen', monospace; color: var(--bone); }
+.bb-mat .pic { width: 12rem; height: 12rem; }
+.bb-mat b { font-weight: 400; }
+.bb-mat.used { outline: 1rem solid var(--yellow); outline-offset: -1rem; } .bb-mat.lack { outline: 1rem solid var(--red); outline-offset: -1rem; } .bb-mat.lack b { color: #ff8a7a; }
+#bb-top, #bb-mats { pointer-events: none; } #bb-top .bb-row, .bb-mat { pointer-events: auto; }
+#bb-top { position: absolute; top: 4rem; left: 50%; transform: translateX(-50%); width: min(64%, 420rem); display: grid; gap: 3rem; justify-items: center; }
+.bb-row { display: flex; gap: 2rem; max-width: 100%; overflow-x: auto; scrollbar-width: none; align-items: flex-start; }
+.bb-row::-webkit-scrollbar { display: none; }
+.bb-type { flex: none; }
+.bb-type.hot { color: var(--yellow); }
+.bb-type.rm { margin-left: 6rem; } .bb-type.rm.on { border-image-source: var(--k-button_danger_pressed); }
+.bb-none { align-self: center; color: var(--grey4); padding: 0 5rem; text-shadow: 1rem 1rem 0 var(--ink); }
+.bb-bp { flex: none; display: grid; gap: 3rem; padding: 2rem 5rem 2rem 2rem; box-sizing: border-box; border: 2rem solid transparent; border-image: var(--k-panel_plate) 2 fill / 2rem stretch; cursor: pointer; }
+.bb-bp .bb-head { display: flex; align-items: center; gap: 4rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); white-space: nowrap; }
+.bb-bp .bb-head .pic { width: 16rem; height: 16rem; object-fit: contain; }
+.bb-bp.cant .bb-head { opacity: .55; }
+.bb-bp.focus { outline: 1rem solid var(--bone); outline-offset: -1rem; }
+.bb-bp.focus .bb-head { color: var(--bone); font-weight: 700; opacity: 1; }
+.bb-bp.sel { outline: 1rem solid var(--yellow); outline-offset: -1rem; }
+.bb-body { display: grid; gap: 2rem; color: var(--grey4); min-width: 86rem; }
+.bb-cost { display: flex; align-items: center; gap: 3rem; } .bb-cost .pic { width: 10rem; height: 10rem; }
+.bb-cost.lack, .bb-tool.lack { color: #ff8a7a; }
+.bb-tool { color: var(--grey3); }
+.bb-roof { justify-self: start; height: 13rem; }
+.bb-go { font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--yellow); }
+#bb-hint { color: var(--bone); text-align: center; pointer-events: none; text-shadow: 1rem 1rem 0 var(--ink); }
+
+/* ---- windows: the world behind is dimmed, the window is a sheet of metal with its name on a tab above it ---- */
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(14,13,17,.7); backdrop-filter: saturate(.5); z-index: 4; }
+.win { display: grid; max-width: 98%; max-height: 98%; }
+.win .panel { max-width: 100%; }
+.win-top { display: flex; justify-content: space-between; align-items: flex-end; padding: 0 8rem; margin-bottom: -2rem; position: relative; z-index: 1; }
+.ktab { box-sizing: border-box; height: 15rem; padding: 1rem 4rem 0; border-style: solid; border-color: transparent; border-width: 4rem 2rem 2rem; border-image: var(--k-tab_active) 4 2 2 2 fill / 4rem 2rem 2rem stretch;
+        font: 700 8rem/8rem 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); white-space: nowrap; }
+.kclose { margin-bottom: 4rem; color: var(--grey4); }
+.kclose:hover { color: var(--bone); }
+.phead { display: flex; justify-content: space-between; align-items: center; gap: 8rem; box-sizing: border-box; height: 14rem; padding: 0 0 0 3rem; border-style: solid; border-color: transparent; border-width: 2rem 2rem 2rem 11rem;
+         border-image: var(--k-header_plate) 2 2 2 11 fill / 2rem 2rem 2rem 11rem repeat; }
+.phead strong { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); text-shadow: 1rem 1rem 0 var(--olive); white-space: nowrap; }
+.phead button { height: 12rem; margin: -1rem -1rem -1rem 0; border-width: 2rem; border-image-width: 2rem 2rem 3rem; }
+h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); }
+#bag { padding-bottom: 40rem; box-sizing: border-box; }                        /* the belt stays in view under the window */
+#bag .panel { max-height: 100%; overflow: auto; }
+#bag-items { display: grid; gap: 6rem; }
+.wcols { display: flex; gap: 8rem; align-items: flex-start; }
+.wcol { display: grid; gap: 4rem; align-content: start; }
+.wbar { display: flex; gap: 1rem; align-items: center; min-height: 13rem; }
+.wbar button { height: 13rem; padding: 0 3rem; }
+.wbar .sp { flex: 1; }
+.wbar .kcheck { margin-left: 4rem; }
+.whints { display: flex; gap: 10rem; flex-wrap: wrap; align-items: center; padding-top: 5rem; border-top: 1rem solid var(--ink); box-shadow: inset 0 1rem 0 var(--ink4); }
+.whint { display: flex; gap: 3rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey3); }
+.wnote { color: var(--grey3); }
+/* grids of cells: your bag, an open container, a cooker's cells. A stack is dragged from cell to cell. */
+.tray { padding: 1rem; width: max-content; }
+.igrid { display: grid; grid-template-columns: repeat(8, 20rem); gap: 1rem; width: max-content; }
+.icell { position: relative; width: 20rem; height: 20rem; background: var(--k-slot_empty) 0 0 / 100% 100% no-repeat; display: grid; place-items: center; user-select: none; image-rendering: pixelated; }
+.icell.has { cursor: grab; }
+.igrid .icell:hover, .dslot:hover { background-image: var(--k-slot_hover); }
+.icell.sel, .icell.over, .igrid .icell.sel:hover { background-image: var(--k-slot_selected); }
+.icell.extra { background-image: var(--k-slot_warn); }                            /* a stack past the last cell: the bag is overfull */
+.icell.locked { background-image: var(--k-slot_locked); }
+.icell.off { visibility: hidden; }
+.icell.fade .ico { opacity: .22; }                                                /* not what the bag's filter is showing */
+.icell.equipped::after { content: ''; position: absolute; left: 2rem; top: 2rem; width: 3rem; height: 3rem; background: var(--green); outline: 1rem solid var(--ink); }
+/* a weapon's or tool's wear: a 2 px line along the bottom of its cell (bag and belt), as long as what is left */
+.durb { position: absolute; left: 3rem; right: 3rem; bottom: 2rem; height: 2rem; background: rgba(14,13,17,.75); pointer-events: none; }
+.durb i { display: block; height: 100%; }
+.broken .ico { opacity: .4; filter: grayscale(1); }                              /* worn down to nothing: kept, good for nothing until mended */
+.broken::before { content: ''; position: absolute; inset: 3rem; background: linear-gradient(to top right, transparent 46%, var(--red) 46% 54%, transparent 54%); opacity: .8; pointer-events: none; }
+.icell .qty { position: absolute; right: 2rem; bottom: 2rem; font: 400 8rem/1 'Silkscreen', monospace; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); pointer-events: none; }
+.icell .ghost { opacity: 1; pointer-events: none; }
+/* the picked item: what it is and what can be done with it */
+.icard { padding: 3rem 4rem 4rem; display: grid; gap: 4rem; min-height: 50rem; align-content: start; }
+.icard .top { display: grid; grid-template-columns: 20rem 1fr auto; gap: 6rem; align-items: start; }
+.icard .top b { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; display: block; margin: 1rem 0 2rem; }
+.icard .top .n { font: 400 8rem/1 'Silkscreen', monospace; color: var(--grey4); margin-top: 1rem; }
+.icard .meta { font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey2); }
+.icard .btns { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2rem; }
+.icard .btns button { padding: 0 2rem; }
+.icard .tb { color: var(--grey4); }
+/* recipes: a list of rows, and the picked one on a page of the notebook */
+.rlist { overflow-y: auto; overflow-x: hidden; }
+.rrow { display: grid; grid-template-columns: 20rem minmax(0, 1fr); gap: 5rem; align-items: center; height: 24rem; box-sizing: border-box; padding: 0 2rem 0 1rem; border-left: 2rem solid transparent; cursor: pointer; }
+.rrow:hover { background: var(--ink3); }
+.rrow.sel { background: var(--ink4); border-left-color: var(--yellow); }
+.rrow b { display: block; font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); white-space: nowrap; overflow: hidden; margin-bottom: 1rem; }
+.rrow span { display: block; color: var(--green); white-space: nowrap; overflow: hidden; }
+.rrow.cant b { color: var(--grey3); } .rrow.cant span { color: var(--red); } .rrow.cant .ico { opacity: .5; }
+.rnone { padding: 6rem; color: var(--grey3); }
+.kpaper .phd { display: grid; grid-template-columns: 20rem 1fr; gap: 5rem; align-items: center; }
+.kpaper .phd b { display: block; font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; margin-bottom: 3rem; }
+.kpaper .phd .sub { display: flex; justify-content: space-between; gap: 4rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey2); }
+.kpaper .rule { height: 0; border-top: 1rem dashed rgba(14,13,17,.45); margin: 5rem 0 4rem; }
+.kpaper .lbl { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: #776256; margin-bottom: 3rem; }
+.kpaper .need { display: grid; grid-template-columns: 16rem 1fr auto 9rem; gap: 4rem; align-items: center; height: 18rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; }
+.kpaper .need .pic { width: 16rem; height: 16rem; object-fit: contain; image-rendering: pixelated; }
+.kpaper .need .cnt { font-weight: 700; color: var(--green2); } .kpaper .need.lack .cnt { color: var(--red2); }
+.kpaper .why { color: var(--red2); margin-top: 3rem; }
+.kpaper .say { margin-top: 4rem; }
+.ract { display: grid; grid-template-columns: auto auto 1fr; gap: 4rem; align-items: center; min-height: 16rem; }
+.ract.one { grid-template-columns: 1fr; }
+.ract > button:not(.primary) { height: 16rem; padding: 0 4rem; }
+.kstep { display: flex; gap: 1rem; align-items: center; }
+.kstep button { width: 14rem; height: 16rem; padding: 0; }
+.kstep span { width: 22rem; height: 16rem; display: grid; place-items: center; font: 700 8rem/1 'Silkscreen', monospace; color: var(--bone); }
+.making { display: grid; grid-template-columns: 1fr auto; gap: 3rem 4rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); }
+.making .kbar { grid-column: 1; } .making b { color: var(--bone); font-weight: 700; } .making button { grid-row: 1 / span 2; grid-column: 2; }
+.making .bad { color: #ff8a7a; }
+.making .prow { grid-column: 1; display: grid; grid-template-columns: 1fr auto; gap: 4rem; align-items: center; } .making .prow .kbar { grid-column: auto; }
+/* the inventory window's first column: you, what you wear, what you are */
+.doll { position: relative; width: 160rem; height: 152rem; }
+.doll canvas.bust { position: absolute; left: 48rem; top: 6rem; width: 64rem; height: 96rem; }
+.dslot { position: absolute; }
+.dslot .lab { position: absolute; left: -10rem; width: 40rem; top: 21rem; text-align: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey2); pointer-events: none; }
+.dslot .lab.up { top: -9rem; }
+.stats { padding: 3rem 4rem; display: grid; gap: 4rem; }
+.stat { display: flex; gap: 5rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); }
+.stat b { margin-left: auto; color: var(--bone); }
+.mebars { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2rem 3rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey3); }
+.mebars .kbar.hp { grid-column: 1 / -1; height: 8rem; }
+.mebars .lab2 { grid-column: span 1; }
+/* the cooking window's middle column: raw > fire > cooked, the fuel, the switch */
+.station { padding: 5rem 6rem 6rem; display: grid; gap: 5rem; }
+.station .flow { display: grid; grid-template-columns: auto 1fr auto; gap: 4rem; align-items: start; }
+.station .side { display: grid; gap: 3rem; justify-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey3); }
+.station .mid { display: flex; align-items: center; justify-content: center; gap: 4rem; padding-top: 14rem; }
+.station .fire { width: 32rem; height: 32rem; display: grid; place-items: center; }
+.station .fire canvas, .station .fire img { width: 32rem; height: 32rem; object-fit: contain; }
+.station .fire.out { filter: grayscale(1) brightness(.6); }
+.karrow { position: relative; width: 20rem; height: 11rem; background: var(--k-flow_arrow_empty) 0 0 / 100% 100% no-repeat; }
+.karrow i { position: absolute; inset: 0; background: var(--k-flow_arrow_full) 0 0 / 100% 100% no-repeat; }
+.station .now { display: grid; grid-template-columns: 1fr auto 1fr; gap: 4rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey3); min-height: 20rem; }
+.station .now .job { display: grid; gap: 3rem; justify-items: center; width: 100rem; }
+.station .now .job b { color: var(--bone); white-space: nowrap; }
+.station .now .job .kbar { width: 100%; }
+.station .now .r { justify-self: end; display: grid; gap: 3rem; justify-items: end; }
+.station .now button.bare { color: var(--yellow); font-weight: 700; } .station .now button.bare:disabled { color: var(--grey1); }
+.fuel { padding: 3rem 5rem 5rem; display: grid; gap: 4rem; }
+.fuel .ft { display: flex; justify-content: space-between; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey3); }
+.fuel .ft b { display: flex; gap: 4rem; align-items: center; color: var(--bone); }
+.fuel .fr { display: grid; grid-template-columns: auto 1fr auto; gap: 6rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); }
+.fuel .sw { display: grid; gap: 2rem; justify-items: center; color: var(--grey2); } .fuel .sw.on { color: var(--yellow); }
+.tipbox { padding: 3rem 4rem; display: grid; gap: 2rem; color: var(--grey4); }
+.tipbox b { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--yellow); }
+.queue { display: grid; gap: 3rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey3); }
+/* abilities in the bag (only with Config skills on) */
+.sk { display: grid; grid-template-columns: 20rem 1fr; gap: 6rem; align-items: center; padding: 2rem 4rem; background: var(--ink3); }
+.sk .name b { display: block; font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; } .sk .name span { color: var(--grey3); }
+.slots { display: flex; gap: 2rem; margin-top: 2rem; } .slots button { height: 12rem; }
+
+/* ---- the other windows: storage rows, your base, quests, the people you talk to, a new character, the controls ---- */
+#store .panel, #claimp .panel { width: 240rem; max-height: 90%; overflow: auto; }
+#store-items, #claim-body, #npc-body, #quest-body { display: grid; gap: 4rem; }
+.slot { display: grid; grid-template-columns: 20rem 1fr auto; gap: 6rem; align-items: center; padding: 2rem 4rem; background: var(--ink3); border: 1rem solid var(--ink); }
+.slot.equipped { border-color: var(--yellow); }
+.slot .pic { width: 16rem; height: 16rem; object-fit: contain; image-rendering: pixelated; }
+.slot .name b { display: block; font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; margin-bottom: 1rem; }
+.slot .name span { color: var(--grey3); } .slot .name span.lack { color: #ff8a7a; }
+.slot .btns { display: flex; gap: 2rem; align-items: center; }
+.slot.rcp .btns .step { width: 13rem; padding: 0; font-size: 6rem; }
+.slot.rcp .btns .qty { min-width: 12rem; text-align: center; font: 700 8rem/1 'Silkscreen', monospace; }
+.slot.rcp.cant { opacity: .6; }
+#npcp .panel, #questp .panel { width: 250rem; max-height: 92%; overflow: auto; }
+.qsay { position: relative; box-sizing: border-box; border-style: solid; border-color: transparent; border-width: 12rem 3rem 3rem; border-image: var(--k-panel_paper) 12 3 3 3 fill / 12rem 3rem 3rem repeat; padding: 0 5rem 3rem; color: var(--ink); white-space: pre-wrap; line-height: 1.15; }
+.paper-taped .qsay { border-width: 14rem 3rem 3rem; border-image-slice: 14 3 3 3 fill; border-image-width: 14rem 3rem 3rem; }
+.paper-taped .qsay::before, .paper-taped .qsay::after { content: ''; position: absolute; top: -14rem; left: -3rem; width: 24rem; height: 14rem; background: var(--k-paper_ends, none) 0 0 / 64rem 50rem no-repeat; }
+.paper-taped .qsay::after { left: auto; right: -3rem; background-position: 100% 0; }
+.qimg { display: block; max-width: 100%; max-height: 120rem; margin: 0 auto; image-rendering: auto; }
+.qgoals { display: grid; gap: 1rem; } .qgoals .done { color: var(--green); }
+.qreward { color: var(--yellow); } .qreturn { color: var(--green); }
+.qbtns { display: flex; gap: 3rem; justify-content: flex-end; }
+.qpicks { display: flex; gap: 3rem; flex-wrap: wrap; }
+.qrow { display: flex; gap: 6rem; justify-content: flex-start; height: 16rem; font-weight: 700; }
+.qrow .qmark { width: 8rem; text-align: center; color: var(--yellow); } .qrow.active .qmark { color: var(--grey4); }
+.qcard { display: grid; gap: 4rem; padding: 4rem 5rem 5rem 8rem; box-sizing: border-box; border: 2rem solid transparent; border-image: var(--k-panel_plate) 2 fill / 2rem stretch; box-shadow: inset 2rem 0 0 var(--yellow); }
+.qcard.ready { box-shadow: inset 2rem 0 0 var(--green); }
+.qcard > b, .qcard > strong, #npc-body > b, #npc-body > strong { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--yellow); }
+#join .panel { min-width: 0; }
+#join .panel > strong { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; }
+#join label { display: grid; gap: 2rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); }
+#join-body { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8rem; align-items: start; }
+#join-preview { width: 64rem; height: 96rem; background: var(--ink2); border: 1rem solid var(--ink); }
+#join-fields { display: grid; gap: 5rem; width: 190rem; }
+#join .jlabel { font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); margin-bottom: -2rem; }
+#join .jrow { display: flex; flex-wrap: wrap; gap: 2rem; }
+#join .jpick { height: auto; padding: 1rem; border: 1rem solid var(--ink); border-image: none; background: var(--ink2); }
+#join .jpick canvas { width: 16rem; height: 24rem; }
+#join .jswatch { width: 14rem; height: 14rem; padding: 0; border: 2rem solid var(--ink); border-image: none; }
+#join .jbody { flex: 1; }
+#join .jpick.on, #join .jswatch.on { border-color: var(--bone); }
+#help .panel { width: 330rem; color: var(--grey4); }
+#tip { position: absolute; z-index: 9; pointer-events: none; max-width: 170rem; padding: 2rem 4rem 3rem; display: grid; gap: 2rem; box-sizing: border-box; border: 2rem solid transparent; border-image: var(--k-panel_tooltip) 2 fill / 2rem stretch; color: var(--grey4); white-space: pre-wrap; }
+#tip b { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); white-space: normal; }
+#menu { position: absolute; z-index: 6; padding: 1rem; display: grid; gap: 1rem; min-width: 90rem; box-sizing: border-box; border: 2rem solid transparent; border-image: var(--k-panel_tooltip) 2 fill / 2rem stretch; }
+#menu button, #menu button:hover, #menu button:active { height: 12rem; padding: 0 4rem; border: 0; border-image: none; justify-content: flex-start; }
+#menu button:hover { background: var(--ink4); }
+#menu button.def { color: var(--yellow); font-weight: 700; }
+/* lists that scroll */
+::-webkit-scrollbar { width: 6rem; height: 6rem; }
+::-webkit-scrollbar-track { background: var(--ink); box-shadow: inset 1rem 0 0 var(--ink3); }
+::-webkit-scrollbar-thumb { background: var(--grey2); border: 1rem solid var(--ink); }
+::-webkit-scrollbar-corner { background: var(--ink); }

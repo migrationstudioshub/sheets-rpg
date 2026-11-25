@@ -16,7 +16,7 @@
   var shownOthers = {};                  // drawn positions of monsters and other players
   var queue = [], inFlight = false, lastReply = 0;
   var held = [], tap = null, holdSince = 0, lastStep = 0, lastFrame = 0, HOLD_MS = 220;
-  var fx = [], bagOpen = false, craftOpen = false;
+  var fx = [], bagOpen = false;
   // building: buildOpen = the blueprint list is showing; building = the blueprint id you are placing (a ghost
   // follows the cursor until Esc); storage = the built container whose contents panel is open
   var buildOpen = false, building = null, storage = null;
@@ -175,7 +175,6 @@
     handleEvents(res.events);
     hud();
     if (bagOpen) bag();
-    if (craftOpen) craftPanel();
     if (buildOpen) buildPanel();
     if (storage) storePanel();
     questsChanged();
@@ -368,11 +367,12 @@
     var now = performance.now();
     (events || []).forEach(function (e, i) {
       if (e.type === 'npc') { openNpc(e); return; }            // you talked to someone: their window (or, with nothing to offer, a line)
-      if (e.text) log(e.text, e.type);
-      if (e.type === 'craft') { if (!craftOpen) toggleCraft(); return; }   // you used a workbench / campfire: show what can be made
+      if (e.type === 'loot' && e.text) lootToast(e); else if (e.text) log(e.text, e.type);   // what reached your bag: a toast on the left
+      if (e.type === 'craft') { openCrafting(); return; }   // you used a workbench: the inventory window, its recipes beside the bag
       if (e.type === 'claim') { claim = e; $('claimp').hidden = false; claimPanel(); return; }       // your claim flag: who belongs to the base
       if (e.type === 'storage' && e.gone) { if (storage && storage.key === e.key) closeStore(); return; }   // a carcass taken clean: it is gone
-      if (e.type === 'storage') { storage = e; storePanel(); return; }   // you opened (or changed) a storage container
+      if (e.type === 'storage' && e.key === tookAll.key && tookAll.n > 0 && performance.now() - tookAll.at < 5000) { tookAll.n--; return; }   // the answer to Take all: the window stays shut
+      if (e.type === 'storage') { storage = e; e._at = performance.now(); storePanel(); return; }   // (_at: when it came, for the countdowns)   // you opened (or changed) a storage container
       if (e.map && e.map !== me.map) return;
       var t0 = now + i * 120;
       if (e.type === 'cast') {
@@ -400,9 +400,19 @@
       if (e.type === 'hit' && e.amount && e.by && e.by !== me.id) return;   // another player's swing: drawn from their `act` (othersAct), sooner than this
       if (e.type === 'hit' && e.amount) fx.push({ x: e.x, y: e.y, text: '-' + e.amount, color: e.to === me.id && e.x === me.x && e.y === me.y ? '#ff6b5b' : '#ffffff', t0: t0 });
       else if (e.type === 'heal' && e.amount) fx.push({ x: e.x, y: e.y, text: '+' + e.amount, color: COLORS.heal, t0: t0 });
-      else if (e.type === 'loot') fx.push({ x: me.x, y: me.y, text: e.text, color: COLORS.loot, t0: t0, life: 1300 });
+      // (what reached your bag floats nothing over your head: it is a card at the side, lootToast)
       else if (e.type === 'level') fx.push({ x: me.x, y: me.y, text: 'LEVEL UP!', color: COLORS.level, t0: t0, life: 1800, big: true });
     });
+  }
+  /** Something reached your bag: a toast ("+3 Plant fiber", with the item's picture when the words name one). */
+  // "+3 Plant fiber" again while its card is still showing adds to that card ("+5 Plant fiber") instead of a new one.
+  // Every way into the bag (picked up, crafted, cooked, given) is the same card: picture, +n, name.
+  function lootToast(e) {
+    var text = e.text, m = /^\+(\d+) (.+)$/.exec(text), id = e.item && content.items[e.item] ? e.item : '';
+    if (!id && m) id = Object.keys(content.items).filter(function (k) { return content.items[k].name === m[2]; })[0] || '';   // (an older referee names it only)
+    var n = Number(e.qty) || (m ? Number(m[1]) : 0), name = id ? content.items[id].name : m ? m[2] : '';
+    if (name && n) UI.toast(name, id ? itemPicEl(content.items[id], 16) : null, { key: id || name, n: n });
+    else UI.toast(text.replace(/\.$/, ''), null);
   }
   function log(text, type) {
     var box = $('log'), line = document.createElement('div');
@@ -473,7 +483,8 @@
     send({ type: 'move', dirs: [dir] });
   }
   function interact() { if (me) send({ type: 'interact' }); }
-  function useItem(id) { send({ type: 'use', item: id }); }
+  // from = where it is used from, {w: 'bag' | 'belt', s}: what it leaves (an empty bottle) goes back there (World leaveItem)
+  function useItem(id, from) { send(from ? { type: 'use', item: id, from: from } : { type: 'use', item: id }); }
 
   // ---------------------------------------------------------------- input
   // when the player last did anything (see the heartbeat in the loop)
@@ -491,16 +502,16 @@
     else if (e.code === 'KeyB') toggleBuild();
     else if (e.code === 'KeyX') { if (removing) stopBuilding(); else startRemoving(); }
     else if (e.code === 'KeyH' && removing) { wallsDown = !wallsDown; log(wallsDown ? 'Walls shown low: point at the base of a wall to pick it.' : 'Walls shown whole: point at the face of a wall to pick it.', 'info'); }
-    else if (e.code === 'KeyC') toggleCraft();
+    else if (e.code === 'KeyC') { if (bagOpen && !storage) toggleBag(); else openCrafting(); }   // C: the inventory window too (crafting is in it)
     else if (e.code === 'KeyL') toggleQuests();
     else if (e.code === 'KeyT') turnBuild(1);
     else if (e.code === 'KeyV' && building && content.blueprints[building] && content.blueprints[building].places === 'tile') {
       buildRoof = !buildRoof; if (buildOpen) buildPanel(); log(buildRoof ? 'Roof: click cells of this storey to cover them (V: back to floor).' : 'Floor: click where it should be laid (V: as a roof).', 'info');
     }
-    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) { if (holdMode()) selectSlot(-1); else cancelThrow(); } else if (introOpen) closeIntro(); else if (claimQuest) closeClaimQuest(); else if (npcTalk) closeNpc(); else if (questOpen) toggleQuests(); else if (claim) closeClaim(); else if (storage) closeStore(); else if (buildOpen) toggleBuild(); else if (building || removing || moveTool) stopBuilding(); else if (craftOpen) toggleCraft(); else if (bagOpen) toggleBag(); }
+    else if (e.code === 'Escape') { closeMenu(); if (armed) disarm(); else if (throwing) { if (holdMode()) selectSlot(-1); else cancelThrow(); } else if (introOpen) closeIntro(); else if (claimQuest) closeClaimQuest(); else if (npcTalk) closeNpc(); else if (questOpen) toggleQuests(); else if (claim) closeClaim(); else if (storage) closeStore(); else if (buildOpen) toggleBuild(); else if (building || removing || moveTool) stopBuilding(); else if (bagOpen) toggleBag(); }
     else if (e.code === 'KeyQ' && skillsOn()) ability(0);
     else if (e.code === 'KeyE' && skillsOn()) ability(1);
-    else if (e.code === 'KeyR') startReload();
+    else if (e.code === 'KeyR') { if (bagOpen && storage) takeAllOpen(); else startReload(); }   // a container open: R takes everything
     else if (/^Digit[0-9]$/.test(e.code) && me && (Number(e.code.slice(5)) + 9) % 10 < BELT) beltKey((Number(e.code.slice(5)) + 9) % 10);   // 1-9, then 0 = the tenth
   });
   addEventListener('keyup', function (e) {
@@ -653,11 +664,13 @@
       if (!el || el._kind !== mk.kind) {
         if (el) el.remove();
         el = markEls[mk.id] = document.createElement('div'); el._kind = mk.kind; el.className = 'mark ' + (mk.kind === 'craft' ? 'reload craft' : mk.kind); el.innerHTML = MARKS[mk.kind] || '';
+        if (mk.kind === 'prompt') { if (mk.key) el.appendChild(UI.key(mk.key)); el._lab = UI.el('span', 'k kplate', ''); el.appendChild(el._lab); }   // a key and what it does
         box.appendChild(el);
       }
       live[mk.id] = 1;
-      el.style.left = (((mk.x + 0.5) * T - lastCam.x) * k).toFixed(1) + 'px';
-      el.style.top = ((mk.y * T - lastCam.y - (mk.up || 0) - (Render.liftAt ? Render.liftAt(mapOf(), mk.x, mk.y, T) : 0)) * k).toFixed(1) + 'px';
+      if (mk.kind === 'prompt' && el._text !== mk.label) { el._text = mk.label; el._lab.textContent = mk.label; }
+      el.style.left = (((mk.x + 0.5 + (mk.ox || 0)) * T - lastCam.x) * k).toFixed(1) + 'px';   // (ox, oy: tiles aside of the spot)
+      el.style.top = (((mk.y + (mk.oy || 0)) * T - lastCam.y - (mk.up || 0) - (Render.liftAt ? Render.liftAt(mapOf(), mk.x, mk.y, T) : 0)) * k).toFixed(1) + 'px';
       if (mk.kind === 'craft') el.style.opacity = mk.paused ? 0.2 : '';
       if (mk.kind === 'reload' || mk.kind === 'craft') el.querySelector('.arc').style.strokeDashoffset = (100.53 * (1 - (mk.p || 0))).toFixed(1);
     });
@@ -688,6 +701,7 @@
   }
   function craftMark(marks, T) {
     var f = craftFrac(); if (!f) return;
+    if (makingBar && makingBar.isConnected) UI.setBar(makingBar, f.p);   // the same, on the bar in the inventory window
     marks.push({ id: 'craft', kind: 'craft', x: shown.x, y: shown.y, up: T * 0.5 + (me.reload ? 34 : 14), p: f.p, paused: !f.on });
     // a piece is due, or you came back / walked off: ask the referee, so its count starts or stops with you
     // (a few times at most while nothing changes: the page and the referee may disagree about "at the station")
@@ -847,7 +861,7 @@
   function useHeld() {
     var it = heldUse(); if (!it) return;
     if (count(it.id) < 1) { log('No ' + it.name.toLowerCase() + ' left.', 'info'); return; }
-    useItem(it.id);
+    useItem(it.id, { w: 'belt', s: me.held });
   }
   /** What the referee will answer to choosing a slot, so the choice shows at once. */
   function predictHold(p, i) {
@@ -885,7 +899,7 @@
       throwing = throwing === id ? null : id;                                 // toggle throw-aim
       if (throwing) log('Aim the ' + it.name.toLowerCase() + ' and click to throw (Esc to cancel).', 'info');
       updateCursor(); hotbar();
-    } else useItem(id);
+    } else useItem(id, { w: 'belt', s: i });
   }
   function aimCheck(cell) {
     var sk = content.skills[armed.skill], map = mapOf(), lk = World.viewLookup(content, map, view, me);
@@ -1041,10 +1055,11 @@
       var key = document.createElement('span'); key.className = 'key'; key.textContent = slotKey(i); b.appendChild(key);
       if (it) {
         b.appendChild(icon({ kind: 'item', id: id }));
-        var q = document.createElement('span'); q.className = 'qty';
         var st = count(id);
-        q.textContent = st ? '×' + st : '0'; b.appendChild(q);
+        if (!World.stackMaxOf || World.stackMaxOf(content, id) > 1 || st !== 1) { var q = document.createElement('span'); q.className = 'qty'; q.textContent = String(st); b.appendChild(q); }   // (one of a kind that does not stack: no number)
         if (!st) b.classList.add('low');
+        var bdt = durMark(b, World.stackInUse ? World.stackInUse(me, id) : null);
+        if (bdt) b.title += '\n' + bdt;
       }
       b.onclick = function () { if (holdMode() && me.held === i && heldUse()) useHeld(); else beltKey(i); };
       // With the inventory window open the belt is part of it: drop a stack on a slot to carry it there (out of a
@@ -1112,70 +1127,156 @@
     try { localStorage.setItem('sheetsrpg.logShut', shut ? '1' : ''); } catch (e) { /* private mode */ }
   };
   try { setLogShut(localStorage.getItem('sheetsrpg.logShut') === '1'); } catch (e) { /* private mode */ }
+  UI.tooltips($('frame'), $('tip'));                        // anything with a title shows it on the kit's card
   $('btn-use').onclick = interact;
   $('btn-bag').onclick = toggleBag;
   $('btn-help').onclick = function () { $('help').hidden = !$('help').hidden; };
   $('help-close').onclick = $('help').onclick = function () { $('help').hidden = true; };
 
   // ---------------------------------------------------------------- HUD and bag
+  // The HUD's parts are made once (hudMake) and then only told their numbers; bars, chips and icons are the kit's
+  // (client/js/ui.js). What the game has no number for yet is not drawn at all: UI.FLAGS says which, and what each
+  // one would read.
+  var hudParts = null, weaponSig = '', statusSig = '';
+  function hudMake() {
+    var P = hudParts = {}, chips = $('chips'), sts = $('statuses');
+    P.water = UI.chip('thirst', 'drop'); P.food = UI.chip('hunger', 'meat'); P.temp = UI.chip('temp', 'temp'); P.tox = UI.chip('infection', 'skull');
+    [P.water, P.food, P.temp, P.tox].forEach(function (c) { chips.insertBefore(c, sts); });
+    P.temp.hidden = true; P.tox.hidden = true;
+    P.hp = UI.bar('hp', { cls: 'hp', tail: true, text: true });
+    $('hp-row').appendChild(UI.icon('heart', UI.COLOR.red, 'sh')); $('hp-row').appendChild(P.hp);
+    P.st = UI.bar('stamina', { cls: 'mid' });
+    $('st-row').appendChild(UI.icon('bolt', UI.COLOR.yellow, 'sh')); $('st-row').appendChild(P.st);
+    P.mp = UI.bar('thirst', { cls: 'mid' });
+    $('mp-row').appendChild(UI.icon('plus', UI.COLOR.blue, 'sh')); $('mp-row').appendChild(P.mp);
+    P.xp = UI.bar('xp', { cls: 'thin' }); $('xp-slot').appendChild(P.xp);
+    P.noise = UI.bar('stamina', { cls: 'thin' }); $('noise').appendChild(UI.icon('eye')); $('noise').appendChild(P.noise);
+    P.night = UI.el('span', '', ''); $('nightfall').appendChild(UI.icon('moon', UI.COLOR.blue)); $('nightfall').appendChild(P.night);
+  }
   function hud() {
     if (!me) return;
+    if (!hudParts) hudMake();
+    var P = hudParts, F = UI.FLAGS;
     buildLockWatch();
     $('hud-map').textContent = mapOf().name;
-    $('hp-fill').style.width = Math.max(0, 100 * me.hp / me.maxHp) + '%';
-    $('hp-text').textContent = Math.max(0, me.hp) + ' / ' + me.maxHp;
+    UI.setBar(P.hp, me.hp / me.maxHp, Math.max(0, me.hp) + '/' + me.maxHp);
     var span = me.xpNext ? me.xpNext - me.xpThis : 0;
-    $('xp-fill').style.width = span ? Math.min(100, 100 * (me.xp - me.xpThis) / span) + '%' : '100%';
-    $('xp-text').textContent = 'Lv ' + me.level + (me.xpNext ? ' · ' + me.xp + ' / ' + me.xpNext + ' XP' : ' · max');
+    UI.setBar(P.xp, span ? (me.xp - me.xpThis) / span : 1);
+    $('xp-lv').textContent = 'Lv ' + me.level;
+    $('xp-text').textContent = me.xpNext ? me.xp + '/' + me.xpNext + ' XP' : 'max';
     $('gold').textContent = me.gold + ' gold';
-    $('mp-fill').style.width = me.maxMp ? Math.max(0, 100 * me.mp / me.maxMp) + '%' : '0%';
-    $('mp-text').textContent = 'MP ' + me.mp + ' / ' + me.maxMp;
-    $('mp-bar').hidden = !skillsOn();                      // mana only pays for skills
+    $('mp-row').hidden = !skillsOn();                      // mana only pays for skills
+    if (skillsOn()) { UI.setBar(P.mp, me.maxMp ? me.mp / me.maxMp : 0); P.mp.setAttribute('data-tip', 'MP ' + me.mp + ' / ' + me.maxMp); }
     var food = me.hunger == null ? 100 : me.hunger, water = me.thirst == null ? 100 : me.thirst;
-    $('food-fill').style.height = Math.max(0, Math.min(100, food)) + '%';        // round gauges: they drain from the top
-    $('food-bar').title = 'Food ' + Math.round(food) + '%';
-    $('food-bar').classList.toggle('low', food <= 25);
-    $('water-fill').style.height = Math.max(0, Math.min(100, water)) + '%';
-    $('water-bar').title = 'Water ' + Math.round(water) + '%';
-    $('water-bar').classList.toggle('low', water <= 25);
+    UI.setChip(P.food, food / 100, food <= 25, 'Food ' + Math.round(food) + '%');
+    UI.setChip(P.water, water / 100, water <= 25, 'Water ' + Math.round(water) + '%');
     var tox = Number(me.tox) || 0, sickAt = me.toxSick || 50;                    // toxicity: only there while there is some; it fills as it rises
-    $('tox-bar').hidden = tox <= 0;
-    $('tox-fill').style.height = Math.max(0, Math.min(100, tox)) + '%';
-    $('tox-bar').title = 'Toxicity ' + Math.round(tox) + '%' + (tox >= sickAt ? ' · it is hurting you' : ' · harmful from ' + sickAt + '%') + '. It wears off with time.';
-    $('tox-bar').classList.toggle('low', tox >= sickAt);
-    var rw = World.rangedWeapon(content, me), wset = $('weapon-set');          // equipped gun: magazine + reserve
-    if (rw) {
-      var reserve = count(rw.ammo);
-      var clip = Number(rw.clip) || 0, loaded = (me.mags && me.mags[rw.id]) || 0;
-      // bottom right of the view: "in the gun / in the bag" over the rounds themselves (one shape per round it holds)
-      var wl = $('weapon'); wl.innerHTML = '';
-      var line = document.createElement('div'); line.className = 'wline'; wl.appendChild(line);
-      var nm = document.createElement('span'); nm.className = 'wname'; nm.textContent = rw.name; line.appendChild(nm);
-      if (clip > 0) {
-        var dry = loaded < (rw.ammoCost || 1);
-        if (dry) { var rl = document.createElement('span'); rl.className = 'wreload'; rl.textContent = 'R'; line.appendChild(rl); }
-        var mag = document.createElement('span'); mag.className = 'wammo' + (dry ? ' low' : ''); mag.textContent = loaded + ' / ' + reserve; line.appendChild(mag);
-        wl.title = loaded + ' of ' + clip + ' in the ' + rw.name.toLowerCase() + ', ' + reserve + ' more in the bag';
-        if (clip <= 40) {
-          var rounds = document.createElement('div'); rounds.className = 'rounds';
-          for (var ri = 0; ri < clip; ri++) { var rd = document.createElement('i'); rd.className = 'round' + (ri < clip - loaded ? ' spent' : ''); rounds.appendChild(rd); }
-          wl.appendChild(rounds);
-        }
-      } else {
-        var am = document.createElement('span'); am.className = 'wammo' + (reserve < (rw.ammoCost || 1) ? ' low' : ''); am.textContent = '×' + reserve; line.appendChild(am);
-      }
-      wset.hidden = false;
-    } else wset.hidden = true;
-    var sts = $('statuses'); sts.innerHTML = '';
-    (me.statuses || []).forEach(function (st) {
-      var d = content.statuses[st.id] || { name: st.id, color: '#888' }, el = document.createElement('span');
-      el.className = 'st'; el.style.color = d.color;
-      var perm = d.kind === 'infection' || st.until > serverNow() + 1e10;   // infection has no timer — it just worsens
-      el.textContent = d.name + (perm ? '' : ' ' + Math.max(0, Math.ceil((st.until - serverNow()) / 1000)) + 's');
-      sts.appendChild(el);
-    });
+    P.tox.hidden = tox <= 0;
+    UI.setChip(P.tox, tox / 100, tox >= sickAt, 'Toxicity ' + Math.round(tox) + '%' + (tox >= sickAt ? ': it is hurting you' : ': harmful from ' + sickAt + '%') + '. It wears off with time.');
+    // ---- waiting for the game to have them (UI.FLAGS): each shows only with its flag on AND its number there
+    var stam = F.stamina && me.maxStamina > 0;
+    $('st-row').hidden = !stam; if (stam) UI.setBar(P.st, me.stamina / me.maxStamina);
+    var temp = F.temperature && me.temp != null;
+    P.temp.hidden = !temp; if (temp) UI.setChip(P.temp, me.temp / 100, me.temp <= 20, 'Temperature');
+    var ck = F.clock && me.clock;
+    $('clock').hidden = !ck; if (ck) UI.setClock($('clock'), ck.day, ck.frac, ck.text);
+    var night = F.nightfall && me.clock && me.clock.nightIn > 0 && me.clock.nightIn <= 180;
+    $('nightfall').hidden = !night; if (night) P.night.textContent = 'Nightfall in ' + Math.floor(me.clock.nightIn / 60) + 'h ' + Math.round(me.clock.nightIn % 60) + 'm';
+    var noise = F.noise && me.noise != null;
+    $('noise').hidden = !noise; if (noise) UI.setBar(P.noise, me.noise);
+    $('minimap').hidden = !F.minimap;
+    weaponCard();
+    // what ails you (and what helps): a chip in the status's colour, its name, the time it has left
+    var list = me.statuses || [], ssig = JSON.stringify(list.map(function (st) { return [st.id, Math.ceil((st.until - serverNow()) / 1000)]; }));
+    if (ssig !== statusSig) {
+      statusSig = ssig;
+      var sts = $('statuses'); sts.innerHTML = '';
+      list.forEach(function (st) {
+        var d = content.statuses[st.id] || { name: st.id, color: '#888' }, one = UI.el('div', 'st'), c = UI.el('div', 'kchip'), lv = UI.el('div', 'lv'), tx = UI.el('span', '');
+        var perm = d.kind === 'infection' || st.until > serverNow() + 1e10;   // infection has no timer — it just worsens
+        var left = Math.max(0, Math.ceil((st.until - serverNow()) / 1000));
+        lv.style.background = d.color; c.appendChild(lv);
+        c.appendChild(UI.icon(d.kind === 'infection' ? 'skull' : st.id === 'burn' ? 'flame' : d.kind === 'dot' ? 'drop' : d.kind === 'buff' || d.kind === 'hot' ? 'plus' : 'bolt', '', 'sh'));
+        tx.style.color = d.color; tx.appendChild(document.createTextNode(d.name));
+        if (!perm) tx.appendChild(UI.el('i', '', Math.floor(left / 60) + ':' + (left % 60 < 10 ? '0' : '') + left % 60));
+        one.appendChild(c); one.appendChild(tx); sts.appendChild(one);
+      });
+    }
     hotbar();
     updateCursor();                 // keep the canvas cursor (crosshair when a gun is ready) in step with gear changes
+  }
+  /** Bottom right: what is in your hands when it shoots — its picture, its name, rounds in it / rounds in the bag. */
+  function weaponCard() {
+    var rw = World.rangedWeapon(content, me), wset = $('weapon-set');
+    if (!rw) { wset.hidden = true; weaponSig = ''; return; }
+    var reserve = count(rw.ammo), clip = Number(rw.clip) || 0, loaded = (me.mags && me.mags[rw.id]) || 0, cost = rw.ammoCost || 1;
+    var cond = UI.FLAGS.condition && me.cond && me.cond[rw.id] != null ? Number(me.cond[rw.id]) : null;
+    var sig = [rw.id, reserve, clip, loaded, cond].join('|');
+    wset.hidden = false;
+    if (sig === weaponSig) return;
+    weaponSig = sig;
+    var wl = $('weapon'), slot = UI.el('div', 'hk empty'), side = UI.el('div', 'wside'), line = UI.el('div', 'wline');
+    wl.innerHTML = '';
+    slot.appendChild(icon({ kind: 'item', id: rw.id })); wl.appendChild(slot); wl.appendChild(side);
+    side.appendChild(UI.el('div', 'wname', rw.name)); side.appendChild(line);
+    line.appendChild(UI.icon('ammo', UI.COLOR.yellow));
+    if (clip > 0) {
+      var dry = loaded < cost;
+      line.appendChild(UI.el('span', 'wammo' + (dry ? ' low' : ''), loaded));
+      line.appendChild(UI.el('span', 'wres', '/ ' + reserve));
+      if (dry) line.appendChild(UI.key('R'));
+      wset.setAttribute('data-tip', loaded + ' of ' + clip + ' in the ' + rw.name.toLowerCase() + ', ' + reserve + ' more in the bag');
+    } else {
+      line.appendChild(UI.el('span', 'wammo' + (reserve < cost ? ' low' : ''), reserve));
+      wset.removeAttribute('data-tip');
+    }
+    if (cond != null) {
+      var cr = UI.el('div', 'wcond'); cr.appendChild(UI.el('span', '', 'Cond')); cr.appendChild(UI.bar('xp', { cls: 'tiny', value: cond }));
+      side.appendChild(cr);
+    }
+  }
+  // ---- the minimap (off: UI.FLAGS.minimap). The land around you, one art pixel per tile, from the map on screen: the
+  // ground's own colour (Terrain `color`), what you can see moving as dots, the people who have something for you as marks.
+  var miniAt = 0;
+  function minimap() {
+    if (!UI.FLAGS.minimap || !me || performance.now() - miniAt < 400) return;
+    miniAt = performance.now();
+    var map = mapOf(), dots = [];
+    view.monsters.forEach(function (m) { if (!sight.vis || sight.vis[m.x + ',' + m.y]) dots.push({ x: m.x, y: m.y, color: UI.COLOR.red }); });
+    view.players.forEach(function (q) { dots.push({ x: q.x, y: q.y, color: UI.COLOR.bone }); });
+    UI.drawMinimap($('minimap-cv'), { cx: me.x, cy: me.y, facing: me.facing, dots: dots, marks: questMarkList,
+      colorAt: function (x, y) {
+        if (x < 0 || y < 0 || x >= map.width || y >= map.height) return '';
+        var t = Rules.terrainAt(content, map, x, y);
+        return (t && t.color) || '#2c2a31';
+      } });
+    $('minimap-name').textContent = map.name || '';
+  }
+  // ---- the prompt: what a click would do to the thing under the mouse, beside it. It shows only once the mouse has
+  // rested on the same tile for PROMPT_MS (never at once, never for what you merely face). Worked out a few times a
+  // second (World.actionsAt is the referee's own list), not every frame.
+  var PROMPT_MS = 1000, promptAt = 0, promptIs = null, promptCell = '', promptSince = 0;
+  function promptMark(marks) {
+    var now = performance.now(), ck = hover ? hover.x + ',' + hover.y : '';
+    if (ck !== promptCell) { promptCell = ck; promptSince = now; promptIs = null; }    // moved to another tile: wait again
+    if (ck && now - promptSince >= PROMPT_MS && now - promptAt > 200) {
+      promptAt = now; promptIs = null;
+      // only within reach: your own tile or one of the eight around it, not round a wall end (the rules' own reach)
+      var reach = Math.abs(hover.x - me.x) <= 1 && Math.abs(hover.y - me.y) <= 1 && !Rules.reachBlocked(content, mapOf(), me.x, me.y, hover.x, hover.y);
+      if (reach && !aiming && !armed && !throwing && !building && !removing && !moveTool && !bagOpen && !questOpen && !questPop() && $('menu').hidden) {
+        var a = tapAction(World.actionsAt(content, mapOf(), lookup(), me, hover.x, hover.y));
+        if (a && a.type !== 'attack') promptIs = { id: 'prompt', kind: 'prompt', x: hover.x, y: hover.y, ox: 0.6, oy: 0.5, label: a.label.replace(/\bthe\s+/gi, '') };   // "Pick up small rock", not "…the small rock"
+      }
+    }
+    if (ck && promptIs) marks.push(promptIs);
+  }
+  /** Crafting has no window of its own: it is the inventory window's right-hand column (hand recipes, and those of the
+   *  stations you stand next to). C and using a workbench open that window, and count as opening crafting (a ui goal). */
+  function openCrafting() {
+    if (questPop()) return;
+    if (storage) { storage = null; invSel = -1; }
+    if (!bagOpen) toggleBag(); else bag();
+    didUi('craft');
   }
   function toggleBag() { if (!bagOpen && questPop()) return; bagOpen = !bagOpen; $('bag').hidden = !bagOpen; if (bagOpen) { bag(); didUi('bag'); } else { storage = null; invSel = -1; } bagHud(); }
   /** While the inventory window is open the belt on screen stays above it: things are dragged onto its slots. */
@@ -1592,7 +1693,6 @@
     if (claim) closeClaim();
     if (storage) closeStore();
     if (buildOpen) toggleBuild(true); else if (building || removing || moveTool) stopBuilding();
-    if (craftOpen) toggleCraft();
     if (bagOpen) toggleBag();
   }
   function myQuests() { return (me && me.quests) || []; }
@@ -1733,22 +1833,34 @@
   }
   /** The corner tracker: what you are on and how far along, without opening anything. */
   var trackerSig = '';
+  function goalName(g) { return (g.label ? '' : GOAL_VERB[g.type] || '') + World.goalText(content, g) + (g.opt ? ' (optional)' : ''); }
+  /** Top right: the quests you are on, a card each — its goals with a tick box, and a bar for the ones that count up. */
   function tracker() {
     var box = $('tracker'), qs = content.quests || {}, list = myQuests().filter(function (x) { return qs[x.id]; });
     var sig = JSON.stringify(list);
     if (sig === trackerSig) return;
     trackerSig = sig; box.innerHTML = '';
     list.slice(0, 5).forEach(function (x) {
-      var q = qs[x.id], one = qel('div', 'tq' + (x.s === 'ready' ? ' ready' : ''));
+      var q = qs[x.id], one = qel('div', 'k kplate tq' + (x.s === 'ready' ? ' ready' : ''));
       one.appendChild(qel('b', '', q.name));
-      if (x.s === 'ready') one.appendChild(qel('div', '', q.ender ? (q.goals.length ? 'Return to ' : 'Find ') + objName(q.ender) : 'Done: claim it (L)'));
-      else q.goals.forEach(function (g, i) {
-        var have = Number(x.n[i]) || 0;
-        one.appendChild(qtext(have >= g.need ? 'done' : '', goalLabel(g, have)));
+      if (x.s === 'ready') {
+        var rl = qel('div', 'tline done'); rl.appendChild(qel('i', 'box'));
+        rl.appendChild(qel('span', '', q.ender ? (q.goals.length ? 'Return to ' : 'Find ') + objName(q.ender) : 'Done. Claim it'));
+        if (!q.ender) rl.appendChild(UI.key('L'));
+        one.appendChild(rl);
+      } else q.goals.forEach(function (g, i) {
+        var have = Number(x.n[i]) || 0, done = have >= g.need, counted = g.need > 1 || g.type === 'have' || g.type === 'own';
+        var ln = qel('div', 'tline' + (done ? ' done' : '')); ln.appendChild(qel('i', 'box'));
+        ln.appendChild(qtext('', counted && !done ? goalName(g) : goalLabel(g, have)));
+        one.appendChild(ln);
+        if (counted && !done) {
+          var pr = qel('div', 'tprog'); pr.appendChild(UI.bar('stamina', { cls: 'tiny', value: have / g.need })); pr.appendChild(qel('span', '', have + '/' + g.need));
+          one.appendChild(pr);
+        }
       });
       box.appendChild(one);
     });
-    if (list.length > 5) box.appendChild(qel('div', 'tq', '+' + (list.length - 5) + ' more (L)'));
+    if (list.length > 5) box.appendChild(qel('div', 'k kplate tq more', '+' + (list.length - 5) + ' more (L)'));
   }
   /** Which NPCs on this map have something for you, worked out when your quests change (not every frame). */
   var questMarkList = [], questMarkSig = '';
@@ -1854,75 +1966,7 @@
     if (questOpen) questPanel();
   }
 
-  // ---- crafting panel (C, or use a crafting station): every recipe you know, what it needs, and Make buttons.
-  // What can be made here is decided by World.recipesFor — the same check the referee runs on the craft action.
-  var craftQty = {};                                           // how many of each recipe was last picked (the panel is redrawn often)
-  function toggleCraft() { if (!craftOpen && questPop()) return; craftOpen = !craftOpen; $('craft').hidden = !craftOpen; if (craftOpen) { craftPanel(); didUi('craft'); } }
-  function craftPanel() {
-    var box = $('craft-items'); box.innerHTML = '';
-    var recs = World.recipesFor(content, mapOf(), me, lookup());
-    var near = recs.filter(function (r) { return r.station && r.here; }).map(function (r) { return r.station; });
-    $('craft-note').textContent = !recs.length ? 'You don\'t know any recipes yet.'
-      : near.length ? '' : 'Stand next to a workbench or campfire to make the things that need one.';
-    var job = me.craft, jr = job && content.recipes && content.recipes[job.id];
-    if (job) {
-      var f = craftFrac() || { p: 0, on: false }, jrow = document.createElement('div'); jrow.className = 'slot';
-      var jn = document.createElement('div'); jn.className = 'name';
-      var jb = document.createElement('b'); jb.textContent = 'Making ' + ((jr && jr.name) || job.id) + (job.qty > 1 ? ' (' + (job.made + 1) + ' of ' + job.qty + ')' : '');
-      var js = document.createElement('span'); js.textContent = f.on ? Math.round(f.p * 100) + '%' : 'waiting: go back to the ' + World.stationName(content, jr && jr.station);
-      if (!f.on) js.className = 'lack';
-      jn.appendChild(jb); jn.appendChild(js);
-      var jbt = document.createElement('div'); jbt.className = 'btns';
-      var stop = document.createElement('button'); stop.textContent = 'Stop'; stop.title = 'Stop and take back what was not used';
-      stop.onclick = function () { send({ type: 'craft', cancel: true }); };
-      var jp = document.createElement('div'); jp.className = 'pic';   // (keeps the row's columns in line with the recipes below)
-      jbt.appendChild(stop); jrow.appendChild(jp); jrow.appendChild(jn); jrow.appendChild(jbt); box.appendChild(jrow);
-    }
-    var groups = {}, order = [];
-    recs.forEach(function (r) { var g = r.category || 'Other'; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(r); });
-    order.forEach(function (g) {
-      var h4 = document.createElement('h4'); h4.textContent = g; box.appendChild(h4);
-      groups[g].sort(function (a, b) { return (b.can ? 1 : 0) - (a.can ? 1 : 0); }).forEach(function (r) {
-        box.appendChild(recipeRow(r, job));
-      });
-    });
-  }
-  /** One recipe as a row: what it makes, what it needs (and how much of each you carry), how many, Make. A recipe
-   *  you cannot make right now is still shown, with what is missing in red and its buttons off. */
-  function recipeRow(r, job) {
-    var out = r.outputs[0] || { item: '', qty: 1 }, it = content.items[out.item] || { name: r.name, sprite: '' };
-    var row = document.createElement('div'); row.className = 'slot rcp' + (r.can ? '' : ' cant');
-    var pic = itemPicEl(it, 32);
-    var name = document.createElement('div'); name.className = 'name';
-    var b = document.createElement('b'); b.textContent = r.name + (out.qty > 1 ? ' ×' + out.qty : ''); name.appendChild(b);
-    r.inputs.forEach(function (g2, i) {
-      var sp = document.createElement('span');
-      sp.textContent = (i ? ', ' : '') + g2.qty + ' ' + ((content.items[g2.item] || {}).name || g2.item).toLowerCase() + ' (' + g2.have + ')';
-      if (g2.have < g2.qty) sp.className = 'lack';
-      name.appendChild(sp);
-    });
-    if (!r.can && r.reason && !/^Not enough/.test(r.reason)) { var why = document.createElement('span'); why.className = 'lack'; why.textContent = ' — ' + r.reason; name.appendChild(why); }
-    var btns = document.createElement('div'); btns.className = 'btns';
-    // How many: arrows (or the wheel) from 1 up to what the ingredients in the bag allow, Max, then Make.
-    var most = !r.can ? 0 : Math.min.apply(null, [World.CRAFT_MAX || 20].concat(r.inputs.map(function (g3) { return g3.qty > 0 ? Math.floor(g3.have / g3.qty) : Infinity; })));
-    var n = Math.max(1, Math.min(most || 1, craftQty[r.id] || 1)), off = !!job || most < 1;
-    var num = document.createElement('span'); num.className = 'qty'; num.textContent = n;
-    function setN(v) {
-      n = Math.max(1, Math.min(most || 1, v)); craftQty[r.id] = n; num.textContent = n;
-      dn.disabled = off || n <= 1; up.disabled = mx.disabled = off || n >= most;
-    }
-    function mk(text, title, fn) { var bt = document.createElement('button'); bt.textContent = text; bt.title = title; bt.onclick = fn; return bt; }
-    var dn = mk('▼', 'One less', function () { setN(n - 1); }), up = mk('▲', 'One more', function () { setN(n + 1); });
-    var mx = mk('Max', 'As many as your ingredients allow', function () { setN(most); });
-    var go = mk('Make', '', function () { send({ type: 'craft', recipe: r.id, qty: n }); });
-    dn.className = up.className = 'step'; go.disabled = off;
-    btns.onwheel = function (e) { if (off) return; e.preventDefault(); setN(n + (e.deltaY < 0 ? 1 : -1)); };
-    [dn, num, up, mx, go].forEach(function (x) { btns.appendChild(x); });
-    setN(n);
-    row.title = r.reason || '';
-    row.appendChild(pic); row.appendChild(name); row.appendChild(btns);
-    return row;
-  }
+  var craftQty = {};                                           // how many of each recipe was last picked (the window is redrawn often)
   // ---- the inventory window (I, or opening a storage container) ----
   // Grids of cells: your bag, the open container beside it, and the belt under them. A stack sits in the cell the
   // referee says (stack.s). Dragging one onto a cell sends the 'inv' action — put down, joined to more of the same,
@@ -1940,14 +1984,26 @@
     if (!it || !it.slot) return '';
     return World.wornAt ? World.wornAt(me, it) : (eq[it.slot] === id ? it.slot : '');
   }
-  function invCell(id, qty, from, slot) {
+  /** A weapon's or tool's wear on its cell: a thin line along the bottom (how much is left), and "Durability 34/50" for
+   *  the hover text. st = the stack ({item, dur}); returns that text, or '' for something that never wears out. */
+  function durMark(el, st) {
+    var d = st && World.durOf ? World.durOf(content, st) : null; if (!d) return '';
+    if (d.left <= 0) el.classList.add('broken');
+    var f = d.left / d.max, bar = document.createElement('i'), fill = document.createElement('i');
+    bar.className = 'durb'; fill.style.width = (100 * f).toFixed(1) + '%';
+    fill.style.background = f > 0.5 ? 'var(--green)' : f > 0.25 ? 'var(--yellow)' : 'var(--red)';
+    bar.appendChild(fill); el.appendChild(bar);
+    return d.left <= 0 ? 'Broken: repair it, or salvage it (durability 0/' + d.max + ')' : 'Durability ' + d.left + '/' + d.max;
+  }
+  function invCell(id, qty, from, slot, st) {
     var it = id ? (content.items[id] || { name: id, type: '' }) : null, d = document.createElement('div');
     d.className = 'icell' + (it ? ' has' : '') + (from === 'bag' && it && slot === invSel ? ' sel' : '');
     if (!it) return d;
     d.appendChild(icon({ kind: 'item', id: id }));
-    if (qty !== 1 || from === 'belt') { var q = document.createElement('span'); q.className = 'qty'; q.textContent = qty > 0 ? '×' + qty : '0'; d.appendChild(q); }
+    if (qty !== 1 || from === 'belt') { var q = document.createElement('span'); q.className = 'qty'; q.textContent = String(Math.max(0, qty)); d.appendChild(q); }
     if (from !== 'belt' && wornKey(id)) d.classList.add('equipped');
-    d.title = it.name + ' — ' + describe(it);
+    var dt = durMark(d, st);
+    d.title = it.name + ' — ' + describe(it) + (dt ? '\n' + dt : '');
     d.draggable = true;
     d.onmousedown = function () { invPress = true; };
     d.ondragstart = function (e) { invDrag = { from: from, item: id, slot: slot, qty: qty }; try { e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move'; } catch (x) { /* older browsers */ } };
@@ -1983,10 +2039,12 @@
     var g = document.createElement('div'); g.className = 'igrid';
     var at = {}, top = -1, part = lo != null;
     cols = cols || INV_COLS; lo = lo || 0;
+    g.style.gridTemplateColumns = 'repeat(' + cols + ', 20rem)';
     (stacks || []).forEach(function (st, i) { var c = st.s >= 0 ? st.s : i; at[c] = st; if (c > top) top = c; });
     var n = part ? size : Math.max(cols, Math.ceil(Math.max(size || 0, top + 1) / cols) * cols), end = size ? lo + size : 0;
     for (var k = 0; k < n; k++) (function (i) {
-      var st = at[i], c = invCell(st && st.item, st && st.qty, w, i);
+      var st = at[i], c = invCell(st && st.item, st && st.qty, w, i, st);
+      if (w === 'bag' && st && !bagMatch(content.items[st.item])) c.classList.add('fade');   // not what the backpack's filter is showing
       if (end && i >= end) c.classList.add(st ? 'extra' : 'off');             // past the last cell: overflow, or not a cell at all
       if (!(end && i >= end)) invTarget(c, function (d) { return (d.from === 'bag' && !(w === 'box' && storage && storage.takeOnly)) || d.from === 'box' || ((d.from === 'belt' || d.from === 'worn') && w === 'bag'); }, function (d, e) {   // (nothing is dropped into a take-only container)
         if (d.from === 'belt') send({ type: 'loadout', bar: 'belt', slot: d.slot, entry: '' });
@@ -1998,245 +2056,426 @@
           if (e.shiftKey && storage && !(w === 'bag' && storage.takeOnly)) { invMove(w, i, w === 'bag' ? 'box' : 'bag'); return; }
           if (w === 'bag') { invSel = invSel === i ? -1 : i; bag(); }
         };
-        if (w === 'bag') c.ondblclick = function () { var it = content.items[st.item]; if (it && (World.itemCan(it, 'consume') || it.slot)) useItem(st.item); };
+        if (w === 'bag') c.ondblclick = function () { var it = content.items[st.item]; if (it && (World.itemCan(it, 'consume') || (it.slot && it.slot !== 'weapon'))) useItem(st.item, { w: 'bag', s: i }); };
       }
       g.appendChild(c);
     })(lo + k);
     return g;
   }
-  // ---- the cooking window (a cooker is open): your bag, its recipes on a sheet of paper, and its cells — raw
-  // materials, fuel, what comes out — with the fire's switch. Nothing is decided here: Cook is the 'store' op 'load',
-  // the switch 'light' / 'douse', every drag an 'inv' action; what the fire is making and how far along it is comes
-  // with each answer (storage.cook: cells, rid, prog / need, fuel, recipes). A referee that sends no `cells` has the
-  // old three cells, and no recipe list.
-  var cookSt = { sel: '', enough: false, page: 0 }, handSt = { sel: '', enough: false, page: 0 }, COOK_COLS = 10, COOK_PER_PAGE = 35;
+  // ---- the inventory window's parts. One window, three shapes (bag): your own (who you are | what you carry | what
+  // you can make), a container's (what you carry | what it holds) and a cooker's (what you carry | the fire | its
+  // recipes). They are built from the UI kit (client/js/ui.js; the pieces and their sizes: art/ui/kit/PIECES.md), in
+  // art pixels (rem). Nothing is decided here: every button and every drop is an action the referee checks.
+  var cookSt = { sel: '', enough: false, cat: '' }, handSt = { sel: '', enough: false, cat: '' }, BAG_COLS = 8;
+  var bagFilter = 'all', listTop = {}, cookQty = {}, makingBar = null;
   function clock(ms) {
     var s = Math.max(0, Math.ceil(ms / 1000));
     function two(n) { return (n < 10 ? '0' : '') + n; }
-    return two(Math.floor(s / 3600)) + ':' + two(Math.floor(s / 60) % 60) + ':' + two(s % 60);
+    return (s >= 3600 ? two(Math.floor(s / 3600)) + ':' : '') + two(Math.floor(s / 60) % 60) + ':' + two(s % 60);
   }
-  /** The bag as the left column of the inventory and cooking windows. */
-  function bagColumn(el) {
-    var bagSize = World.bagSlots ? World.bagSlots(content) : INV_COLS * 4, used = (me.inventory || []).length;
-    var left = el('div', 'ck-col'), lbar = el('div', 'ck-bar');
-    left.appendChild(el('div', 'ck-tab', 'Inventory'));
-    lbar.appendChild(el('span', used > bagSize ? 'lack' : '', used + ' / ' + bagSize));
-    var sort = el('button', 'hbtn', 'Sort'); sort.title = 'Put the bag in order: the same things joined into full stacks, kinds together';
+  function bagSizeNow() { return World.bagSlots ? World.bagSlots(content) : INV_COLS * 4; }
+  // The backpack's filter only dims what it is not about: every stack stays in its cell, so dragging works as ever.
+  var BAG_FILTERS = [['all', 'pack', 'Everything'], ['tools', 'hammer', 'Tools and materials'], ['food', 'meat', 'Food, drink and medicine'], ['weapons', 'sword', 'Weapons, ammunition and what you wear']];
+  function bagMatch(it) {
+    if (bagFilter === 'all' || !it) return true;
+    var eat = World.itemCan(it, 'consume'), arm = !!it.slot || World.itemCan(it, 'shoot') || World.itemCan(it, 'throw') || it.type === 'ammo';
+    return bagFilter === 'food' ? eat : bagFilter === 'weapons' ? arm : !eat && !arm;
+  }
+  /** "+20 hunger, +5 attack": what an item gives, or nothing. */
+  function gains(it) { var t = describe(it); return t === (it.type || 'item') ? '' : t; }
+  /** The backpack: its title and count, the filter and Sort, the cells. */
+  function bagColumn() {
+    var size = bagSizeNow(), used = (me.inventory || []).length, col = qel('div', 'wcol'), bar = qel('div', 'wbar');
+    col.style.width = '172rem';
+    col.appendChild(UI.head('Backpack', used + '/' + size, used > size));
+    BAG_FILTERS.forEach(function (f) {
+      var b = qel('button', bagFilter === f[0] ? 'on' : ''); b.type = 'button'; b.title = f[2]; b.appendChild(UI.icon(f[1]));
+      b.onclick = function () { bagFilter = f[0]; bag(); };
+      bar.appendChild(b);
+    });
+    bar.appendChild(qel('span', 'sp'));
+    var sort = qel('button', '', 'Sort'); sort.title = 'Put the bag in order: the same things joined into full stacks, kinds together';
     sort.disabled = !used; sort.onclick = function () { invSel = -1; send({ type: 'inv', op: 'sort' }); };
-    lbar.appendChild(sort); left.appendChild(lbar);
-    left.appendChild(invGrid(me.inventory, 'bag', bagSize, COOK_COLS));
-    return left;
+    bar.appendChild(sort); col.appendChild(bar);
+    var tray = qel('div', 'k kinset tray'); tray.appendChild(invGrid(me.inventory, 'bag', size, BAG_COLS));
+    if (UI.FLAGS.lockedRow) {                                  // (off: a row to be unlocked by a better bag)
+      var lock = qel('div', 'igrid'); lock.style.marginTop = '1rem';
+      for (var i = 0; i < BAG_COLS; i++) lock.appendChild(qel('div', 'icell locked'));
+      tray.appendChild(lock);
+    }
+    col.appendChild(tray);
+    if (UI.FLAGS.load && me.maxLoad > 0) {                     // (off: what you carry weighs nothing yet)
+      var lr = qel('div', 'making'); lr.appendChild(qel('span', '', 'Load')); lr.appendChild(qel('span', '', me.load + '/' + me.maxLoad + ' kg'));
+      lr.appendChild(UI.bar('xp', { cls: 'tiny', value: me.load / me.maxLoad })); col.appendChild(lr);
+    }
+    return col;
   }
-  /** The sheet of paper in the middle of the inventory and cooking windows: the picked recipe (what it takes, what the
-   *  result gives, how long), its buttons, a filter, and every recipe as a cell. o = {recs: [{id, name, ins: [{item,
-   *  qty, have}], outs: [{item, qty}], can, secs, why}], st: {sel, enough, page} (the caller keeps it), cur (the one
-   *  shown when none was picked), enoughLabel, none (text with no recipes), action(wrap, sel) (puts the buttons in)}. */
-  function recipeSheet(el, o) {
-    var st = o.st, recs = o.recs, paper = el('div', 'ck-paper'), det = el('div', 'ck-det');
-    var shown = st.enough ? recs.filter(function (x) { return x.can; }) : recs;
-    var pages = Math.max(1, Math.ceil(shown.length / COOK_PER_PAGE)); st.page = Math.max(0, Math.min(st.page, pages - 1));
+  /** The stack picked in the backpack: what it is, and what can be done with it. */
+  function itemCard() {
+    var card = qel('div', 'k kplate icard'), sel = invSel >= 0 ? (me.inventory || []).filter(function (s) { return s.s === invSel; })[0] : null;
+    if (!sel) {
+      invSel = -1;
+      card.appendChild(qel('div', 'tb', storage && storage.takeOnly ? 'Drag what you want out of the ' + storage.name.toLowerCase() + ' into your backpack. Nothing can be put in it; emptied, it is gone.'
+        : storage ? 'Drag things between your backpack and the ' + storage.name.toLowerCase() + ', or onto a slot of the belt below.'
+        : 'Click something in your backpack to see what it is. Drag it onto a slot of the belt below to keep it at hand, or out of the window to drop it.'));
+      return card;
+    }
+    var it = content.items[sel.item] || { name: sel.item, type: '' }, equipped = !!wornKey(sel.item), eats = World.itemCan(it, 'consume');
+    var top = qel('div', 'top'), cell = qel('div', 'icell'), mid = qel('div'), btns = qel('div', 'btns');
+    cell.appendChild(icon({ kind: 'item', id: sel.item }));
+    mid.appendChild(qel('b', '', it.name)); mid.appendChild(qel('div', 'tb', it.description || gains(it) || ''));
+    top.appendChild(cell); top.appendChild(mid); top.appendChild(qel('span', 'n', 'x' + sel.qty));
+    card.appendChild(top);
+    var held = it.slot === 'weapon', inHand = held && heldId() === sel.item && World.stackInUse && World.stackInUse(me, sel.item) === sel;   // (held things are never worn: the belt says what is in hand)
+    var d = World.durOf ? World.durOf(content, sel) : null, max = World.stackMaxOf ? World.stackMaxOf(content, sel.item) : 99;
+    card.appendChild(qel('div', 'meta', [it.type || 'item', it.description ? gains(it) : '', inHand && !(d && d.left <= 0) ? 'in hand' : !held && equipped ? 'worn' : '',
+      d ? (d.left <= 0 ? 'broken' : 'durability ' + d.left + '/' + d.max) : max > 1 ? 'stacks to ' + max : ''].filter(Boolean).join(' / ')));
+    if (eats || (it.slot && !held)) {                           // food and the like: Use; clothes: Wear / Take off
+      var ub = qel('button', '', eats ? 'Use' : equipped ? 'Take off' : 'Wear');
+      ub.onclick = function () { useItem(sel.item, { w: 'bag', s: sel.s }); }; btns.appendChild(ub);
+    }
+    if (d) {                                                    // mend it to full: what it takes, and where
+      var ri = World.repairInfo(content, mapOf(), me, lookup(), sel), rb = qel('button', '', 'Repair');
+      rb.disabled = !ri.ok;
+      rb.title = 'Repair: back to ' + d.max + '/' + d.max + (ri.cost.length ? '\nTakes ' + ri.cost.map(function (g) { return g.qty + ' ' + itemName(g.item).toLowerCase() + ' (' + g.have + ')'; }).join(', ') : '') + (ri.ok ? '' : '\n' + ri.reason);
+      rb.onclick = function () { send({ type: 'inv', op: 'repair', s: sel.s }); }; btns.appendChild(rb);
+    }
+    var sv = World.salvageInfo ? World.salvageInfo(content, sel) : { ok: false };
+    if (sv.ok) {                                                // take it apart: some of what it was made of comes back
+      var sb = qel('button', '', 'Salvage');
+      sb.title = 'Salvage: take it apart (it is gone)\nGives ' + sv.gives.map(function (g) { return g.qty + ' ' + itemName(g.item).toLowerCase(); }).join(', ');
+      sb.onclick = function () { invSel = -1; send({ type: 'inv', op: 'salvage', s: sel.s }); }; btns.appendChild(sb);
+    }
+    if (storage && !storage.takeOnly) { var pb = qel('button', '', 'Store'); pb.onclick = function () { invMove('bag', sel.s, 'box'); }; btns.appendChild(pb); }
+    var db = qel('button', 'danger', 'Drop'); db.title = 'Drop: the whole stack, into a loot bag at your feet';
+    db.onclick = function () { invSel = -1; send({ type: 'inv', op: 'drop', s: sel.s, qty: sel.qty }); }; btns.appendChild(db);
+    card.appendChild(btns);
+    return card;
+  }
+  /** What a recipe that cannot be made is short of: "missing 3 plant fiber". */
+  function lackText(x) {
+    var g = x.ins.filter(function (q) { return q.have < q.qty; })[0];
+    return g ? 'missing ' + (g.qty - g.have) + ' ' + itemName(g.item).toLowerCase() : (x.why || 'cannot be made now');
+  }
+  /**
+   * Recipes, the same way in every window: a row of filters, the list (a row each: what it makes, "ready" or what is
+   * missing), the picked one on a page of the notebook (what it takes and how much of each you have), and its buttons.
+   * o = {key (to remember the list's scroll), recs: [{id, name, cat, ins: [{item, qty, have}], outs: [{item, qty}],
+   * can, secs, why}], st: {sel, enough, cat} (the caller keeps it), cur (the one shown when none was picked),
+   * enoughLabel, none (text with no recipes), action(wrap, sel) (puts the buttons in)}. Returns {bar, list, paper, act}.
+   */
+  function recipeBook(o) {
+    var st = o.st, recs = o.recs, cats = [];
+    recs.forEach(function (x) { if (x.cat && cats.indexOf(x.cat) < 0) cats.push(x.cat); });
+    if (st.cat && cats.indexOf(st.cat) < 0) st.cat = '';
+    var shown = recs.filter(function (x) { return (!st.enough || x.can) && (!st.cat || x.cat === st.cat); });
     function byId(id) { return id ? recs.filter(function (x) { return x.id === id; })[0] : null; }
     var sel = byId(st.sel) || byId(o.cur) || shown[0] || recs[0] || null;
-    if (!sel) det.appendChild(el('div', 'ck-none', o.none));
-    else {
-      var out = sel.outs[0] || { item: '', qty: 1 }, oit = content.items[out.item] || { name: sel.name };
-      var head = el('div', 'ck-name'); head.appendChild(itemPicEl(oit, 32)); head.appendChild(el('b', '', sel.name + ' (x' + out.qty + ')'));
-      det.appendChild(head);
-      var needs = el('div', 'ck-needs'), lst = el('div', 'ck-ins');
-      sel.ins.forEach(function (g) {
-        var it = content.items[g.item] || { name: g.item }, one = el('span', 'ck-in' + (g.have >= g.qty ? '' : ' lack'));
-        one.appendChild(itemPicEl(it, 20)); one.appendChild(el('span', '', 'x ' + g.qty));
-        one.title = it.name + ' — you have ' + g.have; lst.appendChild(one);
-      });
-      needs.appendChild(lst); needs.appendChild(el('span', 'ck-fx', describe(oit)));
-      det.appendChild(needs);
-      det.appendChild(el('div', 'ck-time', sel.secs > 0 ? sel.secs + ' seconds' : 'Instant'));
-      var act = el('div', 'ck-act'); o.action(act, sel); det.appendChild(act);
-      if (sel.why) det.appendChild(el('div', 'ck-why', sel.why));
-    }
-    paper.appendChild(det);
-    var filt = el('label', 'ck-filter'), cb = document.createElement('input');
-    cb.type = 'checkbox'; cb.checked = st.enough; cb.onchange = function () { st.enough = cb.checked; st.page = 0; bag(); };
-    filt.appendChild(el('span', '', 'Filter by:')); filt.appendChild(cb); filt.appendChild(el('span', '', o.enoughLabel));
-    paper.appendChild(filt);
-    var rgrid = el('div', 'ck-recs'), page = shown.slice(st.page * COOK_PER_PAGE, (st.page + 1) * COOK_PER_PAGE);
-    for (var i = 0; i < COOK_PER_PAGE; i++) (function (x) {
-      var c = el('div', 'ck-rc' + (x ? ' has' : '') + (x && sel && x.id === sel.id ? ' sel' : '') + (x && !x.can ? ' cant' : ''));
-      if (x) {
-        c.appendChild(icon({ kind: 'item', id: (x.outs[0] || {}).item }));
-        c.title = x.name + (x.can ? '' : ' — ' + (x.why || 'you do not have what it takes'));
-        c.onclick = function () { st.sel = x.id; bag(); };
-      }
-      rgrid.appendChild(c);
-    })(page[i]);
-    paper.appendChild(rgrid);
-    var pager = el('div', 'ck-pager'), prev = el('button', '', '◀'), next = el('button', '', '▶');
-    prev.title = 'Previous page'; next.title = 'Next page';
-    prev.disabled = st.page <= 0; next.disabled = st.page >= pages - 1;
-    prev.onclick = function () { st.page--; bag(); }; next.onclick = function () { st.page++; bag(); };
-    pager.appendChild(prev); if (pages > 1) pager.appendChild(el('span', '', (st.page + 1) + ' / ' + pages)); pager.appendChild(next);
-    paper.appendChild(pager);
-    return paper;
-  }
-  // ---- the inventory window with no container open: your bag | what you can make with your hands, on the sheet | what
-  // you wear, on a picture of the body. A worn slot is a cell over the body (BODY_CELLS: the middle of each, in the
-  // .ck-body box): drag something from the bag onto it ('use', with `slot` for the accessory places), drag it back or
-  // double-click it to take it off. What may go where is the item's `slot`; the referee has the last word.
-  var BODY_CELLS = [
-    { key: 'accessory1', x: 83, y: 29 }, { key: 'accessory2', x: 154, y: 29 }, { key: 'accessory3', x: 227, y: 29 }, { key: 'accessory4', x: 308, y: 29 },
-    { key: 'helm', x: 179, y: 94 }, { key: 'armor', x: 167, y: 191 }, { key: 'back', x: 294, y: 173 }, { key: 'gloves', x: 69, y: 310 },
-    { key: 'pants', x: 173, y: 296 }, { key: 'feet', x: 192, y: 477 }];
-  var SLOT_NAMES = { helm: 'Head', armor: 'Chest', pants: 'Pants', feet: 'Feet', gloves: 'Gloves', back: 'Back', accessory: 'Accessory' };
-  function invWindow(box, el) {
-    var cols = el('div', 'ck-cols');
-    cols.appendChild(bagColumn(el));
-    // made by hand
-    var job = me.craft, jr = job && content.recipes && content.recipes[job.id];
-    var recs = World.recipesFor(content, mapOf(), me, lookup()).filter(function (r) { return !r.station; }).map(function (r) {
-      return { id: r.id, name: r.name, ins: r.inputs, outs: r.outputs, can: r.can, secs: r.timeS, why: !r.can && r.reason && !/^Not enough/.test(r.reason) ? r.reason : '' };
+    var bar = qel('div', 'wbar');
+    if (cats.length > 1) [''].concat(cats.slice(0, 4)).forEach(function (c) {
+      var b = qel('button', st.cat === c ? 'on' : '', c || 'All'); b.type = 'button';
+      b.onclick = function () { st.cat = c; listTop[o.key] = 0; bag(); };
+      bar.appendChild(b);
     });
-    var mid = el('div', 'ck-col ck-mid');
-    mid.appendChild(el('div', 'ck-title', 'Recipes'));
-    mid.appendChild(recipeSheet(el, { recs: recs, st: handSt, cur: job && job.id, enoughLabel: 'Enough materials', none: 'You know nothing that can be made without a workbench.', action: function (wrap, sel) {
-      if (job) {                                               // one thing at a time: what is being made, and Stop
-        wrap.appendChild(el('span', 'ck-job', 'Making ' + ((jr && jr.name) || job.id) + (job.qty > 1 ? ' (' + (job.made + 1) + ' of ' + job.qty + ')' : '')));
-        var stop = el('button', 'ck-go', 'Stop'); stop.title = 'Stop and take back what was not used';
-        stop.onclick = function () { send({ type: 'craft', cancel: true }); };
-        wrap.appendChild(stop); return;
-      }
-      // how many: the arrows (or the wheel), from 1 up to what the materials in the bag allow
-      var most = !sel.can ? 0 : Math.min.apply(null, [World.CRAFT_MAX || 20].concat(sel.ins.map(function (g) { return g.qty > 0 ? Math.floor(g.have / g.qty) : Infinity; })));
-      var n = Math.max(1, Math.min(most || 1, craftQty[sel.id] || 1));
-      var step = el('div', 'ck-step'), up = el('button', '', '▲'), num = el('span', '', n), dn = el('button', '', '▼'), go = el('button', 'ck-go', 'Craft');
-      function setN(v) { n = Math.max(1, Math.min(most || 1, v)); num.textContent = n; dn.disabled = most < 1 || n <= 1; up.disabled = most < 1 || n >= most; }
-      up.title = 'One more'; dn.title = 'One less';
-      up.onclick = function () { setN(n + 1); }; dn.onclick = function () { setN(n - 1); };
-      wrap.onwheel = function (e) { if (most < 1) return; e.preventDefault(); setN(n + (e.deltaY < 0 ? 1 : -1)); };
-      go.disabled = most < 1; go.title = most < 1 ? (sel.why || 'You do not have what it takes') : '';
-      go.onclick = function () { craftQty[sel.id] = n; send({ type: 'craft', recipe: sel.id, qty: n }); };
-      step.appendChild(up); step.appendChild(num); step.appendChild(dn); setN(n);
-      wrap.appendChild(step); wrap.appendChild(go);
-    } }));
-    cols.appendChild(mid);
-    // what you wear
-    var right = el('div', 'ck-col'), rbar = el('div', 'ck-bar'), body = el('div', 'ck-body'), pic = document.createElement('img');
-    right.appendChild(el('div', 'ck-tab', 'Equipment'));
-    rbar.appendChild(el('span', '', (content.classes[me['class']] ? content.classes[me['class']].name + ' · ' : '') + 'Attack ' + me.atk + ' · Defence ' + me.def));
-    rbar.appendChild(el('span', '', me.gold + ' gold')); right.appendChild(rbar);
-    pic.src = '../art/ui/body_' + (me.body === 'female' ? 'female' : 'male') + '.png'; pic.alt = ''; pic.draggable = false;
-    pic.onerror = function () { pic.style.display = 'none'; };   // (no picture: the cells alone)
-    body.appendChild(pic);
-    BODY_CELLS.forEach(function (q) {
+    bar.appendChild(qel('span', 'sp'));
+    bar.appendChild(UI.check(o.enoughLabel, st.enough, function (v) { st.enough = v; listTop[o.key] = 0; bag(); }));
+    var list = qel('div', 'k kinset rlist');
+    if (!shown.length) list.appendChild(qel('div', 'rnone', recs.length ? 'Nothing here that you have the things for.' : o.none));
+    shown.forEach(function (x) {
+      var row = qel('div', 'rrow' + (sel && x.id === sel.id ? ' sel' : '') + (x.can ? '' : ' cant')), cell = qel('div', 'icell'), tx = qel('div');
+      var oit = content.items[(x.outs[0] || {}).item], gain = oit ? gains(oit) : '';
+      cell.appendChild(icon({ kind: 'item', id: (x.outs[0] || {}).item }));
+      tx.appendChild(qel('b', '', x.name)); tx.appendChild(qel('span', '', x.can ? 'ready' + (gain ? ', ' + gain : '') : lackText(x)));
+      row.appendChild(cell); row.appendChild(tx);
+      row.onclick = function () { st.sel = x.id; bag(); };
+      list.appendChild(row);
+    });
+    list.onscroll = function () { listTop[o.key] = list.scrollTop; };
+    setTimeout(function () { list.scrollTop = listTop[o.key] || 0; }, 0);    // (the list is rebuilt with the window: it stays where it was)
+    var paper = qel('div', 'kpaper'), act = qel('div', 'ract');
+    if (!sel) paper.appendChild(qel('div', 'tb', recs.length ? 'Pick a recipe from the list.' : ''));
+    else {
+      var out = sel.outs[0] || { item: '', qty: 1 }, it0 = content.items[out.item] || { name: sel.name };
+      var hd = qel('div', 'phd'), hc = qel('div', 'icell'), ht = qel('div'), sub = qel('div', 'sub');
+      hc.appendChild(icon({ kind: 'item', id: out.item }));
+      ht.appendChild(qel('b', '', sel.name + (out.qty > 1 ? ' x' + out.qty : '')));
+      sub.appendChild(qel('span', '', gains(it0) || it0.type || '')); sub.appendChild(qel('span', '', sel.secs > 0 ? sel.secs + ' sec' : 'instant'));
+      ht.appendChild(sub); hd.appendChild(hc); hd.appendChild(ht); paper.appendChild(hd);
+      paper.appendChild(qel('div', 'rule'));
+      paper.appendChild(qel('div', 'lbl', 'Needs'));
+      sel.ins.forEach(function (g) {
+        var it = content.items[g.item] || { name: g.item }, ok = g.have >= g.qty, row = qel('div', 'need' + (ok ? '' : ' lack'));
+        row.appendChild(itemPicEl(it, 16)); row.appendChild(qel('span', '', it.name)); row.appendChild(qel('span', 'cnt', g.have + '/' + g.qty));
+        row.appendChild(UI.icon(ok ? 'check' : 'x', ok ? UI.COLOR.paperGreen : UI.COLOR.paperRed));
+        paper.appendChild(row);
+      });
+      if (it0.description) paper.appendChild(qel('div', 'tb say', it0.description));
+      if (sel.why) paper.appendChild(qel('div', 'tb why', sel.why));
+      o.action(act, sel);
+    }
+    return { bar: bar, list: list, paper: paper, act: act };
+  }
+  /** What you are making by hand, under the recipe list: its name, how far along, Stop. */
+  // ---- countdowns. live(el, fn): fn runs four times a second while el is on the page (the windows are only redrawn
+  // when an answer changes them, which is not every second).
+  var liveList = [];
+  function live(el, fn) { liveList.push({ el: el, fn: fn }); }
+  setInterval(function () { liveList = liveList.filter(function (x) { if (!x.el.isConnected) return false; x.fn(); return true; }); }, 250);
+  /** A countdown that goes down one second a second: it follows its own clock and drifts towards the referee's figure
+   *  (leftMs) by at most 0.1 s per call (4 calls a second), so a small disagreement never makes it skip a number. A
+   *  big one (a new batch, a stop) is taken at once. */
+  var smoothEnds = {};
+  function smoothLeft(key, leftMs) {
+    var now = performance.now(), e = smoothEnds[key], want = now + leftMs;
+    if (e == null || Math.abs(want - e) > 3000) e = want;
+    else e += Math.max(-100, Math.min(100, want - e));
+    smoothEnds[key] = e;
+    return Math.max(0, e - now);
+  }
+  /** "8s", "1:05": time left, rounded up to the second. */
+  function leftText(ms) { var s = Math.max(0, Math.ceil(ms / 1000)); return s >= 60 ? Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + s % 60 : s + 's'; }
+  /** How long what you are making by hand has to go, every piece still to make included ("12s left"). */
+  function craftLeftText() {
+    var j = me && me.craft, f = craftFrac(); if (!j || !f) return '';
+    // (counted on across the end of a piece, not stopped there until the referee says the next one has begun)
+    var need = Number(j.need) || 0, work = (Number(j.ms) || 0) + (j.on && f.on ? Math.max(0, serverNow() - j.at) : 0);
+    return need ? leftText(smoothLeft('craft:' + j.id, ((Number(j.qty) || 1) - (Number(j.made) || 0)) * need - work)) + ' left' : '';
+  }
+  function makingStrip(job, jr) {
+    var f = craftFrac() || { p: 0, on: false }, box = qel('div', 'k kplate making'), t = qel('div');
+    box.style.padding = '3rem 4rem';
+    t.appendChild(qel('b', '', (jr && jr.name) || job.id)); if (job.qty > 1) t.appendChild(document.createTextNode(' ' + (job.made + 1) + '/' + job.qty));
+    box.appendChild(t);
+    var stop = qel('button', '', 'Stop'); stop.title = 'Stop and take back what was not used';
+    stop.onclick = function () { send({ type: 'craft', cancel: true }); };
+    box.appendChild(stop);
+    makingBar = UI.bar('stamina', { cls: 'tiny', value: f.p });
+    var left = qel('span', '', craftLeftText());
+    if (f.on) { var prow = qel('div', 'prow'); prow.appendChild(makingBar); prow.appendChild(left); box.appendChild(prow); live(left, function () { left.textContent = craftLeftText(); var g = craftFrac(); if (g) UI.setBar(makingBar, g.p); }); } else box.appendChild(qel('div', 'bad', 'Waiting: go back to the ' + World.stationName(content, jr && jr.station)));
+    return box;
+  }
+  // ---- your own window: who you are | what you carry | what you can make with your hands. A worn slot is a cell
+  // beside the figure (DOLL_SLOTS: where each sits in the tray, in art pixels): drag something from the backpack onto
+  // it ('use', with `slot` for the accessory places), drag it back or double-click it to take it off. What may go
+  // where is the item's `slot`; the referee has the last word.
+  var DOLL_SLOTS = [
+    { key: 'helm', x: 12, y: 8 }, { key: 'armor', x: 12, y: 38, ghost: 'shield' }, { key: 'pants', x: 12, y: 68 }, { key: 'feet', x: 12, y: 98 },
+    { key: 'back', x: 126, y: 8, ghost: 'pack' }, { key: 'gloves', x: 126, y: 38 }, { key: 'accessory1', x: 126, y: 68 }, { key: 'accessory2', x: 126, y: 98 },
+    { key: 'accessory3', x: 58, y: 126, lab: 'up' }, { key: 'accessory4', x: 80, y: 126, lab: 'none' }];
+  var SLOT_NAMES = { helm: 'Head', armor: 'Chest', pants: 'Pants', feet: 'Feet', gloves: 'Gloves', back: 'Back', accessory: 'Acc' };
+  /** You, as you look now (body, hair, what you wear), on a small canvas. */
+  function drawBust(cv) {
+    var g = cv.getContext('2d'); g.imageSmoothingEnabled = false; g.clearRect(0, 0, cv.width, cv.height);
+    (playerLayers(me) || []).forEach(function (l) {
+      if (l.slot === 'weapon') return;
+      var base = Assets.get(l.path); if (!base || !base.width) return;
+      var img = (l.mask && l.ramp) ? Tint.getTintedLayer(base, Assets.get(l.mask), l.ramp) : base;
+      if (l.skin) img = Tint.skinned(img, l.skin, !l.skinAll);
+      var h = Math.round(cv.width * base.height / base.width);
+      g.drawImage(img || base, 0, cv.height - h, cv.width, h);
+    });
+  }
+  function invWindow(box) {
+    var cols = qel('div', 'wcols');
+    // who you are
+    var who = qel('div', 'wcol'), doll = qel('div', 'k kinset doll'), bust = document.createElement('canvas');
+    who.style.width = '160rem';
+    who.appendChild(UI.head(me.name || 'Survivor', 'Lv ' + me.level));
+    bust.className = 'bust'; bust.width = 32; bust.height = 48; drawBust(bust); doll.appendChild(bust);
+    DOLL_SLOTS.forEach(function (q) {
       var kind = q.key.replace(/\d+$/, ''), label = SLOT_NAMES[kind] || kind, id = (me.equipment || {})[q.key];
       var c = invCell(id && content.items[id] ? id : '', 1, 'worn', q.key);
-      c.classList.remove('equipped'); c.classList.add('ck-slot'); c.style.left = q.x + 'px'; c.style.top = q.y + 'px';
-      if (!c.firstChild) { c.title = label + ': drag something you can wear here'; c.appendChild(el('span', 'ck-slotname', kind === 'accessory' ? 'Acc.' : label)); }
+      c.classList.remove('equipped'); c.classList.add('dslot'); c.style.left = q.x + 'rem'; c.style.top = q.y + 'rem';
+      if (!c.firstChild) { c.title = label + ': drag something you can wear here'; if (q.ghost) c.appendChild(UI.icon(q.ghost, UI.COLOR.ghost, 'ghost')); }
       else c.ondblclick = function () { useItem(id); };                    // take it off (it stays in the bag)
+      if (q.lab !== 'none') { var lb = qel('span', 'lab' + (q.lab === 'up' ? ' up' : ''), label); if (q.lab === 'up') lb.style.left = '1rem'; c.appendChild(lb); }
       invTarget(c, function (d) { var it = content.items[d.item]; return (d.from === 'bag' || d.from === 'worn') && !!it && it.slot === kind; },
         function (d) { if ((me.equipment || {})[q.key] !== d.item) send({ type: 'use', item: d.item, slot: q.key }); });
-      body.appendChild(c);
+      doll.appendChild(c);
     });
-    right.appendChild(body); cols.appendChild(right);
+    who.appendChild(doll);
+    var stats = qel('div', 'k kplate stats');
+    function stat(ic, label, val, cls) { var r = qel('div', 'stat'); r.appendChild(UI.icon(ic, UI.COLOR.grey)); r.appendChild(qel('span', '', label)); r.appendChild(qel('b', cls || '', val)); stats.appendChild(r); }
+    if (content.classes[me['class']] && Object.keys(content.classes).length > 1) stat('marker', 'Class', content.classes[me['class']].name);
+    stat('sword', 'Attack', me.atk); stat('shield', 'Defence', me.def); stat('coin', 'Gold', me.gold, 'gold');
+    who.appendChild(stats);
+    var food = me.hunger == null ? 100 : me.hunger, water = me.thirst == null ? 100 : me.thirst, mb = qel('div', 'mebars');
+    mb.appendChild(UI.bar('hp', { cls: 'hp', value: me.hp / me.maxHp }));
+    mb.appendChild(UI.bar('thirst', { cls: 'tiny', value: water / 100 })); mb.appendChild(UI.bar('hunger', { cls: 'tiny', value: food / 100 })); mb.appendChild(qel('span'));
+    mb.appendChild(qel('span', '', 'Water')); mb.appendChild(qel('span', '', 'Food')); mb.appendChild(qel('span', '', ''));
+    who.appendChild(mb);
+    who.appendChild(qel('div', 'tl dim', 'HP ' + Math.max(0, me.hp) + '/' + me.maxHp));
+    cols.appendChild(who);
+    // what you carry
+    var mine = bagColumn(); mine.appendChild(itemCard()); cols.appendChild(mine);
+    // what you can make with your hands
+    var job = me.craft, jr = job && content.recipes && content.recipes[job.id];
+    var all = World.recipesFor(content, mapOf(), me, lookup()), near = all.filter(function (r) { return r.station && r.here; });
+    var recs = all.filter(function (r) { return !r.station || r.here; }).map(function (r) {
+      return { id: r.id, name: r.name, cat: r.category || '', ins: r.inputs, outs: r.outputs, can: r.can, secs: r.timeS, why: !r.can && r.reason && !/^Not enough/.test(r.reason) ? r.reason : '' };
+    });
+    var book = recipeBook({ key: 'hand', recs: recs, st: handSt, cur: job && job.id, enoughLabel: 'Can craft', none: 'You know nothing that can be made without a workbench.', action: function (wrap, sel) {
+      if (job) { wrap.className = 'ract one'; wrap.appendChild(qel('div', 'wnote', 'One thing at a time: what you are making is under the list.')); return; }
+      // how many: - and + (or the wheel), from 1 up to what the materials in the bag allow
+      var most = !sel.can ? 0 : Math.min.apply(null, [World.CRAFT_MAX || 20].concat(sel.ins.map(function (g) { return g.qty > 0 ? Math.floor(g.have / g.qty) : Infinity; })));
+      var step = UI.stepper(Math.max(1, Math.min(most || 1, craftQty[sel.id] || 1)), most, null), go = qel('button', 'primary big', 'Craft');
+      go.insertBefore(UI.icon('hammer', UI.COLOR.ink), go.firstChild);
+      go.disabled = most < 1; go.title = most < 1 ? (sel.why || 'You do not have what it takes') : '';
+      go.onclick = function () { craftQty[sel.id] = step.get(); send({ type: 'craft', recipe: sel.id, qty: step.get() }); };
+      wrap.appendChild(step); wrap.appendChild(step.maxButton()); wrap.appendChild(go);   // - n + | Max | Craft / Cook
+    } });
+    var make = qel('div', 'wcol'), two = qel('div', 'wcols'), lcol = qel('div', 'wcol'), pcol = qel('div', 'wcol');
+    make.style.width = '308rem'; two.style.gap = '6rem'; lcol.style.width = '150rem'; pcol.style.width = '152rem';
+    make.appendChild(UI.head('Crafting', near.length ? World.stationName(content, near[0].station) : 'Hands only')); make.appendChild(book.bar);
+    book.list.style.height = job ? '122rem' : '146rem'; lcol.appendChild(book.list);
+    makingBar = null;
+    if (job) lcol.appendChild(makingStrip(job, jr));
+    if (UI.FLAGS.queue) { var qu = qel('div', 'queue'); qu.appendChild(qel('span', '', 'Queue')); var qg = qel('div', 'igrid'); for (var i = 0; i < 5; i++) qg.appendChild(qel('div', 'icell')); qu.appendChild(qg); lcol.appendChild(qu); }   // (off: one thing is made at a time)
+    book.paper.style.minHeight = '128rem'; pcol.appendChild(book.paper); pcol.appendChild(book.act);
+    two.appendChild(lcol); two.appendChild(pcol); make.appendChild(two); cols.appendChild(make);
     box.appendChild(cols);
+    box.appendChild(UI.hints([['Drag', 'move'], ['Shift', 'half'], ['Ctrl', 'one'], ['2x click', 'use / wear'], ['Drag to belt', 'keep at hand']]));
   }
-  function cookWindow(box, el) {
+  // ---- a container is open: what you carry | what it holds
+  /** R, or the Take all button: everything in the open container into the bag (a cooker: everything cooked). */
+  var tookAll = { key: '', at: 0, n: 0 };                          // (the container just emptied with Take all: its answer must not reopen it)
+  // A container (chest, carcass, loot bag) shuts at once: grab and go. A cooker stays open: you are working at it.
+  function takeAllOpen() {
+    if (!storage) return;
+    if (storage.cook) {
+      var ck = storage.cook, cells = ck.cells || [1, 1, 1], lo = cells[0] + cells[1], inv = Array.isArray(storage.inv) ? storage.inv : [];
+      inv.filter(function (st) { return st.s >= lo && st.s < lo + cells[2]; }).forEach(function (st) { invMove('box', st.s, 'bag'); });
+      return;
+    }
+    tookAll = { key: storage.key, at: performance.now(), n: 1 };   // n = the answers still to come (its answer must not reopen it)
+    send({ type: 'inv', op: 'takeall', key: storage.key });
+    closeStore();
+  }
+  function storeWindow(box) {
+    var inv = Array.isArray(storage.inv) ? storage.inv : Object.keys(storage.inv || {}).map(function (id, i) { return { item: id, qty: storage.inv[id], s: i }; });   // (an older referee sends {item: qty})
+    var cols = qel('div', 'wcols'), mine = bagColumn(), theirs = qel('div', 'wcol'), bar = qel('div', 'wbar'), tray = qel('div', 'k kinset tray');
+    mine.appendChild(itemCard()); cols.appendChild(mine);
+    theirs.style.minWidth = '172rem';
+    theirs.appendChild(UI.head(storage.name, storage.slots ? inv.length + '/' + storage.slots : ''));
+    bar.appendChild(qel('span', 'sp'));
+    var all = qel('button', '', 'Take all'); all.title = 'Everything in it, into your backpack'; all.disabled = !inv.length;
+    all.onclick = takeAllOpen; all.title += ' (R)';
+    bar.appendChild(all); theirs.appendChild(bar);
+    tray.appendChild(invGrid(inv, 'box', storage.slots || INV_COLS * 2, BAG_COLS)); theirs.appendChild(tray);
+    cols.appendChild(theirs); box.appendChild(cols);
+    box.appendChild(UI.hints(storage.takeOnly ? [['R', 'take all'], ['Drag', 'take'], ['Shift+click', 'take the stack'], ['Shift', 'half'], ['Ctrl', 'one']]
+      : [['R', 'take all'], ['Drag', 'move'], ['Shift+click', 'send across'], ['Shift', 'half'], ['Ctrl', 'one'], ['2x click', 'use / equip']]));
+  }
+  // ---- a cooker is open (a campfire, a furnace): what you carry | the fire: raw > fire > cooked, its fuel, its
+  // switch | its recipes. Cook is the 'store' op 'load', the switch 'light' / 'douse', every drag an 'inv' action;
+  // what the fire is making and how far along it is comes with each answer (storage.cook: cells, rid, prog / need,
+  // left, fuel, recipes). A referee that sends no `cells` has the old three cells, and no recipe list.
+  /** The picture of the thing whose window is open (lit, when it has a picture for that), or null. */
+  function stationPic(key, lit) {
+    var e = (mapOf().entities || []).filter(function (x) { return x.key === key; })[0], o = e && content.objects[e.ref];
+    var img = o && Assets.get((lit && o.spriteStates && o.spriteStates.burning) || o.sprite);
+    if (!img || !img.width) return null;
+    var fr = Number(o.frames) || 1, fw = fr > 1 && img.width % fr === 0 && img.width / fr >= 16 ? img.width / fr : img.width, cv = document.createElement('canvas');   // (a strip of frames: the first one)
+    cv.width = fw; cv.height = img.height; cv.getContext('2d').drawImage(img, 0, 0, fw, img.height, 0, 0, fw, img.height);
+    return cv;
+  }
+  function cookWindow(box) {
     var ck = storage.cook, cells = ck.cells || [1, 1, 1], inv = Array.isArray(storage.inv) ? storage.inv : [], key = storage.key;
-    var bagSize = World.bagSlots ? World.bagSlots(content) : INV_COLS * 4, used = (me.inventory || []).length;
+    var los = [0, cells[0], cells[0] + cells[1]];             // the first cell of each run: raw, fuel, cooked
     function have(id) {                                       // in the bag, and already in its raw cells
       var n = 0; (me.inventory || []).forEach(function (st) { if (st.item === id) n += st.qty; });
       inv.forEach(function (st) { if (st.item === id && st.s < cells[0]) n += st.qty; });
       return n;
     }
-    var cols = el('div', 'ck-cols');
-    cols.appendChild(bagColumn(el));
-    // its recipes, on the sheet
+    function run(z, across) { var tray = qel('div', 'tray'); tray.appendChild(invGrid(inv, 'box', cells[z], Math.min(cells[z], across), los[z])); return tray; }
+    var cols = qel('div', 'wcols');
+    // what you carry
+    var mine = bagColumn(), tip = qel('div', 'k kplate tipbox');
+    tip.appendChild(qel('b', '', 'Tip')); tip.appendChild(qel('div', '', 'Nothing cooks by itself: pick a recipe and press Cook. Shift+click sends a stack straight to the fire.'));
+    mine.appendChild(tip); cols.appendChild(mine);
+    // the fire
+    var cur = ck.rid && content.recipes && content.recipes[ck.rid], pct = ck.need ? Math.max(0, Math.min(1, ck.prog / ck.need)) : 0;
+    var mid = qel('div', 'wcol'), stn = qel('div', 'k kinset station'), flow = qel('div', 'flow'), fmid = qel('div', 'mid');
+    mid.style.width = '240rem';
+    mid.appendChild(UI.head(storage.name, ck.lit ? 'Burning' : 'Not lit'));
+    function side(label, z) { var s = qel('div', 'side'); s.appendChild(qel('span', '', label)); s.appendChild(run(z, 3)); return s; }
+    var a1 = qel('div', 'karrow'), a2 = qel('div', 'karrow'), f1 = qel('i'), f2 = qel('i'), fire = qel('div', 'fire' + (ck.lit ? '' : ' out'));
+    f1.style.clipPath = 'inset(0 ' + (cur && ck.lit ? 0 : 100) + '% 0 0)'; f2.style.clipPath = 'inset(0 ' + (100 - 100 * pct).toFixed(0) + '% 0 0)';
+    a1.appendChild(f1); a2.appendChild(f2);
+    fire.appendChild(stationPic(key, ck.lit) || UI.icon('flame', '#c1752d'));
+    fmid.appendChild(a1); fmid.appendChild(fire); fmid.appendChild(a2);
+    flow.appendChild(side('Raw', 0)); flow.appendChild(fmid); flow.appendChild(side('Cooked', 2));
+    stn.appendChild(flow);
+    var now = qel('div', 'now'), jb = qel('div', 'job'), rt = qel('div', 'r');
+    now.appendChild(qel('span', '', cur && ck.left > 1 ? (ck.left - 1) + ' more to go' : ''));
+    if (cur) {
+      var jname = qel('b', ''), jbar = UI.bar('fuel', { cls: 'tiny', value: pct });
+      jb.appendChild(jname); jb.appendChild(jbar);
+      var cookTick = function () {                           // counted on from the referee's last answer, so it goes down a second a second
+        var gone = ck.lit ? performance.now() - (storage._at || performance.now()) : 0, prog = Math.min(ck.need || 0, (ck.prog || 0) + gone);
+        jname.textContent = cur.name + (ck.lit && ck.need ? '  ' + leftText(smoothLeft('cook:' + storage.key + ':' + ck.rid, ck.need - prog)) : '');
+        if (ck.need) { UI.setBar(jbar, prog / ck.need); f2.style.clipPath = 'inset(0 ' + (100 - 100 * prog / ck.need).toFixed(0) + '% 0 0)'; }
+      };
+      cookTick(); live(jname, cookTick);
+      jb.title = cur.name + (ck.lit ? ': ' + Math.round(pct * 100) + '%' : ': the fire is not lit');
+    } else jb.appendChild(qel('span', '', 'Nothing is cooking'));
+    now.appendChild(jb);
+    var done = inv.filter(function (st) { return st.s >= los[2] && st.s < los[2] + cells[2]; });
+    var take = qel('button', 'bare', 'Take all'); take.title = 'Everything cooked, into your backpack'; take.disabled = !done.length;
+    take.onclick = takeAllOpen; take.title += ' (R)';
+    rt.appendChild(take);
+    if (cur) { var stopB = qel('button', 'bare', 'Cancel'); stopB.title = 'Stop cooking this (what is in the cells stays there)'; stopB.onclick = function () { send({ type: 'store', key: key, op: 'cancel' }); }; rt.appendChild(stopB); }
+    now.appendChild(rt); stn.appendChild(now); mid.appendChild(stn);
+    // its fuel, and the switch
+    var fuel = qel('div', 'k kplate fuel'), ft = qel('div', 'ft'), fb = qel('b'), fr = qel('div', 'fr'), ms = ck.fuel != null ? ck.fuel : ck.burn;
+    fb.appendChild(UI.icon('flame', '#c1752d')); fb.appendChild(document.createTextNode('Fuel')); ft.appendChild(fb);
+    fuel.appendChild(ft);
+    var burn = qel('span', '');
+    var burnTick = function () { var left = ms - (ck.lit ? performance.now() - (storage._at || performance.now()) : 0); if (ck.lit) left = smoothLeft('fuel:' + storage.key, left); burn.textContent = left > 0 ? 'Burns for ' + clock(left) : ms > 0 ? 'Burns for 00:00' : 'No fuel'; };
+    burnTick(); if (ck.lit) live(burn, burnTick);
+    fr.appendChild(run(1, 4)); fr.appendChild(burn);
+    var sw = qel('div', 'sw' + (ck.lit ? ' on' : '')), tg = qel('button', 'bare ktoggle' + (ck.lit ? ' on' : ''));
+    tg.title = ck.lit ? 'Put the fire out' : 'Light the fire (it needs fuel)';
+    tg.onclick = function () { send({ type: 'store', key: key, op: ck.lit ? 'douse' : 'light' }); };
+    sw.appendChild(tg); sw.appendChild(qel('span', '', ck.lit ? 'Lit' : 'Out')); fr.appendChild(sw);
+    fuel.appendChild(fr); mid.appendChild(fuel);
+    if (UI.FLAGS.queue) { var qu = qel('div', 'k kplate fuel queue'); qu.appendChild(qel('span', '', 'Queue')); var qg = qel('div', 'igrid'); for (var i = 0; i < 5; i++) qg.appendChild(qel('div', 'icell')); qu.appendChild(qg); mid.appendChild(qu); }   // (off: the fire has one job at a time)
+    cols.appendChild(mid);
+    // its recipes
     var recs = (ck.recipes || []).map(function (id) { return content.recipes && content.recipes[id]; }).filter(Boolean).map(function (r) {
       var ins = World.list(r.inputs).map(function (g) { return { item: g.item, qty: g.qty, have: have(g.item) }; });
-      return { id: r.id, name: r.name, ins: ins, outs: World.list(r.outputs), can: ins.every(function (g) { return g.have >= g.qty; }), secs: r.timeS || World.COOK_S || 5 };
+      return { id: r.id, name: r.name, cat: r.category || '', ins: ins, outs: World.list(r.outputs), can: ins.every(function (g) { return g.have >= g.qty; }), secs: r.timeS || World.COOK_S || 5 };
     });
-    var mid = el('div', 'ck-col ck-mid');
-    mid.appendChild(el('div', 'ck-title', 'Recipes'));
-    mid.appendChild(recipeSheet(el, { recs: recs, st: cookSt, cur: ck.rid, enoughLabel: 'Enough ingredients', none: 'Nothing you know can be made here yet.', action: function (wrap, sel) {
-      var go = el('button', 'ck-go', 'Cook'); go.disabled = !sel.can;
-      go.title = sel.can ? 'Cook one (hold Shift: as many as you have the things for). What it takes goes from your bag into the raw materials; with fuel in it, the fire is lit.' : 'You do not have what it takes';
-      go.onclick = function (e) { send({ type: 'store', key: key, op: 'load', recipe: sel.id, qty: e.shiftKey ? 99 : 1 }); };
-      wrap.appendChild(go);
-    } }));
-    cols.appendChild(mid);
-    // the cooker itself
-    var right = el('div', 'ck-col'), rbar = el('div', 'ck-bar'), sw = el('button', 'ck-sw' + (ck.lit ? ' on' : ''));
-    right.appendChild(el('div', 'ck-tab', storage.name));
-    rbar.appendChild(el('span', '', ck.lit ? 'Burning' : 'Not lit'));
-    sw.appendChild(el('span', '', ck.lit ? 'ON' : 'OFF')); sw.title = ck.lit ? 'Put the fire out' : 'Light the fire (it needs fuel)';
-    sw.onclick = function () { send({ type: 'store', key: key, op: ck.lit ? 'douse' : 'light' }); };
-    rbar.appendChild(sw); right.appendChild(rbar);
-    var lo = 0;
-    function zone(label, z) { right.appendChild(el('h4', '', label)); right.appendChild(invGrid(inv, 'box', cells[z], COOK_COLS, lo)); lo += cells[z]; }
-    zone('Raw materials', 0); zone('Fuel', 1);
-    right.appendChild(el('div', 'ck-fuel', 'Fuel left: ' + clock(ck.fuel != null ? ck.fuel : ck.burn)));
-    var nowRow = el('div', 'ck-now'), cur = ck.rid && content.recipes && content.recipes[ck.rid], ncell = el('div', 'icell');
-    var pct = ck.need ? Math.max(0, Math.min(100, Math.round(100 * ck.prog / ck.need))) : 0;
-    if (cur) {
-      ncell.appendChild(icon({ kind: 'item', id: (World.list(cur.outputs)[0] || {}).item }));
-      if (ck.left > 1) ncell.appendChild(el('span', 'qty', '×' + ck.left));
-      ncell.title = cur.name + (ck.left > 1 ? ' — ' + ck.left + ' to go' : '') + (ck.lit ? ' — ' + pct + '%' : ' — the fire is not lit');
-    } else ncell.title = 'Nothing is being cooked: pick a recipe and press Cook';
-    var arrow = el('div', 'ck-arrow'), fill = el('div', 'ck-arrow-fill'); fill.style.height = pct + '%'; arrow.appendChild(fill);
-    var stopB = el('button', 'hbtn ck-stop', 'Cancel'); stopB.title = 'Stop cooking this (what is in the cells stays there)';
-    stopB.onclick = function () { send({ type: 'store', key: key, op: 'cancel' }); };
-    if (!cur) stopB.style.visibility = 'hidden';
-    nowRow.appendChild(ncell); nowRow.appendChild(arrow); nowRow.appendChild(stopB); right.appendChild(nowRow);
-    zone('Cooked materials', 2);
+    var book = recipeBook({ key: 'cook', recs: recs, st: cookSt, cur: ck.rid, enoughLabel: 'Can cook', none: 'Nothing you know can be made here yet.', action: function (wrap, sel) {
+      var most = !sel.can ? 0 : Math.min.apply(null, [99].concat(sel.ins.map(function (g) { return g.qty > 0 ? Math.floor(g.have / g.qty) : Infinity; })));
+      var step = UI.stepper(Math.max(1, Math.min(most || 1, cookQty[sel.id] || 1)), most, function (v) { cookQty[sel.id] = v; }), go = qel('button', 'primary big', 'Cook');
+      go.insertBefore(UI.icon('flame', UI.COLOR.ink), go.firstChild);
+      go.disabled = !sel.can;
+      go.title = sel.can ? 'Cook: as many as the number says (hold Shift: as many as you have the things for). What it takes goes from your backpack into the raw cells; with fuel in it, the fire is lit.' : 'You do not have what it takes';
+      go.onclick = function (e) { send({ type: 'store', key: key, op: 'load', recipe: sel.id, qty: e.shiftKey ? 99 : step.get() }); };
+      wrap.appendChild(step); wrap.appendChild(step.maxButton()); wrap.appendChild(go);   // - n + | Max | Craft / Cook
+    } });
+    var right = qel('div', 'wcol'); right.style.width = '228rem';
+    right.appendChild(UI.head('Recipes')); right.appendChild(book.bar);
+    book.list.style.height = '74rem'; right.appendChild(book.list);
+    book.paper.style.minHeight = '74rem'; right.appendChild(book.paper); right.appendChild(book.act);
     cols.appendChild(right);
     box.appendChild(cols);
-    box.appendChild(el('div', 'empty', 'Nothing cooks by itself: pick a recipe and press Cook. Drag things between your bag and the cells, or Shift+click a stack to send it across (Shift while dropping moves half, Ctrl one).'));
+    box.appendChild(UI.hints([['R', 'take all cooked'], ['Drag', 'move'], ['Shift+click', 'send across'], ['Shift', 'half'], ['Ctrl', 'one']]));
   }
   function bag() {
     if (invDrag || invPress) { invDirty = true; return; }    // never redraw under a drag (or a press about to become one): the thing held would vanish
     // …nor when nothing it shows has changed: answers arrive several times a second
-    var sig = JSON.stringify([me.inventory, me.belt, me.held, me.equipment, me.atk, me.def, me.gold, me.abilities, me.skills, storage && [storage.key, storage.inv, storage.slots, storage.cook, storage.takeOnly], cookSt, handSt, craftQty, invSel, me.craft && [me.craft.id, me.craft.qty, me.craft.made]]);
+    var sig = JSON.stringify([me.inventory, me.belt, me.held, me.equipment, me.atk, me.def, me.gold, me.abilities, me.skills, storage && [storage.key, storage.inv, storage.slots, storage.cook, storage.takeOnly], cookSt, handSt, craftQty, invSel, bagFilter,
+      me.craft && [me.craft.id, me.craft.qty, me.craft.made, !!(craftFrac() || {}).on], me.level, me.hp, me.maxHp, Math.round(me.hunger == null ? 100 : me.hunger), Math.round(me.thirst == null ? 100 : me.thirst), me.hair, me.hairColor]);
     var box = $('bag-items');
     if (sig === invSig && box.firstChild) return;
     invSig = sig; box.innerHTML = '';
-    function el(tag, cls, text) { var d = document.createElement(tag); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
-    var bagSize = World.bagSlots ? World.bagSlots(content) : INV_COLS * 4, used = (me.inventory || []).length;
+    var el = qel;
     $('bag-title').textContent = storage ? storage.name : 'Inventory';
-    var cooking = !!(storage && storage.cook);
-    $('bag').classList.toggle('cookwin', cooking || !storage);
-    if (cooking) { cookWindow(box, el); return; }
-    $('bag-stats').textContent = (content.classes[me['class']] ? content.classes[me['class']].name + ' · ' : '') +
-      'Attack ' + me.atk + ' · Defence ' + me.def + ' · ' + me.gold + ' gold';
-    var cols = el('div', 'inv-cols');
-    // your bag
-    var mine = el('div', 'inv-col'), mh = el('h4', '', 'Bag (' + used + '/' + bagSize + ')');
-    if (used > bagSize) mh.className = 'lack';
-    function headBtn(h4, text, title, fn) { var hb = el('button', 'hbtn', text); hb.title = title; hb.onclick = fn; h4.appendChild(hb); return hb; }
-    headBtn(mh, 'Sort', 'Put the bag in order: the same things joined into full stacks, kinds together', function () { invSel = -1; send({ type: 'inv', op: 'sort' }); }).disabled = !used;
-    mine.appendChild(mh); mine.appendChild(invGrid(me.inventory, 'bag', bagSize));
-    mine.appendChild(el('div', 'empty', 'Drag something out of the window to drop it.'));
-    cols.appendChild(mine);
-    // the open container
-    if (storage) {
-      var inv = Array.isArray(storage.inv) ? storage.inv : Object.keys(storage.inv || {}).map(function (id, i) { return { item: id, qty: storage.inv[id], s: i }; });   // (an older referee sends {item: qty})
-      var theirs = el('div', 'inv-col');
-      theirs.appendChild(el('h4', '', storage.name + (storage.slots ? ' (' + inv.length + '/' + storage.slots + ')' : '')));
-      headBtn(theirs.firstChild, 'Take all', 'Everything in it, into your bag', function () { send({ type: 'inv', op: 'takeall', key: storage.key }); }).disabled = !inv.length;
-      theirs.appendChild(invGrid(inv, 'box', storage.slots || INV_COLS * 2));
-      cols.appendChild(theirs);
-    }
-    if (storage) box.appendChild(cols); else invWindow(box, el);
-    // what is picked in the bag: what it is, and what can be done with it
-    var info = el('div', 'inv-info'), sel = invSel >= 0 ? (me.inventory || []).filter(function (s) { return s.s === invSel; })[0] : null;
-    if (!sel) { invSel = -1; info.appendChild(el('span', 'empty', (storage && storage.takeOnly ? 'Drag what you want out of the ' + storage.name.toLowerCase() + ' into your bag. Nothing can be put in it; emptied, it is gone.' : storage ? 'Drag things between your bag and the ' + storage.name.toLowerCase() + ', onto another cell, or onto a slot of the belt at the bottom of the screen.' : 'Drag a stack to another cell, or onto a slot of the belt at the bottom of the screen to carry it there.') + ' Hold Shift while dropping to move half, Ctrl for one.' + (storage ? ' Shift+click sends a stack across.' : ' Double-click uses or equips.'))); }
-    else {
-      var it = content.items[sel.item] || { name: sel.item, type: '' }, equipped = !!wornKey(sel.item);
-      var nm = el('div', 'name'); nm.appendChild(el('b', '', it.name + (sel.qty > 1 ? ' ×' + sel.qty : ''))); nm.appendChild(el('span', '', describe(it) + (equipped ? ' · equipped' : '') + (World.stackMaxOf ? ' · stacks to ' + World.stackMaxOf(content, sel.item) : '')));
-      info.appendChild(nm);
-      var eats = World.itemCan(it, 'consume');
-      if (eats || it.slot) { var ub = el('button', '', eats ? 'Use' : (equipped ? 'Unequip' : 'Equip')); ub.onclick = function () { useItem(sel.item); }; info.appendChild(ub); }
-      if (storage && !storage.takeOnly) { var pb = el('button', '', 'Store'); pb.onclick = function () { invMove('bag', sel.s, 'box'); }; info.appendChild(pb); }
-    }
-    box.appendChild(info);
+    if (storage && storage.cook) cookWindow(box);
+    else if (storage) storeWindow(box);
+    else invWindow(box);
     // abilities (only with Config skills on): which two sit on Q and E
     if (skillsOn()) {
       box.appendChild(el('h4', '', 'Abilities (Q / E)'));
@@ -2268,7 +2507,6 @@
     return bits.join(', ');
   }
   $('bag-close').onclick = toggleBag;
-  $('craft-close').onclick = toggleCraft;
   $('npc-close').onclick = function () { if (introOpen) closeIntro(); else if (claimQuest) closeClaimQuest(); else closeNpc(); };
   $('quest-close').onclick = toggleQuests;
   $('btn-quests').onclick = toggleQuests;
@@ -2350,7 +2588,7 @@
     var myFacing = aiming ? (Math.cos(aimAngle) < 0 ? 'W' : 'E') : me.facing;
     var actors = [{ x: shown.x, y: shown.y, facing: myFacing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, aim: aiming ? aimAngle : null, swing: (performance.now() - swingT0) / SWING_MS, statusColor: myst ? myst.color : '' }];
     var seen = {}, marks = [], tMark = performance.now(), TM = content.config.tile_size || 32;
-    reloadMark(marks, TM); craftMark(marks, TM); questMarks(marks, TM);
+    reloadMark(marks, TM); craftMark(marks, TM); questMarks(marks, TM); promptMark(marks); minimap();
     view.monsters.forEach(function (m) {
       var d = content.monsters[m.ref] || { name: m.ref, sprite: '' }, s = shownOthers[m.id] || (shownOthers[m.id] = { x: m.x, y: m.y });
       ease(s, m, dt / 250); seen[m.id] = 1;
@@ -2562,7 +2800,8 @@
     var T = c.config.tile_size || 32;
     canvas.width = (c.config.view_w || 15) * T;
     canvas.height = (c.config.view_h || 11) * T;
-    $('frame').style.setProperty('--ar', (canvas.width / canvas.height).toFixed(4));   // the view fills the window, keeping its shape (index.html)
+    $('frame').style.setProperty('--ar', (canvas.width / canvas.height).toFixed(4));
+    UI.setAspect(canvas.width / canvas.height);            // …and the UI its whole-number scale for that room (client/js/ui.js)   // the view fills the window, keeping its shape (index.html)
     renderer = new Render.Renderer(canvas, c);
     return api.resume();
   }).then(function (res) {
@@ -2577,7 +2816,7 @@
     return res;
   }).then(apply).then(function () {
     setupDebug();
-    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use what you face · ' + (skillsOn() ? 'Q/E abilities · ' : '') + 'mouse wheel or 1-9, 0 choose what you hold from the belt (click to use food and the like) · I bag · C craft · B build.', 'info');
+    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use what you face · ' + (skillsOn() ? 'Q/E abilities · ' : '') + 'mouse wheel or 1-9, 0 choose what you hold from the belt (click to use food and the like) · I or C inventory and crafting · B build.', 'info');
     if (api.staleDraft) log('Your map editor draft was made from older game data, so the game is using the latest data instead. Open the editor to update or discard the draft.', 'death');
     requestAnimationFrame(frame);
   }).catch(function (e) {

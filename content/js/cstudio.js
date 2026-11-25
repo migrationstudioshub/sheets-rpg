@@ -506,7 +506,7 @@ var CStudio = (function () {
     range: 'shoot', ammo: 'shoot', ammo_cost: 'shoot', fire_ms: 'shoot', clip: 'shoot', reload_ms: 'shoot', fire_mode: 'shoot', aim: 'shoot',
     heal: 'consume', mp: 'consume', hunger: 'consume', thirst: 'consume', toxicity: 'consume', leaves: 'consume', on_use: 'consume', cooldown_s: 'consume',
     throw_range: 'throw', throw_area: 'throw', throw_power: 'throw', throw_status: 'throw', throw_status_ms: 'throw', burns: 'throw',
-    penetration: 'ammo', falloff: 'ammo', tool: 'tool', structure_dmg: 'tool'
+    penetration: 'ammo', falloff: 'ammo', recover: 'ammo', tool: 'tool', structure_dmg: 'tool', durability: 'tool', material_wear: 'tool', repair_cost: 'tool', repair_station: 'tool', salvage: 'tool'
   };
   function typePropDefs(ty) {
     var v = ty ? ty.properties : null;
@@ -688,12 +688,12 @@ var CStudio = (function () {
   // A list of "item + amount" rows (blueprint cost, recipe inputs/outputs). Stored as the same text the rules
   // read ("wood:4, nails:2"), so nothing else changes; a row with no item picked yet is simply not saved.
   // A multiplier per material: a material dropdown + a number, one row each ("wood:3, stone:0.5").
-  var MATERIALS = ['wood', 'metal', 'stone', 'glass'];
+  var MATERIALS = ['wood', 'metal', 'stone', 'glass', 'flesh'];
   function materialsField(r, fl) {
     var list = String(r[fl.key] == null ? '' : r[fl.key]).split(/[,;]/).map(function (part) {
       var bits = part.trim().split(':'), v = Number(bits[1]);
       return bits[0] ? { m: bits[0].trim(), v: v >= 0 ? v : 1 } : null;
-    }).filter(Boolean), box = h('div', {});
+    }).filter(Boolean), box = h('div', {}), wearing = fl.key === 'material_wear';   // (wear per hit, not a damage multiplier)
     function save() { r[fl.key] = list.filter(function (g) { return g.m; }).map(function (g) { return g.m + ':' + g.v; }).join(', '); persist(); }
     function draw() {
       box.innerHTML = '';
@@ -702,12 +702,12 @@ var CStudio = (function () {
           h('select', { style: 'flex:1;min-width:0', onchange: function (e) { g.m = e.target.value; save(); } },
             h('option', { value: '', text: '— pick a material —' }),
             MATERIALS.concat(g.m && MATERIALS.indexOf(g.m) < 0 ? [g.m] : []).map(function (m) { return h('option', { value: m, text: m, selected: m === g.m }); })),
-          h('span', { text: '×' }),
-          h('input', { type: 'number', min: 0, step: 0.5, value: g.v, style: 'width:80px', title: 'Damage multiplier',
+          h('span', { text: wearing ? '−' : '×' }),
+          h('input', { type: 'number', min: 0, step: wearing ? 1 : 0.5, value: g.v, style: 'width:80px', title: wearing ? 'Durability lost per hit' : 'Damage multiplier',
             oninput: function (e) { var v = Number(e.target.value); g.v = v >= 0 ? v : 1; save(); } }),
           h('button', { text: '✕', title: 'Remove', onclick: function () { list.splice(i, 1); save(); draw(); } })));
       });
-      box.appendChild(h('button', { text: '+ Add material', onclick: function () { list.push({ m: '', v: 2 }); draw(); } }));
+      box.appendChild(h('button', { text: '+ Add material', onclick: function () { list.push({ m: '', v: wearing ? 1 : 2 }); draw(); } }));
     }
     draw();
     return h('div', { className: 'field', title: fl.help || '' }, h('label', { text: fl.key }), box,

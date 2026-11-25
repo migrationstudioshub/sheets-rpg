@@ -1413,7 +1413,7 @@ test('crafting by hand: needs the materials, uses them up, gives the result', ()
   assert.match(texts(act(s, { type: 'craft', recipe: 'r_hammer' })), /Not enough wood, scrap metal/);
   World.give(s.c, s.p, 'wood', 3, []); World.give(s.c, s.p, 'scrap', 5, []);
   assert.strictEqual(recipe(s, 'r_hammer').can, true);
-  assert.match(texts(act(s, { type: 'craft', recipe: 'r_hammer' })), /You make 1 hammer/);
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_hammer' })), /[+]1 Hammer/i);
   assert.deepStrictEqual([World.count(s.p, 'hammer'), World.count(s.p, 'wood'), World.count(s.p, 'scrap')], [1, 2, 3]);
   assert.match(texts(act(s, { type: 'craft', recipe: 'no_such_recipe' })), /don't know how/);
 });
@@ -1426,7 +1426,7 @@ test('a station recipe needs the station nearby and the tool in the bag', () => 
   assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails' })), /Needs a hammer/);
   assert.strictEqual(recipe(s, 'r_nails').here, true);
   World.give(s.c, s.p, 'hammer', 1, []);
-  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails', qty: 3 })), /You make 12 nails/);
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails', qty: 3 })), /[+]12 Nails/i);
   assert.deepStrictEqual([World.count(s.p, 'nails'), World.count(s.p, 'scrap'), World.count(s.p, 'hammer')], [12, 7, 1], 'the tool is not used up');
   assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails', qty: 20 })), /Not enough scrap metal/, 'all or nothing');
   assert.strictEqual(World.count(s.p, 'scrap'), 7);
@@ -1440,7 +1440,7 @@ test('a craft object with no station id is a station by its own id', () => {
   assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails' })), /Needs a workbench nearby/, 'named after the object');
   put(s, 'camp', 4, 5, 'E');
   assert.strictEqual(recipe(s, 'r_nails').here, true);
-  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails' })), /You make 4 nails/);
+  assert.match(texts(act(s, { type: 'craft', recipe: 'r_nails' })), /[+]4 Nails/i);
 });
 
 test('crafting takes time: work counts only at the station, waits while you are away, and can be stopped', () => {
@@ -1454,14 +1454,14 @@ test('crafting takes time: work counts only at the station, waits while you are 
   assert.match(texts(act(s, { type: 'craft', recipe: 'r_hammer' }, 1500)), /already making something/);
   tick(4000);
   assert.strictEqual(World.count(s.p, 'nails'), 0, 'not yet');
-  assert.match(tick(5100), /You make 4 nails/);
+  assert.match(tick(5100), /[+]4 Nails/i);
   assert.deepStrictEqual([s.p.craft.made, World.publicPlayer(s.c, s.p).craft.need], [1, 4000]);
   put(s, 'camp', 1, 1, 'N'); tick(6000); tick(30000);                 // away from the bench: nothing happens, however long
   assert.strictEqual(World.count(s.p, 'nails'), 4);
   assert.strictEqual(s.p.craft.on, false);
   put(s, 'camp', 4, 5, 'E'); tick(31000); tick(34000);
   assert.strictEqual(World.count(s.p, 'nails'), 4, 'the time away did not count');
-  assert.match(tick(35000), /You make 4 nails/);
+  assert.match(tick(35000), /[+]4 Nails/i);
   assert.ok(!s.p.craft, 'done');
   // stopping gives back what was not used
   act(s, { type: 'craft', recipe: 'r_nails', qty: 3 }, 40000);
@@ -4169,6 +4169,160 @@ test('growth: grass grows items on the base and on the overlay, thinly, and catc
   assert.ok(d.some(b => b.y >= 1 && b.y < 10) && d.some(b => b.y >= 20), 'on the base grass and on the overlay grass');
   assert.ok(d.every(b => (b.y >= 1 && b.y < 10) || b.y >= 20), 'only where grass is the ground you see');
   d.forEach(a => assert.ok(d.filter(b => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) <= 5).length <= 6, 'thin: ' + a.x + ',' + a.y));
+});
+
+test('what a used item leaves goes where the used one was: its belt slot, a stack of it, its cell, else a free cell', () => {
+  function setup(inv) {
+    const s = fresh();
+    s.c.items.water = Object.assign({}, s.c.items.potion, { id: 'water', name: 'Water', heal: 0, mp: 0, hunger: 0, thirst: 30, onUse: '', cooldownMs: 0, leaves: 'bottle', stackMax: 20 });
+    s.c.items.bottle = { id: 'bottle', name: 'Bottle', type: 'material', stackMax: 20 };
+    s.p.thirst = 0; s.p.inventory = inv.map(a => ({ item: a[0], qty: a[1], s: a[2] }));
+    return s;
+  }
+  const at = (s, id) => s.p.inventory.filter(x => x.item === id).map(x => x.s + ':' + x.qty).join(',');
+  // from the belt, the last one: the empty bottle takes its belt slot (and, in the bag, the cell the water emptied)
+  let s = setup([['water', 1, 3]]); s.p.belt = Array(10).fill(''); s.p.belt[2] = 'water'; s.p.held = 2;
+  act(s, { type: 'use', item: 'water', from: { w: 'belt', s: 2 } });
+  assert.strictEqual(s.p.belt[2], 'bottle', 'the belt slot holds the bottle now');
+  assert.strictEqual(at(s, 'bottle'), '3:1', 'in the cell the water left');
+  // from the belt with water left: the slot keeps the water, the bottle goes to the bag
+  s = setup([['water', 2, 3]]); s.p.belt = Array(10).fill(''); s.p.belt[2] = 'water';
+  act(s, { type: 'use', item: 'water', from: { w: 'belt', s: 2 } });
+  assert.strictEqual(s.p.belt[2], 'water');
+  assert.strictEqual(at(s, 'bottle'), '0:1', 'a free cell (cell 3 still holds water)');
+  // from the bag: 1. onto a stack of bottles
+  s = setup([['water', 1, 5], ['bottle', 2, 7]]);
+  act(s, { type: 'use', item: 'water', from: { w: 'bag', s: 5 } });
+  assert.strictEqual(at(s, 'bottle'), '7:3');
+  // 2. into the cell the water emptied (the one it was used from, not another stack of water)
+  s = setup([['water', 1, 5], ['water', 4, 9]]);
+  act(s, { type: 'use', item: 'water', from: { w: 'bag', s: 5 } });
+  assert.strictEqual(at(s, 'water'), '9:4', 'taken from the cell it was used from');
+  assert.strictEqual(at(s, 'bottle'), '5:1');
+  // 3. that cell still holds water: a free cell
+  s = setup([['water', 3, 5]]);
+  act(s, { type: 'use', item: 'water', from: { w: 'bag', s: 5 } });
+  assert.strictEqual(at(s, 'water'), '5:2'); assert.strictEqual(at(s, 'bottle'), '0:1');
+});
+
+test('ammo with a recover chance: a shot that ends in a monster stays in it (carcass or loot bag), a miss lies where it stopped', () => {
+  function archer(recover) {
+    const s = hero('survivor');
+    s.c.items.arrow = { id: 'arrow', name: 'Arrow', type: 'ammo', stackMax: 99, penetration: 1, falloff: 0, recover: recover };
+    s.c.items.bow = Object.assign({}, s.c.items.pistol, { id: 'bow', name: 'Bow', ammo: 'arrow', ammoCost: 1, clip: 0 });
+    s.p.inventory = [{ item: 'bow', qty: 1, s: 0 }, { item: 'arrow', qty: 10, s: 1 }];
+    s.p.equipment = { weapon: 'bow' }; s.p.belt = Array(10).fill(''); s.p.belt[0] = 'bow'; s.p.held = 0;
+    s.p.x = 9; s.p.y = 13; s.p.facing = 'E';
+    return s;
+  }
+  const bagsAt = (s, x, y) => World.structOf(s.ws, 'map_3').ents.filter(b => b.x === x && b.y === y && Array.isArray(b.inv));
+  const dropsAt = (s, x, y) => World.structOf(s.ws, 'map_3').ents.filter(b => b.x === x && b.y === y && b.ref === '_drop');
+  // always recovered (100 %): the arrow is in the skeleton, and in the loot bag where it dies (no carcass)
+  let s = archer(1), m = monster(s, 'skeleton', 12, 13);
+  m.hp = 1;
+  act(s, { type: 'shoot', x: 12, y: 13 }, 1000);
+  assert.ok(m.dead, 'the shot killed it');
+  assert.strictEqual(World.count(s.p, 'arrow'), 9, 'one arrow spent');
+  assert.deepStrictEqual(bagsAt(s, 12, 13).map(b => b.inv.map(g => g.item + ':' + g.qty).join()), ['arrow:1'], 'a loot bag holds it');
+  // it stays in a monster that lives on, and comes out with the next arrow when it dies
+  s = archer(1); m = monster(s, 'skeleton', 12, 13); m.hp = 1000;
+  act(s, { type: 'shoot', x: 12, y: 13 }, 1000); act(s, { type: 'shoot', x: 12, y: 13 }, 5000);
+  assert.deepStrictEqual(m.stuck, [{ item: 'arrow', qty: 2 }]);
+  // a monster with a carcass keeps them in its body
+  s = archer(1); m = monster(s, 'deer', 12, 13); m.hp = 1;
+  act(s, { type: 'shoot', x: 12, y: 13 }, 1000);
+  const body = World.structOf(s.ws, 'map_3').ents.filter(b => b.ref === s.c.monsters.deer.carcass)[0];
+  assert.ok(body && body.inv.some(g => g.item === 'arrow' && g.qty === 1), 'in the carcass');
+  // a miss: it lies on the ground where the shot ended, and the next one joins it
+  s = archer(1);
+  act(s, { type: 'shoot', x: 12, y: 13 }, 1000); act(s, { type: 'shoot', x: 12, y: 13 }, 5000);
+  const all = World.structOf(s.ws, 'map_3').ents.filter(b => b.ref === '_drop' && /^arrow:/.test(b.data.pickup));
+  assert.strictEqual(all.length, 1, 'one pile'); assert.strictEqual(all[0].data.pickup, 'arrow:2');
+  // 0 %: never
+  s = archer(0); m = monster(s, 'skeleton', 12, 13); m.hp = 1;
+  act(s, { type: 'shoot', x: 12, y: 13 }, 1000);
+  assert.strictEqual(bagsAt(s, 12, 13).length, 0); assert.strictEqual(m.stuck, undefined);
+  assert.strictEqual(dropsAt(s, 12, 13).length + dropsAt(s, 11, 13).length, 0);
+});
+
+test('weapons, tools and gear never stack; a weapon wears out with use and breaks, and keeps its wear when moved', () => {
+  const s = hero('warrior');
+  s.c.items.club = { id: 'club', name: 'Club', type: 'weapon', slot: 'weapon', stackMax: 99, atk: 1, durability: 3, can: { equip: true } };
+  assert.strictEqual(World.stackMaxOf(s.c, 'club'), 1, 'a weapon never stacks, whatever its stack_max');
+  assert.strictEqual(World.stackMaxOf(s.c, 'potion'), s.c.items.potion.stackMax || 99, 'a potion still does');
+  s.p.inventory = [{ item: 'club', qty: 1, s: 4 }, { item: 'club', qty: 1, s: 7 }];
+  s.p.belt = Array(10).fill(''); s.p.belt[0] = 'club'; s.p.held = 0; s.p.equipment = { weapon: 'club' };
+  const m = monster(s, 'skeleton', s.p.x + 1, s.p.y); m.hp = 1000;
+  const inUse = () => s.p.inventory.filter(x => x.s === 4)[0];
+  assert.deepStrictEqual(World.durOf(s.c, inUse()), { left: 3, max: 3 }, 'a new one is whole');
+  act(s, { type: 'attack', x: m.x, y: m.y }, 1000);
+  assert.strictEqual(inUse().dur, 2, 'one blow, one use (the first one in the bag)');
+  // moved to another cell, sorted, it keeps its wear
+  act(s, { type: 'inv', from: { w: 'bag', s: 4 }, to: { w: 'bag', s: 0 } }, 1100);
+  act(s, { type: 'inv', op: 'sort' }, 1200);
+  assert.deepStrictEqual(s.p.inventory.map(x => x.dur).sort(), [2, undefined], 'still worn after a move and a sort');
+  // used up: it breaks, the other one is still there
+  const worn = s.p.inventory.filter(x => x.dur === 2)[0];
+  act(s, { type: 'inv', from: { w: 'bag', s: worn.s }, to: { w: 'bag', s: 0 } }, 1300);
+  s.p.inventory.filter(x => x.dur === undefined)[0].s = 5;
+  let t = 5000, ev = [];
+  for (let i = 0; i < 2; i++, t += 5000) ev = ev.concat(act(s, { type: 'attack', x: m.x, y: m.y }, t));
+  assert.match(texts(ev), /Your club is broken\./);
+  assert.strictEqual(World.count(s.p, 'club'), 2, 'a broken one is not destroyed');
+  const broken = s.p.inventory.filter(x => x.dur === 0)[0];
+  assert.ok(broken && World.isBroken(s.c, broken));
+  assert.strictEqual(s.p.belt[0], 'club', 'still on the belt');
+  assert.strictEqual(World.stackInUse(s.p, 'club').dur, undefined, 'the whole one is the one in use now');
+  // with only the broken one left, nothing is in hand
+  s.p.inventory = s.p.inventory.filter(x => x === broken); World.holdSlot(s.c, s.p, 0);
+  assert.strictEqual(World.heldItem(s.c, s.p), null); assert.strictEqual(s.p.equipment.weapon, undefined, 'a broken weapon is not a weapon');
+  // repair: half its recipe (rounded up) by default, or its own repair_cost; then it is whole and in hand again
+  s.c.recipes = { r_club: { id: 'r_club', name: 'Club', inputs: 'potion:3', outputs: 'club:1', station: '' } };
+  World.give(s.c, s.p, 'potion', 5, [], true);
+  assert.deepStrictEqual(World.repairInfo(s.c, s.c.maps.map_3, s.p, { stateOf: () => '' }, broken).cost.map(g => g.item + ':' + g.qty), ['potion:2']);
+  assert.match(texts(act(s, { type: 'inv', op: 'repair', s: broken.s }, 30000)), /You repair the club/);
+  assert.strictEqual(broken.dur, undefined); assert.strictEqual(World.count(s.p, 'potion'), 3);
+  assert.strictEqual(s.p.equipment.weapon, 'club', 'in hand again');
+  assert.match(texts(act(s, { type: 'inv', op: 'repair', s: broken.s }, 31000)), /It is not worn/);
+  // a recipe that needs a station: only next to it
+  s.c.recipes.r_club.station = 'anvil'; broken.dur = 1;
+  assert.match(texts(act(s, { type: 'inv', op: 'repair', s: broken.s }, 32000)), /nearby/);
+  // salvage: half its recipe (rounded down), or its own salvage list; the item is gone
+  s.c.items.club.salvage = '';
+  act(s, { type: 'inv', op: 'salvage', s: broken.s }, 33000);
+  assert.strictEqual(World.count(s.p, 'club'), 0); assert.strictEqual(World.count(s.p, 'potion'), 4, 'one potion back (3 / 2, down)');
+  s.c.items.club.salvage = 'potion:2'; World.give(s.c, s.p, 'club', 1, [], true);
+  act(s, { type: 'inv', op: 'salvage', s: s.p.inventory.filter(x => x.item === 'club')[0].s }, 34000);
+  assert.strictEqual(World.count(s.p, 'potion'), 6, 'its own salvage list');
+  // no recipe makes it: its own repair_cost (a repair kit) mends it, anywhere or at its repair_station; with neither, it cannot be
+  s.c.recipes = {}; s.c.items.club.salvage = '';
+  World.give(s.c, s.p, 'club', 1, [], true);
+  const gun = s.p.inventory.filter(x => x.item === 'club')[0]; gun.dur = 1;
+  s.c.items.club.repairCost = '';
+  assert.match(texts(act(s, { type: 'inv', op: 'repair', s: gun.s }, 40000)), /Nothing you know can mend it/);
+  s.c.items.club.repairCost = 'potion:4';
+  assert.match(texts(act(s, { type: 'inv', op: 'repair', s: gun.s }, 41000)), /You repair the club/);
+  assert.strictEqual(World.count(s.p, 'potion'), 2, 'the kit is used up');
+  gun.dur = 1; s.c.items.club.repairStation = 'anvil';
+  assert.match(texts(act(s, { type: 'inv', op: 'repair', s: gun.s }, 42000)), /nearby/, 'its own repair_station');
+});
+
+test('wear depends on what is hit: the item\'s material_wear (wood 1, stone 2, metal 3; a creature is flesh; not listed = 1)', () => {
+  const s = camp();
+  s.c.objects.t_tree.properties.hp = 1000;
+  World.give(s.c, s.p, 'axe', 1, []);
+  s.p.belt[0] = 'axe'; World.holdSlot(s.c, s.p, 0);
+  const axe = s.c.items.axe; axe.durability = 50; axe.wearVs = { stone: 2, metal: 3 };
+  const left = () => World.durOf(s.c, World.stackInUse(s.p, 'axe')).left;
+  act(s, { type: 'attack', x: 1, y: 0 }, 1000);
+  assert.strictEqual(left(), 49, 'the pine is wood: not listed, 1');
+  s.c.objects.t_tree.properties.material = 'stone'; s.c.objects.t_tree.material = 'stone';
+  act(s, { type: 'attack', x: 1, y: 0 }, 5000);
+  assert.strictEqual(left(), 47, 'stone: 2');
+  axe.wearVs = { wood: 0, stone: 2 }; s.c.objects.t_tree.properties.material = 'wood'; s.c.objects.t_tree.material = 'wood';
+  act(s, { type: 'attack', x: 1, y: 0 }, 9000);
+  assert.strictEqual(left(), 47, 'wood: 0 = no wear');
+  assert.deepStrictEqual(Content.build(Object.assign({}, tables, { Items: tables.Items.map(i => i.id === 'axe' ? Object.assign({}, i, { material_wear: 'stone:2, metal:3' }) : i) })).items.axe.wearVs, { stone: 2, metal: 3 });
 });
 
 console.log(`\n${passed} world tests passed`);

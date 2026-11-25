@@ -111,7 +111,7 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   Settings resolve as kind default → object `properties` (JSON) → placement `data` (JSON in MapEntities).
 - Object `kind`s: deco, container, door, switch, trap (step|timed), rest, sign, npc, spawn (places monsters), teleport, trigger, craft.
 - **Data-driven actions** (`on_interact`, `on_use`, `on_cast`, trigger `do`): `give:item:n; take:item:n; gold:n; heal:n; damage:n; flag:x; unflag:x; teleport:map:x:y; set_state:key:state; xp:n; message:text`; conditions (`if`): `flag:x, !flag:x, has:item:n, level:n`.
-- **Building:** the `Blueprints` tab (a wall style or an object, cost, work, tool). `World.canBuild` decides a spot (ghost and referee); built things live in the map's `struct` layer with keys `<map>.b<n>`; maps carry a `nobuild` grid (map editor, No-build tab). In game: B build, C craft. A N-S wall may carry a draw-only offset (`style:height:l|r`, the editor's cursor-side mode): `build` takes `off`, and `{type:'shift', target, off}` moves a built one; collision stays on the grid line. Holding the button keeps a wall stroke on its line (editor and game).
+- **Building:** the `Blueprints` tab (a wall style or an object, cost, work, tool). `World.canBuild` decides a spot (ghost and referee); built things live in the map's `struct` layer with keys `<map>.b<n>`; maps carry a `nobuild` grid (map editor, No-build tab). In game: B build; C (or I) opens the inventory window, whose Crafting column is all crafting: hand recipes plus those of a station you stand next to (there is no separate crafting window; using a workbench opens the inventory too). A N-S wall may carry a draw-only offset (`style:height:l|r`, the editor's cursor-side mode): `build` takes `off`, and `{type:'shift', target, off}` moves a built one; collision stays on the grid line. Holding the button keeps a wall stroke on its line (editor and game).
 - **Claims:** a built object of kind `claim` (`properties.claim_radius`) makes the land around it its builder's base; `World.mayUse` / `claimAt` (on a live map) gate building, built doors/crates/stations and damage for non-members. Members are added by name from the flag's panel. Config: `claim_max_per_player`, `claim_max_members`, `claim_open_land`, `pvp_structures` (on = raids).
 - **Crafting:** the `Recipes` tab (inputs → outputs, optional `station` and `tool`); a station is a kind-`craft` object with `properties.station`; items carry `tool` tags. `World.recipesFor` decides what can be made (panel and referee). Objects with `properties.harvest` yield items when broken and grow back.
 - **Cookers** (campfire, furnace): a kind-`craft` object with `properties.cooks` makes its station's recipes over time, with fuel
@@ -120,13 +120,13 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   (batches of one recipe, set by the Cook button — never what merely lies in the raw cells); `cookPick` says whether the job can go on
   (every input in the raw cells, room for every output); `cookTick` counts the time. Actions: `inv` moves (a cell picks
   the run), `store` ops `light` / `douse` / `load` (`recipe`, `qty`: sets or adds to the job, moves what is missing from the bag into
-  the raw cells, lights it if there is fuel) / `cancel`. Page: `cookWindow` in `main.js` (bag | recipes on a sheet of paper drawn in CSS, `.ck-paper` | the cells), drawn from `storage.cook`.
+  the raw cells, lights it if there is fuel) / `cancel`. Page: `cookWindow` in `main.js` (backpack | the fire: raw > fire > cooked, fuel, the switch | its recipes), drawn from `storage.cook`. The campfire in `data/game/` has 6 raw, 4 fuel, 6 cooked cells.
 - **What is worn:** an item's `slot` = `weapon` (in hand), `helm` (head), `armor` (chest), `pants`, `feet`, `gloves`, `back`
   (`World.WORN_SLOTS`), or `accessory` — four at once, in `p.equipment.accessory1…4`. `World.wornAt` / `slotFor` are the only
   two that know the accessory places; `use` takes `slot` (which place; a worn accessory dropped on another place moves).
-  Page: with no container open the inventory is `invWindow` in `main.js` — bag | hand recipes on the sheet (`recipeSheet`,
-  shared with the cooking window) | the worn slots as cells over a body picture (`BODY_CELLS`; `art/ui/body_male.png` /
-  `body_female.png`, picked by `me.body`; without the files the cells show alone).
+  Page: with no container open the inventory is `invWindow` in `main.js` — who you are (the worn slots as cells beside
+  your own figure, `DOLL_SLOTS`) | the backpack and the picked item's card | hand recipes (`recipeBook`: a list of rows
+  and the picked one on a notebook page; shared with the cooking window).
 - **Item types:** the `ItemTypes` tab (Content Studio → Item Types) gives each type ticks (`equip` + default `slot`, `shoot`,
   `consume` + `cooldown_s`, `throw`; `ammo`/`tool` only pick which item fields the form shows) and its own `properties`.
   `Content.build` turns them into `item.can`, `item.cooldownMs`, `item.props`; rules ask **`World.itemCan(it, what)`**, never
@@ -250,6 +250,25 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   Page rules: a quest window (`#npcp`: new quest / tutorial, quest complete, an NPC) first shuts every other view
   (`closeViews`), and while it shows the bag, craft, build and quest-log keys open nothing (`questPop`).
   Not built, and not decided: a bonus reward for optional goals; the boss lockout (fight again at once, or once a day / week).
+- **Durability, and what never stacks** (Nov 2026): Items `durability` (uses; 0 = never wears out) on weapons and tools. Each
+  stack carries what it has left as `dur` (missing = whole); `World.wear` takes one per blow at a monster (`attack`), per blow that
+  does damage to a wall or object (`strike`, harvesting included) and per shot (`shoot`); at 0 it breaks and is gone. How much a
+  hit costs depends on the material hit: Items `material_wear` (`stone:2, metal:3` → `item.wearVs`; not listed = 1, 0 = free;
+  a monster is `flesh`; a shot always 1).
+  **Broken** (dur 0) is not destroyed: it stays, but counts as nothing in hand (`usable`; `holdSlot`, `heldItem`, `hasTool` skip it).
+  **Repair** (inv op `repair`, `World.repairInfo`): back to full for Items `repair_cost` (empty = half its recipe, rounded up; no recipe
+  and no repair_cost = cannot), at Items `repair_station` (empty = its recipe's station, or anywhere). **Salvage** (op `salvage`,
+  `World.salvageInfo`): the item is gone, Items `salvage` comes back (empty = half its recipe, rounded down). Page: the bag's item
+  card shows Repair / Salvage / Drop for held things (never Equip/Unequip: the belt says what is in hand); worn gear keeps Wear / Take off. The one in
+  use is `World.stackInUse` (the first of that item in the bag); `World.durOf` = {left, max}. **Never stack** (`stackMaxOf` = 1,
+  whatever stack_max says): weapons, worn gear, anything with a durability; a tool with none (a lockpick) still stacks. A stack
+  that is moved keeps its `dur` (`addStacks` takes it along as `keep`; sort, drop, take all, loot bags). Page: `durMark` = the 2 px
+  line along the bottom of a bag cell / belt slot and the "Durability x/max" hover line.
+- **Ammo that can be had back** (Nov 2026): Items `recover` (0-100 %, an ammo field in the Studio) = the chance, rolled per round
+  spent, that a shot gives it back. `World` `shoot`: a shot that ends in a monster leaves it stuck there (`stickIn`, `m.stuck`), and
+  `hitMonster` puts what is stuck into its carcass, or a loot bag where it fell (`leaveBag`) when it leaves none; a shot that hits
+  nothing leaves it lying where it stopped (`layOnGround`: a `_drop` pickup on the last cell of the shot it can lie on, joined to
+  the same item already there). Not for shots onto another floor (`shootAcross`) or thrown items yet.
 - **Who took part in a kill** (Nov 2026): a monster keeps `m.hits = {playerId: when}`; on death everyone who hit it within
   Config `kill_credit_s` (30) gets `World` `killShare`: the kill for their quests, **full XP**, their own gold and their own roll
   of the loot table. The last hitter gets it at once; the others' shares wait in the map record (`ms.credits`) and are given by
@@ -287,6 +306,19 @@ only describe the *starting* data. **Never tell the owner to re-import GameData.
 wipe them. For a new tab or column: make the code tolerate its absence (sensible defaults), and give the owner the
 rows/columns to add by hand (or add a small server function that adds them). Keep `data/tables.json` in step
 for offline mode by updating `build_gamedata.py` too.
+
+## The game page's look: the UI kit (25 Nov 2026) — read `docs/UI_KIT.md` before touching the HUD or a window
+The owner drew a UI kit (`art/ui/kit/`: `plain/` and `nb/` = Nano Banana, same piece names; `PIECES.md` says what each piece is
+for and how it is cut) and the page is built from it. `client/js/ui.js` (`UI`) knows which set each piece comes from (`SET`: one
+line moves a piece), the scale, and the parts (bars, chips, icons, key caps, toasts, the tooltip); `client/css/ui.css` holds every
+size. **1rem = 1 art pixel** (`--u` = a whole number of screen pixels, set from the view's room): never write `px` there, never
+name a picture file there (`var(--k-<piece>)`). Fonts: Silkscreen (labels, caps) and Jersey 10 (body), in `art/ui/fonts/`.
+What the owner chose: the mix (Nano Banana for `panel_metal`, `header_plate`, `panel_paper`, all `button_*`, tiled; everything
+else plain); **only what the game has data for is shown** — the rest is built and hidden behind `UI.FLAGS` (minimap, clock,
+nightfall, noise, stamina, temperature, condition, load, lockedRow, queue; `?ui=all` shows them), never a placeholder value;
+drag / Shift / Ctrl / double-click in the inventory stay exactly as they were; windows with no mock (quests, NPC, build bar,
+storage, claim, new character, help) use the same pieces with their old layouts. The data the mocks still wait for is the
+**backburner** list in `docs/UI_KIT.md`: add to it, do not add the data unasked.
 
 ## Rules of the code
 - Shared code is **classic scripts**, not modules: `var X = (function () { ... })(); if (typeof module !== 'undefined') module.exports = X;`

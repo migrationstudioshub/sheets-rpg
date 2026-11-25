@@ -1,0 +1,26 @@
+{
+"id": "map_7_z2",
+"name": "0002_test",
+"width": 51,
+"height": 51,
+"terrain": {"e":1,"w":51,"h":51,"p":["","g_asphalt"],"r":[[0,1293],[1,4],[0,47],[1,4],[0,47],[1,4],[0,47],[1,4],[0,1151]]},
+"overlay": null,
+"vWalls": null,
+"hWalls": null,
+"roof": null,
+"nobuild": null,
+"elev": null,
+"falls": null,
+"roof_color": "",
+"spawn": null,
+"shapes": null,
+"overlayShapes": null,
+"floor_of": "map_7",
+"z": 2,
+"entities": [
+  {"key":"map_7_z2.e1","x":18,"y":25,"ref":"barrel2","data":""},
+  {"key":"map_7_z2.e2","x":21,"y":25,"ref":"barrel2","data":""},
+  {"key":"map_7_z2.e3","x":18,"y":28,"ref":"barrel2","data":""},
+  {"key":"map_7_z2.e4","x":21,"y":28,"ref":"barrel2","data":""}
+]
+}

@@ -34,7 +34,27 @@ let lanChild = null;                    // host/server.js
 // live site is unaffected. 'home' means the view is detached, revealing the shell's Home panel underneath.
 let toolView = null;
 let activeTool = 'home';
-let navHeight = 150;                    // px reserved for the shell's top nav; the shell reports the real value
+let navCss = 150;                       // the shell's top nav height in CSS px, as the shell reports it
+
+// UI zoom (View menu, Ctrl+= / Ctrl+- / Ctrl+0): one factor for the shell and every tool, remembered in
+// settings.json. Lower = smaller UI and more room for the map. The nav's real height is navCss × zoom.
+const ZOOM_STEPS = [0.5, 0.6, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5];
+let zoom = 1;
+function navHeight() { return Math.round(navCss * zoom); }
+function applyZoom() {
+  if (win && !win.isDestroyed()) win.webContents.setZoomFactor(zoom);
+  if (toolView) toolView.webContents.setZoomFactor(zoom);
+  layoutToolView();
+}
+function setZoom(z) {
+  zoom = Math.min(ZOOM_STEPS[ZOOM_STEPS.length - 1], Math.max(ZOOM_STEPS[0], Math.round(z * 100) / 100));
+  saveSettings(Object.assign(loadSettings(), { zoom: zoom }));
+  applyZoom();
+}
+function stepZoom(dir) {
+  const next = dir > 0 ? ZOOM_STEPS.find((s) => s > zoom + 0.001) : ZOOM_STEPS.slice().reverse().find((s) => s < zoom - 0.001);
+  if (next) setZoom(next);
+}
 
 const state = {
   projectRoot: null,
@@ -90,6 +110,7 @@ async function pickProjectDialog() {
 async function ensureProject() {
   const s = loadSettings();
   if (typeof s.port === 'number') state.port = s.port;
+  if (typeof s.zoom === 'number' && s.zoom > 0) zoom = s.zoom;
   if (isProject(s.projectRoot)) { state.projectRoot = s.projectRoot; return true; }
 
   const dev = !app.isPackaged && devRepoRoot();
@@ -164,6 +185,8 @@ function ensureToolView() {
   // silently blocks switching tabs. The editor autosaves its unsaved work locally and restores it when it
   // reloads, so let the page go.
   toolView.webContents.on('will-prevent-unload', (e) => e.preventDefault());
+  // Keep the chosen zoom on every page the tool view loads.
+  toolView.webContents.on('did-finish-load', () => { if (toolView) toolView.webContents.setZoomFactor(zoom); });
   toolView.webContents.setWindowOpenHandler(({ url }) => {
     // A Play-test (map editor / Content Studio) opens the offline game with window.open. It has already
     // written the offline draft first, so instead of spawning a separate window, load it straight into
@@ -178,7 +201,7 @@ function ensureToolView() {
 function layoutToolView() {
   if (!win || win.isDestroyed() || !toolView || activeTool === 'home') return;
   const b = win.getContentBounds();
-  const y = Math.min(navHeight, b.height);
+  const y = Math.min(navHeight(), b.height);
   toolView.setBounds({ x: 0, y: y, width: b.width, height: Math.max(0, b.height - y) });
 }
 function showTool(tool, overrideUrl) {
@@ -265,6 +288,19 @@ function buildMenu() {
       ],
     },
     {
+      label: 'View',
+      submenu: [
+        { label: 'Zoom in (bigger UI)', accelerator: 'CmdOrCtrl+=', click: () => stepZoom(1) },
+        { label: 'Zoom in', accelerator: 'CmdOrCtrl+Plus', visible: false, acceleratorWorksWhenHidden: true, click: () => stepZoom(1) },
+        { label: 'Zoom in', accelerator: 'CmdOrCtrl+numadd', visible: false, acceleratorWorksWhenHidden: true, click: () => stepZoom(1) },
+        { label: 'Zoom out (smaller UI)', accelerator: 'CmdOrCtrl+-', click: () => stepZoom(-1) },
+        { label: 'Zoom out', accelerator: 'CmdOrCtrl+numsub', visible: false, acceleratorWorksWhenHidden: true, click: () => stepZoom(-1) },
+        { label: 'Actual size (100%)', accelerator: 'CmdOrCtrl+0', click: () => setZoom(1) },
+        { type: 'separator' },
+        ...[0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25].map((z) => ({ label: Math.round(z * 100) + '%', click: () => setZoom(z) })),
+      ],
+    },
+    {
       label: 'LAN',
       submenu: [
         { label: 'Start LAN host', click: () => startLan() },
@@ -296,7 +332,11 @@ function createWindow() {
   });
   win.loadURL(urlFor('home'));
   // Re-tell the shell which tab is active whenever it (re)loads, so a manual Reload keeps the highlight right.
-  win.webContents.on('did-finish-load', () => { if (win && !win.isDestroyed()) win.webContents.send('nav:active', activeTool); });
+  win.webContents.on('did-finish-load', () => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.setZoomFactor(zoom);
+    win.webContents.send('nav:active', activeTool);
+  });
   win.on('closed', () => { win = null; toolView = null; activeTool = 'home'; });
   win.on('resize', layoutToolView);
   win.on('maximize', layoutToolView);
@@ -314,7 +354,8 @@ ipcMain.handle('lan:start', () => startLan());
 ipcMain.handle('lan:stop', () => stopLan());
 ipcMain.handle('navigate', (_e, tool) => { navTo(tool); return true; });
 // The shell reports how tall its top nav is, so the tool view sits exactly beneath it.
-ipcMain.on('nav:height', (_e, px) => { navHeight = Math.max(0, Math.round(Number(px) || 0)) || navHeight; layoutToolView(); });
+// It measures in CSS px, so main multiplies by the zoom (navHeight()).
+ipcMain.on('nav:height', (_e, px) => { navCss = Math.max(0, Math.round(Number(px) || 0)) || navCss; layoutToolView(); });
 ipcMain.handle('project:choose', () => changeProject());
 ipcMain.handle('project:reveal', () => shell.openPath(state.projectRoot));
 ipcMain.handle('open-external', (_e, url) => shell.openExternal(url));

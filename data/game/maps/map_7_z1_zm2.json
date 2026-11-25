@@ -1,0 +1,21 @@
+{
+"id": "map_7_z1_zm2",
+"name": "0002_test",
+"width": 51,
+"height": 51,
+"terrain": {"e":1,"w":51,"h":51,"p":[""],"r":[[0,2601]]},
+"overlay": null,
+"vWalls": null,
+"hWalls": null,
+"roof": null,
+"nobuild": null,
+"elev": null,
+"falls": null,
+"roof_color": "",
+"spawn": null,
+"shapes": null,
+"overlayShapes": null,
+"floor_of": "",
+"z": 0,
+"entities": []
+}

@@ -2,6 +2,8 @@
  * Content Studio: a schema-driven editor for all game content (items, classes, skills, monsters,
  * statuses, loot, config, terrain, objects, tilesets, levels). It reads the current content from the
  * Cloud Function, edits a LOCAL draft, Play-tests it offline, and Publishes to Firestore.
+ * Local mode (the project's own server is there: the desktop app, tools/asset_server.py): it edits the project
+ * files in data/game/ instead, saving each change as it is made; no draft, no publishing (client/js/localdata.js).
  *
  * Every form is generated from shared/schema.js — add a field there and it shows up here. `T` is the
  * working tables object ({ Items:[rows], ... }); records are just row objects, keyed by their id field
@@ -18,6 +20,9 @@ var CStudio = (function () {
   var filter = '';
   var VIEW_LS = 'sheetsrpg.studioView';   // which type + record was open, so a reload comes back to it
   var hasAssetServer = false;   // the local Asset Studio server (asset_server.py) is reachable → offer "Rescan art"
+  // Local mode (the project's own server answers /data/ping): the game is the project files in data/game/, edits are
+  // saved there as they are made, and nothing is published. savedT = the tabs as last written, to send only changes.
+  var LOCAL = false, freshLocal = false, savedT = {}, saveTimer = null, saving = null, saveAgain = false, saveErr = null;
 
   function h(tag, props) {
     var el = document.createElement(tag);
@@ -69,23 +74,65 @@ var CStudio = (function () {
   }
   function itemTypeRow(id) { return rows('itemTypes').filter(function (t) { return t.id === id; })[0] || null; }
   function init() {
-    if (!FUN) { $('top').textContent = 'No FUNCTIONS_URL in client/js/config.js — cannot reach the content server.'; return; }
     renderTop('Loading…');
     loadManifest().then(function () { if (type === 'appearances') renderForm(); });   // paper-doll art list for the picker
-    var draft = ContentStore.getDraft();
-    (draft && Object.keys(draft).length
-      ? Promise.resolve(draft)
-      : ContentStore.loadRecords(FUN)
-    ).then(function (tables) {
-      T = tables || {};
-      Schema.list().forEach(function (t) { if (!Array.isArray(T[tab(t)])) T[tab(t)] = []; }); seedItemTypes();
-      type = Schema.authored('studio')[0];
-      restoreView();
-      renderAll();
-      var on = $('list').querySelector('.rec.on'); if (on) on.scrollIntoView({ block: 'center' });
-      probeAssetServer();                                       // reveal "Rescan art" if the local art server is up
-      setStatus(draft ? 'Editing your local draft.' : 'Loaded live content.', draft ? 'dirty' : 'clean');
+    LocalData.probe().then(function (pr) {
+      if (pr.local) return initLocal(pr);
+      if (!FUN) { $('top').textContent = 'No FUNCTIONS_URL in client/js/config.js — cannot reach the content server.'; return; }
+      var draft = ContentStore.getDraft();
+      return (draft && Object.keys(draft).length
+        ? Promise.resolve(draft)
+        : ContentStore.loadRecords(FUN)
+      ).then(function (tables) {
+        start(tables);
+        setStatus(draft ? 'Editing your local draft.' : 'Loaded live content.', draft ? 'dirty' : 'clean');
+      });
     }).catch(function (e) { renderTop('Load failed'); setStatus('Could not load content: ' + e.message, 'bad'); });
+  }
+  function start(tables) {
+    T = tables || {};
+    Schema.list().forEach(function (t) { if (!Array.isArray(T[tab(t)])) T[tab(t)] = []; }); seedItemTypes();
+    type = Schema.authored('studio')[0];
+    restoreView();
+    renderAll();
+    var on = $('list').querySelector('.rec.on'); if (on) on.scrollIntoView({ block: 'center' });
+    probeAssetServer();                                         // reveal "Rescan art" if the local art server is up
+  }
+  // Local mode: the game from data/game/ (or, in a project that has none yet, the sample data/tables.json, which the
+  // first change writes out whole). A draft left in this browser from before (never published) is offered once.
+  function initLocal(pr) {
+    LOCAL = true;
+    return LocalData.load().then(function (files) {
+      if (files) return files;
+      freshLocal = true;
+      return fetch(GAME_CONFIG.OFFLINE_TABLES, { cache: 'no-cache' }).then(function (r) { return r.json(); });
+    }).then(function (tables) {
+      savedT = JSON.parse(JSON.stringify(tables));
+      start(tables);
+      setStatus(freshLocal ? 'Local project: no data/game yet — starting from the sample data; your first change saves it.' : 'Local project: editing the files in data/game/.', freshLocal ? 'dirty' : 'clean');
+      offerOldDraft();
+    });
+  }
+  function offerOldDraft() {
+    var d = ContentStore.getDraft();
+    if (!d || !Object.keys(d).length) return;
+    var diff = LocalData.changedTabs(d, T), names = Object.keys(diff).filter(function (k) { return Array.isArray(diff[k]); });
+    if (!names.length) { ContentStore.clearDraft(); return; }          // nothing in it that the files lack
+    var lines = names.map(function (k) {
+      var a = d[k] || [], b = T[k] || [], same = {};
+      b.forEach(function (r) { same[JSON.stringify(r)] = 1; });
+      return '  ' + k + ': ' + a.filter(function (r) { return !same[JSON.stringify(r)]; }).length + ' changed or new row(s)';
+    });
+    var ok = confirm('This app still holds Content Studio edits from before local mode, which were never published:\n\n' + lines.join('\n') +
+      '\n\nOK: bring those tabs into the project files (each replaces the same tab in data/game/).\n' +
+      'Cancel: leave the project files as they are (you will be asked again next time).');
+    if (!ok) return;
+    names.forEach(function (k) { T[k] = diff[k]; });
+    seedItemTypes();
+    flushFiles().then(function () { return saveFiles(); }).then(function () {
+      if (!saveErr) { ContentStore.clearDraft(); setStatus('Brought your earlier edits into the project files ✓ (' + names.join(', ') + ')', 'clean'); }
+    });
+    renderAll();
   }
   // Remember the open type + record (called whenever the form is drawn). Records are remembered by id
   // where the type has one, so the right one comes back even if rows were added or removed meanwhile.
@@ -108,7 +155,36 @@ var CStudio = (function () {
     else if (v.index >= 0 && v.index < all.length) i = v.index;
     curIndex = i;
   }
-  function persist() { ContentStore.setDraft(T); setStatus('Draft saved in this browser (unpublished).', 'dirty'); questMapSoon(); }   // (an edit may change a link: the questline map follows)
+  function persist() { keep(); questMapSoon(); }   // (an edit may change a link: the questline map follows)
+  // Keep the edits: in local mode written into the project files (data/game/, client/js/localdata.js) a moment
+  // after the last change, only the tabs that changed; otherwise the browser draft, as before.
+  function keep() {
+    if (!LOCAL) { ContentStore.setDraft(T); setStatus('Draft saved in this browser (unpublished).', 'dirty'); return; }
+    setStatus('Saving…', 'dirty');
+    clearTimeout(saveTimer); saveTimer = setTimeout(saveFiles, 400);
+  }
+  // One save at a time: a change made while one is being written is picked up by the next (what still differs).
+  function saveFiles() {
+    clearTimeout(saveTimer); saveTimer = null;
+    if (saving) { saveAgain = true; return saving; }
+    var tabs = LocalData.changedTabs(T, savedT), names = Object.keys(tabs);
+    if (!names.length && !freshLocal) { setStatus('Saved in the project files ✓', 'clean'); return Promise.resolve(); }
+    var snap = JSON.parse(JSON.stringify(freshLocal ? T : tabs));
+    saving = (freshLocal ? LocalData.saveAll(T) : LocalData.saveTabs(tabs)).then(function () {
+      if (freshLocal) { savedT = snap; freshLocal = false; } else names.forEach(function (k) { savedT[k] = snap[k]; });
+      saveErr = null;
+      setStatus('Saved in the project files ✓ (' + (names.length ? names.join(', ') : 'everything') + ')', 'clean');
+    }, function (e) {
+      saveErr = e;
+      setStatus('Could not save to the project files: ' + e.message, 'bad');
+    }).then(function () {
+      saving = null;
+      if (saveAgain) { saveAgain = false; return saveFiles(); }
+    });
+    return saving;
+  }
+  /** Before Play-test or a reload: anything still waiting is written now. */
+  function flushFiles() { return !LOCAL ? Promise.resolve() : saveTimer ? saveFiles() : (saving || Promise.resolve()); }
   document.addEventListener('click', function () { if (typeof closePickers === 'function') closePickers(); });   // close any open visual dropdown
 
   // ---------------------------------------------------------------- top bar
@@ -118,6 +194,11 @@ var CStudio = (function () {
     top.appendChild(h('span', { id: 'status', className: 'status note', text: msg || '' }));
     top.appendChild(h('span', { className: 'sp' }));
     if (hasAssetServer) top.appendChild(h('button', { className: 'ghost', title: 'Rescan the art/ folder and rebuild the picker list (local app only)', text: '↻ Rescan art', onclick: rescanArt }));
+    if (LOCAL) {                                              // local mode: saved as you go, nothing to publish
+      top.appendChild(h('button', { className: 'ghost', title: 'Play the project files offline', text: '▶ Play-test', onclick: playtest }));
+      top.appendChild(h('button', { title: 'Read data/game/ again (after a git pull, or a change made in the map editor)', text: '↻ Reload files', onclick: reloadFiles }));
+      return;
+    }
     top.appendChild(h('button', { className: 'ghost', title: 'Play-test offline against this draft', text: '▶ Play-test', onclick: playtest }));
     top.appendChild(h('button', { className: 'ghost', title: 'Download the draft as JSON (for a repo snapshot)', text: 'Export', onclick: function () { ContentStore.exportFile(T, 'content.json'); } }));
     top.appendChild(h('button', { title: 'Reload live content, discarding the local draft', text: 'Discard draft', onclick: discard }));
@@ -126,8 +207,19 @@ var CStudio = (function () {
   function setStatus(msg, cls) { var s = $('status'); if (s) { s.textContent = msg || ''; s.className = 'status note ' + (cls || ''); } }
 
   function playtest() {
+    if (LOCAL) { flushFiles().then(function () { window.open('../client/?offline', '_blank'); }); return; }   // the game reads the files
     ContentStore.setDraft(T);                                   // make sure the latest edits are in the draft
     window.open('../client/?offline', '_blank');
+  }
+  function reloadFiles() {
+    flushFiles().then(function () { return LocalData.load(); }).then(function (files) {
+      if (!files) { setStatus('There is no data/game/ to read yet.', 'bad'); return; }
+      savedT = JSON.parse(JSON.stringify(files)); freshLocal = false;
+      var keepType = type; T = files;
+      Schema.list().forEach(function (t) { if (!Array.isArray(T[tab(t)])) T[tab(t)] = []; }); seedItemTypes();
+      type = keepType; restoreView(); renderAll();
+      setStatus('Read the project files again ✓', 'clean');
+    });
   }
   // The Asset Studio server (asset_server.py, behind the desktop app) can rescan art/ and rebuild the
   // manifest. GitHub Pages has no such server, so only show the button when it answers.
@@ -357,7 +449,7 @@ var CStudio = (function () {
         var i = rowOf(id); if (i < 0) return;
         var had = !!all[i].map_xy;
         all[i].map_xy = Math.round(x) + ',' + Math.round(y);
-        ContentStore.setDraft(T); setStatus('Draft saved in this browser (unpublished).', 'dirty');
+        keep();
         if (!had) renderQuestMap();                                  // (the first box placed by hand brings the Reset layout button)
       }
     });

@@ -188,7 +188,14 @@
     "art/tilesets/wall_demo_face.png",
     "art/tilesets/water.png",
     "art/tilesets/water_auto_anim.png",
+    "art/tilesets/waterfall.png",
+    "art/tilesets/waterfall_anim.png",
+    "art/tilesets/waterfall_foam_bottom_anim.png",
+    "art/tilesets/waterfall_foam_bottom_small_anim.png",
+    "art/tilesets/waterfall_foam_top_anim.png",
     "art/tilesets/wood_wall_cap.png",
-    "art/tilesets/wood_wall_face.png"
+    "art/tilesets/wood_wall_face.png",
+    "art/ui/body_female.png",
+    "art/ui/body_male.png"
   ]
 }

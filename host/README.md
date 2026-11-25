@@ -54,7 +54,8 @@ It prints something like:
   same read the game page does; nothing is ever written there), so you host your real maps, monsters and blueprints.
   It is read ONCE: publish something in the Content Studio and you restart the host to get it. With no internet it
   uses the copy kept from the last good read (`host/content.cache.json`), and failing that the starting content in
-  `data/tables.json`. `CONTENT=local node host/server.js` always plays the starting content.
+  `data/tables.json`. `CONTENT=local node host/server.js` always plays the starting content. A project with `data/game/` (local mode:
+what the Content Studio and the map editor save) plays that by default; `CONTENT=live` reads the live game instead.
 - **Saved between sessions.** The game is kept in the folder `host/save.live/` (`host/save/` when playing the starting
   content): one small file per character, one per map, and `world.json`. Every 3 seconds the host writes only the
   records that changed, and once more on Ctrl+C, so if the computer dies mid-game at most 3 seconds are lost

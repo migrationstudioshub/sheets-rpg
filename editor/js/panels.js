@@ -86,13 +86,15 @@ var Panels = (function () {
       h('button', { title: 'Undo (Ctrl+Z)', onclick: E.doUndo, text: '↶' }),
       h('button', { title: 'Redo (Ctrl+Y)', onclick: E.doRedo, text: '↷' }));
     var save = h('div', { className: 'group right' },
-      Store.online() ? null : h('button', { title: 'Download tables.json to commit to the repository', text: 'Export',
+      Store.online() || Store.local() ? null : h('button', { title: 'Download tables.json to commit to the repository', text: 'Export',
         onclick: function () { E.syncAll(); Store.exportFile(E.tables); } }),
-      Store.online() ? null : h('button', { title: 'Throw away this browser\'s draft and reload the repository data', text: 'Discard draft',
+      Store.online() || Store.local() ? null : h('button', { title: 'Throw away this browser\'s draft and reload the repository data', text: 'Discard draft',
         onclick: function () { if (confirm('Discard all draft changes in this browser?')) { Store.discardDraft(); Store.clearWip(); E.dirty = { maps: {}, tabs: {}, deleted: [] }; location.reload(); } } }),
+      !Store.local() ? null : h('button', { title: 'Throw away the changes not saved yet and open the project files as they are', text: 'Discard changes',
+        onclick: function () { if (!E.isDirty() || confirm('Discard the map changes you have not saved?')) { Store.clearWip(); E.dirty = { maps: {}, tabs: {}, deleted: [] }; location.reload(); } } }),
       h('button', { title: 'Open the game on this map in a new tab', text: '▶ Play-test', onclick: playtest }),
-      h('button', { className: 'primary', title: Store.online() ? 'Save to the Game Data spreadsheet (Ctrl+S)' : 'Save a draft in this browser (Ctrl+S)',
-        text: Store.online() ? 'Save to Game Data' : 'Save draft', onclick: E.save }));
+      h('button', { className: 'primary', title: Store.local() ? 'Save the changed maps into the project files, data/game/ (Ctrl+S)' : Store.online() ? 'Save to the Game Data spreadsheet (Ctrl+S)' : 'Save a draft in this browser (Ctrl+S)',
+        text: Store.local() ? 'Save' : Store.online() ? 'Save to Game Data' : 'Save draft', onclick: E.save }));
     bar.appendChild(tools); bar.appendChild(layers); if (sub) bar.appendChild(sub);
     bar.appendChild(view); bar.appendChild(save);
   }
@@ -133,7 +135,8 @@ var Panels = (function () {
     // editor's tables (maps included) are handed to the offline game through the shared content draft.
     var go = function () {
       E.syncAll();
-      try { localStorage.setItem('sheetsrpg.contentDraft', JSON.stringify(E.tables)); } catch (e) {}
+      // (local mode: the game reads the project files, just saved; no draft)
+      if (!Store.local()) try { localStorage.setItem('sheetsrpg.contentDraft', JSON.stringify(E.tables)); } catch (e) {}
       window.open('../client/?offline&map=' + encodeURIComponent(E.mapId), 'sheetsrpg-play');
     };
     if (!E.isDirty()) return go();
@@ -776,7 +779,7 @@ var Panels = (function () {
     var s = $('status');
     var dirty = E.isDirty();
     s.innerHTML = '';
-    s.appendChild(h('span', { className: 'mode', text: Store.online() ? 'online' : 'offline' }));
+    s.appendChild(h('span', { className: 'mode', text: Store.local() ? 'local files' : Store.online() ? 'online' : 'offline' }));
     s.appendChild(h('span', { className: dirty ? 'dirty' : 'clean', text: dirty ? '● unsaved changes' : '✓ all saved' }));
     s.appendChild(h('span', { className: lastBad ? 'bad' : '', text: lastMsg }));
     s.appendChild(h('span', { className: 'right', text: Math.round(E.view.zoom * 100) + '%' }));

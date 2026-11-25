@@ -111,16 +111,52 @@
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 1000; }
   .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: 360px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
   .modal .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  /* Quests: drag a card to change the order; the questline map on the right (js/questmap.js) */
+  #list .rec[draggable=true] { cursor: grab; }
+  #list .rec.dragging { opacity: .4; }
+  #list .rec.dropbefore { box-shadow: 0 -3px 0 var(--accent); }
+  #list .rec.dropafter { box-shadow: 0 3px 0 var(--accent); }
+  #main.withmap { grid-template-columns: 280px minmax(360px, 1fr) 440px; }
+  #main.withmap.wide { grid-template-columns: 280px minmax(360px, 1fr) minmax(400px, 1.3fr); }
+  #main.withmap.mapshut { grid-template-columns: 280px 1fr 34px; }
+  @media (max-width: 1350px) {                       /* small screens: the list and the map give up some room */
+    #main.withmap, #main.withmap.wide { grid-template-columns: 220px minmax(300px, 1fr) 330px; }
+    #main.withmap.mapshut { grid-template-columns: 220px 1fr 34px; }
+  }
+  #qmap { border-left: 1px solid var(--line); background: #15171d; min-height: 0; display: flex; flex-direction: column; }
+  #qmap[hidden] { display: none; }
+  #qmap .qmhead { display: flex; gap: 6px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  #qmap .qmhead b { font-size: 12px; }
+  #qmap .qmhead button { padding: 2px 8px; font-size: 12px; }
+  #qmap .qmlegend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px; }
+  #qmap .qmlegend span { display: inline-flex; align-items: center; gap: 5px; }
+  #qmap .qmhint { color: var(--dim); font-size: 10px; padding: 4px 10px; border-bottom: 1px solid var(--line); }
+  #qmap .qmbody { overflow: hidden; flex: 1; position: relative; min-height: 0; }
+  #qmap .qmempty { position: absolute; top: 10px; left: 10px; }
+  #qmap svg.qmcanvas { display: block; position: absolute; inset: 0; cursor: default; user-select: none;
+    background-image: radial-gradient(#252a33 1px, transparent 1px); background-size: 16px 16px; }
+  #qmap svg.qmcanvas.panning { cursor: grabbing; }
+  #qmap .qmlabel { fill: var(--dim); font-size: 10px; letter-spacing: .06em; }
+  #qmap .qnode { cursor: move; }
+  #qmap .qnode rect.box { fill: #20242d; stroke: #3a4150; }
+  #qmap .qnode:hover rect.box { stroke: #6a7890; }
+  #qmap .qnode.on rect.box { fill: #2f4f7a; stroke: var(--accent); stroke-width: 2; }
+  #qmap .qnode.missing rect.box { fill: transparent; stroke: var(--bad); stroke-dasharray: 4 3; }
+  #qmap .qnode text { fill: var(--text); font-size: 12px; pointer-events: none; }
+  #qmap .qnode text.sub { fill: var(--dim); font-size: 10px; }
+  #qmap .qedge { fill: none; stroke-width: 1.6; }
+  #qmap .qedge.hot { stroke-width: 2.8; }
+  #qmap .qmshut { writing-mode: vertical-rl; border: 0; background: transparent; color: var(--dim); padding: 10px 6px; }
 </style>
 </head>
 <body>
   <div id="top"></div>
   <div id="nav"></div>
-  <div id="main"><div id="list"></div><div id="form"></div></div>
+  <div id="main"><div id="list"></div><div id="form"></div><div id="qmap" hidden></div></div>
 
   <script>
     (function () {
-      var files = ['../shared/schema.js', '../shared/content.js', '../client/js/config.js', '../client/js/content_store.js', '../client/js/tint.js', 'js/cstudio.js'];
+      var files = ['../shared/schema.js', '../shared/content.js', '../client/js/config.js', '../client/js/content_store.js', '../client/js/tint.js', 'js/questmap.js', 'js/cstudio.js'];
       var v = Date.now();
       (function next(i) {
         if (i >= files.length) { if (window.CStudio) CStudio.init(); return; }

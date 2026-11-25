@@ -215,6 +215,15 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   time**, in the order things started (`p.intro`; quest op `seen` takes the `id` read). **Skip tutorial** sets `p.tutOff`:
   the chain is closed, and every tutorial step a hook starts later is skipped the same way (`skipSteps`). Studio: the
   `on_start` field (rewards editor) and a "When met, start" picker under each objective (`goalsField`).
+  **Studio, Quests view** (Nov 2026): the cards can be dragged into order (`dragSort` / `moveRow` in `cstudio.js`; the row
+  order is `q.order`, the order an NPC offers its quests; off while searching). On the right, the **questline map**
+  (`content/js/questmap.js`, draw-only, reads the draft rows): every `quest:` link in `on_start`, an objective's `on_done`,
+  `rewards`, and `quest:` / `quest_active:` in `requires` is an arrow (colour = kind); quests joined by links form one
+  questline, laid out top to bottom, links going back up drawn round the side; a link to a missing id shows dashed red.
+  One canvas: click a box to open that quest, **drag it to place it** (kept on the row as `map_xy` "x,y" — published
+  with the quests, ignored by the game; a box without one is placed by the automatic layout; Reset layout clears them),
+  hold the mouse wheel or drag empty space to pan, wheel to zoom, Fit; the view outlives redraws. Wide / Hide are kept in
+  `sheetsrpg.studioQuestMap`. A new kind of link = one line in `graph`.
   More goal rules: **`have`** (bring) is what is in the bag right now, and the full amount must be there at hand-in, when it is
   taken. **`own`** (have in the bag, kept) is the most that was in the bag at once while on the quest — `questSweep` keeps the
   mark, so once met it stays ticked when the item is then eaten or used (the owner's "kill, pick up the meat, eat it" quest).

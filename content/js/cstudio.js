@@ -108,7 +108,7 @@ var CStudio = (function () {
     else if (v.index >= 0 && v.index < all.length) i = v.index;
     curIndex = i;
   }
-  function persist() { ContentStore.setDraft(T); setStatus('Draft saved in this browser (unpublished).', 'dirty'); }
+  function persist() { ContentStore.setDraft(T); setStatus('Draft saved in this browser (unpublished).', 'dirty'); questMapSoon(); }   // (an edit may change a link: the questline map follows)
   document.addEventListener('click', function () { if (typeof closePickers === 'function') closePickers(); });   // close any open visual dropdown
 
   // ---------------------------------------------------------------- top bar
@@ -282,10 +282,88 @@ var CStudio = (function () {
         groups[k].forEach(function (ri) { list.appendChild(recCard(type, ri[0], ri[1], idf)); });
       });
     } else {
-      all.forEach(function (r, i) { if (matches(r) && (type !== 'config' || shownConfig(r))) list.appendChild(recCard(type, r, i, idf)); });
+      var sortable = type === 'quests' && !q;      // quests: the order is the order an NPC offers them in — drag to change it
+      all.forEach(function (r, i) {
+        if (!matches(r) || (type === 'config' && !shownConfig(r))) return;
+        var card = recCard(type, r, i, idf);
+        if (sortable) dragSort(card, i);
+        list.appendChild(card);
+      });
+      if (type === 'quests') list.appendChild(h('div', { className: 'note', style: 'padding:4px 2px', text: q ? 'Clear the search to drag quests into order.' : 'Drag a quest to change the order. An NPC offers its quests in this order.' }));
     }
     if (!list.querySelector('.rec')) list.appendChild(h('div', { className: 'note', style: 'padding:8px', text: all.length ? 'No match.' : 'Nothing here yet — click New.' }));
   }
+  // Drag a record card onto another: it moves above or below it (whichever half of the card it is dropped on).
+  var dragFrom = -1;
+  function dragSort(card, i) {
+    card.draggable = true;
+    function clear() { Array.prototype.forEach.call(document.querySelectorAll('#list .rec'), function (c) { c.classList.remove('dropbefore', 'dropafter'); }); }
+    function below(e) { var b = card.getBoundingClientRect(); return e.clientY > b.top + b.height / 2; }
+    card.addEventListener('dragstart', function (e) { dragFrom = i; card.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(i)); } catch (x) { /* old browsers */ } });
+    card.addEventListener('dragend', function () { dragFrom = -1; card.classList.remove('dragging'); clear(); });
+    card.addEventListener('dragover', function (e) {
+      if (dragFrom < 0) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+      clear(); card.classList.add(below(e) ? 'dropafter' : 'dropbefore');
+    });
+    card.addEventListener('drop', function (e) {
+      e.preventDefault(); clear();
+      if (dragFrom < 0) return;
+      moveRow(dragFrom, below(e) ? i + 1 : i);
+      dragFrom = -1;
+    });
+  }
+  /** Move a row of the current table to just before index `to` (counted before the move). The open record stays open. */
+  function moveRow(from, to) {
+    var all = rows(type), open = all[curIndex];
+    if (from < 0 || from >= all.length || to === from || to === from + 1) return;
+    var r = all.splice(from, 1)[0];
+    all.splice(to > from ? to - 1 : to, 0, r);
+    curIndex = open ? all.indexOf(open) : -1;
+    persist(); renderList(); renderForm();
+  }
+
+  // ---------------------------------------------------------------- the questline map (Quests only; js/questmap.js)
+  var QMAP_LS = 'sheetsrpg.studioQuestMap';      // 'wide' | 'shut' | '' (normal)
+  function qmapMode() { try { return localStorage.getItem(QMAP_LS) || ''; } catch (e) { return ''; } }
+  function setQmapMode(m) { try { localStorage.setItem(QMAP_LS, m); } catch (e) { /* private mode */ } renderQuestMap(); }
+  function renderQuestMap() {
+    var box = $('qmap'), main = $('main'); if (!box || !main) return;
+    var on = type === 'quests' && typeof QuestMap !== 'undefined', mode = qmapMode();
+    box.hidden = !on;
+    main.classList.toggle('withmap', on); main.classList.toggle('wide', on && mode === 'wide'); main.classList.toggle('mapshut', on && mode === 'shut');
+    if (!on) return;
+    box.innerHTML = '';
+    if (mode === 'shut') { box.appendChild(h('button', { className: 'qmshut', text: 'Questlines ▸', title: 'Show the questline map', onclick: function () { setQmapMode(''); } })); return; }
+    var all = rows('quests'), cur = all[curIndex];
+    var placed = all.filter(function (r) { return r.map_xy; }).length;
+    box.appendChild(h('div', { className: 'qmhead' }, h('b', { text: 'Questlines' }), h('span', { className: 'sp', style: 'margin-left:auto' }),
+      h('button', { text: 'Fit', title: 'Show every quest', onclick: function () { QuestMap.fit(); } }),
+      placed ? h('button', { text: 'Reset layout', title: 'Forget where the boxes were dragged to (' + placed + ' placed by hand) and lay them all out again', onclick: function () {
+        if (!confirm('Put all ' + placed + ' hand-placed quest boxes back where the automatic layout puts them?')) return;
+        all.forEach(function (r) { delete r.map_xy; }); persist(); renderQuestMap();
+      } }) : null,
+      h('button', { text: mode === 'wide' ? 'Narrow' : 'Wide', title: 'Give the map more room', onclick: function () { setQmapMode(mode === 'wide' ? '' : 'wide'); } }),
+      h('button', { text: 'Hide', title: 'Fold the map away', onclick: function () { setQmapMode('shut'); } })));
+    box.appendChild(QuestMap.legend());
+    box.appendChild(h('div', { className: 'qmhint', text: 'Drag a box to place it · hold the mouse wheel (or drag empty space) to move around · wheel to zoom' }));
+    var body = h('div', { className: 'qmbody' }); box.appendChild(body);
+    function rowOf(id) { for (var i = 0; i < all.length; i++) if (String(all[i].id || '') === id) return i; return -1; }
+    QuestMap.draw(body, all, configList('start_quests'), cur ? String(cur.id || '') : '', {
+      pick: function (id) { var i = rowOf(id); if (i < 0) return; curIndex = i; renderList(); renderForm(); },
+      // where a box was dropped: kept on its row (published with it; the game never reads it). Saved without redrawing
+      // the map, which already shows it there — a redraw would cut short the next drag.
+      move: function (id, x, y) {
+        var i = rowOf(id); if (i < 0) return;
+        var had = !!all[i].map_xy;
+        all[i].map_xy = Math.round(x) + ',' + Math.round(y);
+        ContentStore.setDraft(T); setStatus('Draft saved in this browser (unpublished).', 'dirty');
+        if (!had) renderQuestMap();                                  // (the first box placed by hand brings the Reset layout button)
+      }
+    });
+  }
+  var qmapTimer = 0;
+  function questMapSoon() { if (type !== 'quests') return; clearTimeout(qmapTimer); qmapTimer = setTimeout(renderQuestMap, 350); }
   function addRecord() {
     var r = Schema.defaults(type); rows(type).push(r); curIndex = rows(type).length - 1;
     persist(); renderNav(); renderList(); renderForm();
@@ -294,6 +372,7 @@ var CStudio = (function () {
   // ---------------------------------------------------------------- the form
   function renderForm() {
     rememberView();
+    renderQuestMap();
     if (type === 'loot') return lootForm();
     if (type === 'kinds') return kindsForm();
     if (type === 'objects') return objForm();

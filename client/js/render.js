@@ -1473,7 +1473,13 @@ var Render = (function () {
     // Anything damaged and in sight shows how much it has left.
     var stD = map._struct;
     if (stD && typeof World !== 'undefined' && World.structInfo) {
-      var barKeys = Object.keys(stD.dmg || {});
+      var barKeys = Object.keys(stD.dmg || {}), meA = (actors || []).filter(function (a) { return a.me; })[0];
+      // a resource's ring shows only to someone within reach of it: their own tile, or one of the eight around its footprint
+      function reachable(e, o) {
+        if (!meA) return false;
+        var mx = Math.round(meA.x), my = Math.round(meA.y), fw = Math.max(1, (o && o.footprintW) || 1), fh = Math.max(1, (o && o.footprintH) || 1);
+        return mx >= e.x - 1 && mx <= e.x + fw && my >= e.y - 1 && my <= e.y + fh;
+      }
       Object.keys(stD.walls || {}).forEach(function (k) { var w = stD.walls[k]; if ((w.prog || 0) < (w.need || 0) || w.hp < w.max) barKeys.push(k); });
       (stD.ents || []).forEach(function (b) { if ((b.prog || 0) < (b.need || 0) || b.hp < b.max) barKeys.push(b.key); });
       barKeys.forEach(function (k) {
@@ -1492,7 +1498,7 @@ var Render = (function () {
         }
         var fr = info.rec && (info.rec.prog || 0) < (info.rec.need || 0);
         if (fr) drawHpBar(g, bx, by, info.rec.prog / info.rec.need, '#6fb7ff');          // a frame: how far along it is
-        else if (info.max > 0 && !em && (!info.built || (info.rec && info.rec.wild)) && info.obj && ((info.rec && info.rec.data && info.rec.data.harvest) || (info.obj.properties && info.obj.properties.harvest))) drawRing(g, bx, oy + (info.e.y + 0.5) * T - L(info.e.x, info.e.y), info.hp / info.max);   // a resource: a ring, not a health bar
+        else if (info.max > 0 && !em && (!info.built || (info.rec && info.rec.wild)) && info.obj && ((info.rec && info.rec.data && info.rec.data.harvest) || (info.obj.properties && info.obj.properties.harvest))) { if (reachable(info.e, info.obj)) drawRing(g, bx, oy + (info.e.y + 0.5) * T - L(info.e.x, info.e.y), info.hp / info.max); }   // a resource: a ring, not a health bar (and only within reach)
         else if (info.max > 0) drawHpBar(g, bx, by, info.hp / info.max);
       });
     }

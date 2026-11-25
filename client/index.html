@@ -4,316 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sheets RPG</title>
-<style>
-  :root { color-scheme: dark; }
-  /* A thin strip along the top of the window (where you are, and the small buttons); under it the game view fills
-     the rest (letterboxed to the view's own shape, --ar, set by main.js) with what the player needs while playing
-     laid over it. */
-  html, body { height: 100%; }
-  body { margin: 0; background: #000; color: #e8e6e3; overflow: hidden;
-         font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
-         display: grid; grid-template-rows: var(--top, 30px) minmax(0, 1fr); place-items: center; }
-  #frame { position: relative; width: min(100vw, calc((100vh - var(--top, 30px)) * var(--ar, 1.6923))); container-type: inline-size; }   /* cqw below = 1% of the view's width: the HUD shrinks with a small window */
-  canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; touch-action: none; }
-  .tag { padding: 1px 8px; border-radius: 10px; background: rgba(42,46,55,.8); font-size: 11px; }
-  select, button { background: #2a2e37; color: #e8e6e3; border: 1px solid #3a3f4b; border-radius: 6px; padding: 3px 8px; font: inherit; cursor: pointer; }
-  button:hover { border-color: #56607a; }
-
-  /* ---- the HUD: laid over the view. The layer itself lets clicks through to the game; its parts take them. ---- */
-  .hudlayer { position: absolute; pointer-events: none; z-index: 2; }
-  .hudlayer > *, .hudlayer .take { pointer-events: auto; }
-  .shadow { text-shadow: 0 1px 2px #000, 0 0 3px #000; }
-  /* the strip above the view: where you are (left) and the small buttons (right) */
-  #hud { justify-self: stretch; align-self: stretch; box-sizing: border-box; padding: 0 10px; display: flex; justify-content: space-between; align-items: center; gap: 10px;
-         font-size: 12px; color: #d6d3cd; background: #14161b; border-bottom: 1px solid #2a2e37; overflow: hidden; }
-  #hud .grp { display: flex; gap: 8px; align-items: center; white-space: nowrap; min-width: 0; }
-  #hud strong { color: #fff; }
-  #hud-net.bad { color: #ff8a7a; }
-  #hud select, #hud button { font-size: 12px; padding: 1px 7px; }
-  #gold { color: #ffd65a; }
-  #reset.arm { background: #6a3a3a; border-color: #ff6b5b; color: #fff; }
-  /* what just happened: a few lines over the health bar that fade; the chevron folds them away. Clicks go through to the game. */
-  #logbox { pointer-events: none; display: grid; gap: 2px; justify-items: start; width: min(46cqw, 520px); }
-  #log-toggle { pointer-events: auto; padding: 0 7px; font-size: 11px; line-height: 16px; background: rgba(16,18,22,.8); border: 1px solid #000; border-radius: 3px; color: #d6d3cd; text-shadow: none; }
-  #log { font-size: 13px; color: #e6e3dd; }
-  #logbox.shut #log { display: none; }
-  #log .msg { pointer-events: none; transition: opacity 1.5s; }
-  #log .msg.old { opacity: .3; }
-  #log .hit { color: #ff9a8a; } #log .loot, #log .level { color: #ffd65a; } #log .heal { color: #7fe39a; } #log .death { color: #ff6b5b; font-weight: 600; }
-
-  /* bottom left: thirst, hunger and what ails you, over the health bar */
-  #hud-bl { left: 12px; bottom: 12px; display: grid; gap: 6px; }
-  #vitals { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: 300px; }
-  .gauge { position: relative; width: 38px; height: 38px; border-radius: 50%; overflow: hidden; background: #1b1e25; border: 2px solid #000; box-shadow: 0 0 0 1px rgba(255,255,255,.25); }
-  .gauge .fill { position: absolute; left: 0; right: 0; bottom: 0; transition: height .4s; }
-  .gauge svg { position: absolute; inset: 7px; width: 24px; height: 24px; fill: #0b0c0f; }
-  #water-fill { background: #7fe9f2; } #food-fill { background: #f3b785; } #tox-fill { background: #a6d94a; }
-  .gauge.low { animation: pulse 1s ease-in-out infinite; box-shadow: 0 0 0 2px #ff6b5b; }
-  @keyframes pulse { 50% { opacity: .55; } }
-  #statuses { display: flex; gap: 5px; flex-wrap: wrap; }
-  .st { font-size: 11px; padding: 2px 8px; border-radius: 12px; background: rgba(16,18,22,.85); border: 2px solid #000; box-shadow: 0 0 0 1px rgba(255,255,255,.2); }
-  .bar { position: relative; overflow: hidden; background: rgba(16,18,22,.85); border: 3px solid #000; box-shadow: 0 0 0 1px rgba(255,255,255,.25); }
-  .bar .fill { position: absolute; inset: 0 auto 0 0; transition: width .25s; }
-  .bar span { position: relative; display: block; color: #fff; text-shadow: 0 1px 1px #000; }
-  #hp-bar { width: clamp(150px, 22cqw, 260px); height: 34px; }
-  #hp-bar span { display: flex; justify-content: space-between; align-items: center; padding: 0 8px; line-height: 34px; }
-  #hp-bar b { font-size: 22px; font-weight: 500; letter-spacing: .02em; }
-  #hp-fill { background: #ff4343; }
-  #mp-bar[hidden] { display: none; }
-  #mp-bar { width: clamp(150px, 22cqw, 260px); height: 12px; border-width: 2px; }
-  #mp-bar span, #xp-bar span { font-size: 9px; line-height: 12px; text-align: center; }
-  #mp-fill { background: #3f7fe6; }
-
-  /* bottom centre: the hotbar (the ten belt slots, keys 1-9 and 0; Q, E abilities before them when skills are on), one strip of boxes; experience under it */
-  #hud-bc { left: 50%; bottom: 12px; transform: translateX(-50%); display: grid; gap: 4px; justify-items: center; }
-  #slots { display: flex; border: 3px solid #000; box-shadow: 0 0 0 1px rgba(255,255,255,.25); background: #000; gap: 3px; }
-  #abilities, #belt { display: flex; gap: 3px; }
-  .hk { position: relative; width: clamp(30px, 4.2cqw, 50px); height: clamp(30px, 4.2cqw, 50px); background: rgba(30,33,40,.88);
-        display: grid; place-items: center; cursor: pointer; overflow: hidden; user-select: none; }
-  .hk.over { border-color: #6fb7ff; box-shadow: inset 0 0 0 2px #6fb7ff; }
-  .hudlayer.above { z-index: 5; }
-  #bag { padding-bottom: 96px; }                        /* the belt stays in view under the window */
-  .hk.armed { box-shadow: inset 0 0 0 3px #ffd65a; }
-  .hk.held { box-shadow: inset 0 0 0 3px #fff; background: rgba(70,76,90,.92); }   /* the belt slot in your hands */
-  .hk.low .ico { opacity: .4; }
-  .hk .ico { width: 60%; height: 60%; border-radius: 4px; display: grid; place-items: center; font-weight: 700; font-size: 11px; color: #111; image-rendering: pixelated; }
-  .hk .key { position: absolute; left: 4px; top: 1px; font-size: 11px; color: #b9b6b0; }
-  .hk .cost { position: absolute; right: 4px; bottom: 1px; font-size: 10px; color: #8fb6ff; }
-  .hk .qty { position: absolute; right: 4px; bottom: 1px; font-size: 10px; color: #fff; }
-  .hk .cd { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.6); }
-  .hk .cdt { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; color: #fff; text-shadow: 0 1px 2px #000; }
-  .hk.empty { cursor: default; }
-  .hk.empty .key { opacity: .5; }
-  #xp-bar { width: 100%; box-sizing: border-box; height: 16px; border-width: 2px; }
-  #xp-fill { background: #d9ad2f; }
-
-  /* bottom right: the gun in your hands — rounds in it / rounds in the bag, and the rounds themselves */
-  #hud-br { right: 14px; bottom: 12px; }
-  /* marks over heads: small signs that sit above a character (above the name) and follow it. main.js (setMarks)
-     places them. reload = a see-through ring that closes as your reload goes on, a round in the middle;
-     alert = "!" a monster that has just seen someone; search = "?" one that has just lost them */
-  #marks { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
-  .mark { position: absolute; width: clamp(17px, 2.3cqw, 26px); transform: translate(-50%, -100%); pointer-events: none; }
-  .mark svg { display: block; width: 100%; height: auto; filter: drop-shadow(0 1px 2px #000); }
-  .mark.reload { opacity: .5; }
-  .mark.reload .track { fill: rgba(16,18,22,.55); stroke: rgba(255,255,255,.22); stroke-width: 4; }
-  .mark.reload .arc { fill: none; stroke: #fff; stroke-width: 4; stroke-dasharray: 100.53; stroke-dashoffset: 100.53; }
-  .mark.reload .round { fill: #fff; }
-  .mark.alert, .mark.search { text-align: center; font-weight: 800; font-size: clamp(17px, 2.5cqw, 28px); line-height: 1;
-    text-shadow: -1px 0 #000, 1px 0 #000, 0 -1px #000, 0 1px #000, 0 2px 3px #000; animation: markpop .18s ease-out; }
-  .mark.alert { color: #ffd65a; } .mark.search { color: #fff; }
-  .mark.quest, .mark.questdone, .mark.questgo { text-align: center; font-weight: 800; font-size: clamp(19px, 2.8cqw, 30px); line-height: 1;
-    text-shadow: -1px 0 #000, 1px 0 #000, 0 -1px #000, 0 1px #000, 0 2px 3px #000; }
-  .mark.quest, .mark.questdone { color: #ffd65a; } .mark.questgo { color: #a9a9a9; }
-  /* quests: the NPC's window, the log, the tracker in the corner */
-  #npcp .panel, #questp .panel { width: 440px; max-height: 80%; overflow: auto; }
-  .qsay { color: #d8d5cf; line-height: 1.45; white-space: pre-wrap; }
-  .qimg { display: block; max-width: 100%; max-height: 220px; margin: 0 auto; border-radius: 6px; }
-  .qsay kbd, .qgoals kbd, #tracker kbd { display: inline-block; min-width: 1.5em; padding: 0 5px; margin: 0 1px; text-align: center; font: 600 0.9em/1.55 inherit; font-family: inherit;
-    color: #f1efe9; background: #3a3f4b; border: 1px solid #5a6070; border-bottom-width: 2px; border-radius: 4px; }
-  .qgoals { display: grid; gap: 2px; font-size: 13px; } .qgoals .done { color: #7fc77f; }
-  .qreward { color: #c9b26a; font-size: 13px; } .qreturn { color: #7fc77f; font-size: 13px; }
-  .qbtns { display: flex; gap: 6px; justify-content: flex-end; } .qbtns button { padding: 6px 12px; }
-  .qpicks { display: flex; gap: 6px; flex-wrap: wrap; } .qpicks button.on { background: #3d6fb6; border-color: #3d6fb6; color: #fff; }
-  .qrow { display: flex; gap: 10px; align-items: center; text-align: left; padding: 7px 10px; background: #262a33; border: 0; border-radius: 6px; }
-  .qrow:hover { background: #2f4f7a; }
-  .qrow .qmark { font-weight: 800; width: 14px; text-align: center; color: #ffd65a; } .qrow.active .qmark { color: #a9a9a9; }
-  .qcard { display: grid; gap: 5px; padding: 9px 11px; background: #262a33; border-radius: 6px; } .qcard.ready { outline: 1px solid #4f8a4f; }
-  #tracker { right: 14px; top: 10px; max-width: 32%; display: grid; gap: 7px; font-size: clamp(10px, 1.35cqw, 13px); text-align: right; }
-  #tracker .tq b { display: block; color: #ffd65a; font-weight: 600; } #tracker .tq.ready b, #tracker .tq.ready div { color: #8fd98f; }
-  #tracker .tq div { color: #e6e3dd; } #tracker .tq .done { color: #8fd98f; }
-  @keyframes markpop { from { transform: translate(-50%, -60%) scale(.4); opacity: 0; } }
-  .weapon { display: grid; justify-items: end; gap: 3px; }
-  .weapon .wline { display: flex; gap: 8px; align-items: baseline; }
-  .weapon .wname { font-size: 11px; color: #ffd36b; }
-  .weapon .wammo { font-size: 17px; font-weight: 600; color: #fff; }
-  .weapon .wammo.low { color: #ff6b5b; }
-  .weapon .wreload { font-size: 10px; font-weight: 700; color: #111; background: #ffd65a; border-radius: 3px; padding: 1px 4px; text-shadow: none; }
-  .weapon .rounds { display: flex; gap: 3px; align-items: flex-end; flex-wrap: wrap-reverse; justify-content: flex-end; max-width: clamp(120px, 20cqw, 240px); }
-  .weapon .round { width: 7px; height: 26px; background: #0b0c0f; border-radius: 4px 4px 1px 1px / 9px 9px 1px 1px; box-shadow: 0 0 0 1px rgba(255,255,255,.55); }
-  .weapon .round.spent { background: transparent; box-shadow: 0 0 0 1px rgba(255,255,255,.18); }
-
-  /* ---- the build bar (B): laid over the view like the rest of the HUD. Top left, what you own; along the top, the
-     kinds of construction and, under them, the blueprints of the open kind ---- */
-  #buildbar { inset: 0; }
-  #buildbar[hidden] { display: none; }
-  #bb-mats { position: absolute; left: 8px; top: 8px; display: grid; gap: 3px; max-height: 60%; overflow: hidden; }
-  .bb-mat { display: flex; align-items: center; gap: 6px; padding: 2px 8px 2px 3px; min-width: 52px; background: rgba(16,18,22,.82); border: 2px solid #000; box-shadow: 0 0 0 1px rgba(255,255,255,.2); font-size: 13px; color: #fff; }
-  .bb-mat .pic { width: 22px; height: 22px; image-rendering: pixelated; }
-  .bb-mat.used { box-shadow: 0 0 0 1px #ffd65a; } .bb-mat.lack { box-shadow: 0 0 0 1px #ff6b5b; } .bb-mat.lack b { color: #ff8a7a; }
-  #bb-top, #bb-mats { pointer-events: none; } #bb-top .bb-row, .bb-mat { pointer-events: auto; }
-  #bb-top { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: min(64cqw, 760px); display: grid; gap: 4px; justify-items: center; }
-  .bb-row { display: flex; gap: 4px; max-width: 100%; overflow-x: auto; scrollbar-width: none; align-items: flex-start; }
-  .bb-row::-webkit-scrollbar { display: none; }
-  .bb-row[hidden] { display: none; }
-  .bb-type { flex: none; padding: 4px 12px; font-size: 13px; color: #d6d3cd; background: rgba(30,33,40,.88); border: 2px solid #000; border-radius: 0; box-shadow: 0 0 0 1px rgba(255,255,255,.2); cursor: pointer; text-shadow: none; }
-  .bb-type.hot { box-shadow: 0 0 0 1px #fff; color: #fff; }
-  .bb-type.on { background: #3d6fb6; color: #fff; }
-  .bb-type.rm { margin-left: 10px; } .bb-type.rm.on { background: #a33; }
-  .bb-none { align-self: center; font-size: 12px; color: #d6d3cd; padding: 0 8px; }
-  .bb-bp { flex: none; display: grid; gap: 4px; padding: 4px 8px 4px 4px; background: rgba(30,33,40,.9); border: 2px solid #000; box-shadow: 0 0 0 1px rgba(255,255,255,.2); cursor: pointer; text-shadow: none; }
-  .bb-bp .bb-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #d6d3cd; white-space: nowrap; }
-  .bb-bp .bb-head .pic { width: 28px; height: 28px; image-rendering: pixelated; object-fit: contain; }
-  .bb-bp.cant .bb-head { opacity: .55; }
-  .bb-bp.focus { background: rgba(44,49,60,.96); box-shadow: 0 0 0 1px #fff; }
-  .bb-bp.focus .bb-head { color: #fff; font-size: 13px; opacity: 1; }
-  .bb-bp.sel { border-color: #ffd65a; }
-  .bb-body { display: grid; gap: 2px; font-size: 12px; color: #d6d3cd; min-width: 150px; }
-  .bb-cost { display: flex; align-items: center; gap: 5px; } .bb-cost .pic { width: 16px; height: 16px; image-rendering: pixelated; }
-  .bb-cost.lack, .bb-tool.lack { color: #ff8a7a; }
-  .bb-tool { color: #9a978f; }
-  .bb-roof { justify-self: start; font-size: 11px; padding: 1px 8px; margin-top: 2px; } .bb-roof.on { background: #3d6fb6; border-color: #3d6fb6; color: #fff; }
-  .bb-go { margin-top: 2px; font-size: 11px; color: #ffd65a; }
-  #bb-hint { font-size: 11px; color: #d6d3cd; text-align: center; pointer-events: none; background: rgba(16,18,22,.72); padding: 1px 10px; }
-
-  /* ---- panels (bag, craft, storage, base) and the rest ---- */
-  .sk { display: grid; grid-template-columns: 36px 1fr; gap: 10px; align-items: center; padding: 4px 6px; border-radius: 6px; background: #262a33; }
-  .sk .ico { width: 32px; height: 32px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; font-size: 11px; color: #111; }
-  .slots { display: flex; gap: 3px; margin-top: 3px; }
-  .slots button { padding: 0 7px; font-size: 11px; }
-  .slots button.on { background: #3d6fb6; border-color: #3d6fb6; }
-  h4 { margin: 6px 0 0; font-size: 12px; color: #b9b6b0; text-transform: uppercase; letter-spacing: .05em; }
-  .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10,12,16,.75); z-index: 4; }
-  .overlay[hidden] { display: none; }
-  .panel { background: #1f232b; padding: 18px 22px; border-radius: 10px; display: grid; gap: 10px; min-width: 260px; max-width: 90%; }
-  #join input, #join select { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid #3a3f4b; background: #14161b; color: #fff; }
-  #join label { display: grid; gap: 4px; color: #b9b6b0; font-size: 12px; }
-  #join label[hidden] { display: none; }
-  /* the character screen: the figure on the left, the choices on the right */
-  #join-body { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: start; }
-  #join-preview { width: 96px; height: 144px; image-rendering: pixelated; background: #14161b; border: 1px solid #3a3f4b; border-radius: 6px; }
-  #join-fields { display: grid; gap: 8px; width: min(330px, 60vw); }
-  #join .jlabel { color: #b9b6b0; font-size: 12px; margin-bottom: -4px; }
-  #join .jrow { display: flex; flex-wrap: wrap; gap: 4px; }
-  #join .jpick { padding: 2px; background: #14161b; border: 2px solid #3a3f4b; border-radius: 6px; line-height: 0; }
-  #join .jpick canvas { width: 32px; height: 48px; image-rendering: pixelated; }
-  #join .jswatch { width: 26px; height: 26px; padding: 0; border: 2px solid #3a3f4b; border-radius: 50%; }
-  #join .jbody { flex: 1; padding: 6px 10px; background: #14161b; border: 2px solid #3a3f4b; }
-  #join .jbody.on { background: #3d6fb6; border-color: #3d6fb6; color: #fff; }
-  #join .jpick.on, #join .jswatch.on { border-color: #fff; }
-  .primary { padding: 8px; background: #3d6fb6; border: 0; color: #fff; }
-  #bag .panel, #craft .panel, #store .panel, #claimp .panel { width: 420px; max-height: 80%; overflow: auto; }
-  #bag-head, #craft-head, .phead { display: flex; justify-content: space-between; align-items: center; }
-  #store h4, #claimp h4 { margin: 6px 0 0; font-size: 12px; color: #9a978f; font-weight: 600; }
-  #store .slot .btns, #claimp .slot .btns { display: flex; gap: 4px; }
-  #craft h4 { margin: 6px 0 0; font-size: 12px; color: #9a978f; font-weight: 600; text-transform: none; }
-  .slot.rcp .name span.lack { color: #e0796b; }
-  .slot.rcp .btns { display: flex; gap: 4px; align-items: center; }
-  .slot.rcp .btns .step { padding: 2px 5px; font-size: 10px; }
-  .slot.rcp .btns .qty { min-width: 20px; text-align: center; font-variant-numeric: tabular-nums; }
-  #craft .panel { width: 480px; }
-  .slot.rcp.cant { opacity: .6; }
-  #bag-stats { color: #b9b6b0; font-size: 12px; }
-  /* the inventory window: grids of cells (bag, open container, belt), moved between by dragging */
-  #bag .panel { width: auto; max-width: 94%; }
-  #bag h4 { margin: 4px 0 0; }
-  .inv-cols { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
-  .inv-col { display: grid; gap: 6px; }
-  .igrid { display: grid; grid-template-columns: repeat(8, 44px); gap: 4px; padding: 6px; background: #14161b; border: 1px solid #3a3f4b; border-radius: 6px; width: max-content; }
-  .igrid.belt { grid-template-columns: repeat(10, 44px); }
-  /* the cooking window: bag | recipes on a sheet of paper | the cooker's cells */
-  #bag.cookwin #bag-title, #bag.cookwin #bag-stats { display: none; }
-  #bag.cookwin #bag-head { justify-content: flex-end; margin-bottom: -34px; position: relative; z-index: 1; pointer-events: none; }
-  #bag.cookwin #bag-head button { pointer-events: auto; }
-  #bag.cookwin .panel { max-height: 92%; background: #33363d; border: 1px solid #14161b; }
-  .ck-cols { display: flex; gap: 14px; align-items: flex-start; justify-content: center; flex-wrap: wrap; }
-  .ck-col { display: grid; gap: 6px; align-content: start; }
-  #bag .ck-col h4 { margin: 2px 0 -2px; font-size: 15px; font-weight: 500; text-transform: none; letter-spacing: 0; color: inherit; }
-  .ck-tab { padding: 9px 12px; text-align: center; font-size: 16px; background: #50545e; border: 1px solid #14161b; border-radius: 4px; }
-  .ck-col:last-child .ck-tab { margin-right: 108px; }      /* (room for the Close button beside it) */
-  .ck-bar { display: flex; justify-content: space-between; align-items: center; min-height: 24px; font-size: 12px; color: #b9b6b0; }
-  .ck-bar .lack { color: #e0563f; }
-  .ck-bar .hbtn { padding: 1px 8px; font-size: 11px; }
-  #bag.cookwin .igrid { grid-template-columns: repeat(10, 34px); gap: 2px; padding: 4px; }
-  #bag.cookwin .icell { width: 34px; height: 34px; border-radius: 2px; }
-  #bag.cookwin .icell .ico { width: 30px; height: 30px; }
-  .ck-sw { width: 54px; height: 22px; padding: 0; border: 1px solid #14161b; border-radius: 3px; background: #1d2027; display: flex; }
-  .ck-sw span { width: 28px; height: 100%; display: grid; place-items: center; font-size: 10px; background: #50545e; color: #e9e6df; border-radius: 2px; }
-  .ck-sw.on { justify-content: flex-end; background: #6b3a1a; }
-  .ck-sw.on span { background: #ff6a1a; color: #1a1208; font-weight: 700; }
-  .ck-fuel { text-align: right; font-size: 11px; color: #c9c6c0; font-variant-numeric: tabular-nums; }
-  .ck-now { display: grid; grid-template-columns: 1fr auto 1fr; justify-items: center; align-items: center; gap: 8px; padding: 10px 0 2px; }
-  .ck-now .icell { grid-column: 2; }
-  .ck-now .ck-arrow { grid-column: 2; }
-  .ck-now .ck-stop { grid-column: 3; grid-row: 1; justify-self: start; padding: 1px 8px; font-size: 11px; }
-  #bag.cookwin .ck-now .icell { width: 46px; height: 46px; border: 2px solid #14161b; }
-  .ck-arrow { width: 40px; height: 62px; position: relative; background: #1d2027; clip-path: polygon(28% 0, 72% 0, 72% 58%, 100% 58%, 50% 100%, 0 58%, 28% 58%); }
-  .ck-arrow-fill { position: absolute; left: 0; right: 0; top: 0; background: #ff4a00; }
-  .ck-title { text-align: center; font-size: 20px; padding: 26px 0 0; }
-  .ck-paper { width: 384px; min-height: 544px; box-sizing: border-box; padding: 78px 16px 14px; background: repeating-linear-gradient(transparent 0 85px, rgba(170,150,80,.3) 85px 86px), linear-gradient(90deg, transparent 0 13px, rgba(170,150,80,.3) 13px 14px, transparent 14px), #efeedd; -webkit-mask: radial-gradient(circle 13px at 50% 20px, transparent 97%, #000) 0 0 / calc(100% / 7) 100%; mask: radial-gradient(circle 13px at 50% 20px, transparent 97%, #000) 0 0 / calc(100% / 7) 100%; color: #2b2a26; display: grid; gap: 8px; align-content: start; }
-  .ck-det { display: grid; gap: 8px; min-height: 150px; align-content: start; }
-  .ck-name { display: flex; align-items: center; gap: 12px; font-size: 20px; padding-bottom: 4px; border-bottom: 1px solid rgba(110,100,60,.35); }
-  .ck-name b { font-weight: 500; }
-  .ck-paper .pic { width: 32px; height: 32px; image-rendering: pixelated; }
-  .ck-needs { display: flex; justify-content: space-between; gap: 10px; align-items: center; font-size: 13px; min-height: 30px; }
-  .ck-ins { display: flex; flex-wrap: wrap; gap: 4px 10px; }
-  .ck-in { display: inline-flex; align-items: center; gap: 6px; color: #1f9d2c; font-weight: 600; }
-  .ck-in.lack { color: #c2331f; }
-  .ck-in .pic { width: 20px; height: 20px; }
-  .ck-fx { text-align: right; }
-  .ck-time { text-align: right; font-size: 13px; padding-top: 4px; border-top: 1px solid rgba(110,100,60,.35); }
-  .ck-act { display: flex; justify-content: center; align-items: center; gap: 10px; min-height: 38px; }
-  .ck-step { display: grid; justify-items: center; font-size: 13px; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  .ck-step button { background: none; border: 0; padding: 0 4px; font-size: 8px; line-height: 1; color: #14161b; }
-  .ck-step button:disabled { opacity: .3; }
-  .ck-job { font-size: 13px; }
-  .ck-why { font-size: 12px; color: #c2331f; text-align: center; }
-  .ck-body { position: relative; width: 384px; height: 520px; }
-  .ck-body img { position: absolute; left: 190px; top: 63px; height: 449px; transform: translateX(-50%); pointer-events: none; user-select: none; }
-  #bag.cookwin .ck-slot { position: absolute; transform: translate(-50%, -50%); background: #50545e; border: 2px solid #14161b; }
-  #bag.cookwin .ck-slot.over { border-color: #6fb7ff; }
-  .ck-slotname { font-size: 8px; color: #d9d6cf; pointer-events: none; }
-  .ck-go { justify-self: center; padding: 4px 16px; background: #50545e; color: #f1eee7; border: 2px solid #14161b; border-radius: 2px; }
-  .ck-go:disabled { opacity: .45; }
-  .ck-none { font-size: 13px; padding-top: 10px; }
-  .ck-filter { display: flex; align-items: center; gap: 6px; font-size: 13px; padding-top: 4px; border-top: 1px solid rgba(110,100,60,.35); }
-  .ck-filter input { margin: 0 0 0 8px; }
-  .ck-recs { display: grid; grid-template-columns: repeat(7, 46px); gap: 4px; justify-content: center; }
-  .ck-rc { width: 46px; height: 46px; box-sizing: border-box; border: 2px solid #14161b; display: grid; place-items: center; }
-  .ck-rc.has { cursor: pointer; }
-  .ck-rc.sel { background: rgba(255,106,26,.25); border-color: #c2531a; }
-  .ck-rc.cant .ico { opacity: .45; }
-  .ck-rc .ico { width: 32px; height: 32px; image-rendering: pixelated; display: grid; place-items: center; font-size: 11px; }
-  .ck-pager { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
-  .ck-pager button { background: none; border: 0; color: #14161b; padding: 0 2px; font-size: 14px; }
-  .ck-pager button:disabled { opacity: .3; }
-  .igrid.over, .icell.over { border-color: #6fb7ff; }
-  .icell { width: 44px; height: 44px; position: relative; background: #1d2027; border: 1px solid #2c303a; border-radius: 4px; display: grid; place-items: center; user-select: none; }
-  .icell.has { cursor: grab; }
-  .icell.sel { border-color: #fff; }
-  .icell.equipped { box-shadow: inset 0 0 0 1px #7bcf62; }
-  .icell.extra { border-color: #e0563f; background: #2a1c1c; }   /* a stack past the last cell: the bag is overfull */
-  .icell.off { visibility: hidden; }
-  #bag h4.lack { color: #e0563f; }
-  .icell .ico { width: 32px; height: 32px; image-rendering: pixelated; pointer-events: none; display: grid; place-items: center; font-size: 11px; border-radius: 3px; }
-  .icell .qty { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; pointer-events: none; }
-  .icell .key { position: absolute; left: 3px; top: 1px; font-size: 10px; color: #9aa0ab; pointer-events: none; }
-  .inv-col h4 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .inv-col h4 .hbtn { padding: 1px 8px; font-size: 11px; font-weight: 400; }
-  .igrid.worn { grid-template-columns: repeat(2, 44px); }
-  .igrid.worn .icell:not(.has) .key { position: static; }
-  .inv-side { width: 400px; max-width: 100%; }
-  .inv-craft { display: grid; gap: 4px; max-height: 196px; overflow: auto; align-content: start; }
-  .inv-info { min-height: 40px; display: flex; gap: 10px; align-items: center; }
-  .inv-info .name { flex: 1; display: grid; }
-  .inv-info .name span { color: #b9b6b0; font-size: 12px; }
-  .slot { display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center; padding: 4px 6px; border-radius: 6px; background: #262a33; }
-  .slot.equipped { outline: 1px solid #e8c14a; }
-  .slot .pic { width: 32px; height: 32px; image-rendering: pixelated; }
-  .slot .name b, .sk .name b { display: block; font-weight: 600; }
-  .sk .name span { color: #9a978f; font-size: 12px; }
-  .slot .name span { color: #9a978f; font-size: 12px; }
-  .empty { color: #9a978f; }
-  #help .panel { max-width: 560px; color: #c9c6c0; font-size: 13px; }
-  #tip { position: absolute; pointer-events: none; background: rgba(16,18,22,.9); color: #fff; font-size: 12px;
-         padding: 3px 8px; border-radius: 6px; white-space: nowrap; z-index: 5; }
-  #tip[hidden], #menu[hidden] { display: none; }
-  #menu { position: absolute; z-index: 6; background: #1f232b; border: 1px solid #3a3f4b; border-radius: 8px; padding: 4px;
-          display: grid; gap: 2px; min-width: 160px; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
-  #menu button { text-align: left; border: 0; background: transparent; padding: 5px 10px; }
-  #menu button:hover { background: #2f4f7a; }
-  #menu button.def { font-weight: 600; }
-</style>
+<!-- The page's look is client/css/ui.css (the UI kit, art/ui/kit/). Loaded without the browser cache, like the scripts below. -->
+<script>document.write('<link rel="stylesheet" href="css/ui.css?v=' + Date.now() + '">');</script>
+<noscript><link rel="stylesheet" href="css/ui.css"></noscript>
 </head>
 <body>
   <div id="hud">
@@ -324,6 +17,7 @@
       <span id="gold"></span>
     </div>
     <div class="grp">
+      <select id="ui-size" title="UI size (kept in this browser)"></select>
       <select id="map-pick" title="Jump to map (offline testing only)"></select>
       <button id="btn-use" title="Use what you face: doors, chests, levers, signs (F or Space)">Use (F)</button>
       <button id="btn-bag" title="Bag (I)">Bag (I)</button>
@@ -336,31 +30,37 @@
     <canvas id="view" width="480" height="352"></canvas>
 
 
-    <div id="hud-bl" class="hudlayer shadow">
-      <div id="logbox"><button id="log-toggle" title="Hide or show what just happened">&#9662;</button><div id="log"></div></div>
-      <div id="vitals">
-        <div class="gauge" id="water-bar"><div class="fill" id="water-fill"></div>
-          <svg viewBox="0 0 24 24"><path d="M12 2.5C12 2.5 5.5 10.6 5.5 15a6.5 6.5 0 0 0 13 0C18.500 10.6 12 2.5 12 2.5z"/></svg></div>
-        <div class="gauge" id="food-bar"><div class="fill" id="food-fill"></div>
-          <svg viewBox="0 0 24 24"><path d="M6 2.5v7.2a2.6 2.6 0 0 0 1.9 2.5V21.500h1.700v-9.300a2.6 2.6 0 0 0 1.900-2.500V2.500H10v6.300H9.250V2.500h-1.500v6.300H7.500V2.500zM17.500 2.500c-2 1.700-3 4.300-3 7.300v3.400h1.600v8.300h1.700V2.500z"/></svg></div>
-        <div class="gauge" id="tox-bar" hidden><div class="fill" id="tox-fill"></div>
-          <svg viewBox="0 0 24 24"><path d="M12 2.5a8 8 0 0 0-8 8c0 2.700 1.300 5 3.300 6.400V19.500a1 1 0 0 0 1 1h1.200v-2h1.500v2h2v-2h1.500v2h1.200a1 1 0 0 0 1-1v-2.600A7.900 7.900 0 0 0 20 10.500a8 8 0 0 0-8-8zM8.700 13.500a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm6.600 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4zM12 16.500l-1.200-2.300h2.400z"/></svg></div>
-        <div id="statuses"></div>
-      </div>
-      <div class="bar" id="hp-bar"><div class="fill" id="hp-fill"></div><span><b>HP</b><i id="hp-text" style="font-style:normal; font-size:12px"></i></span></div>
-      <div class="bar" id="mp-bar"><div class="fill" id="mp-fill"></div><span id="mp-text">MP</span></div>
+    <div id="hud-tl" class="hudlayer"><div id="nightfall" class="k kplate" hidden></div></div>
+    <div id="hud-tc" class="hudlayer"><div id="noise" class="k kplate" hidden></div></div>
+    <div id="hud-tr" class="hudlayer">
+      <div id="clock" hidden></div>
+      <div id="minimap" hidden><canvas id="minimap-cv" width="102" height="54"></canvas><span id="minimap-n">N</span><span id="minimap-name"></span></div>
+      <div id="tracker"></div>
     </div>
 
-    <div id="hud-bc" class="hudlayer shadow">
-      <div id="slots"><div id="abilities"></div><div id="belt"></div></div>
-      <div class="bar" id="xp-bar"><div class="fill" id="xp-fill"></div><span id="xp-text">Lv</span></div>
+    <div id="hud-bl" class="hudlayer">
+      <div id="toasts"></div>
+      <div id="logbox"><button id="log-toggle" title="Hide or show what just happened">&#9662;</button><div id="log"></div></div>
+      <div id="vitals" class="k kplate">
+        <div id="chips"><div id="statuses"></div></div>
+        <div class="vrow" id="hp-row"></div>
+        <div class="vrow" id="st-row" hidden></div>
+        <div class="vrow" id="mp-row" hidden></div>
+      </div>
+    </div>
+
+    <div id="hud-bc" class="hudlayer">
+      <div id="bcbox">
+        <div id="xp-row"><span id="xp-lv" class="k kplate"></span><span id="xp-slot"></span><span id="xp-text"></span></div>
+        <div id="slots" class="k kplate"><div id="abilities"></div><div id="belt"></div></div>
+      </div>
     </div>
 
     <div id="marks"></div>
-    <div id="tracker" class="hudlayer shadow"></div>
-    <div id="hud-br" class="hudlayer shadow">
-      <div id="weapon-set" hidden><div id="weapon" class="weapon"></div></div>
+    <div id="hud-br" class="hudlayer">
+      <div id="weapon-set" class="k kplate" hidden><div id="weapon"></div></div>
     </div>
+
 
     <div id="join" class="overlay" hidden>
       <form id="join-form" class="panel">
@@ -386,13 +86,15 @@
     <div id="tip" hidden></div>
     <div id="menu" hidden></div>
     <div id="bag" class="overlay" hidden>
-      <div class="panel">
-        <div id="bag-head"><strong id="bag-title">Inventory</strong><button id="bag-close">Close (Esc)</button></div>
-        <div id="bag-stats"></div>
-        <div id="bag-items" style="display:grid; gap:6px"></div>
+      <div class="win">
+        <div class="win-top"><span class="ktab" id="bag-title">Inventory</span><button id="bag-close" class="bare kclose"><kbd>Esc</kbd> Close</button></div>
+        <div class="panel">
+          <div id="bag-stats" hidden></div>
+          <div id="bag-items"></div>
+        </div>
       </div>
     </div>
-    <div id="buildbar" class="hudlayer shadow" hidden>
+    <div id="buildbar" class="hudlayer" hidden>
       <div id="bb-mats"></div>
       <div id="bb-top">
         <div id="bb-types" class="bb-row"></div>
@@ -403,38 +105,31 @@
     <div id="store" class="overlay" hidden>
       <div class="panel">
         <div class="phead"><strong id="store-title">Storage</strong><button id="store-close">Close (Esc)</button></div>
-        <div id="store-items" style="display:grid; gap:6px"></div>
+        <div id="store-items"></div>
       </div>
     </div>
     <div id="claimp" class="overlay" hidden>
       <div class="panel">
         <div class="phead"><strong id="claim-title">Your base</strong><button id="claim-close">Close (Esc)</button></div>
-        <div id="claim-body" style="display:grid; gap:6px"></div>
+        <div id="claim-body"></div>
       </div>
     </div>
     <div id="npcp" class="overlay" hidden>
       <div class="panel">
         <div class="phead"><strong id="npc-title"></strong><button id="npc-close">Close (Esc)</button></div>
-        <div id="npc-body" style="display:grid; gap:8px"></div>
+        <div id="npc-body"></div>
       </div>
     </div>
     <div id="questp" class="overlay" hidden>
       <div class="panel">
         <div class="phead"><strong>Quests</strong><button id="quest-close">Close (Esc)</button></div>
-        <div id="quest-body" style="display:grid; gap:8px"></div>
-      </div>
-    </div>
-    <div id="craft" class="overlay" hidden>
-      <div class="panel">
-        <div id="craft-head"><strong id="craft-title">Crafting</strong><button id="craft-close">Close (Esc)</button></div>
-        <div id="craft-note" class="empty"></div>
-        <div id="craft-items" style="display:grid; gap:6px"></div>
+        <div id="quest-body"></div>
       </div>
     </div>
     <div id="help" class="overlay" hidden>
       <div class="panel">
         <div class="phead"><strong>Controls</strong><button id="help-close">Close</button></div>
-        <div>Move with WASD / arrows (the mouse never moves you) · hold right-click to aim — the crosshair follows your cursor, you face its side, and left-click fires toward it (auto/semi guns fire while held; R reloads, and so does a click on an empty magazine) · left-click to interact (open, pick up, pick a lock); hold left-click for the full action list · F or Space uses what you face · mouse wheel or 1–9, 0: choose what you hold from the belt (a weapon is ready at once; a grenade is thrown where you click; food and meds are used with a click) · I: bag · C: craft · B: build bar (wheel over the kinds, click one, then pick a blueprint and click it to take it in hand; click the ground to place, F to work on it) · X: remove what you built</div>
+        <div>Move with WASD / arrows (the mouse never moves you) · hold right-click to aim — the crosshair follows your cursor, you face its side, and left-click fires toward it (auto/semi guns fire while held; R reloads, and so does a click on an empty magazine) · left-click to interact (open, pick up, pick a lock); hold left-click for the full action list · F or Space uses what you face · mouse wheel or 1–9, 0: choose what you hold from the belt (a weapon is ready at once; a grenade is thrown where you click; food and meds are used with a click) · I or C: inventory and crafting (next to a workbench its recipes show there too) · B: build bar (wheel over the kinds, click one, then pick a blueprint and click it to take it in hand; click the ground to place, F to work on it) · X: remove what you built · R with a chest or a fire open: take everything out</div>
       </div>
     </div>
   </div>
@@ -444,7 +139,7 @@
     // version right after an update (GitHub Pages otherwise lets browsers keep files for 10 minutes).
     (function () {
       var files = ['../shared/mapcode.js', '../shared/content.js', '../shared/autotile.js', '../shared/rules.js', '../shared/world.js',
-                   'js/config.js', 'js/assets.js', 'js/scatter.js', 'js/tint.js', 'js/render.js', 'js/content_store.js', 'js/localdata.js', 'js/wire.js', 'js/api.js', 'js/main.js'];
+                   'js/config.js', 'js/ui.js', 'js/assets.js', 'js/scatter.js', 'js/tint.js', 'js/render.js', 'js/content_store.js', 'js/localdata.js', 'js/wire.js', 'js/api.js', 'js/main.js'];
       var v = Date.now();
       (function next(i) {
         if (i >= files.length) return;

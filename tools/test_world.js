@@ -4779,4 +4779,51 @@ test('dialogue: opens on the first start line that fits, moves by answers, runs 
   assert.strictEqual(npc(s.as(s.p, { type: 'interact', x: 3, y: 1 })).text, 'Mind the rats.');
 });
 
+// ------------------------------------------------------------ shops
+test('shops: offers trade items and gold both ways, stock is per character and comes back, a dialogue answer opens it', () => {
+  const offers = [
+    { id: 'wood', gives: 'wood:2', costs: 'gold:5', stock: 3, restock_h: 1 },
+    { id: 'swap', gives: 'gold:4', costs: 'wood:1', sell: true },
+    { id: 'secret', gives: 'wood:10', costs: 'gold:1', if: 'flag:friend' }
+  ];
+  const s = village([RATS], tb => {
+    tb.Shops = [{ id: 'store', name: 'Marta\'s store', offers: JSON.stringify(offers) }];
+    tb.Dialogues = [{ id: 'marta', nodes: JSON.stringify([{ id: 'hello', start: true, text: 'Yes?', answers: [{ id: 'buy', text: 'Show me.', shop: true }] }]) }];
+    tb.Objects.find(o => o.id === 'npc_marta').properties = JSON.stringify({ dialogue: 'marta', shop: 'store' });
+    tb.Objects.find(o => o.id === 'npc_tom').properties = JSON.stringify({ shop: 'store' });
+  });
+  const shop = ev => ev.find(e => e.type === 'shop'), n = (who, id) => World.count(who, id);
+  const K = 'field.e1', wood0 = n(s.p, 'wood');
+  s.p.gold = 20;
+  s.as(s.p, { type: 'interact', x: 3, y: 1 });
+  let v = shop(s.as(s.p, { type: 'talk', key: K, a: 'buy' }));
+  assert.deepStrictEqual([v.name, v.offers.map(o => o.id + ':' + (o.left === undefined ? '∞' : o.left)).join(' ')], ['Marta\'s store', 'wood:3 swap:∞'], 'the answer opens it; the locked offer is not shown');
+  assert.strictEqual(s.p.talkAt, undefined);
+  v = shop(s.as(s.p, { type: 'shop', op: 'trade', key: K, offer: 'wood', qty: 2 }));
+  assert.deepStrictEqual([s.p.gold, n(s.p, 'wood') - wood0, v.offers[0].left], [10, 4, 1]);
+  assert.ok(v.offers[0].back > 3000 && v.offers[0].back <= 3600, 'and says when it is back');
+  assert.match(texts(s.as(s.p, { type: 'shop', op: 'trade', key: K, offer: 'wood', qty: 2 })), /only 1 left/);
+  s.as(s.p, { type: 'shop', op: 'trade', key: K, offer: 'wood', qty: 1 });
+  assert.match(texts(s.as(s.p, { type: 'shop', op: 'trade', key: K, offer: 'wood' })), /none left/);
+  assert.match(texts(s.as(s.p, { type: 'shop', op: 'trade', key: K, offer: 'secret' })), /^$/, 'a locked offer is not traded');
+  assert.strictEqual(s.p.gold, 5);
+  // selling: the same thing the other way
+  s.as(s.p, { type: 'shop', op: 'trade', key: K, offer: 'swap', qty: 3 });
+  assert.deepStrictEqual([s.p.gold, n(s.p, 'wood') - wood0], [17, 3]);
+  // another character has their own stock; with nothing to pay with, nothing changes hands
+  s.q.gold = 3;
+  v = shop(s.as(s.q, { type: 'shop', op: 'open', key: K }));
+  assert.strictEqual(v.offers[0].left, 3);
+  assert.match(texts(s.as(s.q, { type: 'shop', op: 'trade', key: K, offer: 'wood' })), /don't have enough/);
+  assert.strictEqual(s.q.gold, 3);
+  assert.match(texts(s.as(s.r, { type: 'shop', op: 'open', key: K })), /need to be with Marta/);
+  // an hour on, it is whole again; unlocked offers show
+  s.t += 3600 * 1000; s.p.flags.friend = true;
+  v = shop(s.as(s.p, { type: 'shop', op: 'open', key: K }));
+  assert.deepStrictEqual(v.offers.map(o => o.id + ':' + o.left).join(' '), 'wood:3 swap:undefined secret:undefined');
+  // an NPC with a shop and no dialogue: its window is told there is one
+  s.r.x = 9; s.r.y = 8;
+  assert.strictEqual(s.as(s.r, { type: 'interact', x: 9, y: 9 }).find(e => e.type === 'npc').shop, 1);
+});
+
 console.log(`\n${passed} world tests passed`);

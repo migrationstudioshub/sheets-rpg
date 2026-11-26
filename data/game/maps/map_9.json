@@ -96,6 +96,8 @@
   {"key":"map_9.e93","x":14,"y":22,"ref":"window_wood","data":"{\"side\":\"N\"}"},
   {"key":"map_9.e98","x":10,"y":21,"ref":"car_wreck","data":""},
   {"key":"map_9.e99","x":14,"y":18,"ref":"door_wood","data":"{\"side\":\"N\"}"},
-  {"key":"map_9.e100","x":12,"y":18,"ref":"bookshelf_1","data":""}
+  {"key":"map_9.e100","x":12,"y":18,"ref":"bookshelf_1","data":""},
+  {"key":"map_9.e101","x":13,"y":19,"ref":"spawner_base_zombie","data":"{\"monster\":\"tutorial_walker\",\"count\":1,\"radius\":1}"},
+  {"key":"map_9.e102","x":14,"y":23,"ref":"npc_doc-Riley","data":""}
 ]
 }

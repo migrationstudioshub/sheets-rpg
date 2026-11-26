@@ -182,6 +182,7 @@ var Schema = (function () {
       f('tame_with', 'ref', '', 'Animal: the item that tames it. Holding it, the animal does not run from you; use the animal to feed it one and make it yours', { ref: 'items' }),
       f('lays', 'items', '', 'What a tame one living at a coop leaves on the ground now and then, to be picked up (eggs)'),
       f('lay_s', 'number', 0, 'Seconds between two of those (only while someone is on the map)'),
+      f('blood', 'text', '', 'The colour of the blood it leaves when it dies, e.g. #3fae4a for a slime (empty = red, none = no blood). Only a look'),
       f('appearance', 'looks', '', 'Paper-doll sets rolled per spawn — add more than one (e.g. male/female) and one is picked by weight (blank = use the flat sprite)', { ref: 'appearances' })
     ] },
     appearances: { collection: 'appearances', id: 'id', label: 'Appearances', singular: 'appearance set', authored: 'studio', fields: [
@@ -285,6 +286,14 @@ var Schema = (function () {
       f('notes', 'text', '')
     ] },
 
+    // A shop is a list of offers an NPC makes: the player gives `costs`, the shop gives `gives` (item lists; gold is
+    // the item id "gold"). An NPC names one in its properties.shop. World.shopAct is the rule.
+    shops: { collection: 'shops', id: 'id', label: 'Shops', singular: 'shop', authored: 'studio', fields: [
+      f('id', 'text', ''), f('name', 'text', ''),
+      f('offers', 'json', '', 'The offers: [{id, gives, costs, sell, stock, restock_h, if}]. Edited as cards in the Shops view'),
+      f('notes', 'text', '')
+    ] },
+
     // ---- edited by the map editor, not the Content Studio forms ----
     maps: { collection: 'maps', id: 'id', label: 'Maps', authored: 'map', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('width', 'number', 0), f('height', 'number', 0),
@@ -306,7 +315,7 @@ var Schema = (function () {
   var TAB = {
     config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', wallStyles: 'WallStyles', kinds: 'Kinds', itemTypes: 'ItemTypes',
     objects: 'Objects', items: 'Items', monsters: 'Monsters', loot: 'LootTables', classes: 'Classes',
-    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes', blueprints: 'Blueprints', quests: 'Quests', dialogues: 'Dialogues',
+    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes', blueprints: 'Blueprints', quests: 'Quests', dialogues: 'Dialogues', shops: 'Shops',
     maps: 'Maps', mapEntities: 'MapEntities'
   };
 

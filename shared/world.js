@@ -3445,6 +3445,7 @@ var World = (function () {
     ev.push({ type: 'hit', map: mapId, x: m.x, y: m.y, amount: dmg, to: p ? p.id : undefined, text: p ? text : '' });
     if (m.hp > 0) return;
     m.dead = true; m.statuses = [];
+    ev.push({ type: 'die', map: mapId, x: m.x, y: m.y, id: m.id });   // for everyone on the map: the page bursts the figure (deathFx in main.js)
     var keep = cfgNum(c, 'kill_credit_s', 30) * 1000, hits = m.hits || {};
     var part = Object.keys(hits).filter(function (id) { return now - hits[id] <= keep && !(p && id === p.id); });
     delete m.hits;
@@ -4588,7 +4589,8 @@ var World = (function () {
     delete p.talkAt;
     var d = (c.dialogues || {})[String(pr.dialogue || '')], first = d && dlgStart(c, p, d);
     if (first) return dlgSay(c, p, e, o, d, first, ev, true);  // a conversation (below)
-    ev.push({ type: 'npc', to: p.id, key: e.key, ref: o.id, name: o.name, text: String(pr.text || '') });
+    ev.push({ type: 'npc', to: p.id, key: e.key, ref: o.id, name: o.name, text: String(pr.text || ''),
+      shop: (c.shops || {})[String(pr.shop || '')] ? 1 : undefined });   // no conversation to open it from: the page shows a Trade button
   }
   // ---- dialogue (Content: c.dialogues[id] = {nodes: {id: {text, start, cond, answers: [{id, text, cond, run, to, once}]}}, order})
   // A conversation opens on the first `start` line whose condition holds (so a first meeting can differ: !talked) and
@@ -4627,9 +4629,55 @@ var World = (function () {
     if (ans.once) { var mem = p.talk[d.id]; if (mem.a.indexOf(node.id + '/' + ans.id) < 0) mem.a.push(node.id + '/' + ans.id); }
     var mapWas = p.map;
     if (ans.run) run(c, ws, p, ans.run, now, ev);
+    var shop = ans.shop && shopOf(c, e);
+    if (shop && p.map === mapWas && near(p, e.x, e.y)) { delete p.talkAt; return shopShow(c, p, e, o, shop, now, ev); }   // "show me what you have"
     var next = ans.to && d.nodes[ans.to];
     if (!next || p.map !== mapWas || !near(p, e.x, e.y) || p.hp <= 0) return end();   // said its last, or the answer took you elsewhere
     dlgSay(c, p, e, o, d, next, ev);
+  }
+  // ---- shops (Content: c.shops[id] = {name, offers: [{id, gives, costs, sell, stock, restockS, cond}]}; an NPC's
+  // properties.shop names one). An offer is one trade: the player gives `costs`, gets `gives` (item lists; gold is
+  // "gold"). Stock is per CHARACTER: p.shops[shop][offer] = {n: taken, at: when the first of them was}; restockS after
+  // `at` the offer is whole again for them (0 = never). An offer with a condition that does not hold is not shown.
+  function shopOf(c, e) { return (c.shops || {})[String(props(c, e).shop || '')] || null; }
+  function shopLeft(p, shop, of, now) {
+    if (!(of.stock > 0)) return { left: null, back: 0 };
+    var m = ((p.shops || {})[shop.id] || {})[of.id];
+    if (m && of.restockS > 0 && now >= m.at + of.restockS * 1000) m = null;
+    return { left: Math.max(0, of.stock - (m ? m.n : 0)), back: m && of.restockS > 0 ? m.at + of.restockS * 1000 - now : 0, m: m };
+  }
+  function shopShow(c, p, e, o, shop, now, ev) {
+    ev.push({ type: 'shop', to: p.id, key: e.key, ref: o.id, id: shop.id, name: shop.name || o.name,
+      offers: shop.offers.filter(function (of) { return check(c, p, of.cond); }).map(function (of) {
+        var s = shopLeft(p, shop, of, now), out = { id: of.id, gives: of.gives, costs: of.costs };
+        if (of.sell) out.sell = 1;
+        if (s.left !== null) { out.left = s.left; if (s.back > 0) out.back = Math.ceil(s.back / 1000); }   // back = seconds until it is whole again
+        return out;
+      }) });
+  }
+  /** {type: 'shop', key, op: 'open' | 'trade', offer, qty} — key = the NPC; every trade answers with the shop as it now stands. */
+  function shopAct(c, ws, p, a, now, ev) {
+    function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
+    var map = liveMap(c, ws, p.map), e = map && (map.entities || []).filter(function (en) { return en.key === String(a.key || ''); })[0];
+    var o = e && objOf(c, e), shop = o && o.kind === 'npc' && shopOf(c, e);
+    if (!shop) return say('There is nothing to trade here.');
+    if (!near(p, e.x, e.y)) return say('You need to be with ' + (o.name || 'them') + '.');
+    if (a.op !== 'trade') return shopShow(c, p, e, o, shop, now, ev);
+    var of = shop.offers.filter(function (x) { return x.id === String(a.offer || ''); })[0];
+    var qty = Math.max(1, Math.min(99, Math.round(Number(a.qty)) || 1));
+    if (!of || !check(c, p, of.cond)) return shopShow(c, p, e, o, shop, now, ev);
+    var s = shopLeft(p, shop, of, now), costs = list(of.costs).filter(function (g) { return g.qty > 0; });
+    if (s.left !== null && s.left < qty) { say(s.left ? 'There ' + (s.left === 1 ? 'is' : 'are') + ' only ' + s.left + ' left.' : 'There is none left.'); return shopShow(c, p, e, o, shop, now, ev); }
+    if (!costs.every(function (g) { return count(p, g.item) >= g.qty * qty; })) { say('You don\'t have enough for that.'); return shopShow(c, p, e, o, shop, now, ev); }
+    costs.forEach(function (g) { take(p, g.item, g.qty * qty); });
+    list(of.gives).forEach(function (g) { if (g.qty > 0 && (g.item === 'gold' || c.items[g.item])) give(c, p, g.item, g.qty * qty, ev); });
+    if (s.left !== null) {
+      p.shops = p.shops || {};
+      var mem = p.shops[shop.id] = p.shops[shop.id] || {};
+      if (!s.m) mem[of.id] = { n: 0, at: now };                 // the first of a fresh stock: its clock starts
+      mem[of.id].n += qty;
+    }
+    shopShow(c, p, e, o, shop, now, ev);
   }
   function teleport(c, p, target, ev) {
     var t = String(target || '').split(':'), map = c.maps[t[0]];
@@ -5110,6 +5158,7 @@ var World = (function () {
     else if (action.type === 'hold') { holdSlot(c, p, action.slot, ev); if (heldItem(c, p)) questCount(c, p, 'hold', heldItem(c, p).id, now, ev); }
     else if (action.type === 'quest') questAct(c, ws, p, action, now, ev);
     else if (action.type === 'talk') talkAct(c, ws, p, action, now, ev);
+    else if (action.type === 'shop') shopAct(c, ws, p, action, now, ev);
     else if (action.type === 'sneak') {                        // (docs/STEALTH.md) never while something is after you
       if (!action.on || !stealthOn(c)) delete p.sneak;
       else if (chasedBy(mapState(ws, p.map), p)) { p.chased = true; delete p.sneak; ev.push({ type: 'info', to: p.id, text: 'You can\'t hide while something is after you.' }); }

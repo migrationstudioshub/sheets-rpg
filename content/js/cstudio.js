@@ -301,7 +301,7 @@ var CStudio = (function () {
     ['World', ['tilesets', 'terrain', 'wallStyles', 'objects']],
     ['Things', ['items', 'loot', 'blueprints', 'recipes']],
     ['Characters', ['classes', 'skills', 'statuses', 'monsters', 'appearances']],
-    ['Story', ['npcs', 'dialogues', 'quests']]
+    ['Story', ['npcs', 'dialogues', 'shops', 'quests']]
   ];
   // object_kinds is kept in Config but edited from the Object Kinds card, so the Config list leaves it out.
   function shownConfig(r) { return r.key !== 'object_kinds'; }
@@ -517,6 +517,84 @@ var CStudio = (function () {
       }
     });
   }
+  // ---------------------------------------------------------------- shops (Story → Shops)
+  // A shop = a list of offers, stored on the row as `offers`: [{id, gives, costs, sell, stock, restock_h, if}]. One
+  // offer is one trade: the player hands over `costs` and gets `gives` (item lists; gold is the item "gold", edited
+  // here as a number of its own). sell = the shop is the one buying: the game lists it under Sell.
+  function offersOf(r) {
+    if (!Array.isArray(r.offers)) { var v = []; try { v = JSON.parse(r.offers || '[]'); } catch (e) { v = []; } r.offers = Array.isArray(v) ? v : []; }
+    return r.offers;
+  }
+  /** One side of a trade: a gold amount and an item list, kept together as the item-list text the rules read. */
+  function tradeSide(text, onSave) {
+    var gold = 0, rest = [];
+    String(text == null ? '' : text).split(/[,;]/).forEach(function (part) {
+      var b = part.trim().split(':'); if (!b[0]) return;
+      if (b[0].trim() === 'gold') gold += parseInt(b[1], 10) > 0 ? parseInt(b[1], 10) : 0; else rest.push(part.trim());
+    });
+    var items = rest.join(', ');
+    function save() { onSave([gold > 0 ? 'gold:' + gold : '', items].filter(Boolean).join(', ')); }
+    return h('div', null,
+      h('div', { className: 'row', style: 'margin-bottom:4px' }, h('span', { className: 'lootlbl', text: 'Gold' }),
+        h('input', { type: 'number', min: 0, step: 1, value: gold || '', placeholder: '0', style: 'width:90px;flex:none', oninput: function (e) { var q = parseInt(e.target.value, 10); gold = q > 0 ? q : 0; save(); } })),
+      itemsBox(items, function (t) { items = t; save(); }));
+  }
+  function shopUsers(id) { return rows('objects').filter(function (o) { return isNpc(o) && id && String(propsObj(o).shop || '') === String(id); }); }
+  function shopForm() {
+    var form = $('form'), keepTop = form.scrollTop; form.innerHTML = '';
+    var r = rows('shops')[curIndex];
+    if (curIndex < 0 || !r) { form.appendChild(h('div', { className: 'empty', text: 'Select a shop, or click New.' })); return; }
+    var offers = offersOf(r), users = shopUsers(r.id);
+    function save(again) { persist(); if (again) shopForm(); }
+    form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: rowLabel('shops', r) }), h('span', { className: 'pill', text: 'Shop' }),
+      h('button', { title: 'Delete this shop', text: '🗑 Delete', style: 'margin-left:auto', onclick: function () {
+        if (!confirm('Delete this shop?' + (users.length ? ' ' + users.length + ' NPC' + (users.length === 1 ? ' keeps' : 's keep') + ' it and will have nothing to trade.' : ''))) return;
+        rows('shops').splice(curIndex, 1); curIndex = -1; persist(); renderNav(); renderList(); renderForm();
+      } })));
+    Schema.get('shops').fields.forEach(function (fl) { if (fl.key === 'id' || fl.key === 'name') form.appendChild(fieldEl(r, fl)); });
+    form.appendChild(h('div', { className: 'field' }, h('label', { text: 'Kept by' }),
+      users.length ? h('div', null, users.map(function (o, n) {
+        return h('a', { href: '#', text: (o.name || o.id) + (n < users.length - 1 ? ', ' : ''), onclick: function (e) { e.preventDefault(); type = 'npcs'; curIndex = rows('objects').indexOf(o); filter = ''; renderNav(); renderList(); renderForm(); } });
+      })) : h('div', { className: 'help', text: 'No NPC yet. Pick this shop on an NPC\'s page (Story → NPCs); several NPCs can keep the same shop.' })));
+    [[false, 'Sells — what players can buy here', '+ Add something to sell'], [true, 'Buys — what players can sell here', '+ Add something to buy']].forEach(function (grp) {
+      form.appendChild(h('div', { className: 'sub', text: grp[1] }));
+      offers.forEach(function (o, oi) {
+        if (isTrue(o.sell) !== grp[0]) return;
+        var card = h('div', { className: 'dcard' });
+        card.appendChild(h('div', { className: 'row' },
+          h('b', { style: 'flex:1;font-size:12px', text: grp[0] ? 'The player hands over' : 'The player gets' }),
+          h('button', { text: '↑', title: 'Earlier in the list', disabled: oi === 0, onclick: function () { offers.splice(oi - 1, 0, offers.splice(oi, 1)[0]); save(true); } }),
+          h('button', { text: '↓', title: 'Later in the list', disabled: oi === offers.length - 1, onclick: function () { offers.splice(oi + 1, 0, offers.splice(oi, 1)[0]); save(true); } }),
+          h('button', { text: '✕', title: 'Remove this offer', onclick: function () { offers.splice(oi, 1); save(true); } })));
+        // (whichever way it goes, the goods come first and the price second: a sale's goods are what the player hands over)
+        card.appendChild(tradeSide(grp[0] ? o.costs : o.gives, function (t) { if (grp[0]) o.costs = t; else o.gives = t; save(); }));
+        card.appendChild(h('div', { className: 'row', style: 'margin-top:6px' }, h('b', { style: 'font-size:12px', text: grp[0] ? 'and gets' : 'and pays' })));
+        card.appendChild(tradeSide(grp[0] ? o.gives : o.costs, function (t) { if (grp[0]) o.gives = t; else o.costs = t; save(); }));
+        card.appendChild(h('div', { className: 'row', style: 'margin-top:6px' },
+          h('span', { className: 'lootlbl', text: 'Stock' }),
+          h('input', { type: 'number', min: 0, step: 1, value: Number(o.stock) > 0 ? o.stock : '', placeholder: 'no limit', style: 'width:90px;flex:none',
+            title: 'How many times EACH character can take this offer before it runs out for them. Empty = no limit',
+            oninput: function (e) { var q = parseInt(e.target.value, 10); if (q > 0) o.stock = q; else delete o.stock; save(); } }),
+          h('span', { className: 'lootlbl', text: 'back after' }),
+          h('input', { type: 'number', min: 0, step: 0.5, value: Number(o.restock_h) > 0 ? o.restock_h : '', placeholder: 'never', style: 'width:90px;flex:none',
+            title: 'Hours until this offer is whole again for a character, counted from the first one they took. Empty = it never comes back',
+            oninput: function (e) { var q = parseFloat(e.target.value); if (q > 0) o.restock_h = q; else delete o.restock_h; save(); } }),
+          h('span', { className: 'lootlbl', text: 'hours' })));
+        card.appendChild(h('div', { className: 'row' },
+          h('span', { className: 'lootlbl', text: 'Only if' }),
+          h('input', { type: 'text', value: o['if'] || '', placeholder: 'always (e.g. quest:helped_doc or level:3)', title: 'The offer is shown only to characters for whom this holds. ' + COND_HELP,
+            oninput: function (e) { var v = e.target.value.trim(); if (v) o['if'] = v; else delete o['if']; save(); } })));
+        form.appendChild(card);
+      });
+      form.appendChild(h('button', { className: 'primary', style: 'margin:2px 0 8px', text: grp[2], onclick: function () {
+        var n = { id: freeId(offers, 'o'), gives: '', costs: '' }; if (grp[0]) n.sell = true;
+        offers.push(n); save(true);
+      } }));
+    });
+    form.appendChild(h('div', { className: 'help', text: 'Stock is counted for each character on their own: one player buying everything leaves the next player\'s shop full. An offer with nothing for the player to get is left out of the game.' }));
+    Schema.get('shops').fields.forEach(function (fl) { if (fl.key === 'notes') form.appendChild(fieldEl(r, fl)); });
+    form.scrollTop = keepTop;
+  }
   function dialogueForm() {
     var form = $('form'), keepTop = form.scrollTop; form.innerHTML = '';
     var r = rows('dialogues')[curIndex];
@@ -607,7 +685,9 @@ var CStudio = (function () {
             h('option', { value: '+', text: '+ a new line…' })),
           a.to && known ? h('button', { text: 'Edit ›', title: 'Go to that line', onclick: function () { curLineId = a.to; redraw(); renderQuestMap(); } }) : null,
           h('label', { className: 'tick', title: 'Offered only once to each character: after it is picked it is gone for good' },
-            h('input', { type: 'checkbox', checked: isTrue(a.once), onchange: function (e) { if (e.target.checked) a.once = true; else delete a.once; save(); questMapSoon(); } }), document.createTextNode('Once only'))));
+            h('input', { type: 'checkbox', checked: isTrue(a.once), onchange: function (e) { if (e.target.checked) a.once = true; else delete a.once; save(); questMapSoon(); } }), document.createTextNode('Once only')),
+          h('label', { className: 'tick', title: 'Picking this answer opens the shop of the NPC being talked to (set on the NPC\'s page) and ends the talk. An NPC with no shop just goes on to the line above' },
+            h('input', { type: 'checkbox', checked: isTrue(a.shop), onchange: function (e) { if (e.target.checked) a.shop = true; else delete a.shop; save(); } }), document.createTextNode('Opens the shop'))));
         ac.appendChild(h('div', { className: 'row' },
           h('span', { className: 'lootlbl', text: 'Only if' }),
           h('input', { type: 'text', value: a['if'] || '', placeholder: 'always (e.g. has:iron_key or !flag:paid)', title: COND_HELP, oninput: function (e) { var v = e.target.value.trim(); if (v) a['if'] = v; else delete a['if']; save(); } })));
@@ -634,6 +714,7 @@ var CStudio = (function () {
     if (type === 'npcs') return npcForm();
     if (type === 'appearances') return appearanceForm();
     if (type === 'dialogues') return dialogueForm();
+    if (type === 'shops') return shopForm();
     var form = $('form'); form.innerHTML = '';
     if (curIndex < 0 || !rows(type)[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select a ' + (Schema.get(type).singular || Schema.get(type).label.toLowerCase().replace(/s$/, '')) + ', or click New.' })); return; }
     var r = rows(type)[curIndex], def = Schema.get(type), hiddenCount = 0;
@@ -1510,6 +1591,23 @@ var CStudio = (function () {
               setProp(o, 'dialogue', id); openDialogue(id);
             } })),
       h('div', { className: 'help', text: 'A conversation with answers to pick, conditions and things that happen. With one, the line above is only used if the dialogue has no line to open on.' })));
+    // its shop (Story → Shops): opened by a dialogue answer ticked "Opens the shop", or by a Trade button when it has no dialogue
+    var shs = rows('shops').filter(function (d) { return d.id; }), scur = String(p.shop || ''), sknown = !scur || shs.some(function (d) { return String(d.id) === scur; });
+    function openShopRow(id) { var i = -1; rows('shops').forEach(function (d, n) { if (i < 0 && String(d.id || '') === String(id)) i = n; }); if (i < 0) return; type = 'shops'; curIndex = i; filter = ''; renderNav(); renderList(); renderForm(); }
+    form.appendChild(h('div', { className: 'field' }, h('label', { text: 'Shop' }),
+      h('div', { className: 'row' },
+        h('select', { style: 'flex:1;min-width:0' + (sknown ? '' : ';border-color:var(--bad)'), onchange: function (e) { setProp(o, 'shop', e.target.value || undefined); npcForm(); } },
+          h('option', { value: '', text: '— none: it does not trade —', selected: !scur }),
+          sknown ? null : h('option', { value: scur, text: scur + ' (missing shop)', selected: true }),
+          shs.map(function (d) { return h('option', { value: d.id, text: (d.name || d.id) + '  (' + d.id + ')', selected: String(d.id) === scur }); })),
+        scur && sknown ? h('button', { text: 'Edit shop ›', onclick: function () { openShopRow(scur); } })
+          : h('button', { text: '+ New shop', title: 'Make a shop for this NPC', disabled: !o.id, onclick: function () {
+              var all = rows('shops'), id = String(o.id).replace(/^npc_/, '') + '_shop', n = 1, base = id;
+              while (all.some(function (d) { return String(d.id) === id; })) id = base + (++n);
+              all.push({ id: id, name: (o.name || o.id) + '\'s shop', offers: [], notes: '' });
+              setProp(o, 'shop', id); openShopRow(id);
+            } })),
+      h('div', { className: 'help', text: scur && dcur ? 'With a dialogue, the shop opens from an answer ticked "Opens the shop" — add one, or players cannot reach it.' : 'What it sells and buys. With no dialogue, its window gets a Trade button by itself.' })));
     form.appendChild(npcOutfit(o));
     // the quests it gives and takes back (set on each quest: giver / ender)
     var gives = questsWhere('giver'), takes = questsWhere('ender');

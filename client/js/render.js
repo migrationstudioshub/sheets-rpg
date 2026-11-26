@@ -941,6 +941,53 @@ var Render = (function () {
   }
   /** Draw an outfit standing on the tile whose top-left is (ax, ay); answers the top of the figure. */
   function drawOutfit(g, fit, ax, ay, T, flip) { return drawLayers(g, outfitLayers(fit), ax, ay, T, flip); }
+  /** The figure of one character (a player or a monster) alone, its tile's top-left at (ax, ay), on gg; answers the top of what was drawn. */
+  function figureOn(gg, a, ax, ay, T) {
+    var top = ay;                                                    // top of the drawn figure (busts rise above the tile)
+    if (a.layers && a.layers.length) {
+      top = drawLayers(gg, a.layers, ax, ay, T, a.facing === 'W', a.aim, a.swing);
+    } else if (a.sprite !== undefined) {
+      var img = a.sprite && Assets.get(a.sprite);
+      if (img) {
+        gg.save();
+        if (a.facing === 'W') { gg.translate(ax + T, ay); gg.scale(-1, 1); gg.drawImage(img, 0, 0, T, T); }
+        else gg.drawImage(img, ax, ay, T, T);
+        gg.restore();
+      } else gg.drawImage(Assets.placeholder(a.name, '#8a2f2f', T), ax, ay);
+    } else gg.drawImage(Assets.hero(a.facing, a.tint || '#3d6fb6', T), ax, ay);
+    return top;
+  }
+  /** A death: the figure of actor `a` taken apart into its own pixels, each with a way to fly (drawFx, kind 'burst'),
+   *  and the drops of blood it throws (`blood` = how many; they land as a stain, Renderer.draw o2.stains).
+   *  Answers {p: [{x, y, vx, vy, c, s, l}], drops: [{dx, dy, t, s, a}]} — p in screen pixels from the tile's top-left,
+   *  speeds per second, l = the share of the effect's life it lasts; drops in tiles from the tile, t = ms in the air. */
+  var burstCv = null;
+  function burst(a, T, blood) {
+    var W3 = 3 * T, H5 = 5 * T, u = Math.max(1, Math.round(T / NT)), p = [], data = null, i;
+    if (!burstCv) burstCv = document.createElement('canvas');
+    if (burstCv.width !== W3 || burstCv.height !== H5) { burstCv.width = W3; burstCv.height = H5; }
+    var sg = burstCv.getContext('2d', { willReadFrequently: true });
+    sg.clearRect(0, 0, W3, H5); sg.imageSmoothingEnabled = false;
+    try { figureOn(sg, a, T, 4 * T, T); data = sg.getImageData(0, 0, W3, H5).data; } catch (e) { data = null; }   // (a picture from another site cannot be read: plain bits instead)
+    var pts = [], sy = 0, x, y;
+    if (data) for (y = 0; y < H5; y += u) for (x = 0; x < W3; x += u) {
+      var k = (y * W3 + x) * 4;
+      if (data[k + 3] > 60) { pts.push([x - T, y - 4 * T, 'rgb(' + data[k] + ',' + data[k + 1] + ',' + data[k + 2] + ')']); sy += y - 4 * T; }
+    }
+    if (!pts.length) for (y = 0; y < T; y += 2 * u) for (x = 0; x < T; x += 2 * u) { pts.push([x, y, '#8a2f2f']); sy += y; }
+    var keep = pts.length > 1400 ? 1400 / pts.length : 1, cx = T / 2, cy = sy / pts.length;
+    for (i = 0; i < pts.length; i++) {
+      if (keep < 1 && Math.random() > keep) continue;
+      var q = pts[i], ang = Math.atan2(q[1] - cy, q[0] - cx) + (Math.random() - 0.5) * 1.2, sp = T * (1.2 + Math.random() * 4.6);
+      p.push({ x: q[0], y: q[1], vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - T * 1.6, c: q[2], s: u, l: 0.45 + Math.random() * 0.55 });
+    }
+    var drops = [];
+    for (i = 0; i < (blood || 0); i++) {
+      var da = Math.random() * Math.PI * 2, dr = i < 4 ? Math.random() * 0.25 : 0.3 + Math.random() * 1.1;
+      drops.push({ dx: 0.5 + Math.cos(da) * dr, dy: 0.7 + Math.sin(da) * dr * 0.6, t: i < 4 ? 0 : 160 + dr * 260, s: u * (i < 4 ? 3 + Math.floor(Math.random() * 3) : 1 + Math.floor(Math.random() * 3)), a: 0.6 + Math.random() * 0.35 });
+    }
+    return { p: p, drops: drops, cy: cy / T };
+  }
   function drawLayers(g, layers, ax, ay, T, flip, aim, swing) {
     var topY = ay, turn = swing != null && swing >= 0 && swing < 1 ? swingTurn(swing) : 0;
     layers.forEach(function (l) {
@@ -1363,6 +1410,23 @@ var Render = (function () {
       if (fogA > 0 && sight.vis && !sight.seen(rx, ry) && sight.known(rx, ry)) b *= 1 - fogA;
       return b < 1 ? b : 0;
     }
+    // layer 2e: blood on the ground where something died (o2.stains from main.js deathFx: [{x, y, t0, life, color,
+    // drops}], Render.burst). Each drop shows once it has landed; the whole stain fades out over its last quarter.
+    if (o2.stains && o2.stains.length) {
+      var tS = performance.now();
+      o2.stains.forEach(function (s) {
+        var ageS = tS - s.t0, rx = Math.round(s.x), ry = Math.round(s.y);
+        if (ageS < 0 || ageS >= s.life || rx < x0 || rx > x1 || ry < y0 || ry > y1) return;
+        var fade = Math.min(1, (s.life - ageS) / (s.life * 0.25)), by = oy - L(Math.max(0, Math.min(map.width - 1, rx)), Math.max(0, Math.min(map.height - 1, ry)));
+        g.fillStyle = s.color;
+        s.drops.forEach(function (d) {
+          if (ageS < d.t) return;
+          g.globalAlpha = d.a * fade;
+          g.fillRect(Math.round(ox + (s.x + d.dx) * T - d.s / 2), Math.round(by + (s.y + d.dy) * T - d.s / 4), d.s, Math.max(1, Math.round(d.s / 2)));
+        });
+      });
+      g.globalAlpha = 1;
+    }
     // layer 2f: while you sneak, where the monsters in view would see you (docs/STEALTH.md; o2.watch from main.js
     // sightAreas, each [{cells: {"x,y": 1}, hot}] worked out by World.sightArea). Amber = it has not noticed
     // anyone, red = it is after someone. A soft fill, and a line round the edge.
@@ -1629,21 +1693,7 @@ var Render = (function () {
     }
     /** Draw one character (a player or a monster) with its tile's top-left at (ax, ay): figure, status tint, health bar, name. */
     /** The figure alone, its tile's top-left at (ax, ay), on gg; answers the top of what was drawn. */
-    function drawFigure(gg, a, ax, ay) {
-      var top = ay;                                                  // top of the drawn figure (busts rise above the tile)
-      if (a.layers && a.layers.length) {
-        top = drawLayers(gg, a.layers, ax, ay, T, a.facing === 'W', a.aim, a.swing);
-      } else if (a.sprite !== undefined) {
-        var img = a.sprite && Assets.get(a.sprite);
-        if (img) {
-          gg.save();
-          if (a.facing === 'W') { gg.translate(ax + T, ay); gg.scale(-1, 1); gg.drawImage(img, 0, 0, T, T); }
-          else gg.drawImage(img, ax, ay, T, T);
-          gg.restore();
-        } else gg.drawImage(Assets.placeholder(a.name, '#8a2f2f', T), ax, ay);
-      } else gg.drawImage(Assets.hero(a.facing, a.tint || '#3d6fb6', T), ax, ay);
-      return top;
-    }
+    function drawFigure(gg, a, ax, ay) { return figureOn(gg, a, ax, ay, T); }
     // Wading: how deep a character stands in shallow water, 0..1 — smooth while it glides in or out (the shallow
     // tiles around where it is drawn, weighed by how near it is to each).
     function wadeAt(x, y) {
@@ -2041,6 +2091,23 @@ var Render = (function () {
         g.globalAlpha = 1;
         continue;
       }
+      if (f.kind === 'burst') {
+        // a death (Render.burst): the figure's own pixels thrown outwards, falling and fading, and its blood in the air
+        var ts = (now - f.t0) / 1000, bx = f.x * T - cam.x, by2 = f.y * T - cam.y, GR = T * 9;
+        for (var pi = 0; pi < f.p.length; pi++) {
+          var q = f.p[pi], qa = age / q.l; if (qa >= 1) continue;
+          g.globalAlpha = 1 - qa * qa; g.fillStyle = q.c;
+          g.fillRect(Math.round(bx + q.x + q.vx * ts), Math.round(by2 + q.y + q.vy * ts + GR * ts * ts / 2), q.s, q.s);
+        }
+        g.fillStyle = f.color || '#a01818';
+        for (var di = 0; f.color && di < f.drops.length; di++) {
+          var d = f.drops[di], dk = d.t ? (now - f.t0) / d.t : 1; if (dk >= 1) continue;          // landed: it is in the stain now
+          g.globalAlpha = d.a + 0.1;
+          g.fillRect(Math.round(bx + (0.5 + (d.dx - 0.5) * dk) * T), Math.round(by2 + (f.cy + (d.dy - f.cy) * dk) * T - Math.sin(Math.PI * dk) * T * 0.45), d.s, d.s);
+        }
+        g.globalAlpha = 1;
+        continue;
+      }
       if (f.kind === 'sound') {
         // a step's noise while sneaking (docs/STEALTH.md): a ring that grows out to how far it carries (f.r tiles) and
         // fades. Square with round corners, as hearing reaches: every tile within f.r steps, diagonals too.
@@ -2069,7 +2136,7 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { outfitOf: outfitOf, outfitLayers: outfitLayers, drawOutfit: drawOutfit, Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
+  return { burst: burst, outfitOf: outfitOf, outfitLayers: outfitLayers, drawOutfit: drawOutfit, Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

@@ -14,7 +14,7 @@
  *     mf: {id: {...}},      monsters: the part that stays (id, ref, maxHp, look) — once, when one comes into range
  *     mo: {id: [x, y, hp, facing, [statuses], alert]},   monsters: where they are now — only the ones that changed
  *     mx: [id, ...],        monsters that are gone (dead, or out of range)
- *     pf, po, px            the other players, the same three ways (po: [x, y, facing, hp, act, wst])
+ *     pf, po, px            the other players, the same three ways (po: [x, y, facing, hp, act, wst, sn])
  *     fl: {floorId: {world, mf, mo, mx, pf, po, px}},    the other floors of the building, each the same way
  *     flx: [floorId, ...],  floors that are no longer told about
  *     events: [...] }       what happened, each told once
@@ -23,7 +23,7 @@
  */
 var Wire = (function () {
   var MON_STAYS = ['id', 'ref', 'maxHp', 'look'];
-  var PLY_MOVES = ['x', 'y', 'facing', 'hp', 'act', 'wst'];
+  var PLY_MOVES = ['x', 'y', 'facing', 'hp', 'act', 'wst', 'sn'];
   var APART = { now: 1, monsters: 1, players: 1, floors: 1 };      // parts of a view that do not go in `world`
 
   // ---------------------------------------------------------------- the host's end

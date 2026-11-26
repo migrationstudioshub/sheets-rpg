@@ -2401,22 +2401,81 @@ var World = (function () {
   //   A tame one with a coop leaves its `lays` object on the ground every lay_s seconds (an egg to pick up).
   // hunter: goes for the nearest prey animal or player within aggro_range, bites what it reaches, and after a
   //   kill it has eaten: for a while it only minds players who come close.
-  // Killed, a monster with a `carcass` leaves that object where it fell (leaveCarcass): worked like a tree
-  //   (harvest, harvest_tool), gone after Config carcass_rot_s.
+  // Killed, a monster leaves a loot bag where it fell (hitMonster, lootBox); Monsters `carcass` only says what that
+  //   bag looks like.
   var TAME_LEASH = 3, HUNTER_FED_MS = 40000;
-  function leaveCarcass(c, ws, mapId, m, def, now, drops) {   // drops = what its loot table rolled this time
-    var o = def && def.carcass && c.objects[def.carcass]; if (!o) return '';
-    var st = structOf(ws, mapId), map = liveMap(c, ws, mapId);
-    if (!map || (map.entities || []).some(function (e) { return e.x === m.x && e.y === m.y && !isWallFixture(objOf(c, e)); })) return '';   // no room where it fell
-    // Inside: what it always gives (loot) and what its loot table rolled. A body is left even with nothing on it
-    // (it is gone the moment someone looks, or when it rots).
-    var inv = []; list(def.loot).concat(drops || []).forEach(function (g) { if (c.items[g.item] && g.qty > 0) addStacks(c, inv, g.item, g.qty, 0); });
-    var max = Number((o.properties || {}).hp) || 0, key = mapId + '.b' + (++st.n);
-    st.ents.push({ key: key, x: m.x, y: m.y, ref: o.id, data: {}, hp: max, max: max, bp: '', by: null, built: now, prog: 0, need: 0, wild: true, inv: inv });
-    mapState(ws, mapId).timers[key] = { at: now + Math.max(10, cfgNum(c, 'carcass_rot_s', 300)) * 1000, rot: true };
-    touchStruct(st); ws.dirty = true;
-    return key;
+  // WHERE LOOT COMES TO LIE: always a loot bag (there are no carcasses apart from them), never straight into a
+  // player's bag: a full bag would lose it. The owner's rules (26 Nov 2026), in order:
+  //  The tile it fell on —
+  //   1. nothing on it: a new bag there;
+  //   2. a loot bag on it: the loot joins that bag, whose time to rot starts again;
+  //   3. only DISPENSABLE items on the ground there (Items `dispensable`: branches, rocks): a new bag there, and
+  //      those items go inside it;
+  //  anything else on it (an item that is not dispensable, an object) — the tiles around, nearest first: those one
+  //  can WALK to from there (walls, shut doors and cliffs in the way count), on the same level of ground, at most
+  //  DROP_REACH steps off —
+  //   4. the nearest free one: a new bag there;
+  //   5. none free: the nearest holding only dispensable items, as in 3;
+  //   6. none: it joins the nearest loot bag among them, as in 2;
+  //   7. not even one: a new bag on the tile it fell on, sharing it with what is there.
+  // An item that is not dispensable is never moved, covered up elsewhere than in 7, or put in a bag.
+  var DROP_REACH = 3, UNSEEN_KINDS = { spawn: 1, trigger: 1 };
+  function lootSpot(c, st, map, x, y) {
+    var R = Rl(), h0 = R.heightAt(map, x, y), seen = {}, q = [{ x: x, y: y, d: 0 }], spare = null, box = null, drop = c.objects._drop;
+    function things(a, b) {                                     // what is on a tile: not what hangs on a wall, nor what nobody sees (a spawn point, a trigger)
+      return R.entitiesAt(map, a, b).filter(function (e) { var o = objOf(c, e); return !isWallFixture(o) && !(o && UNSEEN_KINDS[o.kind]); });
+    }
+    function dispensable(e) {                                   // a thing on the ground that grew or was left there, all of it dispensable
+      if (!drop || e.ref !== drop.id || !e.wild || !st.ents.some(function (s) { return s.key === e.key; })) return false;
+      var got = list(e.data && e.data.pickup);
+      return got.length > 0 && got.every(function (g) { return c.items[g.item] && c.items[g.item].dispensable; });
+    }
+    function bagOn(on) { return on.filter(function (e) { return e.wild && Array.isArray(e.inv); })[0] || null; }
+    function takes(at, on) { return { x: at.x, y: at.y, take: on.map(function (e) { return e.key; }) }; }
+    seen[x + ',' + y] = 1;
+    for (var i = 0; i < q.length; i++) {
+      var at = q[i];
+      if (!at.d || R.heightAt(map, at.x, at.y) === h0) {
+        var on = things(at.x, at.y), bag = bagOn(on);
+        if (!on.length) return { x: at.x, y: at.y };
+        if (!at.d && bag) return { box: bag.key };              // where it fell: a bag, or only dispensable things, settles it
+        if (!at.d && on.every(dispensable)) return takes(at, on);
+        if (!spare && on.every(dispensable)) spare = takes(at, on);
+        if (!box && bag) box = bag;
+      }
+      if (at.d >= DROP_REACH) continue;
+      for (var k = 0; k < 4; k++) {
+        var r = R.tryMove(c, map, at.x, at.y, 'NESW'.charAt(k));
+        if (!r.ok || r.map || seen[r.x + ',' + r.y]) continue;
+        seen[r.x + ',' + r.y] = 1; q.push({ x: r.x, y: r.y, d: at.d + 1 });
+      }
+    }
+    return spare || (box ? { box: box.key } : { x: x, y: y });
   }
+  /** The loot bag (object o: lootBagOf) for what falls at (x, y): a new one where lootSpot says, or
+   *  the one it joins. Its time to rot starts now. Returns the struct entity (its inv is an array), or null. */
+  function lootBox(c, ws, mapId, x, y, o, now) {
+    var st = structOf(ws, mapId), ms = mapState(ws, mapId), map = liveMap(c, ws, mapId); if (!o || !map) return null;
+    var spot = lootSpot(c, st, map, x, y), box = null;
+    if (spot.box) box = st.ents.filter(function (b) { return b.key === spot.box; })[0] || null;
+    if (!box) {
+      if (spot.box) spot = { x: x, y: y };
+      var max = Number((o.properties || {}).hp) || 0;
+      box = { key: mapId + '.b' + (++st.n), x: spot.x, y: spot.y, ref: o.id, data: {}, hp: max, max: max, bp: '', by: null, built: now, prog: 0, need: 0, wild: true, inv: [] };
+      (spot.take || []).forEach(function (key) {                // the dispensable things that lay there: into the bag
+        var e = st.ents.filter(function (b) { return b.key === key; })[0]; if (!e) return;
+        list(e.data && e.data.pickup).forEach(function (g) { if (c.items[g.item] && g.qty > 0) addStacks(c, box.inv, g.item, g.qty, 0); });
+        st.ents = st.ents.filter(function (b) { return b.key !== key; }); delete ms.timers[key];
+      });
+      st.ents.push(box);
+    }
+    ms.timers[box.key] = { at: now + Math.max(10, cfgNum(c, 'loot_bag_rot_s', 900)) * 1000, rot: true };
+    touchStruct(st); ws.dirty = true;
+    return box;
+  }
+  /** The loot bag a monster leaves: the object named in Monsters `carcass` (its own look: a dead rabbit), else the
+   *  standard one. Whatever it looks like it IS a loot bag: same rules, same time to rot. */
+  function lootBagOf(c, def) { return (def && def.carcass && c.objects[def.carcass]) || bagObject(c); }
   /** One step toward (tx, ty), the way the plain brain walks: the long axis first, cutting a corner when it may. */
   function stepToward(c, ws, mapId, map, m, here, tx, ty, stepMs) {
     var dx = tx - m.x, dy = ty - m.y, dirs = [];
@@ -2464,13 +2523,198 @@ var World = (function () {
     ws.dirty = true;
     return !!coop;
   }
-  function animalStep(c, ws, mapId, map, ms, m, def, here, now, rng, stepMs) {
-    var range = def.fleeRange || def.aggro || 4, threat = null, best = 1e9;
+  // ---- stealth (docs/STEALTH.md, stage 1): what a monster notices of a player ----
+  // Config stealth (on when not said) — off = the old rules exactly. A player who sneaks (p.sneak, action
+  // {type: 'sneak', on}) walks Config sneak_slow (2) times slower (Rules.stepCost), is seen from Config sneak_sight
+  // (0.6) of the usual range, and makes Config noise_sneak (2) tiles of noise instead of noise_walk (6). Standing still
+  // makes none: noise lasts NOISE_LINGER_MS after the last step (p.stepAt).
+  var NOISE_LINGER_MS = 900;
+  function stealthOn(c) { var v = c && c.config && c.config.stealth; return v === undefined || v === '' || yes(v); }
+  /** How far (in tiles) a player's own noise carries: sneaking or not, moving or not. The page asks it too (the meter). */
+  function noiseRadius(c, sneak, moving) {
+    if (!moving || !stealthOn(c)) return 0;
+    return Math.max(0, sneak ? cfgNum(c, 'noise_sneak', 2) : cfgNum(c, 'noise_walk', 6));
+  }
+  function noiseOf(c, p, now) { return noiseRadius(c, !!p.sneak, !!p.stepAt && now - Number(p.stepAt) <= NOISE_LINGER_MS); }
+  /** The loudest a player gets (walking): what the noise meter is full at. */
+  function noiseMax(c) { return Math.max(1, cfgNum(c, 'noise_walk', 6), cfgNum(c, 'noise_sneak', 2)); }
+  /**
+   * What monster m notices of player p: 'seen' | 'heard' | ''. The ONE question every brain asks about a player
+   * (a monster that was struck knows who did it, apart from this). range = how far this brain looks: the walker's
+   * sight_range, the hunter's and the plain one's aggro_range, the animal's flee_range.
+   * Seen = within range (× sneak_sight while p sneaks) with a clear line of sight (canSee: the edge question).
+   * Heard = within the radius of p's noise × Monsters hearing (1 when not said, 0 = deaf), walls or not.
+   * Stealth off: within range = seen, through walls — but for o.los (the walker), which always needed to see.
+   * o.manhattan: the plain brain measures distance that way.
+   */
+  function notices(c, map, m, def, p, now, range, stateFn, o) {
+    o = o || {};
+    var d = o.manhattan ? Math.abs(p.x - m.x) + Math.abs(p.y - m.y) : cheb(m.x, m.y, p.x, p.y);
+    if (!stealthOn(c)) return d <= range && (!o.los || canSee(c, map, m.x, m.y, p.x, p.y, stateFn)) ? 'seen' : '';
+    if (looksAt(c, map, m, range, p.sneak, p.x, p.y, stateFn, o.manhattan)) return 'seen';
+    var hear = noiseOf(c, p, now) * (def.hearing == null ? 1 : def.hearing);
+    return hear > 0 && d <= hear ? 'heard' : '';
+  }
+  // SPOTTED (owner, 25 Nov 2026). A monster that sees a sneaking player (or is struck by one and lives) makes them
+  // stand up: spotted() is the one way that happens. While any monster on their map is after them — it has seen
+  // them or been hit by them and not given up (chasedBy) — they cannot sneak again; advance keeps p.chased, and
+  // tells them when the last one has lost interest.
+  function spotted(c, p, m, ev) {
+    if (!p || !p.sneak) return;
+    delete p.sneak; p.wasSneak = true;                         // (wasSneak: they are reminded of Z when it is over)
+    var def = m && c.monsters[m.ref];
+    if (ev) ev.push({ type: 'info', to: p.id, text: (def ? 'The ' + lower(def.name) : 'Something') + ' spotted you!' });
+  }
+  /** Is any monster here after player p? (engaged = p hit it; chase = a plain or hunter brain that saw p; a walker's
+   *  ai on p with spot = it has seen them, not only heard them.) */
+  function chasedBy(ms, p) {
+    return ((ms && ms.monsters) || []).some(function (m) {
+      return !m.dead && (m.engaged === p.id || m.chase === p.id || !!(m.ai && m.ai.k === 'p' && m.ai.id === p.id && m.ai.spot));
+    });
+  }
+  /** A plain or hunter brain's choice this turn, kept as m.chase: a player it SAW (or that struck it) is chased, and
+   *  spotted; a player it only heard keeps whatever it was (it goes to look, it does not know who). */
+  function chaseNote(c, m, target, saw, ev) {
+    if (target && saw) { m.chase = target.id; delete m.hear; delete m.goTo; spotted(c, target, m, ev); }
+    else if (!target || m.chase !== target.id) delete m.chase;
+  }
+  // PERCEPTION (owner, 25 Nov 2026). Every time the world moves on (advance), not only on a monster's own turn:
+  //  - SEEN: it reacts at once. A walker hunts, a plain or hunter brain chases (! over its head), an animal runs;
+  //    the sneaking player is spotted, and the monster's next turn is due now.
+  //  - HEARD, unseen, while it is after nobody: surprised, it freezes where it stands, facing as it was (? over its
+  //    head: m.hear = {x, y, at, id}); Config hear_delay_s (2) later it turns to the sound and goes to look where the sound was — a walker searches (breaking
+  //    nothing), a plain or hunter brain walks there (m.goTo) — or, an animal, runs from that spot (m.fleeFrom).
+  //    A new sound while it is already on its way only moves the spot.
+  var GOTO_MS = 15000, SCARE_MS = 4000;
+  function hearDelay(c) { return Math.max(0, cfgNum(c, 'hear_delay_s', 2)) * 1000; }
+  function faceToward(m, x, y) {
+    var dx = x - m.x, dy = y - m.y; if (!dx && !dy) return;
+    m.facing = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
+  }
+  function senseStep(c, ws, mapId, map, ms, here, now, sfn, ev) {
+    if (!stealthOn(c) || !here.length) return;
+    var loud = noiseMax(c), wake = cfgNum(c, 'walker_wake_radius', 24);
+    ms.monsters.forEach(function (m) {
+      var def = c.monsters[m.ref]; if (!def || m.dead || m.tame) return;
+      var range = lookRange(def, m, now), reach = Math.max(range * coneReach(c), loud * (def.hearing == null ? 1 : def.hearing)) + 1;
+      if (def.brain === 'walker') reach = Math.min(reach, wake);   // (an inert walker senses nothing: see walkerStep)
+      var o = { manhattan: !def.brain, los: def.brain === 'walker' }, seen = null, sd = 1e9, heard = null, hd = 1e9;
+      here.forEach(function (q) {
+        var d = cheb(q.x, q.y, m.x, m.y); if (d > reach) return;
+        if (def.brain === 'animal' && def.tameWith && (heldItem(c, q) || {}).id === def.tameWith) return;   // feed in hand: nothing to fear
+        var how = notices(c, map, m, def, q, now, range, sfn, o);
+        if (how === 'seen' && d < sd) { sd = d; seen = q; } else if (how === 'heard' && d < hd) { hd = d; heard = q; }
+      });
+      var due = false, wasAfter = !!(m.engaged || m.chase || (m.ai && m.ai.k === 'p' && m.ai.s));   // (already after someone: no hurry-up)
+      if (seen) {
+        if (def.brain === 'walker') {
+          if (!(m.ai && m.ai.k === 'p' && m.ai.id === seen.id && m.ai.s)) { m.ai = { k: 'p', id: seen.id, a: (def.aggroS > 0 ? def.aggroS : 30) * 1000, x: seen.x, y: seen.y, s: 1, spot: 1 }; due = true; }
+        } else if (def.brain === 'animal') { if (!m.fleeFrom || m.fleeFrom.id !== seen.id) due = true; m.fleeFrom = { x: seen.x, y: seen.y, until: now + SCARE_MS, id: seen.id }; }
+        else if (m.chase !== seen.id && !(def.brain === 'hunter' && m.engaged)) { m.chase = seen.id; due = true; }
+        if (m.hear || m.goTo) { delete m.hear; delete m.goTo; }
+        spotted(c, seen, m, ev);
+      } else if (heard && !(def.brain === 'hunter' && now < (m.fedUntil || 0))) {
+        var busy = def.brain === 'walker' ? m.ai && m.ai.k === 'p' : !!(m.chase || m.engaged);   // after someone already: its own brain tracks the sound
+        if (!busy) {
+          var on = def.brain === 'animal' ? m.fleeFrom : def.brain === 'walker' ? null : m.goTo;
+          if (on) { on.x = heard.x; on.y = heard.y; on.until = now + (def.brain === 'animal' ? SCARE_MS : GOTO_MS); }
+          else if (m.hear) { m.hear.x = heard.x; m.hear.y = heard.y; m.hear.id = heard.id; }
+          else { m.hear = { x: heard.x, y: heard.y, at: now, id: heard.id }; ws.dirty = true; }   // surprised: it freezes as it is (it turns only when the wait is over)
+        }
+      }
+      if (due && !wasAfter) {
+        ws.dirty = true;
+        var stepMs = def.moveMs * monStats(c, m).slow; if (!((now - m.last) >= stepMs)) m.last = now - stepMs;   // its turn is now
+      }
+    });
+  }
+  /** A monster that heard something and is waiting before it goes to look: true while it should stand still. Once
+   *  the wait is over, the sound becomes where it goes (plain, hunter: m.goTo) or what it runs from (animal). */
+  function listening(c, m, def, now) {
+    if (!m.hear) return false;
+    if (now - m.hear.at < hearDelay(c)) return true;
+    var h = m.hear; delete m.hear;
+    faceToward(m, h.x, h.y);                                  // the surprise is over: it turns to the sound (an animal then runs from it)
+    if (def.brain === 'animal') m.fleeFrom = { x: h.x, y: h.y, until: now + SCARE_MS };
+    else if (def.brain !== 'walker') m.goTo = { x: h.x, y: h.y, until: now + GOTO_MS };
+    return false;
+  }
+  /** A plain or hunter brain on its way to a sound (m.goTo): one step there; gone once it arrives or tires of it. */
+  function goToStep(c, ws, mapId, map, m, here, now, stepMs) {
+    var g = m.goTo; if (!g) return false;
+    if (now > g.until || (m.x === g.x && m.y === g.y)) { delete m.goTo; return false; }
+    var x0 = m.x, y0 = m.y;
+    stepToward(c, ws, mapId, map, m, here, g.x, g.y, stepMs);
+    if (m.x === x0 && m.y === y0 && cheb(m.x, m.y, g.x, g.y) <= 1) delete m.goTo;   // (as near as it can get)
+    return true;
+  }
+  /** How far a monster that looks `range` tiles sees a player, sneaking or not. */
+  function seeRange(c, range, sneak) { return sneak && stealthOn(c) ? range * Math.max(0, cfgNum(c, 'sneak_sight', 0.6)) : range; }
+  // FACING (stage 3). A monster sees its full range only within a cone in front of it: Config sight_cone degrees
+  // wide (60; 360 = all round), centred on m.facing, and Config cone_reach (1.5) times as far as its range there. Anywhere else it sees Config back_sight times as far (0 = not
+  // at all: it must hear you). Its own cell counts as in front.
+  function inCone(c, m, x, y) {
+    var dx = x - m.x, dy = y - m.y; if (!dx && !dy) return true;
+    var deg = cfgNum(c, 'sight_cone', 60); if (!(deg < 360)) return true;
+    var f = Rl().DIRS[m.facing] || Rl().DIRS.S;
+    return (dx * f.dx + dy * f.dy) / Math.sqrt(dx * dx + dy * dy) >= Math.cos(Math.max(0, deg) / 2 * Math.PI / 180) - 1e-9;
+  }
+  /** Would monster m (looking `range` tiles) see a player standing at (x, y)? Reach (sneaking shrinks it, the cone
+   *  turns it), then line of sight. notices and sightArea both ask this, so the drawing never lies. */
+  function looksAt(c, map, m, range, sneak, x, y, stateFn, man) {
+    // With a cone (sight_cone under 360): straight-line distance, so the fan ends in a rounded tip, long rather than
+    // wide. Seeing all round, the brain's own measure (Chebyshev, or Manhattan for the plain brain), as before.
+    var d = cfgNum(c, 'sight_cone', 60) < 360 ? Math.round(Math.sqrt((x - m.x) * (x - m.x) + (y - m.y) * (y - m.y)) * 10) / 10
+      : man ? Math.abs(x - m.x) + Math.abs(y - m.y) : cheb(m.x, m.y, x, y);
+    var r = seeRange(c, range, sneak) * (inCone(c, m, x, y) ? coneReach(c) : Math.min(1, Math.max(0, cfgNum(c, 'back_sight', 0))));
+    return d <= r && canSee(c, map, m.x, m.y, x, y, stateFn);
+  }
+  /** How much further a monster sees straight ahead, inside its cone, than its range says (Config cone_reach, 1.5:
+   *  the owner wanted the cone longer rather than wider). A monster that sees all round (sight_cone 360) has no
+   *  "ahead": 1. */
+  function coneReach(c) {
+    if (!(cfgNum(c, 'sight_cone', 60) < 360)) return 1;
+    return Math.max(1, cfgNum(c, 'cone_reach', 1.5));
+  }
+  /** How far each brain looks for players (what it passes to notices): walker sight_range (else aggro_range), animal
+   *  flee_range (else aggro_range, else 4), hunter aggro_range (2 while fed after a kill), plain aggro_range. */
+  function lookRange(def, m, now) {
+    if (def.brain === 'walker') return def.sight > 0 ? def.sight : def.aggro;
+    if (def.brain === 'animal') return def.fleeRange || def.aggro || 4;
+    if (def.brain === 'hunter') return m && now < (m.fedUntil || 0) ? 2 : def.aggro || 6;
+    return def.aggro;
+  }
+  /**
+   * Where monster m would SEE a player (notices → 'seen'): {"x,y": 1}. Only for the page (the sight areas drawn
+   * while sneaking); the rules ask notices. sneak = the player sneaks (the area shrinks by sneak_sight).
+   */
+  function sightArea(c, map, m, def, sneak, stateFn, now) {
+    var out = {}, range = lookRange(def, m, now || 0), st = stealthOn(c), r = st ? seeRange(c, range, sneak) : range, R = Math.floor(st ? r * coneReach(c) : r);
+    var man = !def.brain, los = st || def.brain === 'walker', x, y;
+    if (!(def.brain === 'animal' && m.tame)) for (y = Math.max(0, m.y - R); y <= Math.min(map.height - 1, m.y + R); y++) for (x = Math.max(0, m.x - R); x <= Math.min(map.width - 1, m.x + R); x++) {
+      if (st) { if (looksAt(c, map, m, range, sneak, x, y, stateFn, man)) out[x + ',' + y] = 1; continue; }
+      var d = man ? Math.abs(x - m.x) + Math.abs(y - m.y) : cheb(m.x, m.y, x, y);
+      if (d <= r && (!los || canSee(c, map, m.x, m.y, x, y, stateFn))) out[x + ',' + y] = 1;
+    }
+    return out;
+  }
+  function animalStep(c, ws, mapId, map, ms, m, def, here, now, rng, stepMs, sfn, ev) {
+    var range = lookRange(def, m, now), threat = null, best = 1e9, seenP = null;
     if (!m.tame) here.forEach(function (q) {
       var d = cheb(q.x, q.y, m.x, m.y); if (d > range || d >= best) return;
       if (def.tameWith && (heldItem(c, q) || {}).id === def.tameWith) return;          // feed in hand: nothing to fear
-      best = d; threat = q;
+      var how = notices(c, map, m, def, q, now, range, sfn);
+      if (how !== 'seen') return;                                                       // (a sound: senseStep — it listens, then runs from the spot)
+      best = d; threat = q; seenP = q;
     });
+    if (seenP && seenP === threat) spotted(c, seenP, m, ev);                          // (it runs: it does not hunt them, so it is never after them)
+    if (!threat && !m.tame && stealthOn(c)) {
+      if (listening(c, m, def, now)) return;                                           // ? — it heard something, and waits
+      var ff = m.fleeFrom, scarer = ff && ff.id ? here.filter(function (q) { return q.id === ff.id; })[0] : null;
+      if (scarer && def.tameWith && (heldItem(c, scarer) || {}).id === def.tameWith) { delete m.fleeFrom; ff = null; }   // they hold out its feed now: calm
+      if (ff && now < ff.until && cheb(m.x, m.y, ff.x, ff.y) <= range * 2 + 2) { stepAway(c, ws, mapId, map, m, here, ff.x, ff.y, stepMs); return; }
+      if (ff) delete m.fleeFrom;
+    }
     ms.monsters.forEach(function (q) {
       var qd = c.monsters[q.ref]; if (q === m || q.dead || !qd || qd.prey || (qd.brain !== 'hunter' && qd.brain !== 'walker')) return;
       var d = cheb(q.x, q.y, m.x, m.y); if (d <= range && d < best) { best = d; threat = q; }
@@ -2501,18 +2745,26 @@ var World = (function () {
       }
     }
   }
-  function hunterStep(c, ws, mapId, map, ms, m, def, ms2, here, now, rng, ev, stepMs, engageRange) {
+  function hunterStep(c, ws, mapId, map, ms, m, def, ms2, here, now, rng, ev, stepMs, engageRange, sfn) {
     var range = def.aggro || 6, fed = now < (m.fedUntil || 0), target = null, kind = '', best = 1e9;
     var eng = m.engaged ? here.filter(function (q) { return q.id === m.engaged; })[0] : null;
     if (eng && cheb(eng.x, eng.y, m.x, m.y) <= engageRange) { target = eng; kind = 'p'; best = 0; } else if (m.engaged) m.engaged = null;
+    var sawIt = !!target;                                         // (struck: it knows who did it)
     if (!target) here.forEach(function (q) {
-      var d = cheb(q.x, q.y, m.x, m.y); if (d <= (fed ? 2 : range) && d < best) { best = d; target = q; kind = 'p'; }
+      var d = cheb(q.x, q.y, m.x, m.y); if (d >= best) return;
+      var how = notices(c, map, m, def, q, now, lookRange(def, m, now), sfn);
+      // heard: only someone it is already after (it lost sight of them); a sound from nobody it is after is senseStep's
+      if (how === 'seen' || (how === 'heard' && !fed && (m.chase === q.id || !stealthOn(c)))) { best = d; target = q; kind = 'p'; sawIt = how === 'seen'; }
     });
+    chaseNote(c, m, kind === 'p' ? target : null, sawIt, ev);
     if (!target && !fed) ms.monsters.forEach(function (q) {
       var qd = c.monsters[q.ref]; if (q === m || q.dead || !qd || !qd.prey) return;
       var d = cheb(q.x, q.y, m.x, m.y); if (d <= range && d < best) { best = d; target = q; kind = 'm'; }
     });
-    if (!target) { roamStep(c, ws, mapId, map, m, here, rng); return ''; }
+    if (!target) {
+      if (listening(c, m, def, now) || goToStep(c, ws, mapId, map, m, here, now, stepMs)) return '';   // ? : it heard something
+      roamStep(c, ws, mapId, map, m, here, rng); return '';
+    }
     if (cheb(m.x, m.y, target.x, target.y) === 1 && !moveBlockedEdge(c, map, m.x, m.y, target.x, target.y)) {
       if (kind === 'p') monsterSwing(c, ws, mapId, m, def, ms2, target, now, rng, ev);
       else {
@@ -2538,7 +2790,8 @@ var World = (function () {
       dir = Math.abs(hx) >= Math.abs(hy) ? (hx > 0 ? 'E' : 'W') : (hy > 0 ? 'S' : 'N');
     }
     var r2 = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
-    if (r2.ok && !r2.map && (!sp || away || (Math.abs(r2.x - sp.x) <= rad && Math.abs(r2.y - sp.y) <= rad))) { m.x = r2.x; m.y = r2.y; m.facing = dir; }
+    if (r2.ok && !r2.map && (!sp || away || (Math.abs(r2.x - sp.x) <= rad && Math.abs(r2.y - sp.y) <= rad))) { m.x = r2.x; m.y = r2.y; }
+    m.facing = dir;                                            // where it cannot step, it still turns and looks that way (its sight cone)
   }
   function millStep(c, ws, mapId, map, m, here, rng) {
     var dir = 'NESW'.charAt(rint(rng, 0, 3)), r = Rl().tryMove(c, map, m.x, m.y, dir, moveOpts(c, ws, mapId, here, m));
@@ -2566,7 +2819,10 @@ var World = (function () {
    * What a monster is up to, for the page to show over its head: 2 = it is after someone it can see (!),
    * 1 = it is looking for someone it lost (?), 0 = neither. Only brains that keep such a state (the walker) say more than 0.
    */
-  function alertOf(m) { var ai = m && m.ai; return ai && ai.k !== 's' ? (ai.s ? 2 : 1) : 0; }
+  function alertOf(m) {
+    var ai = m && m.ai; if (ai) return ai.k !== 's' ? (ai.s ? 2 : 1) : 0;
+    return !m ? 0 : m.chase ? 2 : m.hear || m.goTo ? 1 : 0;   // the other brains: after someone it saw (!), listening or going to a sound (?)
+  }
   var WALKER_PATH = 24, WALKER_NODES = 320, WALKER_REACH = 18, WALKER_MAXCOST = 160;
   var WALKER_PLANS = 8;                                       // ways worked out per map per turn, whatever the size of the horde: the rest wait their turn
   function walkerCtx(c, ws, mapId, map) {
@@ -2688,14 +2944,21 @@ var World = (function () {
    */
   function walkerStep(c, ws, mapId, ms, m, def, ms2, here, now, rng, ev, stepMs, ctx) {
     if (ctx.stale) { ctx.map = liveMap(c, ws, mapId); ctx.obst = {}; ctx.built = null; ctx.stale = false; }
-    var map = ctx.map, sight = def.sight > 0 ? def.sight : def.aggro, full = (def.aggroS > 0 ? def.aggroS : 30) * 1000;
-    function sees(x, y) { return cheb(m.x, m.y, x, y) <= sight && canSee(c, map, m.x, m.y, x, y, ctx.stateFn); }
+    var map = ctx.map, sight = lookRange(def, m, now), full = (def.aggroS > 0 ? def.aggroS : 30) * 1000;
+    function sees(x, y) { return cheb(m.x, m.y, x, y) <= sight && canSee(c, map, m.x, m.y, x, y, ctx.stateFn); }   // (a prey animal)
+    function aware(q) { return notices(c, map, m, def, q, now, sight, ctx.stateFn, { los: true }); }        // (a player: seen, heard or neither)
+    var stealth = stealthOn(c);
     function byId(list, id) { for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]; return null; }
     var ai = m.ai || null, tgt = null, seen = false;
     if (m.engaged) {                                          // struck by someone, or it came up the stairs after them
       var who = byId(here, m.engaged);
-      if (who) ai = m.ai = { k: 'p', id: who.id, a: full, x: who.x, y: who.y };
+      if (who) ai = m.ai = { k: 'p', id: who.id, a: full, x: who.x, y: who.y, spot: 1 };   // spot: it knows them (chasedBy)
       m.engaged = null;
+    }
+    if (m.hear && !(ai && ai.k === 'p')) {                    // it heard something (senseStep): ? — a moment, then it goes to look there
+      if (now - m.hear.at < hearDelay(c)) return;             // surprised: frozen, facing as it was
+      faceToward(m, m.hear.x, m.hear.y);
+      ai = m.ai = { k: 'p', id: m.hear.id, a: full, x: m.hear.x, y: m.hear.y, w: 1 }; delete m.hear;
     }
     if (ai && ai.k === 'p') tgt = byId(here, ai.id);
     else if (ai && ai.k === 'm') { tgt = byId(ms.monsters, ai.id); if (!tgt || tgt.dead) { delete m.ai; ai = tgt = null; } }      // it won
@@ -2704,21 +2967,39 @@ var World = (function () {
       return followStairs(c, ws, mapId, map, ms, m, here, now) ? 'gone' : undefined;
     }
     if (ai && ai.k !== 's') {
-      if (tgt && sees(tgt.x, tgt.y)) { seen = true; ai.a = full; ai.x = tgt.x; ai.y = tgt.y; ai.s = 1; delete ai.w; }   // s: it has them in sight (alertOf)
+      var how = !tgt ? '' : ai.k === 'p' ? aware(tgt) : sees(tgt.x, tgt.y) ? 'seen' : '';
+      if (how === 'seen') {
+        seen = true; ai.a = full; ai.x = tgt.x; ai.y = tgt.y; ai.s = 1; delete ai.w;          // s: it has them in sight (alertOf)
+        if (ai.k === 'p') { ai.spot = 1; spotted(c, tgt, m, ev); }                            // (a search it heard its way into: now it has seen them)
+      }
       else {
         ai.a -= stepMs; delete ai.s;
-        if (tgt && cheb(m.x, m.y, tgt.x, tgt.y) <= def.aggro) { ai.x = tgt.x; ai.y = tgt.y; delete ai.w; }   // out of sight but close: it hears them
+        // out of sight but heard: it knows where they are now. (Stealth off: anyone within aggro_range is heard, through
+        // walls, and it breaks in after them. Stealth on: only their noise tells it, and a sound alone — ai.w — sends it
+        // to look, never to break anything.)
+        if (stealth ? how === 'heard' : tgt && cheb(m.x, m.y, tgt.x, tgt.y) <= def.aggro) { ai.x = tgt.x; ai.y = tgt.y; if (!stealth) delete ai.w; }
         if (ai.a <= 0) { delete m.ai; ai = tgt = null; }
       }
     }
     // Looking for something (new) to go after — only with a player around to set it off.
     var awake = here.some(function (q) { return cheb(q.x, q.y, m.x, m.y) <= ctx.wake; });
     if (awake && !seen) {
-      var found = null, fk = '', fd = 1e9;
-      here.forEach(function (q) { var d = cheb(q.x, q.y, m.x, m.y); if (d < fd && sees(q.x, q.y)) { fd = d; found = q; fk = 'p'; } });
+      var found = null, fk = '', fd = 1e9, heard = null, hd = 1e9;
+      here.forEach(function (q) {
+        var d = cheb(q.x, q.y, m.x, m.y); if (d >= fd && d >= hd) return;
+        var hw = aware(q);
+        if (hw === 'seen' && d < fd) { fd = d; found = q; fk = 'p'; }
+        else if (hw === 'heard' && d < hd) { hd = d; heard = q; }
+      });
       if (!ctx.prey) ctx.prey = ms.monsters.filter(function (q) { var qd = c.monsters[q.ref]; return qd && qd.prey; });
       if (!def.prey) ctx.prey.forEach(function (q) { if (q.dead || q === m) return; var d = cheb(q.x, q.y, m.x, m.y); if (d < fd && sees(q.x, q.y)) { fd = d; found = q; fk = 'm'; } });
-      if (found) { ai = m.ai = { k: fk, id: found.id, a: full, x: found.x, y: found.y, s: 1 }; tgt = found; seen = true; }
+      if (found) {
+        ai = m.ai = { k: fk, id: found.id, a: full, x: found.x, y: found.y, s: 1 }; tgt = found; seen = true;
+        if (fk === 'p') { ai.spot = 1; spotted(c, found, m, ev); }
+      }
+      else if (heard && !stealth) {                            // (stealth on, a sound is senseStep's: ? first, then it goes to look)
+        ai = m.ai = { k: 'p', id: heard.id, a: full, x: heard.x, y: heard.y, w: 1 }; tgt = heard;
+      }
       else if (!ai && ctx.buildings) {
         var bt = builtInSight(c, map, m, sight, ctx);
         if (bt) { ai = m.ai = { k: 's', t: bt, a: full }; tgt = resolveOn(c, map, map._struct, bt); }
@@ -2852,6 +3133,8 @@ var World = (function () {
       });
     });
     var wctx = null;                                            // what the walkers of this map share for this turn
+    var sfn = function (e) { return stateOf(c, ws, mapId, e); };  // (doors open or shut, for line of sight)
+    senseStep(c, ws, mapId, map, ms, here, now, sfn, ev);         // seen: at once; heard: ? and a moment's wait (see PERCEPTION)
     ms.monsters.forEach(function (m) {
       var def = c.monsters[m.ref]; if (!def) return;
       if (m.dead) {
@@ -2880,9 +3163,9 @@ var World = (function () {
           if (wr === 'stop') break;
           continue;
         }
-        if (def.brain === 'animal') { animalStep(c, ws, mapId, map, ms, m, def, here, now, rng, stepMs); continue; }
-        if (def.brain === 'hunter') { if (hunterStep(c, ws, mapId, map, ms, m, def, ms2, here, now, rng, ev, stepMs, engageRange) === 'stop') break; continue; }
-        var target = null, best = 1e9;
+        if (def.brain === 'animal') { animalStep(c, ws, mapId, map, ms, m, def, here, now, rng, stepMs, sfn, ev); continue; }
+        if (def.brain === 'hunter') { if (hunterStep(c, ws, mapId, map, ms, m, def, ms2, here, now, rng, ev, stepMs, engageRange, sfn) === 'stop') break; continue; }
+        var target = null, best = 1e9, heardOnly = false;
         var eng = m.engaged ? here.filter(function (q) { return q.id === m.engaged; })[0] : null;   // chase whoever hit it
         if (eng) {
           var ed = Math.abs(eng.x - m.x) + Math.abs(eng.y - m.y);
@@ -2890,12 +3173,15 @@ var World = (function () {
         }
         if (!target) here.forEach(function (q) {
           if (q.hp <= 0 || q.map !== mapId) return;
-          var d = Math.abs(q.x - m.x) + Math.abs(q.y - m.y);
-          if (d <= def.aggro && d < best) { best = d; target = q; }
+          var d = Math.abs(q.x - m.x) + Math.abs(q.y - m.y); if (d >= best) return;
+          var how = notices(c, map, m, def, q, now, lookRange(def, m, now), sfn, { manhattan: true });
+          // heard: only someone it is already after (it lost sight of them); any other sound is senseStep's (? then go and look)
+          if (how === 'seen' || (how === 'heard' && (m.chase === q.id || !stealthOn(c)))) { best = d; target = q; heardOnly = how === 'heard'; }
         });
+        chaseNote(c, m, target, !!target && !heardOnly, ev);
         if (target && m.guest) m.idleUntil = now + GUEST_IDLE_MS;
         if (target) {
-          if (monsterShot(c, ws, mapId, map, m, def, ms2, target, best, now, rng, ev)) break;
+          if (!heardOnly && monsterShot(c, ws, mapId, map, m, def, ms2, target, best, now, rng, ev)) break;
           if (cheb(m.x, m.y, target.x, target.y) === 1 && !moveBlockedEdge(c, map, m.x, m.y, target.x, target.y)) {
             // beside its target (diagonals count) with no wall between: swing. (A wall on the edge makes it try to move around instead.)
             monsterSwing(c, ws, mapId, m, def, ms2, target, now, rng, ev);
@@ -2915,7 +3201,16 @@ var World = (function () {
           }
         } else if (m.follow && now < m.follow.until) {
           if (followStairs(c, ws, mapId, map, ms, m, here, now)) return;      // gone to the other floor
-        } else roamStep(c, ws, mapId, map, m, here, rng);
+        } else if (listening(c, m, def, now)) break;                          // ? — it heard something, and waits a moment
+        else if (!goToStep(c, ws, mapId, map, m, here, now, stepMs)) roamStep(c, ws, mapId, map, m, here, rng);   // …then goes to look
+      }
+    });
+    // who is chased (no sneaking for them), and who has just shaken off the last one after them (they are told)
+    here.forEach(function (p) {
+      if (chasedBy(ms, p)) p.chased = true;
+      else if (p.chased) {
+        delete p.chased;
+        if (p.wasSneak) { delete p.wasSneak; ev.push({ type: 'info', to: p.id, text: 'Nothing is after you any more: you can sneak again (Z).' }); }   // (only for one who was spotted sneaking)
       }
     });
     // guests that moved on, died, or lost interest are simply gone (they have no spawner to return to)
@@ -3071,7 +3366,15 @@ var World = (function () {
     if (gold > 0) give(c, p, 'gold', gold, ev);
     // their own roll of the loot table (quest drops included): into their part of the carcass, or straight to them
     var drops = roll(c, def.lootTable, rng, p).filter(function (g) { return g.qty > 0 && (g.item === 'gold' || c.items[g.item]); });
-    var body = share.key ? structOf(ws, mapId).ents.filter(function (b) { return b.key === share.key && b.wild; })[0] : null;
+    var body = share.key ? structOf(ws, mapId).ents.filter(function (b) { return b.key === share.key && b.wild && Array.isArray(b.inv); })[0] : null;
+    if (!body && drops.some(function (g) { return g.item !== 'gold'; })) {
+      // nothing lies there (it left no body, or the body was emptied since): a loot bag where it fell, never straight
+      // into the bag. The others still owed a share of this kill find theirs in the same one.
+      body = lootBox(c, ws, mapId, share.x, share.y, lootBagOf(c, def), now);
+      if (body) (mapState(ws, mapId).credits || []).forEach(function (cr) {
+        if (cr !== share && cr.ref === share.ref && cr.x === share.x && cr.y === share.y && cr.at === share.at) cr.key = body.key;
+      });
+    }
     drops.forEach(function (g) {
       if (g.item === 'gold' || !body) { give(c, p, g.item, g.qty, ev); return; }
       var mine = body.inv.filter(function (st) { return st.own === p.id; }), cell = body.inv.filter(function (st) { return !st.own; }).length;
@@ -3118,27 +3421,44 @@ var World = (function () {
     }
     return false;
   }
+  /**
+   * Is monster m caught unawares by player p's blow? (Stealth on, the player on its floor.) Nobody is fighting it
+   * (m.engaged), it has nobody in sight (a walker's ai.s), and it does not SEE p (notices: having heard them does
+   * not spoil it — it knows something is there, not where). A blow from behind, or a shot from out of its sight.
+   */
+  function unaware(c, ws, mapId, m, def, p, now) {
+    if (!def || !stealthOn(c) || p.map !== mapId || m.engaged || (m.ai && m.ai.s)) return false;
+    var map = liveMap(c, ws, mapId), sfn = function (e) { return stateOf(c, ws, mapId, e); };
+    return notices(c, map, m, def, p, now, lookRange(def, m, now), sfn, { manhattan: !def.brain, los: def.brain === 'walker' }) !== 'seen';
+  }
   /** Damages a monster; if it dies, everyone who took part gets their share (see WHO TOOK PART above). */
   function hitMonster(c, ws, mapId, p, m, dmg, now, rng, ev, text) {
     var def = c.monsters[m.ref];
+    if (p && unaware(c, ws, mapId, m, def, p, now)) {                // caught unawares: a sneak attack (docs/STEALTH.md stage 3)
+      var amb = Math.max(1, Math.round(dmg * Math.max(1, cfgNum(c, 'ambush_mult', 2))));
+      text = String(text || '').replace(' for ' + dmg + '.', ' for ' + amb + '.') + ' A sneak attack!';
+      dmg = amb;
+    }
     m.hp -= dmg; ws.dirty = true;
     if (p) { noteHit(c, m, p, now); questCount(c, p, 'hit', '*', now, ev); }
-    if (p && m.hp > 0) m.engaged = p.id;                        // being hit (even from range) makes it come after you
+    if (p && m.hp > 0) { m.engaged = p.id; spotted(c, p, m, ev); }   // being hit (even from range) makes it come after you (and a sneaking attacker is found out)
     ev.push({ type: 'hit', map: mapId, x: m.x, y: m.y, amount: dmg, to: p ? p.id : undefined, text: p ? text : '' });
     if (m.hp > 0) return;
     m.dead = true; m.statuses = [];
     var keep = cfgNum(c, 'kill_credit_s', 30) * 1000, hits = m.hits || {};
     var part = Object.keys(hits).filter(function (id) { return now - hits[id] <= keep && !(p && id === p.id); });
     delete m.hits;
-    // What it always gives lies in its carcass, for whoever takes it. Killed with no player in the fight (a wolf's
-    // kill), the body also holds one roll of its loot table; with no carcass and a player's last blow, that player
-    // is handed what it always gives.
-    // What was shot into it (arrows that can be had back, stickIn) lies with it: in its carcass, else in a loot bag where it fell.
+    // Everything it leaves lies in a loot bag where it fell (lootBox), for whoever takes it: what it always gives
+    // (Monsters loot), what was shot into it and can be had back (stickIn), and, killed with no player in the fight
+    // (a wolf's kill), one roll of its loot table. The players' own rolls join it in killShare. Nothing to leave: no bag.
     var stuck = (m.stuck || []).filter(function (g) { return c.items[g.item] && g.qty > 0; }); delete m.stuck;
-    var alone = !p && !part.length, key = leaveCarcass(c, ws, mapId, m, def, now, (alone ? roll(c, def.lootTable, rng) : []).concat(stuck));
-    if (!key && stuck.length) leaveBag(c, ws, mapId, m.x, m.y, stuck, now);
-    if (!key && p) list(def.loot).forEach(function (g) { give(c, p, g.item, g.qty, ev); });
-    var share = { ref: m.ref, key: key || '', x: m.x, y: m.y };
+    var alone = !p && !part.length, key = '';
+    var inside = list(def.loot).concat(alone ? roll(c, def.lootTable, rng) : []).filter(function (g) { return c.items[g.item] && g.qty > 0; }).concat(stuck);
+    if (inside.length) {
+      var lb = lootBox(c, ws, mapId, m.x, m.y, lootBagOf(c, def), now);
+      if (lb) { inside.forEach(function (g) { addStacks(c, lb.inv, g.item, g.qty, 0, g); }); key = lb.key; }
+    }
+    var share = { ref: m.ref, key: key || '', x: m.x, y: m.y, at: now };
     if (part.length) {
       var ms0 = mapState(ws, mapId); ms0.credits = ms0.credits || [];
       part.forEach(function (id) { ms0.credits.push({ to: id, ref: share.ref, key: share.key, x: share.x, y: share.y, at: now }); });
@@ -3247,11 +3567,29 @@ var World = (function () {
   }
   function edgeBlocksSight(c, map, a, b, from) { return edgeBlocks(c, map, a, b, 'sight', from); }
   function edgeBlocksMove(c, map, a, b) { return edgeBlocks(c, map, a, b, 'move'); }
+  // Raised ground (Rules `elev`) hides what lies behind it. The eye of each end is Config `eye_height` (0.75 of a
+  // height step; a wall is 2) above its own ground, and the line runs straight from one eye to the other: a cell in
+  // between whose ground rises above that line stops it. Level ground never does, so flat maps are unchanged; from
+  // high ground you see far, from below you see only the edge of a ledge taller than you. The same both ways.
+  function eyeHeight(c) { var v = cfgNum(c, 'eye_height', 0.75); return v >= 0 ? v : 0.75; }
+  function hillBetween(c, map, cells) {
+    if (!map || !map.elev || !map.elev.length || cells.length < 3) return false;
+    var R = Rl(), eye = eyeHeight(c), n = cells.length - 1, a = cells[0], b = cells[n];
+    var ha = R.groundHeight(map, a.x + 0.5, a.y + 0.5) + eye, hb = R.groundHeight(map, b.x + 0.5, b.y + 0.5) + eye;
+    for (var i = 1; i < n; i++) {
+      var g = R.groundHeight(map, cells[i].x + 0.5, cells[i].y + 0.5);
+      if (g > ha + (hb - ha) * i / n + 1e-6) return true;
+    }
+    return false;
+  }
   // Is the straight line between two cells clear? `edgeFn` picks the wall rule: sight for seeing/shooting,
   // movement for a thrown item's flight and a blast's reach (an explosion is stopped by any solid wall).
   function clearLine(c, map, x0, y0, x1, y1, stateFn, edgeFn, noPeek) {
-    var cells = lineCells(x0, y0, x1, y1);
+    // The same line both ways: a stepped line from A to B is not always the one from B to A, so round a corner one
+    // could see the other unseen (a monster you cannot see seeing you). The line is always drawn from the lesser end.
+    var flip = x0 > x1 || (x0 === x1 && y0 > y1), cells = flip ? lineCells(x1, y1, x0, y0).reverse() : lineCells(x0, y0, x1, y1);
     for (var i = 1; i < cells.length - 1; i++) if (blocksSight(c, map, cells[i].x, cells[i].y, stateFn)) return false;
+    if (hillBetween(c, map, cells)) return false;
     var from = noPeek ? null : { x: x0, y: y0, tx: x1, ty: y1 };   // the viewer + target: a window only shows a narrow cone to someone at it
     for (var j = 0; j < cells.length - 1; j++) if (edgeFn(c, map, cells[j], cells[j + 1], from)) return false;
     return true;
@@ -3280,6 +3618,7 @@ var World = (function () {
         var nx = nb[i][0], ny = nb[i][1];
         if (!out[nx + ',' + ny] || Math.abs(nx - px) + Math.abs(ny - py) >= d) continue;
         if (blocksSight(c, map, nx, ny, stateFn) || Rl().blockedBetween(c, map, nx, ny, x, y, 'sight')) continue;
+        if (map.elev && map.elev.length && hillBetween(c, map, lineCells(px, py, x, y))) continue;   // hidden by the ground itself: not a notch
         add.push(x + ',' + y); break;
       }
     }
@@ -3349,7 +3688,7 @@ var World = (function () {
     var sv = ms && ms.struct, srev = sv ? sv.rev || 0 : 0;
     return { structRev: srev, struct: srev && haveRev !== srev ? publicStruct(sv) : undefined, states: fixtureStates(c, ws, mapId), players: (everyone || []).filter(function (q) { return q.map === mapId && q.hp > 0 && !(but && q.id === but.id); }).map(function (q) {
       return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '',
-        x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level, act: q.act || '', wst: weaponState(c, q) };
+        x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level, act: q.act || '', wst: weaponState(c, q), sn: q.sneak ? 1 : 0 };
     }), monsters: ((ms && ms.monsters) || []).filter(function (m) { return !m.dead; }).map(function (m) {
       var d = c.monsters[m.ref];
       return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing, look: m.look || undefined };
@@ -3792,7 +4131,10 @@ var World = (function () {
 
   // ------------------------------------------------------------ data-driven actions
   /** "flag:met_mayor, has:iron_key, !flag:done, level:3, quest:first_steps, quest_active:rats" -> all must hold */
-  function check(c, p, cond) {
+  // In a dialogue (dlg = its id) two more read the character's memory of it: `talked` (they have spoken before) and
+  // `said:<line>` (the NPC has said that line to them). Elsewhere they are written in full: talked:<dialogue>,
+  // said:<dialogue>/<line>.
+  function check(c, p, cond, dlg) {
     return String(cond || '').split(',').every(function (part) {
       part = part.trim(); if (!part) return true;
       var not = part.charAt(0) === '!'; if (not) part = part.slice(1);
@@ -3802,6 +4144,11 @@ var World = (function () {
       else if (a[0] === 'level') ok = p.level >= Number(a[1]);
       else if (a[0] === 'quest') ok = !!(p.questsDone || {})[a[1]];              // that quest has been handed in
       else if (a[0] === 'quest_active') ok = !!(p.quests || {})[a[1]];         // that quest is in the log
+      else if (a[0] === 'talked') ok = !!(p.talk || {})[a[1] || dlg || ''];
+      else if (a[0] === 'said') {
+        var sd = String(a[1] || '').split('/'), mem = (p.talk || {})[sd.length > 1 ? sd[0] : (dlg || '')];
+        ok = !!mem && (mem.n || []).indexOf(sd[sd.length - 1]) >= 0;
+      }
       else ok = true;
       return not ? !ok : ok;
     });
@@ -3995,7 +4342,9 @@ var World = (function () {
     var qs = c.quests || {};
     return Object.keys(p.quests || {}).filter(function (id) { return qs[id]; }).sort(function (a, b) { return (p.quests[a].at || 0) - (p.quests[b].at || 0); }).map(function (id) {
       var q = qs[id];
-      return { id: id, s: questState(c, p, q, now), n: q.goals.map(function (g, i) { return goalCount(p, q, i); }) };
+      var e = { id: id, s: questState(c, p, q, now), n: q.goals.map(function (g, i) { return goalCount(p, q, i); }) };
+      if (p.quests[id].hide) e.hide = 1;                       // not followed: kept out of the tracker (quest op follow)
+      return e;
     });
   }
   /** The quests this player could accept right now (ids, in the order they were written). */
@@ -4024,7 +4373,7 @@ var World = (function () {
   /** Tell the player once when the last goal of a quest is met. */
   function questReady(c, p, q, was, now, ev) {
     if (was !== 'ready' && questState(c, p, q, now) === 'ready')
-      ev.push({ type: 'quest', to: p.id, ready: q.id, text: q.name + ': done.' + (q.ender ? ' Return to ' + npcName(c, q.ender) + '.' : '') });
+      ev.push({ type: 'quest', to: p.id, ready: q.id, text: q.tutorial ? '' : q.name + ': done.' + (q.ender ? ' Return to ' + npcName(c, q.ender) + '.' : '') });   // (a tutorial step is never tracked where the player sees it)
   }
   /**
    * Something a quest may ask for happened — a kill of `ref`, a talk with npc object `ref`, an item used, crafted,
@@ -4042,7 +4391,7 @@ var World = (function () {
         var have = Number(st.n[i]) || 0; if (have >= g.need) return;
         var was = questState(c, p, q, now);
         st.n[i] = Math.min(g.need, have + Math.max(1, Math.round(Number(amount) || 1)));
-        if (g.need > 1 && !QUIET_GOALS[g.type]) ev.push({ type: 'quest', to: p.id, text: goalText(c, g) + ': ' + st.n[i] + '/' + g.need });
+        if (g.need > 1 && !QUIET_GOALS[g.type] && !q.tutorial) ev.push({ type: 'quest', to: p.id, text: goalText(c, g) + ': ' + st.n[i] + '/' + g.need });
         questReady(c, p, q, was, now, ev);
       });
     });
@@ -4059,7 +4408,7 @@ var World = (function () {
         if (Number(st.n[i]) >= 1) return;
         var was = questState(c, p, q, now);
         st.n[i] = 1;
-        if (questState(c, p, q, now) !== 'ready') ev.push({ type: 'quest', to: p.id, text: q.name + ': ' + goalText(c, g) + ' reached.' });
+        if (questState(c, p, q, now) !== 'ready' && !q.tutorial) ev.push({ type: 'quest', to: p.id, text: q.name + ': ' + goalText(c, g) + ' reached.' });
         questReady(c, p, q, was, now, ev);
       });
     });
@@ -4087,7 +4436,7 @@ var World = (function () {
   function questBegin(c, ws, p, q, now, ev, o) {
     p.quests[q.id] = { n: q.goals.map(function () { return 0; }), at: now };
     if (o.by) p.quests[q.id].by = o.by;
-    ev.push({ type: 'quest', to: p.id, text: 'New quest: ' + q.name });
+    if (!q.tutorial) ev.push({ type: 'quest', to: p.id, text: 'New quest: ' + q.name });
     if (o.announce) (p.intro = p.intro || []).push(q.id);
     if (q.onStart) run(c, ws, p, q.onStart, now, ev, q.id);
   }
@@ -4105,7 +4454,7 @@ var World = (function () {
     var map = liveMap(c, ws, p.map);
     return !!objId && !!map && (map.entities || []).some(function (e) { return e.ref === objId && near(p, e.x, e.y); });
   }
-  /** {type: 'quest', op: 'accept' | 'turnin' | 'abandon' | 'seen', id, choice?} — choice = which of the choose-one rewards (its place in the list). */
+  /** {type: 'quest', op: 'accept' | 'turnin' | 'abandon' | 'follow' | 'seen' | 'did' | 'skip', id, choice?, on?} — choice = which of the choose-one rewards (its place in the list); on = follow it or not. */
   function questAct(c, ws, p, a, now, ev) {
     function say(x) { ev.push({ type: 'info', to: p.id, text: x }); }
     if (a.op === 'seen') {                                     // a "New quest" window has been read: that one (id), or all of them (an older page)
@@ -4117,8 +4466,14 @@ var World = (function () {
     if (a.op === 'skip') return questSkip(c, ws, p, now, ev);
     var q = (c.quests || {})[String(a.id || '')];
     if (!q) return say('There is no such quest.');
+    if (a.op === 'follow') {                                 // the player's own pick of what the tracker shows (on = shown; the default)
+      if (!p.quests[q.id]) return;
+      if (a.on === false || a.on === 0) p.quests[q.id].hide = 1; else delete p.quests[q.id].hide;
+      return;
+    }
     if (a.op === 'abandon') {
       if (!p.quests[q.id]) return;
+      if (q.noAbandon) return say('"' + q.name + '" cannot be given up.');
       questDrop(p, q.id);
       return say('You give up on "' + q.name + '".');
     }
@@ -4142,7 +4497,7 @@ var World = (function () {
     delete p.quests[q.id];
     p.questsDone[q.id] = now;
     if (p.intro) { p.intro = p.intro.filter(function (x) { return x !== q.id; }); if (!p.intro.length) delete p.intro; }   // (finished before its window was read: nothing left to announce)
-    ev.push({ type: 'quest', to: p.id, done: q.id, text: 'Quest complete: ' + q.name });
+    ev.push({ type: 'quest', to: p.id, done: q.id, text: q.tutorial ? '' : 'Quest complete: ' + q.name });
     run(c, ws, p, q.rewards, now, ev);
     if (pick) give(c, p, pick.item, pick.qty, ev);
     if (typeof p.held === 'number' && p.held >= 0) holdSlot(c, p, p.held, ev);   // (what was in hand may have been handed over)
@@ -4229,7 +4584,52 @@ var World = (function () {
   /** Talking to an NPC: quests that ask for a word with them move on, and the page is told to open their window. */
   function talkTo(c, ws, p, e, o, pr, now, ev) {
     questCount(c, p, 'talk', o.id, now, ev);
+    delete p.sneak;                                            // talking to someone: you stand up (docs/STEALTH.md)
+    delete p.talkAt;
+    var d = (c.dialogues || {})[String(pr.dialogue || '')], first = d && dlgStart(c, p, d);
+    if (first) return dlgSay(c, p, e, o, d, first, ev, true);  // a conversation (below)
     ev.push({ type: 'npc', to: p.id, key: e.key, ref: o.id, name: o.name, text: String(pr.text || '') });
+  }
+  // ---- dialogue (Content: c.dialogues[id] = {nodes: {id: {text, start, cond, answers: [{id, text, cond, run, to, once}]}}, order})
+  // A conversation opens on the first `start` line whose condition holds (so a first meeting can differ: !talked) and
+  // moves by the answers the player picks: an answer may ask a condition, run an action list (the same lists quests and
+  // objects use), lead to another line or end the talk, and be offered only once. The character remembers each
+  // dialogue: p.talk[dialogue] = {n: [lines said], a: [once-answers used, "line/answer"]}. Where the talk stands is
+  // p.talkAt = {k: entity key, d: dialogue, n: line} — the page can only answer the line it was shown.
+  function dlgStart(c, p, d) {
+    for (var i = 0; i < d.order.length; i++) { var n = d.nodes[d.order[i]]; if (n.start && check(c, p, n.cond, d.id)) return n; }
+    return null;
+  }
+  function dlgAnswers(c, p, d, node) {
+    var used = ((p.talk || {})[d.id] || {}).a || [];
+    return node.answers.filter(function (a) { return a.text && !(a.once && used.indexOf(node.id + '/' + a.id) >= 0) && check(c, p, a.cond, d.id); });
+  }
+  /** The NPC says this line: answers are worked out BEFORE the line is remembered (so "!said:this" works on its own answers). */
+  function dlgSay(c, p, e, o, d, node, ev, opening) {
+    var answers = dlgAnswers(c, p, d, node).map(function (a) { return { a: a.id, text: a.text, end: a.to ? undefined : 1 }; });
+    p.talk = p.talk || {};
+    var mem = p.talk[d.id] = p.talk[d.id] || { n: [], a: [] };
+    if (mem.n.indexOf(node.id) < 0) mem.n.push(node.id);
+    p.talkAt = { k: e.key, d: d.id, n: node.id };
+    ev.push({ type: 'npc', to: p.id, key: e.key, ref: o.id, name: o.name, text: node.text,
+      dlg: { id: d.id, node: node.id, hub: node.start ? 1 : undefined, open: opening ? 1 : undefined, answers: answers } });
+  }
+  /** {type: 'talk', key, a} — the answer picked (a = its id) to the line this NPC last said; no a = walk away. */
+  function talkAct(c, ws, p, action, now, ev) {
+    var at = p.talkAt; if (!at) return;
+    function end() { delete p.talkAt; ev.push({ type: 'npc', to: p.id, key: at.k, end: 1 }); }
+    if (String(action.key || '') !== at.k || action.a == null || action.a === '') { delete p.talkAt; return; }
+    var map = liveMap(c, ws, p.map), e = map && (map.entities || []).filter(function (en) { return en.key === at.k; })[0];
+    var o = e && objOf(c, e), d = (c.dialogues || {})[at.d], node = d && d.nodes[at.n];
+    if (!e || !o || !node || !near(p, e.x, e.y)) return end();
+    var ans = dlgAnswers(c, p, d, node).filter(function (a) { return a.id === String(action.a); })[0];
+    if (!ans) return dlgSay(c, p, e, o, d, node, ev);          // no longer on offer (things changed meanwhile): the line again, as it stands now
+    if (ans.once) { var mem = p.talk[d.id]; if (mem.a.indexOf(node.id + '/' + ans.id) < 0) mem.a.push(node.id + '/' + ans.id); }
+    var mapWas = p.map;
+    if (ans.run) run(c, ws, p, ans.run, now, ev);
+    var next = ans.to && d.nodes[ans.to];
+    if (!next || p.map !== mapWas || !near(p, e.x, e.y) || p.hp <= 0) return end();   // said its last, or the answer took you elsewhere
+    dlgSay(c, p, e, o, d, next, ev);
   }
   function teleport(c, p, target, ev) {
     var t = String(target || '').split(':'), map = c.maps[t[0]];
@@ -4655,7 +5055,7 @@ var World = (function () {
       p.mvT = now;
       for (var i = 0; i < dirs.length; i++) {
         var dir = dirs[i]; if (!Rl().isDir(dir)) continue;
-        var dd = Rl().DIRS[dir] || Rl().DIAG[dir], cost = Rl().stepCost(dir, c, liveMap(c, ws, p.map), p.x + dd.dx, p.y + dd.dy);   // (wading into shallow water costs more)
+        var dd = Rl().DIRS[dir] || Rl().DIAG[dir], cost = Rl().stepCost(dir, c, liveMap(c, ws, p.map), p.x + dd.dx, p.y + dd.dy, p);   // (wading into shallow water, or sneaking, costs more)
         if (p.mvB < cost) break;
         p.facing = Rl().faceFor(dir, p.facing);
         var r = Rl().tryMove(c, liveMap(c, ws, p.map), p.x, p.y, dir, moveOpts(c, ws, p.map, players, p));
@@ -4668,7 +5068,7 @@ var World = (function () {
         if (r.ok) { p.x = r.x; p.y = r.y; p.mvB -= cost; walked++; if (onStep(c, ws, p, now, ev)) break; }
         // (walking into a creature does nothing: an attack is a deliberate click, never a bump)
       }
-      if (walked) questCount(c, p, 'walk', '*', now, ev, walked);
+      if (walked) { p.stepAt = now; questCount(c, p, 'walk', '*', now, ev, walked); }   // (stepAt: the noise of walking, noiseOf)
     } else if (action.type === 'interact') {
       var tgt = action.x != null && action.y != null ? { x: Math.round(Number(action.x)), y: Math.round(Number(action.y)) } : null;
       interact(c, ws, p, now, rng, ev, players, tgt, action.verb || '');
@@ -4691,10 +5091,10 @@ var World = (function () {
     else if (action.type === 'throw') throwItem(c, ws, p, action, now, rng, ev, players);
     else if (action.type === 'reload') reload(c, ws, p, action, now, ev);
     else if (action.type === 'craft') craft(c, ws, p, action, now, ev);
-    else if (action.type === 'build') build(c, ws, p, action, now, ev, players);
+    else if (action.type === 'build') { delete p.sneak; build(c, ws, p, action, now, ev, players); }   // (building is never done sneaking: docs/STEALTH.md)
     else if (action.type === 'relocate') { var mvT = cleanTarget(action.target); if (mvT) relocate(c, ws, p, Object.assign({}, action, { target: mvT }), now, ev, players); else ev.push({ type: 'info', to: p.id, text: 'Pick something.' }); }
     else if (action.type === 'work' || action.type === 'dismantle' || action.type === 'upgrade' || action.type === 'shift' || action.type === 'turn') {
-      var stT = cleanTarget(action.target);
+      var stT = cleanTarget(action.target); delete p.sneak;
       if (!stT) ev.push({ type: 'info', to: p.id, text: 'Pick something.' });
       else if (action.type === 'work') work(c, ws, p, stT, now, ev);
       else if (stT.t === 'tile' || stT.t === 'roof') { if (action.type === 'dismantle') (stT.t === 'roof' ? liftRoof : liftTile)(c, ws, p, stT, now, ev, players); else ev.push({ type: 'info', to: p.id, text: 'Pick something.' }); }
@@ -4709,6 +5109,12 @@ var World = (function () {
     else if (action.type === 'loadout') setLoadout(c, p, action.bar, action.slot, action.entry, ev);
     else if (action.type === 'hold') { holdSlot(c, p, action.slot, ev); if (heldItem(c, p)) questCount(c, p, 'hold', heldItem(c, p).id, now, ev); }
     else if (action.type === 'quest') questAct(c, ws, p, action, now, ev);
+    else if (action.type === 'talk') talkAct(c, ws, p, action, now, ev);
+    else if (action.type === 'sneak') {                        // (docs/STEALTH.md) never while something is after you
+      if (!action.on || !stealthOn(c)) delete p.sneak;
+      else if (chasedBy(mapState(ws, p.map), p)) { p.chased = true; delete p.sneak; ev.push({ type: 'info', to: p.id, text: 'You can\'t hide while something is after you.' }); }
+      else p.sneak = true;
+    }
     questSweep(c, ws, p, now, ev);                             // wherever that left them: a place a quest sends them to? a quest that is simply done?
     return ev;
   }
@@ -4814,7 +5220,7 @@ var World = (function () {
       players: (players || []).filter(function (q) { return q.id !== p.id && q.map === mapId; }).map(function (q) {
         // class + equipment + hair let other clients draw this player's paper-doll (base body, hair, worn gear)
         return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {},
-          hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '', x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level, act: q.act || '', wst: weaponState(c, q) };
+          hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '', x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level, act: q.act || '', wst: weaponState(c, q), sn: q.sneak ? 1 : 0 };   // sn: sneaking
       })
     };
   }
@@ -4870,6 +5276,8 @@ var World = (function () {
       explored: p.explored || {}, claims: p.claims || [],
       quests: questLog(c, p, Date.now()), questsOpen: questsOpen(c, p, Date.now()), questIntro: p.intro && p.intro.length ? p.intro : undefined,   // questIntro = starting quests the page has yet to welcome the player with
         // the quest log as the page shows it, and what could be accepted now
+      // stealth: sneaking or not, and how loud they are (0-1 of noiseMax; the page works its own meter out as it walks)
+      sneak: p.sneak ? true : undefined, chased: p.chased ? true : undefined, noise: stealthOn(c) ? noiseOf(c, p, Date.now()) / noiseMax(c) : undefined,
       inventory: p.inventory, equipment: p.equipment, respawn: p.respawn };
   }
 
@@ -4882,6 +5290,7 @@ var World = (function () {
     syncEdges: syncEdges, syncEdgesView: syncEdgesView, isEdgeDoor: isEdgeDoor, isWallFixture: isWallFixture, openingOf: openingOf,
     mountEdgeOf: mountEdgeOf, fixtureEdges: fixtureEdges, wallMountAt: wallMountAt, wallMountUseCell: wallMountUseCell,
     visibleCells: visibleCells, perceive: perceive,
+    stealthOn: stealthOn, notices: notices, sightArea: sightArea, lookRange: lookRange, noiseOf: noiseOf, noiseRadius: noiseRadius, noiseMax: noiseMax, NOISE_LINGER_MS: NOISE_LINGER_MS,
     roofZoneAt: roofZoneAt, roofZones: roofZones, covered: covered, asRoof: asRoof, roofSteps: roofSteps, roofSpan: roofSpan, roofSupport: roofSupport,
     liveMap: liveMap, liveMapFromStruct: liveMapFromStruct, structOf: structOf, publicStruct: publicStruct,
     structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure,

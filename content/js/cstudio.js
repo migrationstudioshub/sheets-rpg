@@ -40,9 +40,11 @@ var CStudio = (function () {
     return el;
   }
   function $(id) { return document.getElementById(id); }
-  function tab(t) { return Schema.tabOf(t); }
+  // 'npcs' is not a table of its own: it is the Objects table seen through its rows of kind npc (the NPCs panel).
+  function tab(t) { return Schema.tabOf(t === 'npcs' ? 'objects' : t); }
   function rows(t) { return (T[tab(t)] = T[tab(t)] || []); }
-  function idField(t) { return Schema.get(t).id; }
+  function idField(t) { return Schema.get(t === 'npcs' ? 'objects' : t).id; }
+  function isNpc(r) { return !!r && String(r.kind) === 'npc'; }
   function rowLabel(t, r) {
     var idf = idField(t);
     if (idf && r[idf]) return String(r[idf]);
@@ -146,7 +148,7 @@ var CStudio = (function () {
   function restoreView() {
     var v = null;
     try { v = JSON.parse(localStorage.getItem(VIEW_LS)); } catch (e) {}
-    if (!v || Schema.authored('studio').indexOf(v.type) < 0) return;
+    if (!v || (Schema.authored('studio').indexOf(v.type) < 0 && v.type !== 'npcs')) return;
     type = v.type;
     if (type === 'loot') { curLoot = lootTableNames().indexOf(v.loot) >= 0 ? v.loot : null; return; }
     if (type === 'kinds') { curKind = allKindNames().indexOf(v.kind) >= 0 ? v.kind : null; return; }
@@ -281,16 +283,17 @@ var CStudio = (function () {
   function renderNav() {
     var nav = $('nav'); nav.innerHTML = '';
     var all = Schema.authored('studio'), placed = {};   // (the menu)
-    var groups = NAV_GROUPS.map(function (g) { return [g[0], g[1].filter(function (t) { placed[t] = 1; return all.indexOf(t) >= 0; })]; });
+    var groups = NAV_GROUPS.map(function (g) { return [g[0], g[1].filter(function (t) { placed[t] = 1; return t === 'npcs' || all.indexOf(t) >= 0; })]; });
     groups.push(['Other', all.filter(function (t) { return !placed[t]; })]);          // a new type nobody filed yet still shows
     groups.forEach(function (g) {
       if (g[1].length) nav.appendChild(h('div', { className: 'navgroup', text: g[0] }));
       g[1].forEach(navButton);
     });
     function navButton(t) {
-      var count = t === 'loot' ? lootTableNames().length : t === 'kinds' ? allKindNames().length : t === 'config' ? rows(t).filter(shownConfig).length : rows(t).length;
+      var count = t === 'loot' ? lootTableNames().length : t === 'kinds' ? allKindNames().length : t === 'config' ? rows(t).filter(shownConfig).length
+        : t === 'npcs' ? rows(t).filter(isNpc).length : t === 'objects' ? rows(t).filter(function (r) { return !isNpc(r); }).length : rows(t).length;
       nav.appendChild(h('button', { className: t === type ? 'on' : '', onclick: function () { type = t; curIndex = -1; curLoot = null; curKind = null; filter = ''; renderList(); renderForm(); renderNav(); } },
-        h('span', { text: Schema.get(t).label }), h('span', { className: 'n', text: String(count) })));
+        h('span', { text: t === 'npcs' ? 'NPCs' : Schema.get(t).label }), h('span', { className: 'n', text: String(count) })));
     }
   }
   var NAV_GROUPS = [
@@ -298,7 +301,7 @@ var CStudio = (function () {
     ['World', ['tilesets', 'terrain', 'wallStyles', 'objects']],
     ['Things', ['items', 'loot', 'blueprints', 'recipes']],
     ['Characters', ['classes', 'skills', 'statuses', 'monsters', 'appearances']],
-    ['Story', ['quests']]
+    ['Story', ['npcs', 'dialogues', 'quests']]
   ];
   // object_kinds is kept in Config but edited from the Object Kinds card, so the Config list leaves it out.
   function shownConfig(r) { return r.key !== 'object_kinds'; }
@@ -345,6 +348,7 @@ var CStudio = (function () {
   function renderList() {
     if (type === 'loot') return lootList();
     if (type === 'kinds') return kindsList();
+    if (type === 'npcs') return npcList();
     var list = $('list'); list.innerHTML = '';
     var search = h('input', { placeholder: 'Search ' + Schema.get(type).label.toLowerCase() + '…', value: filter,
       oninput: function (e) { filter = e.target.value; renderList(); } });
@@ -376,7 +380,7 @@ var CStudio = (function () {
     } else {
       var sortable = type === 'quests' && !q;      // quests: the order is the order an NPC offers them in — drag to change it
       all.forEach(function (r, i) {
-        if (!matches(r) || (type === 'config' && !shownConfig(r))) return;
+        if (!matches(r) || (type === 'config' && !shownConfig(r)) || (type === 'objects' && isNpc(r))) return;   // (NPCs have their own panel)
         var card = recCard(type, r, i, idf);
         if (sortable) dragSort(card, i);
         list.appendChild(card);
@@ -421,6 +425,7 @@ var CStudio = (function () {
   function setQmapMode(m) { try { localStorage.setItem(QMAP_LS, m); } catch (e) { /* private mode */ } renderQuestMap(); }
   function renderQuestMap() {
     var box = $('qmap'), main = $('main'); if (!box || !main) return;
+    if (type === 'dialogues' && typeof DialogMap !== 'undefined') return renderDialogMap(box, main);
     var on = type === 'quests' && typeof QuestMap !== 'undefined', mode = qmapMode();
     box.hidden = !on;
     main.classList.toggle('withmap', on); main.classList.toggle('wide', on && mode === 'wide'); main.classList.toggle('mapshut', on && mode === 'shut');
@@ -455,10 +460,168 @@ var CStudio = (function () {
     });
   }
   var qmapTimer = 0;
-  function questMapSoon() { if (type !== 'quests') return; clearTimeout(qmapTimer); qmapTimer = setTimeout(renderQuestMap, 350); }
+  function questMapSoon() { if (type !== 'quests' && type !== 'dialogues') return; clearTimeout(qmapTimer); qmapTimer = setTimeout(renderQuestMap, 350); }
   function addRecord() {
-    var r = Schema.defaults(type); rows(type).push(r); curIndex = rows(type).length - 1;
+    if (type === 'npcs') { var n = Schema.defaults('objects'); n.kind = 'npc'; rows('objects').push(n); curIndex = rows('objects').length - 1; persist(); renderNav(); renderList(); renderForm(); return; }
+    var r = Schema.defaults(type);
+    if (type === 'dialogues') r.nodes = [{ id: 'hello', start: true, text: '', answers: [] }];   // a conversation needs a line to open on
+    rows(type).push(r); curIndex = rows(type).length - 1;
     persist(); renderNav(); renderList(); renderForm();
+  }
+
+  // ---------------------------------------------------------------- dialogues (Story → Dialogues; the map is js/dialogmap.js)
+  // A dialogue = the lines an NPC can say, each with the answers the player may give. Stored on the row as `nodes`:
+  // [{id, text, start, if, x, y, answers: [{id, text, if, do, to, once}]}] (x, y = where its box was dragged to on the
+  // map). The form edits the dialogue and ONE line at a time (the one picked on the map or in the strip of lines).
+  var curLineId = '', curLineOf = null;
+  var COND_HELP = 'A condition list, all must hold: talked (they have spoken before), !talked (first meeting), said:<line id> (the NPC has said that line to them), flag:x, !flag:x, has:item:n, level:n, quest:x (handed in), quest_active:x';
+  function linesOf(r) {
+    if (!Array.isArray(r.nodes)) { var v = []; try { v = JSON.parse(r.nodes || '[]'); } catch (e) { v = []; } r.nodes = Array.isArray(v) ? v : []; }
+    r.nodes.forEach(function (n) { if (!Array.isArray(n.answers)) n.answers = []; });
+    return r.nodes;
+  }
+  function freeId(list, prefix) { var i = 1; while (list.some(function (x) { return x.id === prefix + i; })) i++; return prefix + i; }
+  function isTrue(v) { return v === true || /^(true|yes|1|on)$/i.test(String(v == null ? '' : v).trim()); }
+  function dialogueUsers(id) { return rows('objects').filter(function (o) { return isNpc(o) && id && String(propsObj(o).dialogue || '') === String(id); }); }
+  function openDialogue(id) {
+    var i = -1; rows('dialogues').forEach(function (d, n) { if (i < 0 && String(d.id || '') === String(id)) i = n; });
+    if (i < 0) return;
+    type = 'dialogues'; curIndex = i; filter = ''; renderNav(); renderList(); renderForm();
+  }
+  function renderDialogMap(box, main) {
+    var mode = qmapMode();
+    box.hidden = false;
+    main.classList.add('withmap'); main.classList.toggle('wide', mode === 'wide'); main.classList.toggle('mapshut', mode === 'shut');
+    box.innerHTML = '';
+    if (mode === 'shut') { box.appendChild(h('button', { className: 'qmshut', text: 'Dialogue map ▸', title: 'Show the map of this dialogue', onclick: function () { setQmapMode(''); } })); return; }
+    var r = rows('dialogues')[curIndex], lines = r ? linesOf(r) : [];
+    var placed = lines.filter(function (n) { return n.x != null && n.y != null; }).length;
+    box.appendChild(h('div', { className: 'qmhead' }, h('b', { text: 'Dialogue map' }), h('span', { className: 'sp', style: 'margin-left:auto' }),
+      h('button', { text: 'Fit', title: 'Show every line', onclick: function () { DialogMap.fit(); } }),
+      placed ? h('button', { text: 'Reset layout', title: 'Forget where the boxes were dragged to and lay them out again', onclick: function () {
+        if (!confirm('Put all ' + placed + ' hand-placed boxes back where the automatic layout puts them?')) return;
+        lines.forEach(function (n) { delete n.x; delete n.y; }); persist(); renderDialogMap(box, main);
+      } }) : null,
+      h('button', { text: mode === 'wide' ? 'Narrow' : 'Wide', title: 'Give the map more room', onclick: function () { setQmapMode(mode === 'wide' ? '' : 'wide'); } }),
+      h('button', { text: 'Hide', title: 'Fold the map away', onclick: function () { setQmapMode('shut'); } })));
+    box.appendChild(DialogMap.legend());
+    box.appendChild(h('div', { className: 'qmhint', text: 'A box = a line the NPC says · an arrow = an answer · click a box to edit it, drag to place it · wheel to zoom' }));
+    var body = h('div', { className: 'qmbody' }); box.appendChild(body);
+    if (!r) { body.appendChild(h('div', { className: 'note qmempty', text: 'Pick a dialogue to see its map.' })); return; }
+    DialogMap.draw(body, lines, curLineOf === r ? curLineId : '', {
+      pick: function (id) { curLineOf = r; curLineId = id; dialogueForm(); renderDialogMap(box, main); },
+      move: function (id, x, y) {                                   // (saved without redrawing the map, which already shows it there)
+        var n = lines.filter(function (q) { return q.id === id; })[0]; if (!n) return;
+        var had = n.x != null; n.x = Math.round(x); n.y = Math.round(y); keep();
+        if (!had) renderDialogMap(box, main);
+      }
+    });
+  }
+  function dialogueForm() {
+    var form = $('form'), keepTop = form.scrollTop; form.innerHTML = '';
+    var r = rows('dialogues')[curIndex];
+    if (curIndex < 0 || !r) { form.appendChild(h('div', { className: 'empty', text: 'Select a dialogue, or click New.' })); return; }
+    var lines = linesOf(r);
+    if (curLineOf !== r || !lines.some(function (n) { return n.id === curLineId; })) { curLineOf = r; curLineId = lines.length ? lines[0].id : ''; }
+    function redraw() { dialogueForm(); questMapSoon(); }
+    function save(again) { persist(); if (again) redraw(); }
+    var users = dialogueUsers(r.id);
+    form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: rowLabel('dialogues', r) }), h('span', { className: 'pill', text: 'Dialogue' }),
+      h('button', { title: 'Delete this dialogue', text: '🗑 Delete', style: 'margin-left:auto', onclick: function () {
+        if (!confirm('Delete this dialogue?' + (users.length ? ' ' + users.length + ' NPC' + (users.length === 1 ? ' uses' : 's use') + ' it: ' + (users.length === 1 ? 'it goes' : 'they go') + ' back to saying one line.' : ''))) return;
+        rows('dialogues').splice(curIndex, 1); curIndex = -1; persist(); renderNav(); renderList(); renderForm();
+      } })));
+    Schema.get('dialogues').fields.forEach(function (fl) { if (fl.key === 'id' || fl.key === 'name') form.appendChild(fieldEl(r, fl)); });
+    form.appendChild(h('div', { className: 'field' }, h('label', { text: 'Used by' }),
+      users.length ? h('div', null, users.map(function (o, n) {
+        return h('a', { href: '#', text: (o.name || o.id) + (n < users.length - 1 ? ', ' : ''), onclick: function (e) { e.preventDefault(); type = 'npcs'; curIndex = rows('objects').indexOf(o); filter = ''; renderNav(); renderList(); renderForm(); } });
+      })) : h('div', { className: 'help', text: 'No NPC yet. Pick this dialogue on an NPC\'s page (Story → NPCs); several NPCs can share one.' })));
+
+    // the lines, as a strip to pick from (the map on the right picks too)
+    form.appendChild(h('div', { className: 'sub', text: 'Lines — what the NPC can say' }));
+    var strip = h('div', { className: 'dlines' });
+    lines.forEach(function (n) {
+      strip.appendChild(h('button', { className: n.id === curLineId ? 'on' : '', text: (isTrue(n.start) ? '▶ ' : '') + n.id, title: n.text || '(says nothing yet)',
+        onclick: function () { curLineId = n.id; redraw(); renderQuestMap(); } }));
+    });
+    strip.appendChild(h('button', { className: 'primary', text: '+ New line', onclick: function () {
+      var n = { id: freeId(lines, 'line'), text: '', answers: [] }; if (!lines.length) { n.id = 'hello'; n.start = true; }
+      lines.push(n); curLineId = n.id; save(true); renderQuestMap();
+    } }));
+    form.appendChild(strip);
+
+    var line = lines.filter(function (n) { return n.id === curLineId; })[0];
+    if (line) {
+      var card = h('div', { className: 'dcard' });
+      card.appendChild(h('div', { className: 'row' },
+        h('span', { className: 'lootlbl', text: 'Line id' }),
+        h('input', { type: 'text', value: line.id, title: 'A short name for this line: answers lead to it by this id, and said:<id> asks whether it was said', onchange: function (e) {
+          var v = String(e.target.value || '').trim().replace(/[^A-Za-z0-9_-]/g, '_');
+          if (!v || lines.some(function (n) { return n !== line && n.id === v; })) { e.target.value = line.id; return; }
+          lines.forEach(function (n) { n.answers.forEach(function (a) { if (a.to === line.id) a.to = v; }); });   // answers that lead here follow the new name
+          line.id = v; curLineId = v; save(true); renderQuestMap();
+        } }),
+        h('button', { text: '🗑 Delete line', title: 'Delete this line. Answers that led to it will end the talk instead', onclick: function () {
+          if (!confirm('Delete the line "' + line.id + '"?')) return;
+          lines.splice(lines.indexOf(line), 1);
+          lines.forEach(function (n) { n.answers.forEach(function (a) { if (a.to === line.id) a.to = ''; }); });
+          curLineId = ''; save(true); renderQuestMap();
+        } })));
+      card.appendChild(h('div', { className: 'field' }, h('label', { text: 'What the NPC says' }),
+        h('textarea', { rows: 3, value: line.text || '', placeholder: 'The words shown beside the NPC. A key in square brackets, like [E], is drawn as a key.', oninput: function (e) { line.text = e.target.value; save(); } })));
+      var startTick = h('input', { type: 'checkbox', checked: isTrue(line.start), onchange: function (e) { if (e.target.checked) line.start = true; else { delete line.start; delete line['if']; } save(true); renderQuestMap(); } });
+      card.appendChild(h('div', { className: 'row', style: 'margin-top:6px' },
+        h('label', { className: 'tick', title: 'A conversation opens on the FIRST line ticked here (in the order of the strip above) whose condition holds. So a first meeting can differ from later ones: tick two lines, give the first the condition !talked' }, startTick, document.createTextNode('Can open the conversation'))));
+      if (isTrue(line.start)) card.appendChild(h('div', { className: 'row' },
+        h('span', { className: 'lootlbl', text: 'Only if' }),
+        h('input', { type: 'text', value: line['if'] || '', placeholder: 'always (e.g. !talked for a first meeting)', title: COND_HELP, oninput: function (e) { var v = e.target.value.trim(); if (v) line['if'] = v; else delete line['if']; save(); } })));
+      if (isTrue(line.start)) card.appendChild(h('div', { className: 'help', text: 'On a line that opens the conversation, the quests this NPC gives and takes back are listed among the answers by themselves. The first such line whose condition holds is used; move a line earlier with the arrows below.' }));
+      if (isTrue(line.start)) {
+        var li = lines.indexOf(line);
+        card.appendChild(h('div', { className: 'row', style: 'margin-top:4px' },
+          h('button', { text: '↑ Try earlier', disabled: li === 0, onclick: function () { lines.splice(li - 1, 0, lines.splice(li, 1)[0]); save(true); } }),
+          h('button', { text: '↓ Try later', disabled: li === lines.length - 1, onclick: function () { lines.splice(li + 1, 0, lines.splice(li, 1)[0]); save(true); } })));
+      }
+      form.appendChild(card);
+
+      form.appendChild(h('div', { className: 'sub', text: 'Answers — what the player can say to "' + line.id + '"' }));
+      if (!line.answers.length) form.appendChild(h('div', { className: 'help', style: 'margin-bottom:6px', text: 'No answers: the player gets a single "Goodbye." that ends the talk.' }));
+      line.answers.forEach(function (a, ai) {
+        var ac = h('div', { className: 'dcard' });
+        ac.appendChild(h('div', { className: 'row' },
+          h('input', { type: 'text', value: a.text || '', placeholder: 'What the player says', oninput: function (e) { a.text = e.target.value; save(); } }),
+          h('button', { text: '↑', title: 'Earlier in the list', disabled: ai === 0, onclick: function () { line.answers.splice(ai - 1, 0, line.answers.splice(ai, 1)[0]); save(true); } }),
+          h('button', { text: '↓', title: 'Later in the list', disabled: ai === line.answers.length - 1, onclick: function () { line.answers.splice(ai + 1, 0, line.answers.splice(ai, 1)[0]); save(true); } }),
+          h('button', { text: '✕', title: 'Remove this answer', onclick: function () { line.answers.splice(ai, 1); save(true); renderQuestMap(); } })));
+        var known = !a.to || lines.some(function (n) { return n.id === a.to; });
+        ac.appendChild(h('div', { className: 'row' },
+          h('span', { className: 'lootlbl', text: 'Leads to' }),
+          h('select', { style: known ? '' : 'border-color:var(--bad)', title: 'The line the NPC says next', onchange: function (e) {
+            var v = e.target.value;
+            if (v === '+') { var n = { id: freeId(lines, 'line'), text: '', answers: [] }; lines.push(n); v = n.id; }
+            a.to = v; save(true); renderQuestMap();
+          } },
+            h('option', { value: '', text: '— ends the talk —', selected: !a.to }),
+            known ? null : h('option', { value: a.to, text: a.to + ' (missing line)', selected: true }),
+            lines.map(function (n) { return h('option', { value: n.id, text: n.id + (n.text ? ' — ' + String(n.text).replace(/\s+/g, ' ').slice(0, 40) : ''), selected: n.id === a.to }); }),
+            h('option', { value: '+', text: '+ a new line…' })),
+          a.to && known ? h('button', { text: 'Edit ›', title: 'Go to that line', onclick: function () { curLineId = a.to; redraw(); renderQuestMap(); } }) : null,
+          h('label', { className: 'tick', title: 'Offered only once to each character: after it is picked it is gone for good' },
+            h('input', { type: 'checkbox', checked: isTrue(a.once), onchange: function (e) { if (e.target.checked) a.once = true; else delete a.once; save(); questMapSoon(); } }), document.createTextNode('Once only'))));
+        ac.appendChild(h('div', { className: 'row' },
+          h('span', { className: 'lootlbl', text: 'Only if' }),
+          h('input', { type: 'text', value: a['if'] || '', placeholder: 'always (e.g. has:iron_key or !flag:paid)', title: COND_HELP, oninput: function (e) { var v = e.target.value.trim(); if (v) a['if'] = v; else delete a['if']; save(); } })));
+        var does = rewardsField(a, { key: 'do', when: 'when this answer is picked', help: 'What picking this answer does: one row each (give something, start a quest). Other actions: take:item:n; gold:-5 (pay); flag:x; unflag:x; heal:n; teleport:map:x:y; message:text' });
+        var lb = does.querySelector('label'); if (lb) lb.textContent = 'What it does';
+        ac.appendChild(does);
+        form.appendChild(ac);
+      });
+      form.appendChild(h('button', { className: 'primary', style: 'margin:2px 0 8px', text: '+ Add answer', onclick: function () {
+        line.answers.push({ id: freeId(line.answers, 'a'), text: '', to: '' }); save(true); renderQuestMap();
+      } }));
+    }
+    Schema.get('dialogues').fields.forEach(function (fl) { if (fl.key === 'notes') form.appendChild(fieldEl(r, fl)); });
+    form.scrollTop = keepTop;
   }
 
   // ---------------------------------------------------------------- the form
@@ -468,7 +631,9 @@ var CStudio = (function () {
     if (type === 'loot') return lootForm();
     if (type === 'kinds') return kindsForm();
     if (type === 'objects') return objForm();
+    if (type === 'npcs') return npcForm();
     if (type === 'appearances') return appearanceForm();
+    if (type === 'dialogues') return dialogueForm();
     var form = $('form'); form.innerHTML = '';
     if (curIndex < 0 || !rows(type)[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select a ' + (Schema.get(type).singular || Schema.get(type).label.toLowerCase().replace(/s$/, '')) + ', or click New.' })); return; }
     var r = rows(type)[curIndex], def = Schema.get(type), hiddenCount = 0;
@@ -995,6 +1160,7 @@ var CStudio = (function () {
     var form = $('form'); form.innerHTML = '';
     if (curIndex < 0 || !rows('objects')[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select an object, or click New.' })); return; }
     var o = rows('objects')[curIndex], p = propsObj(o), statesInput = null;
+    if (isNpc(o)) { type = 'npcs'; renderNav(); renderList(); return npcForm(); }   // (made an NPC: it moves to the NPCs panel)
     form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: rowLabel('objects', o) }), h('span', { className: 'pill', text: 'Objects' }),
       h('button', { title: 'Delete this object', text: '🗑 Delete', style: 'margin-left:auto', onclick: function () {
         if (!confirm('Delete this object?')) return; rows('objects').splice(curIndex, 1); curIndex = -1; persist(); renderNav(); renderList(); renderForm();
@@ -1260,6 +1426,107 @@ var CStudio = (function () {
     form.appendChild(kindPropsSection(o));
   }
 
+  // An NPC's outfit: the exact pictures it wears, listed bottom to top (body first) — properties.outfit =
+  // [{path, tint, type}] (type only says which pictures the picker offers). With one, the game draws the NPC as a
+  // figure like a player, turned towards whoever looks at it; its plain sprite is then what the map editor shows.
+  function npcOutfit(o) {
+    var fit = (propsObj(o).outfit || []).map(function (l) { return { type: l.type || '', path: l.path || '', tint: l.tint || '' }; });
+    function isHair(l) { return l.type === 'hair' || /(^|\/)hair_[^\/]*$/.test(l.path); }
+    function save() {
+      fit.forEach(function (l) { if (l.path && !l.tint && isHair(l)) l.tint = 'hair_brown'; });   // hair shows only through its colour: never leave it without one
+      setProp(o, 'outfit', fit.map(function (l) { var q = { path: l.path }; if (l.tint) q.tint = l.tint; if (l.type) q.type = l.type; return q; }));
+      npcForm(); npcList();
+    }
+    var box = h('div', { className: 'field' }, h('div', { className: 'sub', text: 'Outfit — what this NPC looks like' }),
+      h('div', { className: 'help', text: 'The pictures this NPC wears, listed bottom to top (the body first, then clothes, hair, what it holds). The game and the map editor draw it as a figure like a player: it breathes, and turns to face whoever is near.' }));
+    fit.forEach(function (l, i) {
+      var L = { type: l.type, options: [{ sprite: l.path }] }, tid = layerType(L);
+      box.appendChild(h('div', { className: 'lootrow' },
+        h('select', { style: 'width:auto;min-width:92px', title: 'Layer type — filters which sprites you can pick', onchange: function (e) { l.type = e.target.value; save(); } },
+          LAYER_TYPES.map(function (t) { return h('option', { value: t.id, text: t.label, selected: t.id === tid }); })),
+        spritePicker(L, l.path, function (v) { l.path = v; save(); }),
+        tid === 'body' ? skinPicker(l.tint, function (v) { l.tint = v; save(); }) : colourPicker(l.tint, function (v) { l.tint = v; save(); }),
+        h('button', { title: 'Earlier in the list (drawn behind)', text: '↑', disabled: i === 0, onclick: function () { fit.splice(i - 1, 0, fit.splice(i, 1)[0]); save(); } }),
+        h('button', { title: 'Later in the list (drawn in front)', text: '↓', disabled: i === fit.length - 1, onclick: function () { fit.splice(i + 1, 0, fit.splice(i, 1)[0]); save(); } }),
+        h('button', { title: 'Remove layer', text: '✕', onclick: function () { fit.splice(i, 1); save(); } })));
+    });
+    box.appendChild(h('button', { style: 'margin:2px 0 6px', text: '+ Add layer', onclick: function () { fit.push({ type: fit.length ? 'chest' : 'body', path: '', tint: '' }); save(); } }));
+    var look = fit.filter(function (l) { return l.path; }).map(function (l) { return { path: l.path, tint: l.tint }; });
+    if (look.length) box.appendChild(h('div', { className: 'preview' }, composeLook(look)));
+    return box;
+  }
+
+  // ---------------------------------------------------------------- NPCs (objects of kind npc, in a panel of their own)
+  function npcThumb(o) {
+    var fit = (propsObj(o).outfit || []).filter(function (l) { return l && l.path; });
+    if (!fit.length) {
+      var src = o.sprite ? spritePath(o.sprite) : '';
+      return src ? h('img', { className: 'rthumb', src: src, alt: '' }) : h('span', { className: 'rthumb ph' });
+    }
+    var cv = composeLook(fit.map(function (l) { return { path: l.path, tint: l.tint || '' }; }));
+    cv.className = 'rthumb'; return cv;
+  }
+  function npcList() {
+    var list = $('list'); list.innerHTML = '';
+    var search = h('input', { placeholder: 'Search NPCs…', value: filter, oninput: function (e) { filter = e.target.value; npcList(); } });
+    list.appendChild(h('div', { className: 'head' }, search, h('button', { className: 'primary', title: 'New', text: '+ New', onclick: addRecord })));
+    var q = filter.toLowerCase(), any = false;
+    rows('objects').forEach(function (o, i) {
+      if (!isNpc(o) || (q && (rowLabel('objects', o) + ' ' + (o.name || '')).toLowerCase().indexOf(q) < 0)) return;
+      any = true;
+      list.appendChild(h('button', { className: 'rec' + (i === curIndex ? ' on' : ''), onclick: function () { curIndex = i; npcList(); renderForm(); } },
+        npcThumb(o), h('div', { className: 'rbody' }, h('div', { text: rowLabel('objects', o) }), o.name && o.id !== o.name ? h('small', { text: o.name }) : null)));
+    });
+    if (!any) list.appendChild(h('div', { className: 'note', style: 'padding:8px', text: rows('objects').some(isNpc) ? 'No match.' : 'No NPCs yet — click New.' }));
+  }
+  function npcForm() {
+    var form = $('form'); form.innerHTML = '';
+    var o = rows('objects')[curIndex];
+    if (curIndex < 0 || !isNpc(o)) { form.appendChild(h('div', { className: 'empty', text: 'Select an NPC, or click New.' })); return; }
+    var p = propsObj(o), qs = rows('quests');
+    function questsWhere(field) { return qs.filter(function (q) { return o.id && String(q[field] || '') === String(o.id); }); }
+    form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: rowLabel('objects', o) }), h('span', { className: 'pill', text: 'NPC' }),
+      h('button', { title: 'Delete this NPC', text: '🗑 Delete', style: 'margin-left:auto', onclick: function () {
+        var uses = questsWhere('giver').concat(questsWhere('ender')).length;
+        if (!confirm('Delete this NPC?' + (uses ? ' ' + uses + ' quest link' + (uses === 1 ? '' : 's') + ' name' + (uses === 1 ? 's' : '') + ' it.' : '') + ' Where it is placed on a map, the placement is left without a picture.')) return;
+        rows('objects').splice(curIndex, 1); curIndex = -1; persist(); renderNav(); npcList(); npcForm();
+      } })));
+    Schema.get('objects').fields.forEach(function (fl) { if (fl.key === 'id' || fl.key === 'name') form.appendChild(fieldEl(o, fl)); });
+    form.appendChild(h('div', { className: 'field' }, h('label', { text: 'What it says' }),
+      h('textarea', { rows: 3, value: p.text || '', placeholder: 'Shown when a player talks to it (above the quests it has for them).', oninput: function (e) { setProp(o, 'text', e.target.value); } })));
+    // its conversation: a dialogue of its own or a shared one (Story → Dialogues); none = it says the one line above
+    var dls = rows('dialogues').filter(function (d) { return d.id; }), dcur = String(p.dialogue || ''), dknown = !dcur || dls.some(function (d) { return String(d.id) === dcur; });
+    form.appendChild(h('div', { className: 'field' }, h('label', { text: 'Dialogue' }),
+      h('div', { className: 'row' },
+        h('select', { style: 'flex:1;min-width:0' + (dknown ? '' : ';border-color:var(--bad)'), onchange: function (e) { setProp(o, 'dialogue', e.target.value || undefined); npcForm(); } },
+          h('option', { value: '', text: '— none: it only says the line above —', selected: !dcur }),
+          dknown ? null : h('option', { value: dcur, text: dcur + ' (missing dialogue)', selected: true }),
+          dls.map(function (d) { return h('option', { value: d.id, text: (d.name || d.id) + '  (' + d.id + ')', selected: String(d.id) === dcur }); })),
+        dcur && dknown ? h('button', { text: 'Edit dialogue ›', onclick: function () { openDialogue(dcur); } })
+          : h('button', { text: '+ New dialogue', title: 'Make a dialogue for this NPC, opening with the line above', disabled: !o.id, onclick: function () {
+              var all = rows('dialogues'), id = String(o.id).replace(/^npc_/, '') + '_talk', n = 1, base = id;
+              while (all.some(function (d) { return String(d.id) === id; })) id = base + (++n);
+              all.push({ id: id, name: o.name || o.id, nodes: [{ id: 'hello', start: true, text: p.text || '', answers: [] }], notes: '' });
+              setProp(o, 'dialogue', id); openDialogue(id);
+            } })),
+      h('div', { className: 'help', text: 'A conversation with answers to pick, conditions and things that happen. With one, the line above is only used if the dialogue has no line to open on.' })));
+    form.appendChild(npcOutfit(o));
+    // the quests it gives and takes back (set on each quest: giver / ender)
+    var gives = questsWhere('giver'), takes = questsWhere('ender');
+    function qlinks(list) {
+      if (!list.length) return h('span', { className: 'note', text: 'none' });
+      return h('span', null, list.map(function (q, n) {
+        return h('a', { href: '#', text: (q.name || q.id) + (n < list.length - 1 ? ', ' : ''), onclick: function (e) { e.preventDefault(); type = 'quests'; curIndex = qs.indexOf(q); filter = ''; renderNav(); renderList(); renderForm(); } });
+      }));
+    }
+    form.appendChild(h('div', { className: 'field' }, h('div', { className: 'sub', text: 'Quests' }),
+      h('div', null, h('b', { text: 'Gives: ' }), qlinks(gives)), h('div', null, h('b', { text: 'Takes back: ' }), qlinks(takes)),
+      h('div', { className: 'help', text: 'Set on each quest (Story → Quests: giver and ender).' })));
+    var more = h('details', { className: 'field' }, h('summary', { text: 'More (picture without an outfit, notes)' }));
+    Schema.get('objects').fields.forEach(function (fl) { if (fl.key === 'sprite' || fl.key === 'notes') more.appendChild(fieldEl(o, fl)); });
+    form.appendChild(more);
+  }
+
   // Save the weighted loot list, and retire the legacy single `loot_table` so there's one source of truth.
   function saveLoot(o, list) {
     setProp(o, 'loot', list.filter(function (e) { return e.table; }));
@@ -1515,7 +1782,12 @@ var CStudio = (function () {
     img.addEventListener('mouseleave', function () { clearTimeout(hv.timer); if (hv.el) hv.el.style.display = 'none'; });
     return img;
   }
-  function spriteThumb(p) { return hoverZoom(h('img', { className: 'thumb lit', src: spritePath(p), alt: '', title: p, onerror: function () { this.style.visibility = 'hidden'; } }), spritePath(p)); }
+  function lookTint(p, tint) { return typeof Tint !== 'undefined' && Tint.lookTint ? Tint.lookTint(p, tint) : tint; }
+  // a garment is shown whole: its fixed part and its cloth (the mask), in the default colour when none is given
+  function spriteThumb(p, tint) {
+    var img = h('img', { className: 'thumb lit', src: spritePath(p), alt: '', onerror: function () { this.style.visibility = 'hidden'; } });
+    return hoverZoom(showTinted(img, p, lookTint(p, tint)), spritePath(p));
+  }
   function swatch(ramp) {
     var cs = (typeof Tint !== 'undefined' && Tint.TINTS[ramp]) || null;
     return cs ? h('span', { className: 'swatch', style: 'background:linear-gradient(90deg,' + cs.join(',') + ')' }) : h('span', { className: 'swatch none' });
@@ -1538,6 +1810,12 @@ var CStudio = (function () {
     var items = [{ value: '', label: '— none —', visual: function () { return h('span', { className: 'thumb ph' }); } }]
       .concat(spritesForType(layerType(L)).map(function (p) { return { value: p, label: fileName(p), visual: function () { return spriteThumb(p); } }; }));
     return visualPicker(canonSprite(current), items, onPick, 'sprite…');
+  }
+  function skinNames() { return (typeof Tint !== 'undefined' && Tint.SKINS) ? Object.keys(Tint.SKINS) : []; }
+  function skinPicker(current, onPick) {
+    var items = [{ value: '', label: 'skin as drawn', visual: function () { return h('span', { className: 'swatch none' }); } }]
+      .concat(skinNames().map(function (s) { return { value: s, label: s.replace(/^skin_/, '') + ' skin', visual: function () { return h('span', { className: 'swatch', style: 'background:' + Tint.SKINS[s] }); } }; }));
+    return visualPicker(current, items, onPick, 'skin…');
   }
   function colourPicker(current, onPick) {
     var items = [{ value: '', label: 'no tint', visual: function () { return h('span', { className: 'swatch none' }); } }]
@@ -1582,7 +1860,7 @@ var CStudio = (function () {
     function hasMatch(node) { return node.files.some(matches) || Object.keys(node.dirs).some(function (k) { return hasMatch(node.dirs[k]); }); }
     function pick(v) { renderBtn(v); closePickers(); onPick(v); }
     function fileRow(p, depth) {
-      return h('div', { className: 'pickitem' + (p === current ? ' on' : ''), title: p, style: 'padding-left:' + (depth * 14 + 8) + 'px',
+      return h('div', { className: 'pickitem' + (p === current ? ' on' : ''), style: 'padding-left:' + (depth * 14 + 8) + 'px',
         onclick: function (e) { e.stopPropagation(); pick(p); } }, spriteThumb(p), h('span', { className: 'picklabel', text: baseName(p) }));
     }
     function renderNode(node, prefix, depth, frag) {
@@ -1637,7 +1915,7 @@ var CStudio = (function () {
     L.options.forEach(function (o, oi) {
       card.appendChild(h('div', { className: 'lootrow' },
         spritePicker(L, o.sprite || '', function (v) { o.sprite = v; setLayers(r, layers); appearanceForm(); }),
-        colourPicker(o.tint || '', function (v) { o.tint = v; setLayers(r, layers); appearanceForm(); }),
+        (tid === 'body' ? skinPicker : colourPicker)(o.tint || '', function (v) { o.tint = v; setLayers(r, layers); appearanceForm(); }),
         pctInput(o.weight, function (v) { o.weight = v; setLayers(r, layers); }), h('span', { className: 'lootlbl', text: '%' }),
         h('button', { title: 'Remove', text: '✕', onclick: function () { L.options.splice(oi, 1); setLayers(r, layers); appearanceForm(); } })));
     });
@@ -1646,7 +1924,7 @@ var CStudio = (function () {
     card.appendChild(h('div', { className: 'lsub', text: 'Colour pool — optional; recolours the chosen sprite' }));
     L.tints.forEach(function (t, ti) {
       card.appendChild(h('div', { className: 'lootrow' },
-        colourPicker(t.tint || '', function (v) { t.tint = v; setLayers(r, layers); appearanceForm(); }),
+        (tid === 'body' ? skinPicker : colourPicker)(t.tint || '', function (v) { t.tint = v; setLayers(r, layers); appearanceForm(); }),
         pctInput(t.weight, function (v) { t.weight = v; setLayers(r, layers); }), h('span', { className: 'lootlbl', text: '%' }),
         h('button', { title: 'Remove', text: '✕', onclick: function () { L.tints.splice(ti, 1); setLayers(r, layers); appearanceForm(); } })));
     });
@@ -1684,19 +1962,22 @@ var CStudio = (function () {
     var g = c.getContext('2d'); g.imageSmoothingEnabled = false;
     function draw() {
       g.clearRect(0, 0, c.width, c.height);
+      var tone = typeof Tint !== 'undefined' && Tint.lookSkin ? Tint.lookSkin(look) : '';
       look.forEach(function (l) {
         var base = pvImg(l.path); if (!base.complete || !base.width) return;
-        var layer = base;
-        if (l.tint && typeof Tint !== 'undefined' && Tint.TINTS[l.tint]) {
+        var layer = base, tint = lookTint(l.path, l.tint);
+        if (tint && typeof Tint !== 'undefined' && Tint.TINTS[tint]) {
           var mask = pvImg(maskPath(l.path));
-          if (mask.complete && mask.width) layer = Tint.getTintedLayer(base, mask, Tint.TINTS[l.tint]);
+          if (mask.complete && mask.width) layer = Tint.getTintedLayer(base, mask, Tint.TINTS[tint]);
         }
+        var sk = tone ? Tint.skinFor(l.path, tone) : null;
+        if (sk) layer = Tint.skinned(layer, sk.tone, !sk.all);
         try { g.drawImage(layer, 0, 0, c.width, c.height); } catch (e) { /* image still loading */ }
       });
     }
     draw();
     look.forEach(function (l) {                               // redraw as each sprite/mask finishes loading
-      [pvImg(l.path), l.tint ? pvImg(maskPath(l.path)) : null].forEach(function (im) { if (im && !im.complete) im.addEventListener('load', draw, { once: true }); });
+      [pvImg(l.path), lookTint(l.path, l.tint) ? pvImg(maskPath(l.path)) : null].forEach(function (im) { if (im && !im.complete) im.addEventListener('load', draw, { once: true }); });
     });
     return c;
   }

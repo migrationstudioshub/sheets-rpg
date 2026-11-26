@@ -19,7 +19,7 @@
     <div class="grp">
       <select id="ui-size" title="UI size (kept in this browser)"></select>
       <select id="map-pick" title="Jump to map (offline testing only)"></select>
-      <button id="btn-use" title="Use what you face: doors, chests, levers, signs (F or Space)">Use (F)</button>
+      <button id="btn-use" title="Use what is towards the cursor: doors, chests, levers, signs (F or Space)">Use (F)</button>
       <button id="btn-bag" title="Bag (I)">Bag (I)</button>
       <button id="btn-quests" title="Quest log (L)">Quests (L)</button>
       <button id="btn-help" title="Controls">?</button>
@@ -28,6 +28,7 @@
   </div>
   <div id="frame">
     <canvas id="view" width="480" height="352"></canvas>
+    <div id="sneak-veil"></div>
 
 
     <div id="hud-tl" class="hudlayer"><div id="nightfall" class="k kplate" hidden></div></div>
@@ -87,7 +88,7 @@
     <div id="menu" hidden></div>
     <div id="bag" class="overlay" hidden>
       <div class="win">
-        <div class="win-top"><span class="ktab" id="bag-title">Inventory</span><button id="bag-close" class="bare kclose"><kbd>Esc</kbd> Close</button></div>
+        <div class="win-top"><span class="ktab" id="bag-title">Inventory</span><button id="bag-close" class="danger kx kclose" title="Close (Esc)" aria-label="Close"></button></div>
         <div class="panel">
           <div id="bag-stats" hidden></div>
           <div id="bag-items"></div>
@@ -104,32 +105,32 @@
     </div>
     <div id="store" class="overlay" hidden>
       <div class="panel">
-        <div class="phead"><strong id="store-title">Storage</strong><button id="store-close">Close (Esc)</button></div>
+        <div class="phead"><strong id="store-title">Storage</strong><button id="store-close" class="danger kx" title="Close (Esc)" aria-label="Close"></button></div>
         <div id="store-items"></div>
       </div>
     </div>
     <div id="claimp" class="overlay" hidden>
       <div class="panel">
-        <div class="phead"><strong id="claim-title">Your base</strong><button id="claim-close">Close (Esc)</button></div>
+        <div class="phead"><strong id="claim-title">Your base</strong><button id="claim-close" class="danger kx" title="Close (Esc)" aria-label="Close"></button></div>
         <div id="claim-body"></div>
       </div>
     </div>
     <div id="npcp" class="overlay" hidden>
       <div class="panel">
-        <div class="phead"><strong id="npc-title"></strong><button id="npc-close">Close (Esc)</button></div>
+        <div class="phead"><strong id="npc-title"></strong><button id="npc-close" class="danger kx" title="Close (Esc)" aria-label="Close"></button></div>
         <div id="npc-body"></div>
       </div>
     </div>
     <div id="questp" class="overlay" hidden>
       <div class="panel">
-        <div class="phead"><strong>Quests</strong><button id="quest-close">Close (Esc)</button></div>
+        <div class="phead"><strong>Quests</strong><button id="quest-close" class="danger kx" title="Close (Esc)" aria-label="Close"></button></div>
         <div id="quest-body"></div>
       </div>
     </div>
     <div id="help" class="overlay" hidden>
       <div class="panel">
-        <div class="phead"><strong>Controls</strong><button id="help-close">Close</button></div>
-        <div>Move with WASD / arrows (the mouse never moves you) · hold right-click to aim — the crosshair follows your cursor, you face its side, and left-click fires toward it (auto/semi guns fire while held; R reloads, and so does a click on an empty magazine) · left-click to interact (open, pick up, pick a lock); hold left-click for the full action list · F or Space uses what you face · mouse wheel or 1–9, 0: choose what you hold from the belt (a weapon is ready at once; a grenade is thrown where you click; food and meds are used with a click) · I or C: inventory and crafting (next to a workbench its recipes show there too) · B: build bar (wheel over the kinds, click one, then pick a blueprint and click it to take it in hand; click the ground to place, F to work on it) · X: remove what you built · R with a chest or a fire open: take everything out</div>
+        <div class="phead"><strong>Controls</strong><button id="help-close" class="danger kx" title="Close (Esc)" aria-label="Close"></button></div>
+        <div>Move with WASD / arrows (the mouse never moves you) · Z: sneak (slower, quieter, harder to spot; Z again to stand up) · hold right-click to aim — the crosshair follows your cursor, you face its side, and left-click fires toward it (auto/semi guns fire while held; R reloads, and so does a click on an empty magazine) · left-click to interact (open, pick up, pick a lock); hold left-click for the full action list · F or Space uses what is towards the cursor · mouse wheel or 1–9, 0: choose what you hold from the belt (a weapon is ready at once; a grenade is thrown where you click; food and meds are used with a click) · I or C: inventory and crafting (next to a workbench its recipes show there too) · B: build bar (wheel over the kinds, click one, then pick a blueprint and click it to take it in hand; click the ground to place, F to work on it) · X: remove what you built · R with a chest or a fire open: take everything out</div>
       </div>
     </div>
   </div>

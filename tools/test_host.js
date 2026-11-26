@@ -112,7 +112,7 @@ function wire() {
   const canon = v => Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.keys(v).sort().reduce((o, k) => { o[k] = canon(v[k]); return o; }, {}) : v;   // (the order of fields does not matter)
   const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
   const mon = (id, x, hp) => ({ id: id, ref: 'rat', x: x, y: 3, hp: hp, maxHp: 9, facing: 'E', statuses: hp < 9 ? ['burn'] : [], alert: undefined, look: undefined });
-  const ply = (id, x) => ({ id: id, name: 'N' + id, 'class': 'warrior', equipment: { weapon: 'axe' }, hair: 'h', hairColor: '', body: '', skin: '', x: x, y: 1, facing: 'S', hp: 10, maxHp: 12, level: 2, act: '', wst: '' });
+  const ply = (id, x) => ({ id: id, name: 'N' + id, 'class': 'warrior', equipment: { weapon: 'axe' }, hair: 'h', hairColor: '', body: '', skin: '', x: x, y: 1, facing: 'S', hp: 10, maxHp: 12, level: 2, act: '', wst: '', sn: 0 });
   const steps = [
     { player: { id: 'me', x: 1, y: 1, hp: 10, inventory: [{ item: 'a', qty: 1 }] }, world: { map: 'm', now: 1, states: { 'm.e1': 'open' }, structRev: 2, struct: { rev: 2, ents: [] }, monsters: [mon('a#0', 1, 9), mon('b#0', 2, 9)], players: [ply('p1', 4)] }, events: [{ seq: 1, type: 'info' }] },
     { player: { id: 'me', x: 2, y: 1, hp: 10, inventory: [{ item: 'a', qty: 1 }] }, world: { map: 'm', now: 2, states: { 'm.e1': 'open' }, structRev: 2, monsters: [mon('a#0', 1, 4), mon('b#0', 2, 9)], players: [ply('p1', 5)] } },

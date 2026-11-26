@@ -51,7 +51,7 @@ Nothing below was added. Each needs a decision first; the UI part is already the
 2. **Day and night** (a world clock, day length, when night falls). UI: ready (`clock`, `nightfall`).
 3. **Temperature / warmth** (per player, and a Warmth stat on clothes; "+warmth nearby" on a lit fire). UI: chip ready;
    the Warmth row of the stats box and the campfire note are not drawn.
-4. **Noise / stealth**. UI: ready (`noise`). Ties into the hearing sense already planned for monsters.
+4. **Noise / stealth**. DONE (25 Nov 2026, `docs/STEALTH.md` stage 1): the `noise` meter is on, filled by `noiseMeter` in `main.js`.
 5. **Weight**: Items `weight`, a carry limit. UI: ready (`load`).
 6. **Condition / durability**: per item instance, which stacks do not have today. UI: ready (`condition`).
 7. **Bag upgrades** (a back-slot item that adds rows). UI: ready (`lockedRow`).
@@ -65,6 +65,11 @@ Nothing below was added. Each needs a decision first; the UI part is already the
 14. **Area names** for the minimap corner (today: the map's name).
 15. **Journal / Map / Skills tabs** on the inventory window: there is one tab (the window's name). The quest log stays on L.
 16. **Art**: item pictures for things that still show two letters (pistol, bandage, arrows…).
+
+## Names over characters
+Not painted into the game picture (which is stretched to the window and would blur them): `render.js` lists where each name goes
+(`renderer.nameTags`) and `main.js` (`nameTags`) lays them over the view as text, Jersey 10 (the body font: the case people type is kept), bone (players' own colour for
+others), with a 1 px dark outline (`.ntag` in `ui.css`).
 
 ## Window height
 The inventory window and a cooker's window (`#bag.tall`) take the whole height of the view, less the belt: the parts marked

@@ -146,6 +146,16 @@
   #qmap .qnode text.sub { fill: var(--dim); font-size: 10px; }
   #qmap .qedge { fill: none; stroke-width: 1.6; }
   #qmap .qedge.hot { stroke-width: 2.8; }
+  /* Dialogues: the picked line and its answers (the map on the right is js/dialogmap.js, drawn into #qmap) */
+  #form .dlines { display: flex; flex-wrap: wrap; gap: 4px; max-width: 540px; margin-bottom: 8px; }
+  #form .dlines button { padding: 3px 8px; font-size: 12px; }
+  #form .dlines button.on { border-color: var(--accent); color: var(--accent); }
+  #form .dcard { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; max-width: 540px; background: #191c23; }
+  #form .dcard .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  #form .dcard .row > input[type=text], #form .dcard .row > select { flex: 1; min-width: 0; width: auto; }
+  #form .dcard .row label.tick { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 12px; color: var(--dim); }
+  #form .dcard .row label.tick input { width: auto; }
+  #form .dcard .field { margin: 0; }
   #qmap .qmshut { writing-mode: vertical-rl; border: 0; background: transparent; color: var(--dim); padding: 10px 6px; }
 </style>
 </head>
@@ -156,7 +166,7 @@
 
   <script>
     (function () {
-      var files = ['../shared/mapcode.js', '../shared/schema.js', '../shared/content.js', '../client/js/config.js', '../client/js/content_store.js', '../client/js/localdata.js', '../client/js/tint.js', 'js/questmap.js', 'js/cstudio.js'];
+      var files = ['../shared/mapcode.js', '../shared/schema.js', '../shared/content.js', '../client/js/config.js', '../client/js/content_store.js', '../client/js/localdata.js', '../client/js/tint.js', 'js/questmap.js', 'js/dialogmap.js', 'js/cstudio.js'];
       var v = Date.now();
       (function next(i) {
         if (i >= files.length) { if (window.CStudio) CStudio.init(); return; }

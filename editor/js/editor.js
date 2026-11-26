@@ -638,8 +638,13 @@ var E = {
     // Terrain defaults to the rectangle tool; things placed one at a time (objects, monsters, walls) to the brush.
     if (t !== E.paletteTab) {
       if (t === 'terrain' && E.tool === 'brush') E.tool = 'rect';
-      else if (E.paletteTab === 'terrain' && E.tool === 'rect' && (t === 'objects' || t === 'monsters' || t === 'items' || t === 'walls')) E.tool = 'brush';
+      else if (E.paletteTab === 'terrain' && E.tool === 'rect' && (t === 'objects' || t === 'npcs' || t === 'monsters' || t === 'items' || t === 'walls')) E.tool = 'brush';
     }
+    // Objects and NPCs share the object brush; each tab keeps its own pick, so painting on one never lays the other's.
+    var bo = E.content && E.content.objects[E.brush.object], boTab = bo && bo.kind === 'npc' ? 'npcs' : 'objects';
+    E.tabBrush = E.tabBrush || {};
+    if (E.brush.object) E.tabBrush[boTab] = E.brush.object;
+    if ((t === 'objects' || t === 'npcs') && t !== boTab) { E.brush.object = E.tabBrush[t] || ''; E.brushLook = ''; }
     E.paletteTab = t;
     E.layer = t === 'terrain' ? 'terrain' : t === 'walls' ? 'walls' : t === 'roof' ? 'roof' : t === 'nobuild' ? 'nobuild' : t === 'height' ? 'height' : t === 'spawn' ? 'spawn' : 'objects';
   };
@@ -768,7 +773,7 @@ var E = {
     var eo = e && E.content.objects[e.ref];
     if (E.layer === 'objects' && e && eo && eo.kind === 'spawn' && e.data.monster) { E.brush.monster = e.data.monster; E.setPaletteTab('monsters'); }
     else if (E.layer === 'objects' && e && e.ref === '_drop' && e.data.pickup) { E.brush.item = String(e.data.pickup).split(':')[0]; E.setPaletteTab('items'); }
-    else if (E.layer === 'objects' && e) { E.brush.object = e.ref; E.setPaletteTab('objects'); }
+    else if (E.layer === 'objects' && e) { E.brush.object = e.ref; E.setPaletteTab(eo && eo.kind === 'npc' ? 'npcs' : 'objects'); }
     else {
       var picked = E.cells()[y][x]; if (picked) E.brush.terrain = picked;
       if (picked && Rules.isWater(E.content.terrain[picked])) { var sm = E.map().shallow; E.brush.shallow = !!(sm && sm[y] && sm[y][x] === '1'); }   // (and how deep it is)
@@ -1063,6 +1068,7 @@ var E = {
       if (!o) g.drawImage(Assets.placeholder('?', '#a33', t), it.dx, it.dy, s, s);
       else if (o.kind === 'stairs') { Render.drawStairs(g, c, o, e, vx, vyE, s, 0); stairArrow(e, o, vx, vyE, s); }
       else if (o.kind === 'spawn' && !o.sprite) drawSpawn(e, o, it.dx, it.dy, s);   // spriteless: editor-only marker
+      else if (Render.outfitOf && Render.outfitOf(o)) Render.drawOutfit(g, Render.outfitOf(o), it.dx, it.dy, s, false);   // an NPC: drawn in its outfit, as in the game
       else {
         var sde = Render.sideDoorEdges ? Render.sideDoorEdges(o, e) : [];
         if (sde.length && sde.every(function (q) { return Render.drawDoorstep(g, m, o, e.data && e.data.state === 'open', vx, vyE, q.x, q.y, s); })) { g.globalAlpha = 1; return; }

@@ -247,6 +247,7 @@ var Content = (function () {
         slot: slot, wornSprite: str(r.worn_sprite), defaultTint: str(r.default_tint),
         wornEmpty: str(r.worn_empty), wornReload: str(r.worn_reload), wornAim: str(r.worn_aim),   // a magazine weapon held empty / being reloaded (a bow: no arrow / drawing)
         stackMax: num(r.stack_max, 99), value: num(r.value, 0),
+        dispensable: bool(r.dispensable),                       // lying on the ground, a loot bag may be put on its tile: it goes inside the bag (World lootSpot)
         atk: num(r.atk, 0), def: num(r.def, 0), heal: num(r.heal, 0), mp: num(r.mp, 0),
         hunger: num(r.hunger, 0), thirst: num(r.thirst, 0),
         // toxicity: what using it adds to the toxicity gauge (negative = a cure); leaves: the item left in the bag
@@ -297,6 +298,8 @@ var Content = (function () {
         // Walker settings: sight = how far it spots a target (0 = aggro_range), aggroS = seconds it keeps looking after
         // losing sight (0 = 30), structureDmg = damage per blow to walls and objects (0 = its attack).
         // prey = walkers hunt this monster as they hunt players (animals).
+        // hearing: times every noise radius for this one (docs/STEALTH.md; empty = 1, 0 = deaf)
+        hearing: num(r.hearing, 1),
         brain: str(r.brain), sight: num(r.sight_range, 0), aggroS: num(r.aggro_s, 0), structureDmg: num(r.structure_dmg, 0), prey: bool(r.prey),
         // animals: how near a threat may come before it runs, what it leaves when killed, what tames it, what a tame one lays and how often
         fleeRange: num(r.flee_range, 0), carcass: str(r.carcass), tameWith: str(r.tame_with), lays: str(r.lays), layS: num(r.lay_s, 0), loot: str(r.loot),   // lays / loot: item lists ("egg:1", "raw_meat:4, leather:2")
@@ -387,7 +390,25 @@ var Content = (function () {
         progressText: str(r.progress_text), doneText: str(r.done_text), goals: goals, requires: str(r.requires), rewards: str(r.rewards),
         choice: str(r.choice), repeatS: Math.max(0, num(r.repeat_h, 0)) * 3600, order: i,
         image: str(r.image), tutorial: bool(r.tutorial),        // image = a picture (a GIF plays) shown with its text; tutorial = a teaching step (World.questSweep, questSkip)
-        onStart: str(r.on_start) };                             // an action list run when it starts (quest:<tutorial> = show a tutorial now)
+        onStart: str(r.on_start),                               // an action list run when it starts (quest:<tutorial> = show a tutorial now)
+        noAbandon: bool(r.no_abandon) };                        // the player cannot give it up (main quests)
+    });
+    // Dialogues: what an NPC says and what can be answered. nodes (JSON, or an array already) = [{id, text, start, if,
+    // answers: [{id, text, if, do, to, once}]}]; kept as a lookup by node id plus the order they were written in
+    // (the first `start` node whose `if` holds is how a conversation opens). World.talkTo / talkAct read this.
+    c.dialogues = {};
+    (tables.Dialogues || []).forEach(function (r) {
+      var id = str(r.id); if (!id) return;
+      var d = { id: id, name: str(r.name) || id, nodes: {}, order: [] };
+      (json(r.nodes, []) || []).forEach(function (n) {
+        var nid = str(n && n.id); if (!nid || d.nodes[nid]) return;
+        d.nodes[nid] = { id: nid, text: str(n.text), start: bool(n.start), cond: str(n['if']),
+          answers: (Array.isArray(n.answers) ? n.answers : []).map(function (a, i) {
+            return { id: str(a.id) || 'a' + i, text: str(a.text), cond: str(a['if']), run: str(a['do']), to: str(a.to), once: bool(a.once) };
+          }) };
+        d.order.push(nid);
+      });
+      if (d.order.length) c.dialogues[id] = d;
     });
     linkFloors(c);
     return c;

@@ -151,12 +151,10 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   (a hole, for everyone). Hearing (shots) is not built.
 - **Animals** (Nov 2026): two more brains. **`animal`** = `World.animalStep`: never attacks, wanders, runs from players and from
   hunters/walkers within `flee_range`. **`hunter`** = `hunterStep` (a wolf): goes for prey animals and players within `aggro_range`,
-  rests after a kill (`m.fedUntil`). Monsters `carcass` = the object left where it dies (`leaveCarcass`: a struct entity marked
-  `wild`: a take-only container holding the monster's `loot`, gone once emptied or after Config `carcass_rot_s`). `tame_with` = the item that tames it: in hand the animal does
+  rests after a kill (`m.fedUntil`). Monsters `carcass` = only what the loot bag it leaves LOOKS like (see "Where loot lies": there are no carcasses apart from loot bags). `tame_with` = the item that tames it: in hand the animal does
   not flee, using the animal feeds it (`tame`: `m.tame/owner/free/home`; it leaves its spawner, which grows a new one). A tame one
   lives within 3 tiles of its home — the nearest object of kind **`coop`** within Config `coop_range` — and leaves its `lays` items (an item list) on the ground there every `lay_s` seconds, up to Config `egg_cap`: an entity of the built-in
-  object `_drop` (kind **`pickup`**) whose `data.pickup` says what lies there. Monsters `loot` (an item list) = what it always gives: the
-  contents of its carcass, or, with no carcass, straight to the killer. `wild` struct entities are
+  object `_drop` (kind **`pickup`**) whose `data.pickup` says what lies there. Monsters `loot` (an item list) = what it always gives: it lies in its loot bag. `wild` struct entities are
   nobody's: not repaired, not taken apart.
 - **Walking:** `Rules.DIRS` stays four-way (facing, walls, "next to"); `Rules.DIAG` (NE/SE/SW/NW) are move-only steps, allowed
   by `tryMove` only when BOTH straight ways round the corner are open, costing `Rules.stepCost` = 1.4. Facing stays four-way
@@ -176,6 +174,7 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   "is this cell under cover" question (rain/fliers later). Nothing collapses yet.
 - **Waterfalls** (draw-only, `client/js/render.js`): water on raised ground falls down the cliff to its south. `Render.fallAt` is the one question (a terrain that is `water` or has a `fall` picture, unless Config `waterfalls` = off; the map's `falls` grid, painted on the editor's Height tab, forces `1` / a tint name or forbids `0`); `fallCells` + `drawFalls` draw the moving strip (default `art/tilesets/waterfall_anim.png`, 4 tiles per frame: single, left, middle, right) over the baked face. A new map grid must be added in `shared/content.js`, `editor/js/editor.js` (mapRows, snapshot, resize), `editor/js/store.js` and `functions/index.js` (both ways), and `client/js/localdata.js` (`GRIDS`). The map editor draws ground raised like the game (`E.show.raised`, H; `mapPt` turns the pointer into the tile drawn under it).
 - **Shallow water** (Nov 2026): the map's `shallow` grid (`'1'` = shallow) marks water you can wade through. Not a terrain of its own (that would draw a shoreline between deep and shallow): the same water, a depth per tile. Painted in the map editor with the water itself — Terrain tab, pick a water terrain, **Depth: Deep / Shallow** (`E.brush.shallow`; painting water sets the tile's depth, painting anything else on the overlay or erasing clears it; the eyedropper picks the depth up). Rules: `Rules.terrainAt` answers a shallow water tile with the same terrain made walkable on every side (`.shallow`, still a water source); `Rules.isWater` / `shallowAt`. Nothing else asks. Drawing (`Render.shallowCells`): only overlay water is see-through (the base painted under it shows); Config `shallow_alpha` (0.45) = how much water shows, `shallow_blend` (2) = tiles the fade between shallow and deep takes, centred on the walkable edge, wobbled by fixed noise. See-through cells are drawn live with the moving ground (`animatedCells` → `drawShallow`), never baked (`bakeGround(…, live)`), so the water is never laid twice. **Wading is slower:** `Rules.stepCost(dir, content, map, x, y)` (x, y = where the step lands) is ×Config `shallow_slow` (2) into shallow water — the referee's walking budget, the page's pace and glide (`lastCost`), and the monsters' turns all ask it. **Wading looks submerged:** `paintActor` in `render.js` draws a character in shallow water through `drawWading` (scratch canvas): below a waterline (Config `wade_depth` 0.22 of the figure, from its feet: the bust's pedestal, up to where the chest begins; `wadeAt` blends it in as it glides onto the tile) the figure is faded and tinted the water's colour, with a ripple ring at the line. `SheetsRPG.content()` / `remap()` are test hooks (change a map in memory, redraw).
+- **Walking sway** (draw-only, owner asked for it subtle): a figure between two tiles leans Config `walk_wobble` degrees (2.5; 0 = off) about its feet and lifts one art pixel, most at mid-step, alternating side each step, aiming or not (`wobbleOf` in `render.js`; timed by where it is drawn, so it follows the walking pace). Standing still it breathes instead (`bobOf`).
 - **Things on cliff faces** (draw-only): an object with `properties.layer: 'cliff'` is placed on the south face of a raised tile (entity `x, y` = that tile; `data.up` tiles above the foot, `data.dx` sideways from the middle, `data.flip`); any number per face. `Render.cliffRect` is the one place that works out where it is drawn (game, editor ghost, editor picking). To the rules it is a walkable object on the tile above. Cliff face pictures: `<tileset>_face.png` = single, left, middle, right (+ an optional 5th = a second middle).
 - **Things that appear on the ground** (`World` `growStep`, called from `advance`): an object with `properties.drops` (+ `drop_s`, `drop_radius` 2, `drop_max` 3) and a terrain with `grows` (+ `grow_s` = seconds per item per 100 tiles, `grow_max` 2; base or overlay, wherever it is the ground you see) leave `_drop` pickups in the struct layer. `ms.growAt` is the map's clock; time away is caught up (Config `growth_catchup_s`). A round (Config `growth_round_s`) tries `GROW_TRIES` random sources of each kind, never all, and Config `ground_item_cap` bounds a map. `growSources` caches the sources on the authored map (`_grow`).
 - **Appearance sets** (paper-doll monsters): the `Appearances` tab (Content Studio → Appearances, `appearanceForm`) = an ordered
@@ -186,6 +185,44 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   pickers read `art/manifest.json` (a published page cannot list a folder): after adding art run
   `node tools/build_art_manifest.js` and commit both. `tools/build_gamedata.py` (Sheets era) does not know this tab: the
   offline seed `data/tables.json` is kept by hand.
+- **NPCs** (plan agreed 25 Nov 2026; the owner wants to be **asked the design questions of each step before it is started**):
+  an NPC stays an anchored object of kind `npc` (never hurt, no brain); order: 1 looks (built), 2 dialogue + its Studio
+  editor (built, see Dialogue below), 3 shops, 4 moving NPCs only if wanted. **NPCs are authored apart from objects** (owner's choice): still rows of
+  the Objects table, but the Content Studio has an **NPCs** panel (Story → NPCs: type `'npcs'` = the Objects rows of kind
+  npc — `tab`/`idField`/`isNpc`, `npcList`, `npcForm`: id, name, what it says (`properties.text`), outfit, the quests it
+  gives / takes back, picture and notes under More) and the map editor an **NPCs** palette tab (`paletteTab 'npcs'`, + New
+  NPC); NPCs are left out of the Objects panel and tab. Objects and NPCs share `E.brush.object`, each tab remembering its
+  own pick (`E.tabBrush`, in `E.setPaletteTab`). **Step 1, draw-only:** object `properties.outfit` = `[{path, tint, type}]`,
+  bottom to top, the exact pictures it wears (`npcOutfit` in `cstudio.js`; no random rolls; hair with no colour = `hair_brown`,
+  as hair draws only through its mask). `Render.outfitOf / outfitLayers / drawOutfit` are the one place that reads it: the
+  game (`npcActors` in `main.js`; `hiddenEntity` drops its object picture), the map editor's map and its palette thumbnail
+  all draw the figure. In the game it **always faces YOU**, worked out on each page so every player
+  sees it turned towards themself; its name shows within `NPC_NAME_R` (3) tiles or under the mouse; it is shown wherever
+  the place is known, like objects (`a.fixed`), not only in line of sight. **Idle breathing** is for every figure standing
+  still — players, monsters, NPCs: actors carry `idle` + `ph`, `bobOf` in `render.js` lifts the figure one art pixel on a
+  slow beat (health bar and name stay put); Config `idle_bob` = off stops it.
+- **Dialogue** (NPC step 2, built 26 Nov 2026; the owner's choices: a branching tree, conditions + actions, quests inside
+  the conversation, a node map + side form in the Studio, dialogues in a tab of their own, a window with the NPC's figure,
+  memory through conditions, the NPC's one line kept as the fallback). The `Dialogues` tab (Content Studio → Story →
+  Dialogues): `nodes` = `[{id, text, start, if, x, y, answers: [{id, text, if, do, to, once}]}]` — a node is a LINE the NPC
+  says, an answer is what the player may say back (`to` = the next line, empty = the talk ends; `do` = an action list, the
+  same as quest rewards; `once` = gone for that character after it is picked; `x, y` = where the box sits on the map,
+  ignored by the game). `Content.build` → `c.dialogues[id] = {nodes: {id: {text, start, cond, answers: [{id, text, cond,
+  run, to, once}]}}, order}`. An NPC names one in `properties.dialogue` (several may share one); none, or one with no line
+  to open on, = its `text` line and the quest list, as before. **Rules** (`shared/world.js`): `talkTo` opens on the FIRST
+  `start` line (row order) whose condition holds (`dlgStart`), `dlgSay` sends the page an `npc` event with `dlg = {id,
+  node, hub, answers: [{a, text}]}` (only the answers this character may give), and `{type: 'talk', key, a}` →
+  `talkAct` takes the answer picked, runs its actions and says the next line or ends (`npc` event with `end`). Where a
+  talk stands is `p.talkAt = {k, d, n}`: only an answer of the line last said is taken, and only beside the NPC. Memory:
+  `p.talk[dialogue] = {n: [lines said], a: [once-answers used]}`; `World.check(c, p, cond, dlg)` knows `talked` and
+  `said:<line>` inside a dialogue (`talked:<dialogue>`, `said:<dialogue>/<line>` anywhere else). A line has no actions:
+  only answers do things. **Page** (`main.js`): `dlgView` in the NPC window (`#npcp`) = the figure (`npcPortrait`) beside
+  the line, then the numbered answers (`dlgRows`; keys 1-9 → `dlgKey`); on a `hub` line (one that can open the talk) the
+  NPC's quests are added to the answers by themselves, and picking one shows the quest view as before. **Studio**
+  (`cstudio.js` `dialogueForm`, `content/js/dialogmap.js` drawn into `#qmap`): the form edits ONE line at a time (the
+  one picked on the map or in the strip of lines) and its answers; the answers' actions use the rewards editor; the NPC
+  page has a Dialogue picker (+ New dialogue makes one from its line). Not built: text that names the player, answers that
+  open a shop (step 3), a visual condition editor (conditions are typed).
 - **Art by file name** (no data needed): a tileset `<key>_auto.png` (`…_auto_anim.png` = animated) finds its base tile
   `<key>.png`, its variety sheets (`scatter.json`), its cliff face `<key>_face.png` and, with a tint, its mask `….tint.png`;
   a wall top `wall_<m>_top_auto.png` finds its face `wall_<m>_face.png` (`Scatter.tileInfo`). A tintable picture `foo.png`
@@ -232,6 +269,13 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   time**, in the order things started (`p.intro`; quest op `seen` takes the `id` read). **Skip tutorial** sets `p.tutOff`:
   the chain is closed, and every tutorial step a hook starts later is skipped the same way (`skipSteps`). Studio: the
   `on_start` field (rewards editor) and a "When met, start" picker under each objective (`goalsField`).
+  **What the player sees of quests** (owner, 26 Nov 2026): Quests `no_abandon` (Studio tick "Cannot be given up", `q.noAbandon`)
+  = no Give up button, and quest op `abandon` is refused (main quests). **Tutorial steps are never tracked where the player sees
+  them**: not in the quest log, not in the tracker, no lines in the log (`New quest` / counts / reached / done / complete are
+  silent for `q.tutorial`), and their window shows the words and picture but no objectives; the referee still counts them.
+  The **quest log (L)** is a list on the left (`qlog` / `qli` in `main.js`) and the picked quest on the right; each row has a
+  **Follow** box (quest op `follow` + `on`; unfollowed = `p.quests[id].hide`, sent as `hide` in the log entry). The tracker
+  (right of the game view) shows only followed quests; a quest is followed when it starts.
   **Studio, Quests view** (Nov 2026): the cards can be dragged into order (`dragSort` / `moveRow` in `cstudio.js`; the row
   order is `q.order`, the order an NPC offers its quests; off while searching). On the right, the **questline map**
   (`content/js/questmap.js`, draw-only, reads the draft rows): every `quest:` link in `on_start`, an objective's `on_done`,
@@ -267,16 +311,33 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   line along the bottom of a bag cell / belt slot and the "Durability x/max" hover line.
 - **Ammo that can be had back** (Nov 2026): Items `recover` (0-100 %, an ammo field in the Studio) = the chance, rolled per round
   spent, that a shot gives it back. `World` `shoot`: a shot that ends in a monster leaves it stuck there (`stickIn`, `m.stuck`), and
-  `hitMonster` puts what is stuck into its carcass, or a loot bag where it fell (`leaveBag`) when it leaves none; a shot that hits
+  `hitMonster` puts what is stuck into the loot bag it leaves; a shot that hits
   nothing leaves it lying where it stopped (`layOnGround`: a `_drop` pickup on the last cell of the shot it can lie on, joined to
   the same item already there). Not for shots onto another floor (`shootAcross`) or thrown items yet.
 - **Who took part in a kill** (Nov 2026): a monster keeps `m.hits = {playerId: when}`; on death everyone who hit it within
   Config `kill_credit_s` (30) gets `World` `killShare`: the kill for their quests, **full XP**, their own gold and their own roll
   of the loot table. The last hitter gets it at once; the others' shares wait in the map record (`ms.credits`) and are given by
   `advance` (with a `kill` event addressed to them, which is also what makes the function save their record). What a monster
-  always gives (`loot`) is not multiplied: it lies in the carcass, shared. A player's own roll lies in the same carcass as
+  always gives (`loot`) is not multiplied: it lies in the loot bag, shared. A player's own roll lies in the same bag as
   stacks marked `own: <playerId>`; **`boxInv(c, e, p)`** is what that player finds there, and the body stays until all is taken.
+- **Where loot lies** (owner's rule, 26 Nov 2026): **loot never goes straight into a player's bag** (a full bag would lose it,
+  and the player could not choose): every kill that has anything to give leaves a **loot bag** (a struct entity marked `wild`: a take-only container)
+  for what it always gives, arrows stuck in it, and each player's own roll (`killShare` makes the bag when there is none
+  or it was already emptied). **Carcasses and loot bags are one thing** (owner: there is no carcass farming): Monsters
+  `carcass` is only the bag's look (`lootBagOf`; empty = the standard `_bag`), every bag rots after Config
+  `loot_bag_rot_s` (900) or goes when emptied, and `carcass_rot_s` is no longer read. Gold is still handed over. `World` `lootSpot` / `lootBox` are the one place that decides where.
+  **The owner's rules, in order.** The tile it fell on: (1) nothing on it → a new bag there; (2) a loot bag on it → the loot
+  joins it and its rot timer starts again; (3) only **dispensable** items on it (Items `dispensable` tick, `item.dispensable`:
+  branches, rocks, fiber; only `_drop` pickups that grew or were left, never map-editor ones) → a new bag there with those
+  items put INSIDE it. Anything else on it (an item not ticked, an object) → the tiles around, nearest first, that can be
+  WALKED to from there (walls, shut doors, cliffs count), same ground height, within `DROP_REACH` (3) steps: (4) the
+  nearest free one; (5) none → the nearest holding only dispensable items, as in 3; (6) none → it joins the nearest loot
+  bag there (my addition, the owner did not say); (7) not even one → a new bag on the tile it fell on, sharing it. An
+  item that is not dispensable is never moved or bagged. Spawn points and triggers do not count as something on a tile.
+  In `data/game/` rock, plant fiber and branch are ticked.
 - **Planned, not built — dialogue, light phasing, instances, parties, bosses, raids:** `docs/QUESTS_INSTANCES_SERVER.md`.
+- **Stealth** (Nov 2026, `docs/STEALTH.md`; the owner agreed the plan). Stage 1 is built: **`World.notices(c, map, m, def, p, now, range, stateFn, o)` → `seen | heard | ''` is the one question every brain asks about a player** (plain, walker, hunter, animal; a monster that was struck still knows who did it). Seen = within the brain's range (× Config `sneak_sight` 0.6 while sneaking) with line of sight; heard = within the player's noise (`World.noiseOf`: Config `noise_walk` 6 / `noise_sneak` 2 tiles, nothing standing still, `NOISE_LINGER_MS` after `p.stepAt`) × Monsters `hearing` (1; 0 = deaf), walls or not. Heard only attracts: a walker searches (`ai.w`, the ?; breaks nothing), a hunter / plain one walks to it (no shot), an animal flees only within half its `flee_range`. Sneaking: Z toggles, action `{type: 'sneak', on}` → `p.sneak`; `Rules.stepCost(…, who)` × Config `sneak_slow` (2) for `who.sneak` / `who.sn` (others are sent `sn`, also in `wire.js`); while sneaking the figure is a see-through shadow (`paintActor`, Config `sneak_alpha`), the screen edges darken (`#sneak-veil`), and each monster in view shows where it would spot you (`World.sightArea` = the seen half of `notices`, Render layer 2f, Config `stealth_areas`; `World.lookRange` is the one place each brain's range is decided); the noise meter (`noiseMeter` in `main.js`, `UI.FLAGS.noise` on) is worked out on the page from its own steps. Stage 3 too: **monsters see in a cone** (Config `sight_cone` 60° on `m.facing`, long rather than wide as the owner asked: `cone_reach` 1.5 × the range ahead, straight-line distance; behind it `back_sight` × the range, 0 = not at all — the owner chose blind behind, so a sneak attack up close is possible — `World.looksAt` is the one place, notices and sightArea ask it), idle roamers turn to look about, and a blow on a monster that has not seen you, is fighting nobody and has nobody in sight is a **sneak attack** × Config `ambush_mult` (2; `unaware` in `hitMonster`). `tools/test_world.js` sets `sight_cone` 360 and `ambush_mult` 1 for the old fights. **Sneaking ends** (owner's rules): seen by a monster, or striking one that lives → `spotted()` stands you up; while any monster here is after you (`chasedBy`: `m.engaged`, `m.chase`, a walker's `ai.spot`; `p.chased` → page `me.chased`) you cannot sneak again; opening the build tools or picking a blueprint (`standUp` in `main.js`; the referee on any build action) and talking to an NPC stand you up; the noise meter shows only while sneaking. Config `stealth` = off restores the old rules exactly. **Perception** (`senseStep`, every `advance`, owner's rules): seen → the monster reacts at once (its turn is made due); heard while after nobody → `m.hear` (the ? at once; surprised, it freezes facing as it was), Config `hear_delay_s` (2) later it turns and goes to the spot (`m.goTo`, a walker's `ai.w` search) or an animal runs from it (`m.fleeFrom`); `alertOf` reads these. Sight lines are drawn from the lesser end, so seeing is the same both ways. **Raised ground hides what is behind it** (`hillBetween` in `clearLine`, so players, monsters, shots and the fog all agree): each end's eye is Config `eye_height` (0.75 of a height step; a wall is 2) above its ground, and ground between that rises above the straight eye-to-eye line blocks; level ground never does. From high ground you see far; from below a ledge taller than you, only its edge. Not built yet: stages 2 and 4 (loud events, the player's own hearing).
+- **Clicking big objects** (page only, 26 Nov 2026): a thing drawn bigger than its tile is meant by any solid pixel of its picture. `Renderer.objectAt` (the frame's `hits`) says which object is drawn under a point; `bigPick` in `main.js` (end of `cellAt`) turns the click to that object's own tile only when the tile under the cursor has nothing to do and the object has (an action, or `World.harvestWith`), and never while building, removing, moving, aiming or throwing. And ONLY its pixels (owner): the empty part of a big object's own tile is no click at all (`Renderer.bigOn`; the cell comes back `miss`, `actsOf` gives nothing), unless a creature or a small thing shares the tile. F / Space on the faced tile are unchanged. The rules still decide what may be done. The view scrolls `edgePad` (the bottom HUD's height + half a tile) past each map edge.
 - Item id `gold` means money. Tall objects: one image taller than a tile (the part above the footprint draws over characters). Animation: `frames` + `frame_ms` (horizontal strip).
 - Skills: target `enemy|ally|self|tile|around`, `range`, `area`, `los`, `effect damage|heal|none`, amount = `power + scale × stat(atk|level)`, `status`, `dash`, `projectile`.
 
@@ -299,8 +360,10 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   creatures show only in line of sight, outdoors too; walls keep an illusion of depth even if faked (the flat top-down style
   was dropped). A hearing sense that outlines unseen creatures is wanted later (`sensed` is its hook). The owner values **one
   consistent rule over many configurable special cases**: extend the single edge question and the single sight decision, do
-  not add a parallel mechanism. Put off, not rejected: cutting thin N-S walls, fixtures on a wall's north face, fog dimming
-  objects (only the ground is dimmed), remembering seen cells across a reload.
+  not add a parallel mechanism. Out of sight, what stands on a known cell (objects, items on the ground, NPCs, doors,
+  waterfalls and cliff things — `drawFalls` / `drawCliffThings` take a `shade` function) is
+  drawn darker by the fog's own `fog_alpha`, like the ground (`shadeAt` in `render.js`, owner 26 Nov 2026). Put off, not
+  rejected: cutting thin N-S walls, fixtures on a wall's north face, remembering seen cells across a reload.
 
 **Important:** the owner now edits the live Game Data spreadsheet. `tools/build_gamedata.py` and `data/*.xlsx`
 only describe the *starting* data. **Never tell the owner to re-import GameData.xlsx** once they have made edits — it would

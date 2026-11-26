@@ -127,6 +127,7 @@ var Schema = (function () {
       f('worn_reload', 'image', '', 'Optional: the weapon while it is being reloaded (reload_ms). Empty = the worn-empty picture'),
       f('default_tint', 'tint', '', 'The colour of the worn layer (needs the sprite to have a .tint.png mask next to it). No tint = drawn as it is'),
       f('stack_max', 'number', 99), f('value', 'number', 0, 'Gold value'),
+      f('dispensable', 'bool', false, 'Dispensable (branches, rocks, fiber): when one lies on the ground where the loot of a monster falls, the loot bag is put on that tile and it goes inside the bag. Not ticked = a loot bag is never put on its tile while there is anywhere else for it'),
       f('atk', 'number', 0), f('def', 'number', 0), f('heal', 'number', 0), f('mp', 'number', 0),
       f('hunger', 'number', 0), f('thirst', 'number', 0),
       f('toxicity', 'number', 0, 'What using it adds to the toxicity gauge (0-100). Negative = it clears that much (a cure)'),
@@ -143,7 +144,7 @@ var Schema = (function () {
       f('tint', 'text', ''),
       f('penetration', 'number', 1, 'Enemies one shot pierces'),
       f('falloff', 'number', 0, 'Damage lost per extra hit (0–1)'),
-      f('recover', 'number', 0, 'Chance (0–100 %) that a spent one can be had back: a shot that ends in a monster leaves it stuck there (found in its carcass, or in a loot bag where it falls); a shot that hits nothing leaves it lying where the shot stopped. 0 = never'),
+      f('recover', 'number', 0, 'Chance (0–100 %) that a spent one can be had back: a shot that ends in a monster leaves it stuck there (found in the loot bag it leaves); a shot that hits nothing leaves it lying where the shot stopped. 0 = never'),
       f('throw_range', 'number', 0), f('throw_area', 'number', 0), f('throw_power', 'number', 0),
       f('throw_status', 'ref', '', '', { ref: 'statuses' }), f('throw_status_ms', 'number', 0),
       f('tool', 'text', '', 'Tool tags this item counts as, e.g. hammer or axe (recipes and harvesting can require one). Empty on an item of a tool type = it counts as a tool by its own id'),
@@ -169,14 +170,15 @@ var Schema = (function () {
       f('attack_range', 'number', 0, '0 = melee; >1 = ranged'), f('ranged_cooldown_ms', 'number', 1500),
       f('ranged_projectile', 'bool', false), f('ranged_status', 'ref', '', '', { ref: 'statuses' }),
       f('infect_chance', 'number', 0, 'Chance a hit infects (0–1)'),
-      f('brain', 'select', '', 'How it thinks. Empty = plain: it goes for any player within aggro_range, even through walls, and forgets them when they step out. walker = it must SEE its target, remembers it, searches where it lost it, and breaks what is in its way. animal = it never attacks: it wanders, and runs from players and hunters that come within flee_range. hunter = it goes after prey animals and players within aggro_range (a wolf)', { options: ['walker', 'animal', 'hunter'] }),
-      f('sight_range', 'number', 0, 'Walker: how many tiles away it can spot a target, with a clear line of sight (0 = aggro_range). Once it is after someone, aggro_range is how close it still hears them through walls'),
+      f('brain', 'select', '', 'How it thinks. Every brain notices a player it can SEE within its range (less far if they sneak) or HEAR (their noise; see hearing). Empty = plain: it goes for a player within aggro_range, and forgets them when they get away. walker = it remembers its target, searches where it lost it, and breaks what is in its way; a sound alone only sends it to look. animal = it never attacks: it wanders, and runs from players and hunters that come within flee_range. hunter = it goes after prey animals and players within aggro_range (a wolf)', { options: ['walker', 'animal', 'hunter'] }),
+      f('sight_range', 'number', 0, 'Walker: how many tiles away it can spot a target, with a clear line of sight (0 = aggro_range)'),
+      f('hearing', 'number', 1, 'How well it hears: times how far a player\'s noise carries (walking: Config noise_walk, 6 tiles; sneaking: noise_sneak, 2; standing still: none). 1 = normal, 2 = keen, 0 = deaf'),
       f('aggro_s', 'number', 0, 'Walker: seconds it keeps looking after losing sight of its target (0 = 30). Time only runs while someone is on the map'),
       f('structure_dmg', 'number', 0, 'Walker: damage per blow to doors, windows, walls and objects in its way (0 = its atk)'),
       f('prey', 'bool', false, 'An animal: walkers and hunters go after it like they go after players'),
       f('flee_range', 'number', 0, 'Animal: how many tiles away a player or a hunter makes it run (0 = aggro_range). Hurt, it runs from whoever hurt it'),
-      f('loot', 'items', '', 'What it gives when killed, always (the loot table above is the lucky extras). With a carcass set it is found inside the carcass, together with what the loot table rolled; with none both go straight into the bag of whoever killed it'),
-      f('carcass', 'ref', '', 'The object it leaves on the ground when killed: an object of kind container. Open it like any container to take the loot. It disappears once emptied, or after Config carcass_rot_s (5 minutes). Empty = no carcass: the loot is given at once', { ref: 'objects' }),
+      f('loot', 'items', '', 'What it gives when killed, always (the loot table above is the lucky extras). It lies in the loot bag left where it died, for whoever takes it; each player who took part finds their own roll of the loot table in the same bag. Nothing ever goes straight into a bag'),
+      f('carcass', 'ref', '', 'What its loot bag looks like: an object of kind container (a dead rabbit, say). Only the look: it is a loot bag like any other, gone once emptied or after Config loot_bag_rot_s (15 minutes). Empty = the standard loot bag. No bag is left when it has nothing to give', { ref: 'objects' }),
       f('tame_with', 'ref', '', 'Animal: the item that tames it. Holding it, the animal does not run from you; use the animal to feed it one and make it yours', { ref: 'items' }),
       f('lays', 'items', '', 'What a tame one living at a coop leaves on the ground now and then, to be picked up (eggs)'),
       f('lay_s', 'number', 0, 'Seconds between two of those (only while someone is on the map)'),
@@ -262,6 +264,7 @@ var Schema = (function () {
       f('text', 'textarea', '', 'What the giver says when offering it. A key written in square brackets, like [W] or [Left click], is drawn as a key'),
       f('image', 'image', '', 'A picture shown above the text (optional): a path in the repo (art/tutorial/move.gif) or a web address. An animated GIF or WebP plays by itself'),
       f('tutorial', 'bool', false, 'A tutorial step: with nobody to hand it to, it finishes by itself the moment it is done (no Claim window) and gives its rewards, so one step can start the next. The player can skip all of them with Skip tutorial'),
+      f('no_abandon', 'bool', false, 'Cannot be given up: the quest log shows no Give up button for it (main quests, the story). Tutorial steps are never in the quest log anyway'),
       f('progress_text', 'textarea', '', 'What the ender says while it is not done yet (optional)'),
       f('done_text', 'textarea', '', 'What the ender says when it is handed in (optional)'),
       f('on_start', 'rewards', '', 'What happens the moment it starts: one row each. Start a tutorial step here to show it right after this quest\'s window (each window shows after the one before is closed). A step started here is closed with this quest if the player gives it up. Stored as an action list (quest:tut_move)', { when: 'when this one starts' }),
@@ -270,6 +273,15 @@ var Schema = (function () {
       f('rewards', 'rewards', '', 'What the player gets when it is handed in: one row each. Stored as the action list the rules run (xp:100; gold:20; give:axe:1)'),
       f('choice', 'items', '', 'Choose-one reward: the player picks ONE of these when handing in (optional)'),
       f('repeat_h', 'number', 0, 'Repeatable: hours before it is offered again after being handed in. 0 = only once. For a mission that can be taken again at once use a small number such as 0.01'),
+      f('notes', 'text', '')
+    ] },
+
+    // A dialogue is a conversation an NPC can have: lines it says ("nodes"), each with the answers the player may give.
+    // An NPC (an object of kind npc) names one in its properties.dialogue; several NPCs may share one.
+    // World.talkTo / talkAct are the rules; the Studio edits `nodes` on a map (content/js/dialogmap.js).
+    dialogues: { collection: 'dialogues', id: 'id', label: 'Dialogues', singular: 'dialogue', authored: 'studio', fields: [
+      f('id', 'text', ''), f('name', 'text', ''),
+      f('nodes', 'json', '', 'The lines: [{id, text, start, if, x, y, answers: [{id, text, if, do, to, once}]}]. Edited on the dialogue map'),
       f('notes', 'text', '')
     ] },
 
@@ -294,7 +306,7 @@ var Schema = (function () {
   var TAB = {
     config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', wallStyles: 'WallStyles', kinds: 'Kinds', itemTypes: 'ItemTypes',
     objects: 'Objects', items: 'Items', monsters: 'Monsters', loot: 'LootTables', classes: 'Classes',
-    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes', blueprints: 'Blueprints', quests: 'Quests',
+    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes', blueprints: 'Blueprints', quests: 'Quests', dialogues: 'Dialogues',
     maps: 'Maps', mapEntities: 'MapEntities'
   };
 

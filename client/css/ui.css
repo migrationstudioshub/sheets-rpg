@@ -436,6 +436,14 @@ h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform:
 .dans .qrow { height: auto; min-height: 16rem; align-items: center; text-align: left; }
 .dans .qkey { width: 8rem; text-align: center; color: var(--grey4); font: 700 8rem/1 'Silkscreen', monospace; }
 .dans .qans { flex: 1; min-width: 0; white-space: normal; }
+/* a shop: one row per offer (what moves, what it costs, how many are left | the button) */
+.shoprow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4rem; align-items: center; padding: 3rem 2rem; box-shadow: inset 0 -1rem 0 var(--ink2); }
+.shoprow.cant .swhat { opacity: .6; }
+.shoprow .swhat { display: grid; gap: 1rem; }
+.shoprow .sprice { color: var(--yellow); } .shoprow .sleft { color: var(--grey4); }
+.tlist { display: inline-flex; flex-wrap: wrap; gap: 1rem 5rem; vertical-align: middle; }
+.tone { display: inline-flex; gap: 2rem; align-items: center; }
+.tico { display: inline-block; width: 12rem; height: 12rem; background: center / contain no-repeat; image-rendering: pixelated; }
 .qcard { display: grid; gap: 4rem; padding: 4rem 5rem 5rem 8rem; box-sizing: border-box; border: 2rem solid transparent; border-image: var(--k-panel_plate) 2 fill / 2rem stretch; box-shadow: inset 2rem 0 0 var(--yellow); }
 .qcard.ready { box-shadow: inset 2rem 0 0 var(--green); }
 .qcard > b, .qcard > strong, #npc-body > b, #npc-body > strong { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--yellow); }

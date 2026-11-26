@@ -397,6 +397,7 @@
   function handleEvents(events) {
     var now = performance.now();
     (events || []).forEach(function (e, i) {
+      if (e.type === 'shop') { openShop(e); return; }          // a trader's offers, as they stand for you now
       if (e.type === 'npc') { openNpc(e); return; }            // you talked to someone: their window (or, with nothing to offer, a line)
       if (e.type === 'loot' && e.text) lootToast(e); else if (e.text) log(e.text, e.type);   // what reached your bag: a toast on the left
       if (e.type === 'craft') { openCrafting(); return; }   // you used a workbench: the inventory window, its recipes beside the bag
@@ -405,6 +406,7 @@
       if (e.type === 'storage' && e.key === tookAll.key && tookAll.n > 0 && performance.now() - tookAll.at < 5000) { tookAll.n--; return; }   // the answer to Take all: the window stays shut
       if (e.type === 'storage') { storage = e; e._at = performance.now(); storePanel(); return; }   // (_at: when it came, for the countdowns)   // you opened (or changed) a storage container
       if (e.map && e.map !== me.map) return;
+      if (e.type === 'die') { deathFx(e, now); return; }       // something died in view: it bursts
       var t0 = now + i * 120;
       if (e.type === 'cast') {
         if (e.by === me.id && performance.now() - lastOwnCast < 6000) return;   // already shown when you cast it
@@ -434,6 +436,25 @@
       // (what reached your bag floats nothing over your head: it is a card at the side, lootToast)
       else if (e.type === 'level') fx.push({ x: me.x, y: me.y, text: 'LEVEL UP!', color: COLORS.level, t0: t0, life: 1800, big: true });
     });
+  }
+  /** Something died (the referee's `die` event, sent to everyone on the map): the figure as it was last drawn flies
+   *  apart into its own pixels and leaves a little blood on the ground (Render.burst; drawFx kind 'burst'; the stain is
+   *  drawn with the ground, renderer.draw `stains`). Only what you were looking at. Monsters `blood` = its colour
+   *  ('' = red, none = no blood); Config death_fx = off: they just vanish, as before. Draw-only. */
+  var monSnap = {}, stains = [];
+  function deathFx(e, now) {
+    var snap = monSnap[e.id]; delete monSnap[e.id];
+    if (!snap || String(content.config.death_fx || '').toLowerCase() === 'off' || !Render.burst) return;
+    if (sight.vis && !sight.vis[e.x + ',' + e.y]) return;
+    var def = content.monsters[snap.ref] || {}, bl = String(def.blood || '').trim(), col = bl.toLowerCase() === 'none' ? '' : (bl || '#b01a1a');
+    var a = Object.assign({}, snap.a, { idle: false }), b = Render.burst(a, content.config.tile_size || 32, col ? 26 : 0);
+    fx.push({ kind: 'burst', x: a.x, y: a.y, p: b.p, drops: b.drops, cy: b.cy, color: col, t0: now, life: 900 });
+    if (col) stains.push({ map: me.map, x: a.x, y: a.y, drops: b.drops, color: col, t0: now, life: 12000 });
+    if (stains.length > 40) stains.shift();
+  }
+  function liveStains(now) {
+    for (var i = stains.length - 1; i >= 0; i--) if (now - stains[i].t0 >= stains[i].life || stains[i].map !== me.map) stains.splice(i, 1);
+    return stains;
   }
   /** Something reached your bag: a toast ("+3 Plant fiber", with the item's picture when the words name one). */
   // "+3 Plant fiber" again while its card is still showing adds to that card ("+5 Plant fiber") instead of a new one.
@@ -1920,7 +1941,7 @@
     if (me && me.sneak) { me = Object.assign({}, me, { sneak: undefined }); hud(); }   // talking: you stand up (the referee already did)
     var has = npcQuests(e.ref);
     npcWait = false;
-    if (!e.dlg && !has.ready.length && !has.open.length && !has.active.length) {      // nothing between you: just what they say
+    if (!e.dlg && !e.shop && !has.ready.length && !has.open.length && !has.active.length) {      // nothing between you: just what they say
       log(e.text ? e.name + ': ' + e.text : e.name + ' has nothing to say yet.', 'info');
       return;
     }
@@ -1979,6 +2000,56 @@
     });
     box.appendChild(list);
   }
+  // ---- a shop (an NPC with one: Content Studio → Story → Shops). The referee sends the offers this character may take
+  // (a shop event: {key, name, offers: [{id, gives, costs, sell, left, back}]}) and again after every trade; the page
+  // lists them — what the trader sells, then what it buys — and sends {type: 'shop', op: 'trade', key, offer, qty}.
+  // A click trades once, Shift+click five times (as many as you can pay for and are left).
+  function openShop(e) {
+    if (introOpen) closeIntro();
+    closeClaimQuest();
+    npcTalk = { key: e.key, ref: e.ref, name: e.name, text: '', offers: e.offers || [], at: Date.now() }; npcQuest = ''; npcWait = false;
+    closeViews(); $('npcp').hidden = false; npcPanel();
+  }
+  function haveOf(id) { return id === 'gold' ? (me.gold || 0) : (me.inventory || []).reduce(function (t, s) { return t + (s && s.item === id ? s.qty : 0); }, 0); }
+  function tradeList(text) {
+    var d = qel('span', 'tlist');
+    World.list(text).filter(function (g) { return g.qty > 0; }).forEach(function (g) {
+      var one = qel('span', 'tone'), it = content.items[g.item], im = it && itemImageUrl(it);
+      if (im) { var i = qel('i', 'tico'); i.style.backgroundImage = 'url(' + im + ')'; one.appendChild(i); }
+      one.appendChild(document.createTextNode(g.qty + ' ' + itemName(g.item)));
+      d.appendChild(one);
+    });
+    return d;
+  }
+  function backText(s) { return s >= 5400 ? Math.round(s / 3600) + ' h' : s >= 90 ? Math.round(s / 60) + ' min' : 'a minute'; }
+  function shopView(box) {
+    var offers = npcTalk.offers, any = false;
+    [['Buy', false], ['Sell', true]].forEach(function (grp) {
+      var mine = offers.filter(function (o) { return !!o.sell === grp[1]; });
+      if (!mine.length) return;
+      any = true;
+      box.appendChild(qel('h4', '', grp[0]));
+      mine.forEach(function (o) {
+        var costs = World.list(o.costs).filter(function (g) { return g.qty > 0; });
+        var can = Math.min.apply(null, [99].concat(costs.map(function (g) { return Math.floor(haveOf(g.item) / g.qty); })));
+        if (o.left != null) can = Math.min(can, o.left);
+        var row = qel('div', 'shoprow' + (can < 1 ? ' cant' : '')), what = qel('div', 'swhat');
+        what.appendChild(tradeList(grp[1] ? o.costs : o.gives));          // (what moves is named first: the goods you get, or the goods you hand over)
+        var price = qel('div', 'sprice'); if (!grp[1] && !costs.length) price.textContent = 'free'; else { price.appendChild(document.createTextNode(grp[1] ? 'for ' : 'costs ')); price.appendChild(tradeList(grp[1] ? o.gives : o.costs)); }
+        what.appendChild(price);
+        if (o.left != null) what.appendChild(qel('div', 'sleft', o.left > 0 ? o.left + ' left' : o.back ? 'None left: back in ' + backText(o.back) : 'None left'));
+        var b = qel('button', can >= 1 ? 'primary' : '', grp[1] ? 'Sell' : 'Buy');
+        b.disabled = can < 1; b.title = can < 1 ? (o.left === 0 ? 'None left' : 'You don\'t have what it costs') : 'Click: once. Shift+click: five times';
+        b.onclick = function (ev) { send({ type: 'shop', op: 'trade', key: npcTalk.key, offer: o.id, qty: ev.shiftKey ? Math.min(5, can) : 1 }); };
+        row.appendChild(what); row.appendChild(b);
+        box.appendChild(row);
+      });
+    });
+    if (!any) box.appendChild(qel('div', 'empty', 'Nothing to trade right now.'));
+    var foot = qel('div', 'qbtns'), gold = qel('span', 'qreward', 'You have ' + (me.gold || 0) + ' gold'), shut = qel('button', '', 'Done');
+    gold.style.marginRight = 'auto'; shut.onclick = closeNpc;
+    foot.appendChild(gold); foot.appendChild(shut); box.appendChild(foot);
+  }
   function closeNpc() { npcTalk = null; npcQuest = ''; npcWait = false; $('npcp').hidden = true; claimPanel(); }   // (a finished quest may have been waiting for this window)
   function npcPanel() {
     if (!npcTalk) return;
@@ -1986,14 +2057,20 @@
     var ent = (mapOf().entities || []).filter(function (en) { return en.key === npcTalk.key; })[0];
     if (!ent || Math.abs(ent.x - me.x) > 1 || Math.abs(ent.y - me.y) > 1) { closeNpc(); return; }
     var box = $('npc-body'), has = npcQuests(npcTalk.ref), q = npcQuest && (content.quests || {})[npcQuest];
-    if (unchanged(box, JSON.stringify(['npc', npcTalk.key, npcQuest, npcPick, myQuests(), me.questsOpen || [], me.inventory, npcTalk.dlg || 0, npcTalk.text, npcWait]))) return;
+    if (unchanged(box, JSON.stringify(['npc', npcTalk.key, npcQuest, npcPick, myQuests(), me.questsOpen || [], me.inventory, npcTalk.dlg || 0, npcTalk.text, npcWait, npcTalk.offers || 0, me.gold]))) return;
     box.innerHTML = ''; $('npc-title').textContent = npcTalk.name;
     var entry = q && questEntry(q.id), offered = q && ((me.questsOpen || []).indexOf(q.id) >= 0);
     if (q && !entry && !offered) { q = null; npcQuest = ''; }                // accepted, handed in or no longer on offer: back to the list
+    if (npcTalk.offers) return shopView(box);                                // a shop
     if (!q && npcTalk.dlg) return dlgView(box);                              // a conversation: the line, and what you can answer
     if (!q) {
       if (npcTalk.text) box.appendChild(qtext('qsay', npcTalk.text));
-      if (!has.ready.length && !has.open.length && !has.active.length) { box.appendChild(qel('div', 'empty', 'Nothing more for now.')); return; }
+      if (npcTalk.shop) {                                                   // a trader with no conversation: straight to the offers
+        var tb = qel('button', 'qrow'); tb.appendChild(qel('span', 'qmark', '$')); tb.appendChild(qel('span', '', 'Trade'));
+        tb.onclick = function () { send({ type: 'shop', op: 'open', key: npcTalk.key }); };
+        box.appendChild(tb);
+      }
+      if (!has.ready.length && !has.open.length && !has.active.length) { if (!npcTalk.shop) box.appendChild(qel('div', 'empty', 'Nothing more for now.')); return; }
       [['ready', 'Ready to hand in', '?'], ['open', 'New', '!'], ['active', 'Under way', '…']].forEach(function (grp) {
         if (!has[grp[0]].length) return;
         box.appendChild(qel('h4', '', grp[1]));
@@ -2878,6 +2955,7 @@
       // sprite '' (not undefined) keeps the monster health-bar colour + no name label even when layered
       actors.push({ x: s.x, y: s.y, facing: m.facing, name: d.name, sprite: lay ? '' : (d.sprite || ''),
         layers: lay || undefined, hp: m.hp, maxHp: m.maxHp, statusColor: stc ? stc.color : '', idle: mStill, ph: phaseOf(m.id) });
+      monSnap[m.id] = { a: actors[actors.length - 1], ref: m.ref, at: tMark };   // how it looks now, should it die (deathFx)
       // "!" when it starts after someone it sees, "?" when it loses them or hears something and goes to look — for a
       // moment, and only if you can see it
       var al = m.alert || 0, ar = alertSt[m.id] || (alertSt[m.id] = { a: al, until: 0, kind: '' });
@@ -2890,6 +2968,7 @@
       if (tMark < ar.until && (!sight.vis || sight.vis[m.x + ',' + m.y])) marks.push({ id: 'm:' + m.id, kind: ar.kind, x: s.x, y: s.y, up: lay ? TM * 0.5 + 4 : 4 });
     });
     Object.keys(alertSt).forEach(function (id) { if (!seen[id]) delete alertSt[id]; });
+    Object.keys(monSnap).forEach(function (id) { if (!seen[id] && tMark - monSnap[id].at > 3000) delete monSnap[id]; });
     setMarks(marks);
     view.players.forEach(function (q) {
       var s = shownOthers['p:' + q.id] || (shownOthers['p:' + q.id] = { x: q.x, y: q.y });
@@ -2960,7 +3039,7 @@
       vis = sight.vis; mem = seenCells[me.map];
     }
     sneakVeil();
-    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null, cutAll: removing && wallsDown, watch: sightAreas(map, vis), floorActors: floorActors(dt), floorStates: floorStates(), floorSight: floorSight() });
+    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null, cutAll: removing && wallsDown, watch: sightAreas(map, vis), stains: liveStains(now), floorActors: floorActors(dt), floorStates: floorStates(), floorSight: floorSight() });
     nameTags(renderer.nameTags);                              // the names over characters, as text over the view
     if (removing) renderer.drawRemove(cam, removeTarget(), wallsDown);
     if (moveTool && !moveTool.key) renderer.drawRemove(cam, moveTarget(), false, true);

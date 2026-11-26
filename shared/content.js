@@ -299,6 +299,7 @@ var Content = (function () {
         // prey = walkers hunt this monster as they hunt players (animals).
         // hearing: times every noise radius for this one (docs/STEALTH.md; empty = 1, 0 = deaf)
         hearing: num(r.hearing, 1),
+        blood: str(r.blood),                                         // draw-only: the colour it bleeds when it dies ('' = red, 'none' = no blood)
         brain: str(r.brain), sight: num(r.sight_range, 0), aggroS: num(r.aggro_s, 0), structureDmg: num(r.structure_dmg, 0), prey: bool(r.prey),
         // animals: how near a threat may come before it runs, what it leaves when killed, what tames it, what a tame one lays and how often
         fleeRange: num(r.flee_range, 0), carcass: str(r.carcass), tameWith: str(r.tame_with), lays: str(r.lays), layS: num(r.lay_s, 0), loot: str(r.loot),   // lays / loot: item lists ("egg:1", "raw_meat:4, leather:2")
@@ -403,11 +404,24 @@ var Content = (function () {
         var nid = str(n && n.id); if (!nid || d.nodes[nid]) return;
         d.nodes[nid] = { id: nid, text: str(n.text), start: bool(n.start), cond: str(n['if']),
           answers: (Array.isArray(n.answers) ? n.answers : []).map(function (a, i) {
-            return { id: str(a.id) || 'a' + i, text: str(a.text), cond: str(a['if']), run: str(a['do']), to: str(a.to), once: bool(a.once) };
+            return { id: str(a.id) || 'a' + i, text: str(a.text), cond: str(a['if']), run: str(a['do']), to: str(a.to), once: bool(a.once),
+              shop: bool(a.shop) };                               // picking it opens the NPC's shop (and ends the talk)
           }) };
         d.order.push(nid);
       });
       if (d.order.length) c.dialogues[id] = d;
+    });
+    // Shops: offers = [{id, gives, costs, sell, stock, restock_h, if}] (JSON, or an array already). gives / costs are item
+    // lists ("bandage:2, gold:5"); sell = the shop is the one buying (only where the page lists it); stock = how many
+    // times each character may take the offer before it runs out (0 = no limit), back after restock_h hours (0 = never).
+    c.shops = {};
+    (tables.Shops || []).forEach(function (r) {
+      var id = str(r.id); if (!id) return;
+      var offers = (json(r.offers, []) || []).map(function (o, i) {
+        return { id: str(o.id) || 'o' + i, gives: str(o.gives), costs: str(o.costs), sell: bool(o.sell),
+          stock: Math.max(0, Math.round(num(o.stock, 0))), restockS: Math.max(0, num(o.restock_h, 0)) * 3600, cond: str(o['if']) };
+      }).filter(function (o) { return o.gives; });
+      c.shops[id] = { id: id, name: str(r.name), offers: offers };
     });
     linkFloors(c);
     return c;

@@ -52,9 +52,10 @@ var Panels = (function () {
         Render.drawPrim25(g, E.content, { kind: 'hcap', x: 0, y: base / s, h: 1, style: id }, ox, 0, s);
       }
     } else {
-      var o = E.content.objects[id], oi = o && o.sprite && Assets.get(o.sprite);
+      var o = E.content.objects[id], oi = o && o.sprite && Assets.get(o.sprite), fit = Render.outfitOf && Render.outfitOf(o);
       g.fillStyle = '#2a2f3a'; g.fillRect(0, 0, T(), T());
-      if (oi) g.drawImage(oi, 0, 0, T(), T());
+      if (fit) { var ft = Math.round(T() * 0.62); Render.drawOutfit(g, fit, Math.round((T() - ft) / 2), T() - ft, ft, false); }   // an NPC: its outfit, small enough to fit
+      else if (oi) g.drawImage(oi, 0, 0, T(), T());
       else g.drawImage(Assets.placeholder(o ? o.name : '?', '#7a5a3a', T()), 0, 0);
     }
     return c;
@@ -123,7 +124,7 @@ var Panels = (function () {
       h('button', { className: 'eye', title: 'Show / hide', text: E.show[id] ? '◉' : '○',
         onclick: function () { E.show[id] = !E.show[id]; toolbar(); E.redraw(); } }),
       h('button', { title: 'Edit the ' + label.toLowerCase() + ' layer (' + key + ')', text: label,
-        onclick: function () { E.setPaletteTab(id === 'terrain' ? 'terrain' : (E.paletteTab === 'monsters' || E.paletteTab === 'items' ? E.paletteTab : 'objects')); all(); E.redraw(); } }));
+        onclick: function () { E.setPaletteTab(id === 'terrain' ? 'terrain' : (E.paletteTab === 'monsters' || E.paletteTab === 'items' || E.paletteTab === 'npcs' ? E.paletteTab : 'objects')); all(); E.redraw(); } }));
   }
   function toggle(what, title) {
     return h('button', { className: E.show[what] ? 'on' : '', title: title, text: 'Grid',
@@ -203,7 +204,7 @@ var Panels = (function () {
 
   // ------------------------------------------------------------ palette
   var filter = '';
-  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', monsters: 'Monsters', items: 'Items', walls: 'Walls', roof: 'Roof', spawn: 'Start', nobuild: 'No-build', height: 'Height' };
+  var TAB_NAMES = { terrain: 'Terrain', objects: 'Objects', npcs: 'NPCs', monsters: 'Monsters', items: 'Items', walls: 'Walls', roof: 'Roof', spawn: 'Start', nobuild: 'No-build', height: 'Height' };
   // N-S walls: 'center' straddles the grid line; 'cursor' snaps the wall fully onto whichever tile the cursor is
   // nearer, so you can keep objects in the other tile clear of the wall art. Visual only; collision stays on the line.
   function wallSideRow() {
@@ -218,7 +219,7 @@ var Panels = (function () {
     var box = $('palette'); box.innerHTML = '';
     var paletteTab = E.paletteTab;
     var tabs = h('div', { className: 'tabs' },
-      ['terrain', 'objects', 'monsters', 'items', 'walls', 'roof', 'spawn', 'nobuild', 'height'].map(function (t) {
+      ['terrain', 'objects', 'npcs', 'monsters', 'items', 'walls', 'roof', 'spawn', 'nobuild', 'height'].map(function (t) {
         return h('button', { className: paletteTab === t ? 'on' : '', text: TAB_NAMES[t],
           onclick: function () { E.setPaletteTab(t); all(); E.redraw(); } });
       }));
@@ -312,7 +313,9 @@ var Panels = (function () {
     box.appendChild(listBox);
     if (paletteTab !== 'items') box.appendChild(h('div', { className: 'row buttons' },
       h('button', { text: '✎ Edit selected', onclick: function () { editDef(defType, current); } }),
-      h('button', { text: '+ New ' + defType, onclick: function () { newDef(defType); } })));
+      h('button', { text: paletteTab === 'npcs' ? '+ New NPC' : '+ New ' + defType, onclick: function () { newDef(defType, paletteTab === 'npcs' ? 'npc' : ''); } })));
+    if (paletteTab === 'npcs') box.appendChild(h('p', { className: 'note',
+      text: 'Paint an NPC to place it. What it looks like (its outfit), what it says and its quests are set in the Content Studio → NPCs.' }));
     if (paletteTab === 'items') box.appendChild(h('p', { className: 'note',
       text: 'Paint an item to lay it on the ground: a player picks it up by using it. Select it (V) to set how many lie there and whether it comes back (respawn_s). Items themselves are made in the Content Studio.' }));
     if (paletteTab === 'monsters') box.appendChild(h('p', { className: 'note',
@@ -373,9 +376,14 @@ var Panels = (function () {
         var styles = Object.keys(E.content.wallStyles || {}).map(function (k) { return E.content.wallStyles[k]; }).filter(match);
         styles.forEach(function (w) { listBox.appendChild(item('wallStyle', w, E.brush.wall === w.id)); });
         if (!styles.length) listBox.appendChild(h('div', { className: 'kind', text: 'No wall styles yet: add one with + New wallStyle' }));
+      } else if (paletteTab === 'npcs') {
+        var npcs = Object.keys(E.content.objects).map(function (k) { return E.content.objects[k]; }).filter(function (o) { return o.kind === 'npc'; }).filter(match);
+        npcs.forEach(function (o) { listBox.appendChild(item('object', o, E.brush.object === o.id)); });
+        if (!npcs.length) listBox.appendChild(h('div', { className: 'kind', text: 'No NPCs yet: add one with + New NPC' }));
       } else {
         var byKind = {};
         Object.keys(E.content.objects).filter(function (k) { return k.charAt(0) !== '_'; }).map(function (k) { return E.content.objects[k]; })   // (ids starting with _ are the game's own)
+          .filter(function (o) { return o.kind !== 'npc'; })                // NPCs have their own tab
           .filter(function (o) { return o.kind !== 'spawn' || o.sprite; })  // plain spawns use the Monsters tab; a sprited spawn (e.g. a nest) is a real placeable object
           .filter(match).forEach(function (o) { (byKind[o.kind] = byKind[o.kind] || []).push(o); });
         Object.keys(byKind).sort().forEach(function (k) {
@@ -666,11 +674,11 @@ var Panels = (function () {
   function editDef(type, id) { if (!id) return; E.selected = null; E.mode = null; defEdit = { type: type, id: id }; inspector(); }
 
   var DEF_TAB = { terrain: 'Terrain', object: 'Objects', monster: 'Monsters', wallStyle: 'WallStyles' };
-  function newDef(type) {
-    Dialogs.prompt('Name of the new ' + type + ':').then(function (name) {
+  function newDef(type, kind) {
+    Dialogs.prompt('Name of the new ' + (kind === 'npc' ? 'NPC' : type) + ':').then(function (name) {
     if (!name) return;
     var slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'new';
-    var pre = type === 'terrain' ? 'ter_' : type === 'monster' ? '' : type === 'wallStyle' ? 'wall_' : 'obj_';
+    var pre = type === 'terrain' ? 'ter_' : type === 'monster' ? '' : type === 'wallStyle' ? 'wall_' : kind === 'npc' ? 'npc_' : 'obj_';
     var tab = DEF_TAB[type], id = pre + slug, n = 2;
     E.tables[tab] = E.tables[tab] || [];
     var exists = function (x) { return (E.tables[tab] || []).some(function (r) { return String(r.id) === x; }); };
@@ -681,7 +689,7 @@ var Panels = (function () {
       ? { id: id, name: name, sprite: '', hp: 10, atk: 3, def: 0, xp: 3, gold_min: 0, gold_max: 2, loot_table: '', aggro_range: 4, move_ms: 800, respawn_s: 60, notes: '' }
       : type === 'wallStyle'
       ? { id: id, name: name, tiles: '', cap: '', face: '', color: '#8a8f98', blocks_move: true, blocks_sight: true, notes: '' }
-      : { id: id, name: name, kind: 'deco', sprite: '', sprite_states: '', frames: '', frame_ms: '', walkable: false, properties: '', on_interact: '', notes: '' };
+      : { id: id, name: name, kind: kind || 'deco', sprite: '', sprite_states: '', frames: '', frame_ms: '', walkable: false, properties: '', on_interact: '', notes: '' };
     E.tables[tab].push(row);
     E.dirty.tabs[tab] = true;
     if (type === 'terrain') E.brush.terrain = id; else if (type === 'monster') E.brush.monster = id;

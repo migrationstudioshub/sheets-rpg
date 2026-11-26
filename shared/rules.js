@@ -20,11 +20,14 @@ var Rules = (function () {
   function isDir(dir) { return !!(DIRS[dir] || DIAG[dir]); }
   // What a step costs, in straight steps of time. Given where it lands (content, map, x, y), wading into shallow water
   // costs Config shallow_slow times as much (2 when not said; 1 = no slower). Players' walking budget, the page's
-  // pace and the monsters' turns all ask this, so they agree.
-  function stepCost(dir, content, map, x, y) {
+  // pace and the monsters' turns all ask this, so they agree. who = the one stepping: a player who sneaks
+  // (who.sneak, or who.sn as other players are sent) pays Config sneak_slow (2) times as much (docs/STEALTH.md).
+  function stepCost(dir, content, map, x, y, who) {
     var k = DIAG[dir] ? DIAG_COST : 1;
+    if (who && (who.sneak || who.sn) && content) k *= sneakSlow(content);
     return content && map && shallowAt(content, map, x, y) ? k * wadeSlow(content) : k;
   }
+  function sneakSlow(content) { var v = Number(content.config && content.config.sneak_slow); return v > 0 ? v : 2; }
   function wadeSlow(content) { var v = Number(content.config && content.config.shallow_slow); return v > 0 ? v : 2; }
   /** Which of the four ways a character faces after stepping dir: a diagonal keeps a facing it already agrees with, else looks sideways. */
   function faceFor(dir, cur) { var g = DIAG[dir]; if (!g) return dir; return cur === g.a || cur === g.b ? cur : g.b; }

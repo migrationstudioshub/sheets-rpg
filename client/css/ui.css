@@ -16,6 +16,10 @@ body { height: 100%; margin: 0; background: #000; color: var(--bone); overflow: 
 #frame { position: relative; width: min(100vw, calc((100vh - var(--top)) * var(--ar, 1.6923))); image-rendering: pixelated; }
 canvas { display: block; image-rendering: pixelated; }
 #view { width: 100%; height: auto; touch-action: none; }
+/* sneaking (docs/STEALTH.md): the edges of the view darken softly, over the world, under the HUD */
+#sneak-veil { position: absolute; inset: 0; pointer-events: none; z-index: 1; opacity: 0; transition: opacity .5s ease;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(8, 6, 14, .35) 72%, rgba(8, 6, 14, .75) 100%); }
+#sneak-veil.on { opacity: 1; }
 [hidden] { display: none !important; }
 
 /* ---- text ---- */
@@ -177,7 +181,8 @@ button:disabled .ki { opacity: .4; }
 #weapon-set { width: 118rem; padding: 3rem 4rem; }
 #weapon { display: grid; grid-template-columns: 24rem 1fr; gap: 6rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; }
 #weapon .wside { display: grid; gap: 3rem; }
-#weapon .wname { font-weight: 700; color: var(--bone); white-space: nowrap; overflow: hidden; }
+/* the name: the body font (narrower than the label font), and a long one takes a second line rather than being cut */
+#weapon .wname { font: 400 10rem/0.9 'Jersey 10', sans-serif; letter-spacing: .5rem; color: var(--bone); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 #weapon .wline { display: flex; gap: 4rem; align-items: center; }
 #weapon .wammo { font-weight: 700; color: var(--bone); } #weapon .wammo.low { color: var(--red); }
 #weapon .wres { color: var(--grey3); }
@@ -198,6 +203,9 @@ button:disabled .ki { opacity: .4; }
 .mark.alert, .mark.search { animation: markpop .18s steps(3); }
 .mark.alert, .mark.quest, .mark.questdone { color: var(--yellow); } .mark.search { color: var(--bone); } .mark.questgo { color: var(--grey4); }
 @keyframes markpop { from { transform: translate(-50%, -60%) scale(.4); opacity: 0; } }
+/* a character's name over its head (main.js nameTags): the UI's body font, as typed (case kept), an outline so it reads on any ground */
+.ntag { position: absolute; transform: translate(-50%, -100%); pointer-events: none; white-space: nowrap; font: 400 10rem/1 'Jersey 10', sans-serif; text-transform: none; color: var(--bone);
+        text-shadow: -1rem 0 var(--ink), 1rem 0 var(--ink), 0 -1rem var(--ink), 0 1rem var(--ink); }
 .mark.prompt { width: auto; transform: translate(0, -50%); display: flex; align-items: center; gap: 2rem; white-space: nowrap; }
 .mark.prompt span { padding: 1rem 4rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); }
 
@@ -240,12 +248,22 @@ button:disabled .ki { opacity: .4; }
 .win-top { display: flex; justify-content: space-between; align-items: flex-end; padding: 0 8rem; margin-bottom: -2rem; position: relative; z-index: 1; }
 .ktab { box-sizing: border-box; height: 15rem; padding: 1rem 4rem 0; border-style: solid; border-color: transparent; border-width: 4rem 2rem 2rem; border-image: var(--k-tab_active) 4 2 2 2 fill / 4rem 2rem 2rem stretch;
         font: 700 8rem/8rem 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); white-space: nowrap; }
-.kclose { margin-bottom: 4rem; color: var(--grey4); }
-.kclose:hover { color: var(--bone); }
-.phead { display: flex; justify-content: space-between; align-items: center; gap: 8rem; box-sizing: border-box; height: 14rem; padding: 0 0 0 3rem; border-style: solid; border-color: transparent; border-width: 2rem 2rem 2rem 11rem;
-         border-image: var(--k-header_plate) 2 2 2 11 fill / 2rem 2rem 2rem 11rem repeat; }
-.phead strong { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); text-shadow: 1rem 1rem 0 var(--olive); white-space: nowrap; }
-.phead button { height: 12rem; margin: -1rem -1rem -1rem 0; border-width: 2rem; border-image-width: 2rem 2rem 3rem; }
+.kclose { margin-bottom: 4rem; }
+/* a column's title plate with the window's close button beside it (main.js closeInPlate): the plate ends just left of the X */
+.hrow { display: flex; align-items: center; gap: 2rem; }
+.hrow .khead { flex: 1 1 auto; min-width: 0; }
+.hrow .kx { margin: 0; }
+#bag .wcols > .wcol:last-child { flex-grow: 1; }          /* (the last column reaches the right edge, so its plate and the X end at the corner) */
+/* every window's close button: a small square red button with the kit's X (Esc does the same) */
+.kx { width: 14rem; height: 14rem; padding: 0; flex: none; }
+.kx::before { content: ''; width: 9rem; height: 9rem; background: var(--k-icon_x) center / 100% 100% no-repeat; image-rendering: pixelated; filter: drop-shadow(1rem 1rem 0 var(--ink)); }
+/* a window's title bar: the header plate (hazard stripes + title) ends just left of the close button, which stands beside it */
+.phead { display: flex; align-items: center; gap: 2rem; height: 14rem; }
+.phead strong { flex: 1 1 auto; min-width: 0; box-sizing: border-box; height: 14rem; display: flex; align-items: center; padding: 0 3rem; overflow: hidden;
+                border-style: solid; border-color: transparent; border-width: 2rem 2rem 2rem 11rem; border-image: var(--k-header_plate) 2 2 2 11 fill / 2rem 2rem 2rem 11rem repeat;
+                font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); text-shadow: 1rem 1rem 0 var(--olive); white-space: nowrap; }
+.phead button { height: 14rem; }
+.phead button.kx { width: 14rem; height: 14rem; }
 h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); }
 #bag { padding-bottom: 40rem; box-sizing: border-box; }                        /* the belt stays in view under the window */
 #bag .panel { max-height: 100%; overflow: auto; }
@@ -383,7 +401,22 @@ h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform:
 .slot.rcp .btns .step { width: 13rem; padding: 0; font-size: 6rem; }
 .slot.rcp .btns .qty { min-width: 12rem; text-align: center; font: 700 8rem/1 'Silkscreen', monospace; }
 .slot.rcp.cant { opacity: .6; }
-#npcp .panel, #questp .panel { width: 250rem; max-height: 92%; overflow: auto; }
+#npcp .panel { width: 250rem; max-height: 92%; overflow: auto; }
+#questp .panel { width: 360rem; max-height: 92%; overflow: auto; }
+/* the quest log: the list (left, a follow box on each row) | the picked quest (right) */
+.qlog { display: grid; grid-template-columns: 112rem minmax(0, 1fr); gap: 6rem; align-items: start; }
+.qlist { display: grid; gap: 1rem; padding: 2rem; align-content: start; }
+.qli { display: grid; grid-template-columns: 9rem minmax(0, 1fr) auto; gap: 3rem; align-items: center; padding: 3rem 3rem 3rem 2rem; cursor: pointer; color: var(--bone); box-shadow: inset 2rem 0 0 transparent; }
+.qli:hover { background: var(--ink2); }
+.qli.on { background: var(--ink2); box-shadow: inset 2rem 0 0 var(--yellow); color: var(--yellow); }
+.qli.ready .qst { color: var(--green); }
+.qli .qn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fbox { display: inline-block; width: 9rem; height: 9rem; cursor: pointer; background: var(--k-checkbox_off) 0 0 / 100% 100% no-repeat; }
+.fbox.on { height: 10rem; margin-top: -1rem; background-image: var(--k-checkbox_on); }
+.qsum { display: grid; gap: 4rem; }
+.qshead { display: flex; gap: 6rem; align-items: center; }
+.qshead > b { flex: 1; font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--yellow); }
+.qfollow { display: flex; gap: 3rem; align-items: center; cursor: pointer; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); }
 .qsay { position: relative; box-sizing: border-box; border-style: solid; border-color: transparent; border-width: 12rem 3rem 3rem; border-image: var(--k-panel_paper) 12 3 3 3 fill / 12rem 3rem 3rem repeat; padding: 0 5rem 3rem; color: var(--ink); white-space: pre-wrap; line-height: 1.15; }
 .paper-taped .qsay { border-width: 14rem 3rem 3rem; border-image-slice: 14 3 3 3 fill; border-image-width: 14rem 3rem 3rem; }
 .paper-taped .qsay::before, .paper-taped .qsay::after { content: ''; position: absolute; top: -14rem; left: -3rem; width: 24rem; height: 14rem; background: var(--k-paper_ends, none) 0 0 / 64rem 50rem no-repeat; }
@@ -395,6 +428,14 @@ h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform:
 .qpicks { display: flex; gap: 3rem; flex-wrap: wrap; }
 .qrow { display: flex; gap: 6rem; justify-content: flex-start; height: 16rem; font-weight: 700; }
 .qrow .qmark { width: 8rem; text-align: center; color: var(--yellow); } .qrow.active .qmark { color: var(--grey4); }
+/* a conversation: the NPC's figure beside its line, then the answers (numbered: keys 1-9) */
+.dlg { display: flex; gap: 4rem; align-items: flex-end; }
+.dlg .dface { flex: none; width: 40rem; height: 60rem; image-rendering: pixelated; }
+.dlg .qsay { flex: 1; min-width: 0; align-self: stretch; }
+.dans { display: grid; gap: 2rem; }
+.dans .qrow { height: auto; min-height: 16rem; align-items: center; text-align: left; }
+.dans .qkey { width: 8rem; text-align: center; color: var(--grey4); font: 700 8rem/1 'Silkscreen', monospace; }
+.dans .qans { flex: 1; min-width: 0; white-space: normal; }
 .qcard { display: grid; gap: 4rem; padding: 4rem 5rem 5rem 8rem; box-sizing: border-box; border: 2rem solid transparent; border-image: var(--k-panel_plate) 2 fill / 2rem stretch; box-shadow: inset 2rem 0 0 var(--yellow); }
 .qcard.ready { box-shadow: inset 2rem 0 0 var(--green); }
 .qcard > b, .qcard > strong, #npc-body > b, #npc-body > strong { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--yellow); }

@@ -94,7 +94,8 @@ function create(deps) {
         id: q.id, name: q.name, 'class': q['class'] || '', equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '',
         x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level,
         wst: World.weaponState ? World.weaponState(content, q) : '',   // weapon in hand: '' | empty | reload (its picture)
-        act: q.act || ''                                       // their last swing or shot, for the others to draw (World.noteAct)
+        act: q.act || '',                                      // their last swing or shot, for the others to draw (World.noteAct)
+        sn: q.sneak ? 1 : 0                                    // sneaking (docs/STEALTH.md): drawn crouched, and paced slower
       })),
       m: m, d: d
     };

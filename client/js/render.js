@@ -105,8 +105,9 @@ var Render = (function () {
     return out;
   }
   /** Draws the falls at their frame for `now`, over the raised ground (ox, oy = where the map's flat origin is on screen). */
-  function drawFalls(g, content, map, cells, ox, oy, size, now, x0, y0, x1, y1) {
+  function drawFalls(g, content, map, cells, ox, oy, size, now, x0, y0, x1, y1, shade) {   // shade(x, y) = brightness under 1 (out of sight, indoors), or 0
     if (!cells || !cells.length) return;
+    var canF = typeof g.filter === 'string';
     var cfgF = content.config || {}, ms = Number(cfgF.waterfall_ms) || 110, foam = !isOff(cfgF.waterfall_foam), tall = Number(cfgF.waterfall_foam_tall) || 4;
     for (var i = 0; i < cells.length; i++) {
       var a = cells[i];
@@ -123,15 +124,19 @@ var Render = (function () {
         if (top2 < botY) botY = top2;
       }
       if (botY <= topY) continue;
+      var sh = shade && canF ? shade(a.x, a.y) : 0;
+      if (sh) g.filter = 'brightness(' + sh + ')';
       g.save(); g.beginPath(); g.moveTo(X, Yl); g.lineTo(X + size, Yr); g.lineTo(X + size, Math.min(Br, botY)); g.lineTo(X, Math.min(Bl, botY)); g.closePath(); g.clip();
       for (var fy = topY; fy < botY; fy += size) g.drawImage(img, fr * 4 * NT + a.col * NT, 0, NT, Math.min(NT, img.height), X, fy, size, size);
       g.restore();
-      if (!foam) continue;
+      if (!foam) { if (sh) g.filter = 'none'; continue; }
       var fp = foamPaths(a.sprite), k = size / NT, tImg = Assets.get(fp.top);
       if (tImg) { var tw = tImg.width / n / 4; g.drawImage(tImg, (fr * 4 + a.col) * tw, 0, tw, tImg.height, X, topY - Math.round(3 * k), tw * k, tImg.height * k); }   // (3 px up: the foam line sits on the edge the water goes over)
       var bImg = botY < fullBot ? null : Assets.get((fullBot - topY) / size >= tall - 0.01 ? fp.big : fp.small) || Assets.get(fp.small) || Assets.get(fp.big);   // (its foot hidden behind nearer ground: no splash)
       if (bImg) { var bw = bImg.width / n / 4, bh = bImg.height; g.drawImage(bImg, (fr * 4 + a.col) * bw, 0, bw, bh, Math.round(X - (bw - NT) / 2 * k), fullBot + size - bh * k, bw * k, bh * k); }
+      if (sh) g.filter = 'none';
     }
+    if (canF) g.filter = 'none';
   }
 
   // ---- things on cliff faces (layer:'cliff') ----
@@ -168,11 +173,16 @@ var Render = (function () {
     g.restore();
   }
   /** Every cliff thing of a map, over the raised ground. hidden(e) = leave this one out. */
-  function drawCliffThings(g, content, map, ox, oy, size, now, hidden) {
+  function drawCliffThings(g, content, map, ox, oy, size, now, hidden, shade) {
     if (!elevOn(map)) return;
+    var canF = typeof g.filter === 'string';
     for (var i = 0; i < map.entities.length; i++) {
       var e = map.entities[i], o = content.objects[e.ref];
-      if (o && o.properties && o.properties.layer === 'cliff' && !(hidden && hidden(e))) drawCliffThing(g, map, o, e, ox, oy, size, now);
+      if (!o || !o.properties || o.properties.layer !== 'cliff' || (hidden && hidden(e))) continue;
+      var sh = shade && canF ? shade(e.x, e.y) : 0;
+      if (sh) g.filter = 'brightness(' + sh + ')';
+      drawCliffThing(g, map, o, e, ox, oy, size, now);
+      if (sh) g.filter = 'none';
     }
   }
 
@@ -908,6 +918,29 @@ var Render = (function () {
     if (p < 0.6) { var q = (p - 0.25) / 0.35; return UP + (DOWN - UP) * q * q; }
     return DOWN * (1 - (p - 0.6) / 0.4);
   }
+  /** An NPC's outfit: object properties.outfit = [{path, tint}], bottom to top (Content Studio → NPCs). Answers the layers
+   *  that have a picture, or null (then the NPC is its plain sprite). The game, the map editor and its palette all ask this. */
+  function outfitOf(o) {
+    var f = o && o.kind === 'npc' && o.properties && o.properties.outfit;
+    if (!Array.isArray(f)) return null;
+    f = f.filter(function (l) { return l && l.path; });
+    return f.length ? f : null;
+  }
+  /** An outfit as paper-doll layers ({path, mask, ramp}), starting the loads of what is not loaded yet. */
+  function outfitLayers(fit) {
+    var tone = typeof Tint !== 'undefined' && Tint.lookSkin ? Tint.lookSkin(fit) : '';   // the body's skin tone (and the hands' in what it holds)
+    return (fit || []).map(function (l) {
+      var sk = tone ? Tint.skinFor(l.path, tone) : null;
+      // a garment's cloth is all in its colour mask: one with no colour given gets the default (Tint.lookTint), never half drawn
+      var tint = typeof Tint !== 'undefined' && Tint.lookTint ? Tint.lookTint(l.path, l.tint) : l.tint;
+      var ramp = tint && typeof Tint !== 'undefined' ? Tint.TINTS[tint] : null, mask = ramp ? l.path.replace(/\.png$/i, '.tint.png') : '';
+      if (!Assets.get(l.path)) Assets.load(l.path);
+      if (mask && !Assets.get(mask)) Assets.load(mask);
+      return { path: l.path, mask: mask, ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false };
+    });
+  }
+  /** Draw an outfit standing on the tile whose top-left is (ax, ay); answers the top of the figure. */
+  function drawOutfit(g, fit, ax, ay, T, flip) { return drawLayers(g, outfitLayers(fit), ax, ay, T, flip); }
   function drawLayers(g, layers, ax, ay, T, flip, aim, swing) {
     var topY = ay, turn = swing != null && swing >= 0 && swing < 1 ? swingTurn(swing) : 0;
     layers.forEach(function (l) {
@@ -1198,6 +1231,10 @@ var Render = (function () {
    */
   Renderer.prototype.draw = function (cam, actors, opts) {
     var c = this.content, map = this.map, g = this.g, T = c.config.tile_size || 32;
+    // names over characters are not painted here: the page lays them over the view as text in the UI's own font, sharp at any
+    // size (main.js nameTags). This frame's list: {x, y (canvas pixels: the middle, the bottom of the name), text, color}.
+    var nameTags = this.nameTags = [];
+    var hits = this.hits = [];                 // this frame's objects and where each is drawn: what objectAt (below) is asked about
     var states = (opts && opts.states) || {}, hidden = opts && opts.hidden;
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#000'; g.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -1274,8 +1311,6 @@ var Render = (function () {
 
     // layer 2b: animated terrain (water, lava...) is drawn live over the baked ground
     if (this.animated.length) drawAnimated(g, this.content, this.animated, ox, oy, T, now, x0, y0, x1, y1, EL ? L : null);
-    if (this.falls && this.falls.length) drawFalls(g, this.content, map, this.falls, ox, oy, T, now, x0, y0, x1, y1);
-    if (EL) drawCliffThings(g, this.content, map, ox, oy, T, now);          // what hangs on the cliff faces
 
     // ---- sight: what the local player sees / knows this frame (see makeSight) ----
     var cfg = c.config || {}, o2 = opts || {};
@@ -1287,6 +1322,10 @@ var Render = (function () {
     var sight = makeSight(map, meActor, o2, cutR);
     if (o2.cutAll) sight.cutH = function () { return true; };   // the remove tool's "walls down" view: every E-W wall a stub
     var prims = this.wall25 || [];
+    var dark = cfg.indoor_dark === undefined || cfg.indoor_dark === '' ? 0.25 : Number(cfg.indoor_dark); if (!(dark >= 0 && dark < 1)) dark = 0.25;
+    // the falls and what hangs on the cliff faces: darker out of sight and indoors, like what stands on the ground (shadeAt)
+    if (this.falls && this.falls.length) drawFalls(g, this.content, map, this.falls, ox, oy, T, now, x0, y0, x1, y1, shadeAt);
+    if (EL) drawCliffThings(g, this.content, map, ox, oy, T, now, null, shadeAt);
 
     // layer 2c: the soft shadow each E-W wall drops on the floor south of it
     var strip = shadowStrip(T);
@@ -1305,12 +1344,49 @@ var Render = (function () {
     // layer 2e: indoors is darker (config indoor_dark, 0-1; 0 = off). The floor gets a veil here; whatever
     // stands indoors — objects, characters, the wall surfaces facing into the room — is drawn darker to match
     // in the sorted pass below (see dim), so a room reads as one dim space while outside stays bright.
-    var dark = cfg.indoor_dark === undefined || cfg.indoor_dark === '' ? 0.25 : Number(cfg.indoor_dark); if (!(dark >= 0 && dark < 1)) dark = 0.25;
     if (dark > 0) { g.fillStyle = 'rgba(0,0,0,' + dark + ')';
       for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (sight.indoor(cx, cy) && sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T - L(cx, cy), T, T); }
-    var canFilter = dark > 0 && typeof g.filter === 'string';
-    function dim(on) { if (canFilter) g.filter = on ? 'brightness(' + (1 - dark) + ')' : 'none'; }
+    var canFilter = typeof g.filter === 'string', shadeNow = false;   // shadeNow: a sneaking figure is being painted (a shadow)
+    // dim(on): on = true (indoors), a number (the brightness shadeAt worked out) or false (as drawn).
+    function dim(on) {
+      if (!canFilter) return;
+      var b = on === true ? 1 - dark : typeof on === 'number' && on > 0 ? on : 1;
+      var f = (b < 1 ? 'brightness(' + b + ') ' : '') + (shadeNow ? 'brightness(0.3) saturate(0.3)' : '');
+      g.filter = f || 'none';
+    }
     function inDark(x, y) { return dark > 0 && sight.indoor(Math.round(x), Math.round(y)); }
+    // How bright what stands on a cell is drawn: darker indoors, and darker out of sight by the fog's own veil
+    // (fog_alpha), so a known place you cannot see now reads as one dim area, things and ground alike. 0 = full.
+    function shadeAt(x, y) {
+      var rx = Math.round(x), ry = Math.round(y), b = 1;
+      if (inDark(rx, ry)) b *= 1 - dark;
+      if (fogA > 0 && sight.vis && !sight.seen(rx, ry) && sight.known(rx, ry)) b *= 1 - fogA;
+      return b < 1 ? b : 0;
+    }
+    // layer 2f: while you sneak, where the monsters in view would see you (docs/STEALTH.md; o2.watch from main.js
+    // sightAreas, each [{cells: {"x,y": 1}, hot}] worked out by World.sightArea). Amber = it has not noticed
+    // anyone, red = it is after someone. A soft fill, and a line round the edge.
+    if (o2.watch && o2.watch.length) {
+      var wat = {};
+      o2.watch.forEach(function (w) { Object.keys(w.cells).forEach(function (k) { wat[k] = Math.max(wat[k] || 1, w.hot ? 2 : 1); }); });
+      var lw = Math.max(1, Math.round(T / 16));
+      [1, 2].forEach(function (lvl) {
+        var rgb = lvl === 2 ? '224,74,58' : '232,180,70', edges = [];
+        g.fillStyle = 'rgba(' + rgb + ',' + (lvl === 2 ? 0.2 : 0.14) + ')';
+        Object.keys(wat).forEach(function (k) {
+          if (wat[k] !== lvl) return;
+          var p = k.split(','), x = +p[0], y = +p[1]; if (x < x0 || x > x1 || y < y0 || y > y1) return;
+          var px = ox + x * T, py = oy + y * T - L(x, y);
+          g.fillRect(px, py, T, T);
+          if (!wat[x + ',' + (y - 1)]) edges.push([px, py, T, lw]);
+          if (!wat[x + ',' + (y + 1)]) edges.push([px, py + T - lw, T, lw]);
+          if (!wat[(x - 1) + ',' + y]) edges.push([px, py, lw, T]);
+          if (!wat[(x + 1) + ',' + y]) edges.push([px + T - lw, py, lw, T]);
+        });
+        g.fillStyle = 'rgba(' + rgb + ',0.6)';
+        edges.forEach(function (e) { g.fillRect(e[0], e[1], e[2], e[3]); });
+      });
+    }
 
     // layer 3: collect objects for the merged back-to-front pass (layer 5). 'auto' = the WHOLE object (base +
     // tall overflow) y-sorts by its south edge with walls and characters, so a thing north of a wall is drawn
@@ -1344,7 +1420,7 @@ var Render = (function () {
           var dOpen = opening === 'arch' || states[e.key] === 'open';
           if (isH) {
             edges.forEach(function (q) { doorFaces[q.x + ',' + q.y] = 1; if (cut) doorGap[q.x + ',' + q.y] = 1; });   // the door draws these faces itself; on a cut wall its whole width is a gap in the stub
-            renderables.push({ sortY: oy + ed0.y * T + 0.6, dark: inDark(ed0.x, ed0.y), lift: L(ed0.x, ed0.y), door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
+            renderables.push({ sortY: oy + ed0.y * T + 0.6, dark: shadeAt(ed0.x, ed0.y), lift: L(ed0.x, ed0.y), door: { o: o, e: e, ed: ed0, W: edges.length, open: dOpen, cut: cut } });
           } else edges.forEach(function (q) {
             vDoor[q.x + ',' + q.y] = dOpen ? 'open' : 'shut';   // in a thin N-S wall: a gap, or a tinted slab
             // A side door is seen edge-on, so it is marked on the floor: a doorstep laid across the wall line,
@@ -1412,7 +1488,7 @@ var Render = (function () {
             }
           }
         }
-        renderables.push({ sortY: mp.sortY, alpha: cut && !opening ? cutA : 1, dark: inDark(e.x, e.y),   // a window stands solid like a door; other fixtures go faint
+        renderables.push({ sortY: mp.sortY, alpha: cut && !opening ? cutA : 1, dark: shadeAt(e.x, e.y),   // a window stands solid like a door; other fixtures go faint
           obj: { o: o, path: wp, dx: mp.dx, dy: mp.dy, flip: mp.flip, st: wst, tall: hasTop(o, wp) } });
         return;
       }
@@ -1420,7 +1496,7 @@ var Render = (function () {
       if (o.kind === 'stairs') {                                          // each step tile sorts with its own row: over the wall behind it, under whoever stands on it
         var sdd = Rules.DIRS[Rules.stairDir(e)];
         for (var si = 0; si < Rules.stairLen(); si++)
-          renderables.push({ sortY: Math.round(oy + (e.y + si * sdd.dy) * T) + T - 0.5, dark: inDark(e.x, e.y), lift: L(e.x, e.y), step: { o: o, e: e, i: si } });
+          renderables.push({ sortY: Math.round(oy + (e.y + si * sdd.dy) * T) + T - 0.5, dark: shadeAt(e.x, e.y), lift: L(e.x, e.y), step: { o: o, e: e, i: si } });
         return;
       }
       var st = states[e.key], facing = (e.data && e.data.facing) || null;
@@ -1430,10 +1506,11 @@ var Render = (function () {
       if (o.id === '_drop') { var lying = World.list((e.data || {}).pickup)[0], lit = lying && c.items[lying.item]; if (lit && lit.sprite) path = lit.sprite; }   // an item on the ground: its own picture
       if (!path && e.bp !== undefined) path = '#built';              // something a player built with no art yet: show a lettered box, never nothing
       var dx = ox + e.x * T, dy = oy + e.y * T - L(e.x, e.y), dz = o.draw || 'auto';
+      hits.push({ e: e, o: o, path: path, dx: dx, dy: dy, flip: flip });
       if (dz === 'over') {
-        overs.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip });
+        overs.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip, shade: shadeAt(e.x, e.y) });
       } else if (dz === 'under') {
-        dim(inDark(e.x, e.y));
+        dim(shadeAt(e.x, e.y));
         drawObject(g, o, path, dx, dy, T, 'base', now, flip);                        // always behind everyone
         if (hasTop(o, path)) drawObject(g, o, path, dx, dy, T, 'top', now, flip);
         drawStateMark(g, o, st, dx, dy, T);
@@ -1443,7 +1520,7 @@ var Render = (function () {
         // tile it draws after the character (+0.1: still under a wall on that line, which is +0.25). Any other
         // facing keeps the tie as it was: the character on the tile is drawn over the object.
         var back = facing && Rules.turnable(o) && Rules.facingOf(String(facing)) === 'N' ? 0.1 : 0;
-        renderables.push({ sortY: Math.round(oy + e.y * T) + T + back, dark: inDark(e.x, e.y), alpha: e.need && (e.prog || 0) < e.need ? 0.5 : 1, at: EL ? { x: e.x, y: e.y, w: Math.max(1, o.footprintW || 1) } : null, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
+        renderables.push({ sortY: Math.round(oy + e.y * T) + T + back, dark: shadeAt(e.x, e.y), alpha: e.need && (e.prog || 0) < e.need ? 0.5 : 1, at: EL ? { x: e.x, y: e.y, w: Math.max(1, o.footprintW || 1) } : null, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
       }
     });
 
@@ -1477,9 +1554,10 @@ var Render = (function () {
     });
     actors.forEach(function (a) {
       // seen = drawn; sensed = an outline (the hook for a hearing sense); hidden = not drawn
-      var how = a.me || !sight.vis ? 'seen' : World.perceive(sight.vis, o2.sensed, a.x, a.y);
+      // (an NPC is a fixed thing, shown like the objects are: wherever the place is known)
+      var how = a.me || !sight.vis ? 'seen' : a.fixed ? (sight.known(Math.round(a.x), Math.round(a.y)) ? 'seen' : 'hidden') : World.perceive(sight.vis, o2.sensed, a.x, a.y);
       if (how === 'hidden') return;
-      renderables.push({ sortY: Math.round(oy + a.y * T) + T, actor: a, sensed: how === 'sensed', dark: inDark(a.x, a.y) });
+      renderables.push({ sortY: Math.round(oy + a.y * T) + T, actor: a, sensed: how === 'sensed', dark: shadeAt(a.x, a.y) });
     });
     renderables.sort(function (p, q) { return p.sortY - q.sortY; });
     renderables.forEach(function (r) {
@@ -1583,13 +1661,18 @@ var Render = (function () {
     /** A character standing in shallow water: the figure drawn on a scratch canvas, its part under the waterline
      *  faded and tinted the water's colour, then a ripple ring where it meets the water. Config wade_depth (0.22: up to where the bust's pedestal meets its chest) =
      *  how much of the figure, from its feet, is under. Answers the top of the figure. */
-    function drawWading(a, ax, ay, wade, isDark) {
+    function drawWading(a, ax, ay, wade, isDark, bob, wb) {
       var W3 = 3 * T, H5 = 5 * T;                                    // room for busts and weapons: the tile sits at (T, 4T)
       if (!wadeCv) wadeCv = document.createElement('canvas');
       if (wadeCv.width !== W3 || wadeCv.height !== H5) { wadeCv.width = W3; wadeCv.height = H5; }
       var sg = wadeCv.getContext('2d');
       sg.globalCompositeOperation = 'source-over'; sg.clearRect(0, 0, W3, H5); sg.imageSmoothingEnabled = false;
-      var top0 = drawFigure(sg, a, T, 4 * T);
+      var top0;
+      if (wb) {                                                      // wading on: it sways as it walks (wobbleOf), the waterline stays level
+        sg.save(); sg.translate(1.5 * T, 5 * T); sg.rotate(wb.ang); sg.translate(-1.5 * T, -5 * T);
+        top0 = drawFigure(sg, a, T, 4 * T - wb.lift) + wb.lift;
+        sg.restore();
+      } else top0 = drawFigure(sg, a, T, 4 * T - (bob || 0)) + (bob || 0);
       var dep = Number(c.config.wade_depth); if (!(dep > 0)) dep = 0.22;
       var line = Math.round(H5 - Math.min(H5 - top0, 2 * T) * Math.min(0.9, dep) * wade);   // the waterline, on the scratch canvas
       sg.globalCompositeOperation = 'destination-out'; sg.fillStyle = 'rgba(0,0,0,' + (0.5 * wade) + ')'; sg.fillRect(0, line, W3, H5 - line);   // under water: faded…
@@ -1606,10 +1689,43 @@ var Render = (function () {
       g.restore();
       return ay - 4 * T + top0;
     }
+    // Breathing: a figure standing still (a.idle) rises one art pixel and sinks again, slowly, each in its own time
+    // (a.ph). Config idle_bob = off stops it. Its health bar and name stay where they are.
+    var bobPx;                                                       // (worked out on first use: figures are painted from above this line)
+    function bobOf(a) {
+      if (!a.idle) return 0;
+      if (bobPx === undefined) bobPx = String(cfg.idle_bob || '').toLowerCase() === 'off' ? 0 : Math.max(1, Math.round(T / NT));
+      return bobPx && Math.sin(now / 380 + (a.ph || 0)) > 0 ? bobPx : 0;
+    }
+    // Walking sway: a figure on its way between two tiles leans a few degrees to one side and lifts one art pixel,
+    // most at mid-step and none on the tile; the next step leans the other way (by which tile it left). It comes
+    // from where the figure is drawn, so it keeps time with the steps, slow when sneaking or wading. Config
+    // walk_wobble = the lean in degrees (2.5; 0 = off). Players and monsters alike.
+    var wobDeg;
+    function wobbleOf(a) {
+      if (a.idle || a.fixed) return null;                          // (aiming too: the aimed arm and weapon lean with the body)
+      if (wobDeg === undefined) { var wv = cfg.walk_wobble; wobDeg = wv === undefined || wv === '' ? 2.5 : (Number(wv) > 0 ? Number(wv) : 0); }
+      if (!wobDeg) return null;
+      var fx = a.x - Math.floor(a.x), fy = a.y - Math.floor(a.y);
+      var s = Math.max(Math.sin(Math.PI * fx), Math.sin(Math.PI * fy));
+      if (!(s > 0.02)) return null;
+      var side = (Math.floor(a.x) + Math.floor(a.y)) % 2 ? 1 : -1;
+      return { ang: side * s * wobDeg * Math.PI / 180, lift: s > 0.5 ? Math.max(1, Math.round(T / NT)) : 0 };
+    }
     function paintActor(a, ax, ay, isDark) {
-      var top, wade = wadeAt(a.x, a.y);
-      if (wade > 0.02) top = drawWading(a, ax, ay, wade, isDark);
-      else { dim(isDark); top = drawFigure(g, a, ax, ay); dim(false); }
+      var top, wade = wadeAt(a.x, a.y), bob = bobOf(a);
+      // sneaking (docs/STEALTH.md): the figure turns into a shadow — dark, washed of colour, see-through (Config sneak_alpha, 0.55)
+      if (a.sneak) { shadeNow = true; var sa = Number(cfg.sneak_alpha); g.globalAlpha = sa > 0 && sa <= 1 ? sa : 0.55; }
+      var wb = wobbleOf(a);
+      if (wade > 0.02) top = drawWading(a, ax, ay, wade, isDark, bob, wb);
+      else if (wb) {                                                 // walking: the figure leans a little, about its feet, and lifts a pixel
+        var wx = ax + T / 2, wy = ay + T;
+        dim(isDark); g.save(); g.translate(wx, wy); g.rotate(wb.ang); g.translate(-wx, -wy);
+        top = drawFigure(g, a, ax, ay - wb.lift) + wb.lift;
+        g.restore(); dim(false);
+      }
+      else { dim(isDark); top = drawFigure(g, a, ax, ay - bob) + bob; dim(false); }
+      if (a.sneak) { shadeNow = false; g.globalAlpha = 1; dim(false); }
       if (a.statusColor) {                                           // tinted while burning, chilled, stunned...
         g.globalAlpha = .35; g.fillStyle = a.statusColor; g.fillRect(ax + 4, top + 4, T - 8, ay + T - top - 8); g.globalAlpha = 1;
       }
@@ -1618,11 +1734,7 @@ var Render = (function () {
         g.fillStyle = a.sprite !== undefined ? '#e04a3a' : '#4ec36a';
         g.fillRect(ax + 5, top - 3, Math.max(0, (T - 10) * a.hp / a.maxHp), 2);
       }
-      if (a.name && a.sprite === undefined) {
-        g.font = '8px sans-serif'; g.textAlign = 'center';
-        g.fillStyle = 'rgba(0,0,0,.6)'; g.fillText(a.name, ax + T / 2 + 1, top - 5);
-        g.fillStyle = a.me ? '#fff' : '#bfe0ff'; g.fillText(a.name, ax + T / 2, top - 6);
-      }
+      if (a.name && a.sprite === undefined) nameTags.push({ x: ax + T / 2, y: top - 3, text: a.name, color: a.me ? '' : (a.nameColor || '#bfe0ff') });
     }
 
     // layer 5c: 'over' objects — the whole sprite sits in front of everything (foreground foliage, railings)
@@ -1659,8 +1771,10 @@ var Render = (function () {
       });
     }
     overs.sort(function (a, b) { return a.y - b.y; }).forEach(function (t) {
+      dim(t.shade);
       drawObject(g, t.o, t.path, t.dx, t.dy, T, 'base', now, t.flip);
       if (hasTop(t.o, t.path)) drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now, t.flip);
+      dim(false);
     });
 
     // layer 6: the floors above (docs/FLOORS.md stage 3). Seen from outside they are the upper part of the
@@ -1710,6 +1824,49 @@ var Render = (function () {
    * outlined green where it may go and red where it may not, with the reason. gh = {bp, x, y, side, ok, reason}.
    */
   /** While building: whose land is whose. Bases you belong to get a green outline, others a red wash. */
+  /** The object whose PICTURE is under a point of the view (canvas pixels), as drawn in the last frame: {x, y} = its own
+   *  tile, or null. So a thing bigger than its tile (a tree, a wide bench) is picked by any pixel of it, see-through
+   *  pixels apart. Of several, the one nearest the camera. Draw-only: what may be done there is still the rules' call. */
+  Renderer.prototype.objectAt = function (px, py) {
+    var T = this.content.config.tile_size || 32, best = null, list = this.hits || [];
+    for (var i = 0; i < list.length; i++) {
+      var h = list[i], img = h.path && Assets.get(h.path); if (!img) continue;
+      var r = objRect(h.o, img, h.dx, h.dy, T);
+      if (px < r.x || py < r.y || px >= r.x + r.w || py >= r.y + r.h) continue;
+      if (best && h.e.y < best.e.y) continue;
+      var sx = Math.floor((px - r.x) * NT / T), sy = Math.floor((py - r.y) * NT / T);
+      if (h.flip) sx = Math.round(r.fw) - 1 - sx;
+      if (!solidAt(img, sx, sy)) continue;
+      best = h;
+    }
+    return best ? { x: best.e.x, y: best.e.y } : null;
+  };
+  /** Does a thing drawn bigger than a tile stand on that tile (its own tile), with nothing smaller sharing it? Then only
+   *  its picture's pixels mean it (objectAt), not the tile's whole square. */
+  Renderer.prototype.bigOn = function (x, y) {
+    var T = this.content.config.tile_size || 32, list = this.hits || [], big = false;
+    for (var i = 0; i < list.length; i++) {
+      var h = list[i]; if (h.e.x !== x || h.e.y !== y) continue;
+      var img = h.path && Assets.get(h.path); if (!img) return false;
+      var r = objRect(h.o, img, h.dx, h.dy, T);
+      if (r.w > T || r.h > T) big = true; else return false;         // (a small thing on the same tile: the tile is its too)
+    }
+    return big;
+  };
+  // Is that pixel of a picture drawn (not see-through)? The picture's pixels are read once and kept; one that cannot be
+  // read (from another site) counts as solid everywhere.
+  var _px = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+  function solidAt(img, sx, sy) {
+    if (sx < 0 || sy < 0 || sx >= img.width || sy >= img.height) return false;
+    if (!_px || typeof document === 'undefined') return true;
+    var d = _px.get(img);
+    if (d === undefined) {
+      try { var cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height; var cg = cv.getContext('2d'); cg.drawImage(img, 0, 0); d = cg.getImageData(0, 0, img.width, img.height).data; }
+      catch (e) { d = null; }
+      _px.set(img, d);
+    }
+    return !d || d[(sy * img.width + sx) * 4 + 3] > 24;
+  }
   Renderer.prototype.drawClaims = function (cam, claims, me, gh) {
     var g = this.g, c = this.content, T = c.config.tile_size || 32, ox = -cam.x, oy = -cam.y;
     var cmap = this.map;
@@ -1884,6 +2041,18 @@ var Render = (function () {
         g.globalAlpha = 1;
         continue;
       }
+      if (f.kind === 'sound') {
+        // a step's noise while sneaking (docs/STEALTH.md): a ring that grows out to how far it carries (f.r tiles) and
+        // fades. Square with round corners, as hearing reaches: every tile within f.r steps, diagonals too.
+        var hw = (0.5 + f.r * Math.sqrt(age)) * T, cx = f.x * T + T / 2 - cam.x, cy = f.y * T + T / 2 - cam.y;
+        g.globalAlpha = .55 * (1 - age); g.strokeStyle = f.color || '#cfe3ff'; g.lineWidth = Math.max(1, Math.round(T / 16));
+        g.beginPath();
+        if (g.roundRect) g.roundRect(Math.round(cx - hw), Math.round(cy - hw), Math.round(2 * hw), Math.round(2 * hw), Math.round(hw * 0.45));
+        else g.rect(Math.round(cx - hw), Math.round(cy - hw), Math.round(2 * hw), Math.round(2 * hw));
+        g.stroke();
+        g.globalAlpha = 1;
+        continue;
+      }
       if (f.kind === 'flash') {
         g.globalAlpha = .45 * (1 - age); g.fillStyle = f.color;
         if (f.cells) f.cells.forEach(function (c) { g.fillRect(Math.round(c.x * T - cam.x), Math.round(c.y * T - cam.y), T, T); });
@@ -1900,7 +2069,7 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
+  return { outfitOf: outfitOf, outfitLayers: outfitLayers, drawOutfit: drawOutfit, Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

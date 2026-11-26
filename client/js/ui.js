@@ -20,7 +20,7 @@ var UI = (function () {
     button_danger_idle: 'nb', button_danger_hover: 'nb', button_danger_pressed: 'nb'
   };
   // every piece the stylesheet uses
-  var PIECES = ['panel_metal', 'panel_plate', 'panel_inset', 'panel_paper', 'panel_tooltip', 'tape', 'header_plate', 'tab_active', 'tab_idle',
+  var PIECES = ['icon_x', 'panel_metal', 'panel_plate', 'panel_inset', 'panel_paper', 'panel_tooltip', 'tape', 'header_plate', 'tab_active', 'tab_idle',
     'slot_empty', 'slot_hover', 'slot_selected', 'slot_locked', 'slot_warn', 'slot_hotbar', 'slot_hotbar_selected',
     'button_normal_idle', 'button_normal_hover', 'button_normal_pressed', 'button_normal_disabled',
     'button_primary_idle', 'button_primary_hover', 'button_primary_pressed',
@@ -36,7 +36,7 @@ var UI = (function () {
     minimap: false,      // top right: the land around you (works today, from the map on screen; off until wanted)
     clock: false,        // top right: day, hour, the day-night track.            Needs me.clock = {day, frac 0-1}
     nightfall: false,    // top left: "nightfall in 2h 10m".                      Needs me.clock.nightIn (game minutes)
-    noise: false,        // top centre: how much noise you make.                  Needs me.noise 0-1
+    noise: true,         // top centre: how much noise you make (stealth, docs/STEALTH.md; main.js noiseMeter). Hidden with Config stealth off
     stamina: false,      // the bar under health.                                 Needs me.stamina / me.maxStamina
     temperature: false,  // a vital chip.                                         Needs me.temp 0-100
     condition: false,    // the weapon card's condition bar.                      Needs me.cond[itemId] 0-1

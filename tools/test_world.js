@@ -15,12 +15,27 @@ const tables = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/tables.j
 // These tests replay many moves at one frozen instant; the referee's walking-speed limit would (rightly) refuse
 // that, so it is switched off here and tested on its own further down.
 tables.Config = tables.Config.filter(r => r.key !== 'move_burst').concat([{ key: 'move_burst', value: 9999 }]);
+// Most fights here count plain damage, and a monster that has not seen its attacker would take a sneak attack's
+// (docs/STEALTH.md stage 3). The stealth tests set Config ambush_mult back themselves.
+// Likewise most monsters here are placed facing nowhere in particular: they see all round unless a test says otherwise.
+tables.Config = tables.Config.filter(r => r.key !== 'ambush_mult' && r.key !== 'sight_cone').concat([{ key: 'ambush_mult', value: 1 }, { key: 'sight_cone', value: 360 }]);
 let passed = 0;
 function test(name, fn) { fn(); passed++; console.log('ok -', name); }
 
 // deterministic dice: cycles through these values
 function dice(seq) { let i = 0; return () => seq[i++ % seq.length]; }
 const mid = dice([0.5]);
+// Loot never goes straight into a bag: it lies in a body or a loot bag. This picks up everything player p finds in
+// the ones on a map (the shared part and their own), and clears away the ones left empty, as taking it all does.
+function scoop(c, ws, mapId, p) {
+  const st = World.structOf(ws, mapId);
+  st.ents.filter(b => b.wild && Array.isArray(b.inv)).forEach(b => {
+    b.inv.filter(g => !g.own || g.own === p.id).forEach(g => World.give(c, p, g.item, g.qty, []));
+    b.inv = b.inv.filter(g => g.own && g.own !== p.id);
+  });
+  st.ents = st.ents.filter(b => !(b.wild && Array.isArray(b.inv) && !b.inv.length));
+  st.rev = (st.rev || 0) + 1;
+}
 
 function fresh() {
   const c = Content.build(tables);
@@ -184,7 +199,9 @@ test('walking into a monster does not attack it; an attack does, and killing it 
   assert.match(texts(ev), /The slime is defeated. \+6 XP/);
   assert.strictEqual(s.p.xp, 6);
   assert.ok(s.p.gold >= 1);
-  assert.ok(World.count(s.p, 'slime_gel') >= 1);                 // dice 0.0 always passes the 60% roll
+  assert.strictEqual(World.count(s.p, 'slime_gel'), 0, 'the loot is not put in the bag');
+  const sbag = World.structOf(s.ws, 'map_3').ents.find(b => b.ref === '_bag');
+  assert.deepStrictEqual([sbag.x, sbag.y, sbag.inv.some(g => g.item === 'slime_gel' && g.own === s.p.id)], [slime.x, slime.y, true], 'it lies in a loot bag where the slime fell, theirs');   // dice 0.0 always passes the 60% roll
   assert.deepStrictEqual([s.p.x, s.p.y], [slime.x + 1, slime.y]); // attacking does not move you
 });
 
@@ -2973,9 +2990,13 @@ test('walker: it must see you to come after you; a wall in between and it does n
   turns(s, 6);
   assert.strictEqual(w.ai, undefined, 'nothing to go after');
   assert.strictEqual(s.p.hp, World.stats(s.c, s.p).maxHp);
-  // the plain brain, for contrast, is drawn through the wall
+  // the plain brain, with stealth on, cannot see through the wall either, and you stand still (silent)
   s.c.monsters.walker.brain = '';
   w.x = 3; w.y = 1;
+  turns(s, 2, dice([0.9]));                                    // (a die that never has it wander)
+  assert.deepStrictEqual([w.x, w.y], [3, 1], 'stealth: it does not know you are there');
+  // with Config stealth off it is drawn through the wall, as before
+  s.c.config.stealth = 'off';
   turns(s, 2);
   assert.deepStrictEqual([w.x, w.y], [3, 2], 'pressed against the wall, as before');
 });
@@ -3024,6 +3045,7 @@ test('walker: its target behind a shut door, it breaks the door down, comes thro
   turns(s, 1);
   assert.strictEqual(w.ai.k, 'p');
   put(s, 'arena', 1, 5, 'N');                                  // the player slips to the far side; it hears them there
+  s.p.stepAt = 1e15;                                           // (walking about all the while: making noise, World.noiseOf)
   const ev = turns(s, 8);
   const hits = ev.filter(e => e.type === 'hit' && e.struct);
   assert.deepStrictEqual(hits.map(e => e.struct), ['arena.e1', 'arena.e1'], 'two blows, both on the door: the weakest way in');
@@ -3103,6 +3125,259 @@ test('walker: it hunts prey animals too, once a player is around to see it start
   assert.strictEqual(w.ai, undefined, 'and with that it is done');
 });
 
+// ---------------------------------------------------------------- stealth (docs/STEALTH.md, stage 1)
+test('stealth: a monster SEES a player in its range with a clear line, HEARS one who walks, and notices nothing else', () => {
+  const s = arena(), map = liveOf(s), def = { aggro: 6, hearing: 1 }, m = { x: 3, y: 1 };
+  const at = (x, y, o) => Object.assign({ x, y }, o || {});
+  const N = (p, o) => World.notices(s.c, map, m, def, p, 10000, 6, stOf(s), o);
+  assert.strictEqual(N(at(3, 0)), 'seen', 'in the open, in range');
+  assert.strictEqual(N(at(3, 5)), '', 'behind the wall, standing still: nothing at all');
+  assert.strictEqual(N(at(3, 5, { stepAt: 9500 })), 'heard', 'behind the wall, walking: heard (noise_walk 6 tiles, walls or not)');
+  assert.strictEqual(N(at(3, 5, { stepAt: 9500, sneak: true })), '', 'sneaking: only 2 tiles of noise');
+  assert.strictEqual(N(at(3, 3, { stepAt: 9500, sneak: true })), 'heard', '…which carries that far');
+  assert.strictEqual(N(at(3, 5, { stepAt: 8000 })), '', 'a moment after the last step it is quiet again');
+  assert.strictEqual(N(at(0, 1, { sneak: true })), 'seen', 'sneaking in the open, 3 tiles off: seen (sight 6 × Config sneak_sight 0.6 = 3.6)');
+  m.x = 0; m.y = 0;
+  assert.strictEqual(N(at(4, 0, { sneak: true })), '', 'sneaking 4 tiles off in the open: not seen');
+  assert.strictEqual(N(at(4, 0)), 'seen', 'walking there: seen');
+  m.x = 3; m.y = 1;
+  assert.strictEqual(World.notices(s.c, map, m, { aggro: 6, hearing: 0 }, at(3, 5, { stepAt: 9500 }), 10000, 6, stOf(s)), '', 'Monsters hearing 0: deaf');
+  assert.strictEqual(World.notices(s.c, map, m, { aggro: 6, hearing: 2 }, at(3, 6, { stepAt: 9500, sneak: true }), 10000, 6, stOf(s)), '', 'hearing 2: sneaking reaches 4 tiles, not 5');
+  assert.strictEqual(World.notices(s.c, map, m, { aggro: 6, hearing: 2 }, at(3, 5, { stepAt: 9500, sneak: true }), 10000, 6, stOf(s)), 'heard');
+  s.c.config.stealth = 'off';
+  assert.strictEqual(N(at(3, 5)), 'seen', 'stealth off: within range is enough, through walls (the old plain brain)');
+  assert.strictEqual(N(at(3, 5), { los: true }), '', '…but a walker still has to see');
+});
+
+test('stealth: the sight area drawn while sneaking is exactly where notices would say seen', () => {
+  const s = arena(), map = liveOf(s);
+  ['walker', '', 'hunter', 'animal'].forEach(brain => {
+    const def = Object.assign({}, s.c.monsters.rat, { brain, aggro: 6, sight: 6, fleeRange: 6 }), m = { x: 3, y: 1 };
+    const area = World.sightArea(s.c, map, m, def, true, stOf(s), 0);
+    for (let y = 0; y < 7; y++) for (let x = 0; x < 7; x++) {
+      const how = World.notices(s.c, map, m, def, { x, y, sneak: true }, 0, World.lookRange(def, m, 0), stOf(s), { manhattan: !brain, los: brain === 'walker' });
+      assert.strictEqual(!!area[x + ',' + y], how === 'seen', (brain || 'plain') + ' at ' + x + ',' + y);
+    }
+    assert.ok(!area['3,5'], 'nothing behind the wall');
+  });
+});
+
+test('stealth: a monster sees its full range only in a cone in front of it (Config sight_cone, back_sight)', () => {
+  const s = arena(), map = liveOf(s), def = { aggro: 6, hearing: 1 };
+  s.c.config.sight_cone = 120; s.c.config.cone_reach = 1;      // (a wide cone with no extra reach; the tests' fixture says 360)
+  const m = { x: 3, y: 1, facing: 'W' };
+  const N = (x, y) => World.notices(s.c, map, m, def, { x, y }, 0, 6, stOf(s));
+  assert.strictEqual(N(0, 1), 'seen', 'straight ahead');
+  assert.strictEqual(N(1, 0), 'seen', 'ahead and a little aside (within 60 degrees)');
+  assert.strictEqual(N(3, 0), '', 'beside it: not seen');
+  assert.strictEqual(N(4, 1), '', 'right behind it, next to it: not seen (back_sight 0)');
+  s.c.config.back_sight = 0.5;
+  assert.strictEqual(N(4, 1), 'seen', 'back_sight 0.5: three tiles behind it');
+  assert.strictEqual(N(6, 0), '', '(a cone counts straight-line distance: that is 3.2 tiles)');
+  m.x = 0; assert.strictEqual(N(4, 1), '', '…but not four');
+  m.x = 3; s.c.config.back_sight = 0;
+  const area = World.sightArea(s.c, map, m, Object.assign({}, def, { brain: 'walker', sight: 6 }), false, stOf(s), 0);
+  assert.ok(area['0,1'] && area['1,2'] && !area['4,1'] && !area['3,2'] && !area['6,0'], 'the area drawn is the same cone');
+  m.facing = 'E';
+  assert.strictEqual(N(4, 1), 'seen', 'it turns round: now it does');
+  s.c.config.stealth = 'off';
+  m.facing = 'W';
+  assert.strictEqual(N(4, 1), 'seen', 'stealth off: no cone, as before');
+});
+
+test('stealth: the cone is long rather than wide: 60 degrees, and 1.5 times the range straight ahead', () => {
+  const s = arena(), map = liveOf(s), def = { aggro: 4, hearing: 1 };
+  delete s.c.config.sight_cone;                                // (the defaults; the tests' fixture says 360)
+  const m = { x: 0, y: 0, facing: 'E' };
+  const N = (x, y) => World.notices(s.c, map, m, def, { x, y }, 0, 4, stOf(s));
+  assert.strictEqual(N(6, 0), 'seen', 'six tiles straight ahead, with a range of 4');
+  assert.strictEqual(N(1, 2), '', 'two tiles off, but too far to the side');
+  s.c.config.cone_reach = 1;
+  assert.strictEqual(N(6, 0), '', 'Config cone_reach 1: only its range');
+});
+
+test('stealth: a roaming monster that cannot step a way still turns to look that way', () => {
+  const s = arena();
+  const rat = { ref: 'rat', id: 'rat#0', x: 6, y: 0, dead: false, hp: 5, statuses: [], last: 0, respawnAt: 0, facing: 'S' };
+  const ms = World.mapState(s.ws, 'arena'); ms.monsters = [rat]; ms.spawnSig = '';
+  put(s, 'arena', 0, 6, 'N');                                  // far off, behind the wall: nothing to go after
+  World.advance(s.c, s.ws, 'arena', [s.p], s.c.monsters.rat.moveMs, dice([0.1, 0.3]), []);   // wander, east: off the map
+  assert.deepStrictEqual([rat.x, rat.y, rat.facing], [6, 0, 'E']);
+});
+
+test('stealth: a blow on a monster that has not seen you is a sneak attack (Config ambush_mult)', () => {
+  function fight(face, cfg) {
+    const s = arena(); Object.assign(s.c.config, { sight_cone: 120, ambush_mult: 2 }, cfg || {});
+    s.c.monsters.rat = Object.assign({}, s.c.monsters.rat, { hp: 99, def: 0 });
+    const rat = { ref: 'rat', id: 'rat#0', x: 3, y: 1, dead: false, hp: 99, statuses: [], last: 1e15, respawnAt: 0, facing: face };
+    const ms = World.mapState(s.ws, 'arena'); ms.monsters = [rat]; ms.spawnSig = '';
+    put(s, 'arena', 3, 2, 'N');                                // right behind it, when it faces north
+    const ev = act(s, { type: 'attack', x: 3, y: 1 }, 5000);
+    return { dmg: 99 - rat.hp, text: texts(ev), rat, s };
+  }
+  const plain = fight('S').dmg;                                // it faces you: an ordinary blow
+  const back = fight('N');
+  assert.strictEqual(back.dmg, plain * 2, 'from behind: twice the damage');
+  assert.match(back.text, new RegExp('for ' + back.dmg + '\\. A sneak attack!'));
+  assert.strictEqual(fight('N', { stealth: 'off' }).dmg, plain, 'stealth off: no such thing');
+  const again = back.s, rat = back.rat, hp = rat.hp;
+  again.p.nextAttack = 0; act(again, { type: 'attack', x: 3, y: 1 }, 9000);
+  assert.strictEqual(hp - rat.hp, plain, 'once struck it knows you are there: the next blow is an ordinary one');
+});
+
+test('stealth: spotted while sneaking, you stand up, and cannot sneak again until nothing is after you', () => {
+  const s = arena();
+  put(s, 'arena', 3, 0, 'W');
+  s.p.sneak = true;
+  const w = withWalker(s, 'arena', 0, 0, { aggroS: 2 });      // 3 tiles off in the open: within 8 × 0.6
+  let ev = turns(s, 1);
+  assert.strictEqual(s.p.sneak, undefined, 'seen: no longer sneaking');
+  assert.match(texts(ev), /The walker spotted you!/);
+  assert.strictEqual(World.publicPlayer(s.c, s.p).chased, true, 'the page is told something is after them');
+  assert.match(texts(act(s, { type: 'sneak', on: true }, s.at)), /can't hide while something is after you/);
+  assert.strictEqual(s.p.sneak, undefined);
+  put(s, 'arena', 3, 5, 'N');                                  // away behind the wall, standing still
+  ev = turns(s, 6, dice([0.9]));
+  assert.strictEqual(w.ai, undefined, 'it gave up');
+  assert.match(texts(ev), /Nothing is after you any more: you can sneak again/);
+  assert.strictEqual(s.p.chased, undefined);
+  act(s, { type: 'sneak', on: true }, s.at);
+  assert.strictEqual(s.p.sneak, true, 'and now they can');
+});
+
+test('stealth: a sneaking player who strikes and does not kill is found out; building stands you up', () => {
+  const s = arena(); s.c.config.ambush_mult = 1;
+  s.c.monsters.rat = Object.assign({}, s.c.monsters.rat, { hp: 99 });
+  const rat = { ref: 'rat', id: 'rat#0', x: 3, y: 1, dead: false, hp: 99, statuses: [], last: 1e15, respawnAt: 0, facing: 'N' };
+  const ms = World.mapState(s.ws, 'arena'); ms.monsters = [rat]; ms.spawnSig = '';
+  put(s, 'arena', 3, 2, 'N'); s.p.sneak = true;
+  assert.match(texts(act(s, { type: 'attack', x: 3, y: 1 }, 5000)), /spotted you/);
+  assert.strictEqual(s.p.sneak, undefined);
+  ms.monsters = []; s.p.sneak = true;
+  act(s, { type: 'build', bp: 'nothing', x: 0, y: 0 }, 6000);
+  assert.strictEqual(s.p.sneak, undefined, 'a build action: standing');
+});
+
+test('sight is the same both ways: if a monster can see you, you can see it (and the other way round)', () => {
+  const s = fresh(), c = s.c, map = c.maps.map_3, sf = () => '';
+  let n = 0;
+  for (let ax = 0; ax < map.width; ax++) for (let ay = 0; ay < map.height; ay++) for (let dx = -6; dx <= 6; dx += 3) for (let dy = -5; dy <= 5; dy += 2) {
+    const bx = ax + dx, by = ay + dy; if (bx < 0 || by < 0 || bx >= map.width || by >= map.height) continue;
+    assert.strictEqual(World.canSee(c, map, ax, ay, bx, by, sf, true), World.canSee(c, map, bx, by, ax, ay, sf, true), ax + ',' + ay + ' and ' + bx + ',' + by);
+    n++;
+  }
+  assert.ok(n > 1000);
+});
+
+test('stealth: a plain monster going to a sound shows ?, one after someone it saw shows !', () => {
+  const s = arena();
+  const rat = { ref: 'rat', id: 'rat#0', x: 3, y: 1, dead: false, hp: 5, statuses: [], last: 0, respawnAt: 0, facing: 'S' };
+  const ms = World.mapState(s.ws, 'arena'); ms.monsters = [rat]; ms.spawnSig = '';
+  s.c.monsters.rat = Object.assign({}, s.c.monsters.rat, { aggro: 6, moveMs: 500 });
+  put(s, 'arena', 3, 5, 'N'); s.p.stepAt = 1e15;               // behind the wall, walking about
+  World.advance(s.c, s.ws, 'arena', [s.p], 500, dice([0.9]), []);
+  assert.strictEqual(World.alertOf(rat), 1, 'heard: ?');
+  put(s, 'arena', 3, 0, 'N');
+  World.advance(s.c, s.ws, 'arena', [s.p], 1000, dice([0.9]), []);
+  assert.strictEqual(World.alertOf(rat), 2, 'seen: !');
+});
+
+test('perception: seen = at once, its turn or not; heard = ? at once, a 2 s wait, then off to the spot of the sound', () => {
+  function rig(over) {
+    const s = arena();
+    s.c.monsters.rat = Object.assign({}, s.c.monsters.rat, { aggro: 6, moveMs: 500 }, over || {});
+    const rat = { ref: 'rat', id: 'rat#0', x: 3, y: 1, dead: false, hp: 5, statuses: [], last: 10000, respawnAt: 0, facing: 'S' };
+    const ms = World.mapState(s.ws, 'arena'); ms.monsters = [rat]; ms.spawnSig = '';
+    const at = (now) => { const ev = []; World.advance(s.c, s.ws, 'arena', [s.p], now, dice([0.9]), ev); return ev; };
+    return { s, rat, at };
+  }
+  // seen: it was not due to move for a while, yet it reacts on this very update
+  const a = rig(); put(a.s, 'arena', 0, 1, 'E'); a.s.p.sneak = true; a.s.p.stepAt = 0;
+  const ev = a.at(10100);
+  assert.deepStrictEqual([World.alertOf(a.rat), a.rat.chase, a.rat.x, a.s.p.sneak], [2, 'p1', 2, undefined], 'the ! , a step towards them, and spotted');
+  assert.match(texts(ev), /spotted you/);
+  // heard, out of sight behind the wall
+  const b = rig(); put(b.s, 'arena', 3, 5, 'N'); b.s.p.stepAt = 1e15;
+  b.at(10500);
+  assert.deepStrictEqual([World.alertOf(b.rat), b.rat.x, b.rat.y, b.rat.hear.x, b.rat.hear.y], [1, 3, 1, 3, 5], 'the ? at once, standing');
+  b.s.p.stepAt = 0; put(b.s, 'arena', 0, 6, 'N');              // they slip away quietly
+  b.at(11500);
+  assert.deepStrictEqual([b.rat.x, b.rat.y], [3, 1], 'still listening a second later');
+  b.at(12600);
+  assert.ok(b.rat.goTo && b.rat.goTo.x === 3 && b.rat.goTo.y === 5, 'two seconds on: it goes to where the sound WAS, not where they are');
+  assert.strictEqual(World.alertOf(b.rat), 1);
+  // an animal: ? , then it runs from the spot of the sound
+  const d = rig({ brain: 'animal', fleeRange: 6 }); put(d.s, 'arena', 3, 4, 'N'); d.s.p.stepAt = 1e15;
+  d.at(10500);
+  assert.deepStrictEqual([World.alertOf(d.rat), d.rat.x, d.rat.y], [1, 3, 1], 'heard: it lifts its head');
+  d.at(12600);
+  assert.ok(Math.max(Math.abs(d.rat.x - 3), Math.abs(d.rat.y - 4)) > 3, 'then runs from the sound');
+});
+
+test('stealth: Z sneaks — the step costs Config sneak_slow, out of the same walking budget; stealth off refuses it', () => {
+  const s = arena();
+  put(s, 'arena', 0, 0, 'E');
+  assert.strictEqual(Rules.stepCost('E', s.c, liveOf(s), 1, 0, { sneak: true }), 2, 'twice a step (sneak_slow not said)');
+  assert.strictEqual(Rules.stepCost('E', s.c, liveOf(s), 1, 0, { sn: 1 }), 2, 'another player, as the page is sent them');
+  act(s, { type: 'sneak', on: true }, 1000);
+  assert.strictEqual(s.p.sneak, true);
+  assert.strictEqual(World.publicPlayer(s.c, s.p).sneak, true);
+  const other = World.newPlayer(s.c, 'p2', 'Other', 'warrior'); other.map = 'arena'; other.x = 6; other.y = 0;
+  assert.strictEqual(World.view(s.c, s.ws, 'arena', other, [s.p, other]).players[0].sn, 1, 'the others see them crouched');
+  s.p.mvB = 6; s.p.mvT = 2000;
+  act(s, { type: 'move', dirs: ['E', 'E', 'E', 'E'] }, 2000);
+  assert.strictEqual(s.p.x, 3, 'a budget of 6 pays for three sneaking steps');
+  assert.strictEqual(s.p.stepAt, 2000, 'walking leaves its noise (World.noiseOf)');
+  assert.strictEqual(World.noiseOf(s.c, s.p, 2500), 2, 'sneaking: 2 tiles');
+  assert.strictEqual(World.noiseOf(s.c, s.p, 4000), 0, 'standing still again: silent');
+  act(s, { type: 'sneak', on: false }, 5000);
+  assert.strictEqual(s.p.sneak, undefined);
+  s.c.config.stealth = 'off';
+  act(s, { type: 'sneak', on: true }, 6000);
+  assert.strictEqual(s.p.sneak, undefined, 'stealth off: there is no sneaking');
+  assert.strictEqual(World.publicPlayer(s.c, s.p).noise, undefined, 'and no noise meter');
+});
+
+test('stealth: a walker that only HEARS someone goes to look, and breaks nothing on the way', () => {
+  const s = arena();
+  put(s, 'arena', 2, 5, 'N');                                  // behind the wall, south of the door
+  s.p.stepAt = 1e15;                                           // (walking about: making noise)
+  const w = withWalker(s, 'arena', 2, 1);
+  const ev = turns(s, 8);
+  assert.ok(w.ai && w.ai.w === 1 && World.alertOf(w) === 1, 'it is looking about (the ?)');
+  assert.ok(!ev.some(e => e.type === 'hit' && e.struct), 'the door is left whole: a sound alone never makes it break in');
+  // in the open, out of sight behind the crate: it walks round to where the sound was, sees them and goes for them
+  const s2 = arena();
+  put(s2, 'arena', 5, 2, 'N'); s2.p.stepAt = 1e15;
+  const w2 = withWalker(s2, 'arena', 5, 0);
+  w2.facing = 'N';
+  turns(s2, 1);
+  assert.deepStrictEqual([w2.ai, World.alertOf(w2), w2.x, w2.y, w2.facing], [undefined, 1, 5, 0, 'N'], 'heard: the ? at once; surprised, it freezes, facing as it was');
+  turns(s2, 1);
+  assert.deepStrictEqual([w2.ai, w2.x, w2.y, w2.facing], [undefined, 5, 0, 'N'], 'still frozen (Config hear_delay_s 2)');
+  turns(s2, 1);
+  assert.deepStrictEqual([w2.ai.x, w2.ai.y, w2.ai.w], [5, 2, 1], 'two seconds on: it turns and goes to where the sound came from');
+  turns(s2, 3);
+  assert.strictEqual(World.alertOf(w2), 2, 'round the crate it sees them: now it hunts (the !)');
+  s.p.stepAt = 0;                                              // they stand still: nothing more to go on
+  delete w.ai; turns(s, 3, dice([0.9]));
+  assert.strictEqual(w.ai, undefined, 'silent and out of sight: it does not know they are there');
+});
+
+test('stealth: an animal lets a sneaking player come closer than a walking one', () => {
+  const s = arena();
+  s.c.monsters.deer = Object.assign({}, s.c.monsters.rat, { id: 'deer', name: 'Deer', brain: 'animal', prey: true, hp: 10, fleeRange: 5, moveMs: 500 });
+  const deer = { ref: 'deer', id: 'deer#0', x: 1, y: 0, dead: false, hp: 10, statuses: [], last: 0, respawnAt: 0, facing: 'S' };
+  const ms = World.mapState(s.ws, 'arena'); ms.monsters = [deer]; ms.spawnSig = '';
+  const step = (now) => World.advance(s.c, s.ws, 'arena', [s.p], now, dice([0.9]), []);   // (a die that never has it wander)
+  put(s, 'arena', 5, 0, 'W'); s.p.sneak = true;                // 4 tiles off: within its 5, beyond 5 × 0.6
+  step(500);
+  assert.deepStrictEqual([deer.x, deer.y], [1, 0], 'sneaking 4 tiles off: it grazes on');
+  delete s.p.sneak;
+  step(1000);
+  assert.ok(Math.max(Math.abs(deer.x - 5), Math.abs(deer.y)) > 4, 'walking (seen): it runs');
+});
+
 test('walker: struck from out of sight, it turns on whoever struck it', () => {
   const s = arena();
   put(s, 'arena', 3, 5, 'N');
@@ -3161,6 +3436,23 @@ test('animated ground: a tileset may hold several frames and a terrain may carry
 });
 
 // ---------------------------------------------------------------- ground height
+test('raised ground hides what is behind it; from high ground you see over low ground; the same both ways', () => {
+  const tb = JSON.parse(JSON.stringify(tables)), row = Array(11).fill('til_1'), el = Array(1).fill(0).map(() => Array(11).fill(''));
+  tb.Maps.push({ id: 'ridge', name: 'Ridge', width: 11, height: 1, terrain: JSON.stringify([row]), elev: JSON.stringify(el) });
+  const c = Content.build(tb), m = c.maps.ridge, none = () => '', see = (a, b) => World.canSee(c, m, a, 0, b, 0, none, true);
+  assert.ok(see(0, 10), 'level ground: nothing hides anything');
+  m.elev[0][5] = '1';
+  assert.ok(!see(0, 10) && !see(10, 0), 'a ledge taller than the eye between two on level ground hides each from the other');
+  m.elev[0][0] = '2';
+  assert.ok(see(0, 10) && see(10, 0), 'from higher ground the eye passes over it');
+  m.elev[0][0] = ''; m.elev[0][8] = '1'; m.elev[0][9] = '1'; m.elev[0][10] = '1'; m.elev[0][5] = '';
+  assert.ok(see(0, 9) && see(0, 10), 'standing on a low ledge is seen from below');
+  ['3', '3', '3'].forEach((v, i) => { m.elev[0][8 + i] = v; });
+  assert.ok(see(6, 8) && !see(6, 10) && !see(10, 6), 'at the foot of a tall cliff, only who stands at its edge is seen');
+  const vis = World.visibleCells(c, m, 6, 0, 20, none);
+  assert.ok(vis['8,0'] && !vis['9,0'] && !vis['10,0']);
+});
+
 test('ground height: a change of height is a cliff, a ramp joins two levels, and its flanks stay closed', () => {
   const tb = JSON.parse(JSON.stringify(tables)), row = Array(6).fill('til_1'), el = Array(6).fill(0).map(() => Array(6).fill(''));
   // a 2x2 plateau at level 1 (cells 2..3, 1..2), reached by a ramp at (2,3) climbing north
@@ -3260,7 +3552,9 @@ test('animals: a carcass is a container with the loot inside; emptied it is gone
   World.hitMonster(s2.c, s2.ws, 'field', s2.p, d2, 999, s2.t, mid, []);
   assert.ok(s2.ws.maps.field.struct.ents.some(b => b.ref === 'carcass_deer'));
   World.advance(s2.c, s2.ws, 'field', [s2.p], s2.t + 301000, mid, []);
-  assert.ok(!s2.ws.maps.field.struct.ents.some(b => b.ref === 'carcass_deer'), 'five minutes on it has rotted away');
+  assert.ok(s2.ws.maps.field.struct.ents.some(b => b.ref === 'carcass_deer'), 'a body is a loot bag: it lasts as long as one (15 minutes), not 5');
+  World.advance(s2.c, s2.ws, 'field', [s2.p], s2.t + 901000, mid, []);
+  assert.ok(!s2.ws.maps.field.struct.ents.some(b => b.ref === 'carcass_deer'), 'fifteen minutes on it has rotted away');
   // a monster with only a loot table leaves a body too, with what the table rolled inside; an empty one is gone when looked at
   const s4 = meadow(), rat = s4.put('rat', 2, 1);
   s4.c.monsters.rat.carcass = 'carcass_rabbit'; s4.c.monsters.rat.moveMs = 99999;
@@ -3271,17 +3565,55 @@ test('animals: a carcass is a container with the loot inside; emptied it is gone
   const s5 = meadow(), rat5 = s5.put('rat', 2, 1);
   s5.c.monsters.rat.carcass = 'carcass_rabbit'; s5.c.loot.rat = [];
   World.hitMonster(s5.c, s5.ws, 'field', s5.p, rat5, 999, s5.t, mid, []);
-  assert.ok(s5.ws.maps.field.struct.ents.some(b => b.ref === 'carcass_rabbit'), 'a body even with nothing on it');
-  assert.match(texts(World.act(s5.c, s5.ws, s5.p, { type: 'interact', x: 2, y: 1 }, s5.t += 1000, mid, [s5.p])), /There is nothing on the rabbit carcass/);
-  assert.ok(!s5.ws.maps.field.struct.ents.some(b => b.ref === 'carcass_rabbit'), 'and looking at it clears it away');
-  // an animal with loot but no carcass hands it over when a player kills it
+  assert.ok(!(s5.ws.maps.field.struct || { ents: [] }).ents.some(b => b.ref === 'carcass_rabbit'), 'nothing to leave: no bag at all');
+  // a bag already lies where it falls: the loot joins it, and its time to rot starts again
+  const s6 = meadow(), d6 = s6.put('deer', 6, 6), d7 = s6.put('deer', 6, 6);
+  World.hitMonster(s6.c, s6.ws, 'field', s6.p, d6, 999, s6.t, mid, []);
+  World.hitMonster(s6.c, s6.ws, 'field', s6.p, d7, 999, s6.t + 60000, mid, []);
+  const b6 = s6.ws.maps.field.struct.ents.filter(b => b.ref === 'carcass_deer');
+  assert.deepStrictEqual([b6.length, b6[0].x, b6[0].y, b6[0].inv.find(g => g.item === 'raw_meat').qty], [1, 6, 6, 8], 'one bag, holding both');
+  assert.strictEqual(World.count(s6.p, 'raw_meat'), 0, 'and nothing went straight into the bag');
+  assert.strictEqual(s6.ws.maps.field.timers[b6[0].key].at, s6.t + 60000 + 900000, 'which now rots fifteen minutes from the second kill');
+  // an animal with loot but no carcass leaves it in a loot bag when a player kills it: never straight into the bag
   const s3 = meadow(), d3 = s3.put('deer', 6, 6);
   s3.c.monsters.deer.carcass = '';
   World.hitMonster(s3.c, s3.ws, 'field', s3.p, d3, 999, s3.t, mid, []);
-  assert.deepStrictEqual([World.count(s3.p, 'raw_meat'), World.count(s3.p, 'leather')], [4, 2]);
+  const bags3 = () => s3.ws.maps.field.struct.ents.filter(b => b.ref === '_bag');
+  assert.deepStrictEqual([World.count(s3.p, 'raw_meat'), bags3().length, bags3()[0].x, bags3()[0].y], [0, 1, 6, 6]);
+  assert.deepStrictEqual(bags3()[0].inv.filter(g => !g.own).map(g => g.item + ':' + g.qty).sort(), ['leather:2', 'raw_meat:4']);
   s3.c.monsters.rabbit.carcass = '';
-  World.hitMonster(s3.c, s3.ws, 'field', null, s3.put('rabbit', 7, 7), 999, s3.t, mid, []);          // killed by a wolf: nobody gets it
-  assert.strictEqual(World.count(s3.p, 'raw_meat'), 4);
+  World.hitMonster(s3.c, s3.ws, 'field', null, s3.put('rabbit', 7, 7), 999, s3.t, mid, []);          // killed by a wolf: its bag lies there all the same
+  assert.deepStrictEqual([bags3().length, bags3()[1].x, bags3()[1].y, World.count(s3.p, 'raw_meat')], [2, 7, 7, 0]);
+  // loot and the ground (the owner's rules): a dispensable item where it falls goes into the bag put there; one that
+  // is not sends the bag to the nearest free tile, else to the nearest tile of dispensable things, else into the nearest bag
+  const s7 = meadow(), st7 = () => World.structOf(s7.ws, 'field');
+  s7.c.monsters.deer.carcass = '';
+  s7.c.items.wood.dispensable = true;
+  const lay = (x, y, what) => { const st = st7(); st.ents.push({ key: 'field.b' + (++st.n), x, y, ref: '_drop', data: { pickup: what }, hp: 0, max: 0, wild: true }); st.rev++; };
+  const fill = what => { for (let y = 3; y <= 9; y++) for (let x = 3; x <= 9; x++)
+    if (Math.abs(x - 6) + Math.abs(y - 6) <= 3 && !st7().ents.some(b => b.x === x && b.y === y)) lay(x, y, what); };
+  const bag7 = () => st7().ents.filter(b => b.ref === '_bag');
+  const at7 = (x, y) => st7().ents.filter(b => b.x === x && b.y === y).map(b => b.ref === '_drop' ? b.data.pickup : b.ref).sort().join();
+  const in7 = b => b.inv.map(g => g.item + ':' + g.qty).sort().join();
+  const kill7 = () => World.hitMonster(s7.c, s7.ws, 'field', s7.p, s7.put('deer', 6, 6), 999, s7.t, mid, []);
+  lay(6, 6, 'wood:3');
+  kill7();
+  assert.deepStrictEqual([bag7().length, at7(6, 6), in7(bag7()[0])], [1, '_bag', 'leather:2,raw_meat:4,wood:3'], 'dispensable where it fell: the bag is put there, the wood inside it');
+  scoop(s7.c, s7.ws, 'field', s7.p);
+  lay(6, 6, 'bone:1');
+  kill7();
+  assert.deepStrictEqual([bag7().length, at7(6, 6), Math.abs(bag7()[0].x - 6) + Math.abs(bag7()[0].y - 6)], [1, 'bone:1', 1], 'not dispensable: the bone stays, the bag on a free tile next to it');
+  scoop(s7.c, s7.ws, 'field', s7.p);
+  lay(6, 5, 'wood:1'); lay(8, 6, 'wood:2'); fill('bone:1');              // every tile near holds a bone, but two: wood
+  kill7();
+  assert.deepStrictEqual([bag7().length, at7(6, 5), at7(6, 6), at7(8, 6), in7(bag7()[0])], [1, '_bag', 'bone:1', 'wood:2', 'leather:2,raw_meat:4,wood:1'], 'no free tile: the NEAREST tile of dispensable things, which go into the bag');
+  kill7();
+  assert.deepStrictEqual([bag7().length, at7(8, 6), in7(bag7()[1])], [2, '_bag', 'leather:2,raw_meat:4,wood:2']);
+  kill7();
+  assert.deepStrictEqual([bag7().length, in7(bag7()[0])], [2, 'leather:4,raw_meat:8,wood:1'], 'no such tile left: it joins the nearest bag');
+  scoop(s7.c, s7.ws, 'field', s7.p); fill('bone:1');
+  kill7();
+  assert.deepStrictEqual([at7(6, 6), World.count(s7.p, 'raw_meat')], ['_bag,bone:1', 20], 'nowhere at all: a bag where it fell, beside the bone; still nothing straight into the bag');
 });
 
 test('animals: a chicken is tamed with seeds, settles at a coop, lays eggs there, and its spawner grows a new wild one', () => {
@@ -3607,12 +3939,13 @@ test('quests: things to bring are counted in the bag and taken at hand-in; quest
   s.c.monsters.rat.lootTable = 'rat'; s.c.monsters.rat.carcass = ''; s.c.monsters.rat.loot = '';
   const had = { bone: World.count(s.p, 'bone'), scrap: World.count(s.p, 'scrap'), wood: World.count(s.p, 'wood') };
   const n = id => World.count(s.p, id) - had[id];
-  s.kill(s.p, 'rat');
+  const kill = () => { s.kill(s.p, 'rat'); scoop(s.c, s.ws, 'field', s.p); };   // (and picks up what it left)
+  kill();
   assert.strictEqual(n('bone'), 0, 'not on the quest: no quest drop');
   s.as(s.p, { type: 'quest', op: 'accept', id: 'tails' });
-  s.kill(s.p, 'rat');
+  kill();
   assert.deepStrictEqual([n('bone'), s.log(s.p)], [1, 'tails:active:1']);
-  s.kill(s.p, 'rat'); s.kill(s.p, 'rat');
+  kill(); kill();
   assert.deepStrictEqual([n('bone'), s.log(s.p)], [2, 'tails:ready:2'], 'enough: no more fall');
   assert.match(texts(s.as(s.p, { type: 'quest', op: 'turnin', id: 'tails' })), /need to be with Tom/, 'handed in to someone else');
   Object.assign(s.p, { x: 8, y: 9 });
@@ -3664,9 +3997,12 @@ test('who took part: everyone who hit it gets the kill, the full XP and their ow
   World.hitMonster(s.c, s.ws, 'field', s.q, rat, 1, s.t += 100, mid, []);
   assert.deepStrictEqual(Object.keys(rat.hits), ['p2'], 'the monster remembers who hit it');
   World.hitMonster(s.c, s.ws, 'field', s.p, rat, 9999, s.t += 100, mid, []);
-  assert.deepStrictEqual([got('p'), s.log(s.p)], [[rxp, 1, 1], 'rats:active:1'], 'the last blow: a share at once, and what it always gives');
+  assert.deepStrictEqual(got('p'), [rxp, 0, 0], 'the last blow: a share at once — the loot in a bag on the ground, not in theirs');
+  scoop(s.c, s.ws, 'field', s.p);
+  assert.deepStrictEqual([got('p'), s.log(s.p)], [[rxp, 1, 1], 'rats:active:1'], 'their own roll, and what it always gives');
   assert.deepStrictEqual([got('q'), !!rat.hits], [[0, 0, 0], false], 'the other is not at hand yet');
   const ev2 = s.turn();
+  scoop(s.c, s.ws, 'field', s.q);                                  // (the first bag was emptied and is gone: theirs lies in a new one)
   assert.deepStrictEqual([got('q'), s.log(s.q)], [[rxp, 1, 0], 'rats:active:1'], 'on the next turn: full XP, their own roll, the kill for their quest — not a second helping of what it always gives');
   assert.ok(ev2.some(e => e.type === 'kill' && e.to === 'p2'), 'and they are told (which also has the referee save them)');
   assert.deepStrictEqual([got('r'), !!s.ws.maps.field.credits], [[0, 0, 0], false], 'a bystander gets nothing; nothing is left waiting');
@@ -4059,6 +4395,33 @@ test('tutorial: steps count the basics, finish by themselves, lead into the firs
   assert.strictEqual(e.log(e.p), 't_talk:ready:1');
 });
 
+test('quests: a main quest cannot be given up; the player picks what to follow; tutorial steps say nothing in the log', () => {
+  const Q = [
+    { id: 'main', name: 'The story', no_abandon: 'TRUE', on_start: 'quest:t_walk', objectives: 'walk:2; drink' },
+    { id: 'side', name: 'An errand', objectives: 'kill:rat:3' },
+    { id: 't_walk', name: 'Walking', tutorial: true, objectives: 'walk:2' }];
+  const cfg = tb => { tb.Config = tb.Config.filter(r => r.key !== 'start_quests'); tb.Config.push({ key: 'start_quests', value: 'main side' }); };
+  const s = village(Q, cfg);
+  assert.deepStrictEqual([s.c.quests.main.noAbandon, s.c.quests.side.noAbandon], [true, false]);
+  assert.match(texts(s.as(s.p, { type: 'quest', op: 'abandon', id: 'main' })), /cannot be given up/);
+  assert.ok(s.p.quests.main, 'still on it');
+  // follow: every quest is followed when it starts; the player may stop, and start again
+  const log = () => World.publicPlayer(s.c, s.p).quests.map(x => x.id + (x.hide ? ':hidden' : '')).sort().join(' ');
+  assert.strictEqual(log(), 'main side t_walk'.split(' ').sort().join(' '));
+  s.as(s.p, { type: 'quest', op: 'follow', id: 'side', on: false });
+  assert.strictEqual(log(), 'main side:hidden t_walk'.split(' ').sort().join(' '));
+  s.as(s.p, { type: 'quest', op: 'follow', id: 'side', on: true });
+  assert.strictEqual(log(), 'main side t_walk'.split(' ').sort().join(' '));
+  // a tutorial step is counted and finishes, with no line in the log; the real quest still speaks
+  Object.assign(s.p, { x: 0, y: 5 });
+  const ev = s.as(s.p, { type: 'move', dirs: ['E', 'E'] });
+  assert.ok(s.p.questsDone.t_walk, 'the step is done');
+  assert.ok(!/Walking/.test(texts(ev)), 'nothing said about it: ' + texts(ev));
+  assert.ok(ev.some(e => e.done === 't_walk'), 'the page is still told it finished');
+  s.as(s.p, { type: 'quest', op: 'abandon', id: 'side' });
+  assert.ok(!s.p.quests.side, 'an ordinary quest can be given up');
+});
+
 test('quest hooks: on_start and an objective\'s on_done start tutorial steps, one window at a time; abandon closes them; skip stays skipped', () => {
   const Q = [
     { id: 'q0', name: 'Water', on_start: 'quest:t_move', rewards: 'quest:q1',
@@ -4266,7 +4629,7 @@ test('ammo with a recover chance: a shot that ends in a monster stays in it (car
   act(s, { type: 'shoot', x: 12, y: 13 }, 1000);
   assert.ok(m.dead, 'the shot killed it');
   assert.strictEqual(World.count(s.p, 'arrow'), 9, 'one arrow spent');
-  assert.deepStrictEqual(bagsAt(s, 12, 13).map(b => b.inv.map(g => g.item + ':' + g.qty).join()), ['arrow:1'], 'a loot bag holds it');
+  assert.deepStrictEqual(bagsAt(s, 12, 13).map(b => b.inv.filter(g => g.item === 'arrow').map(g => g.item + ':' + g.qty).join()), ['arrow:1'], 'a loot bag holds it');
   // it stays in a monster that lives on, and comes out with the next arrow when it dies
   s = archer(1); m = monster(s, 'skeleton', 12, 13); m.hp = 1000;
   act(s, { type: 'shoot', x: 12, y: 13 }, 1000); act(s, { type: 'shoot', x: 12, y: 13 }, 5000);
@@ -4284,7 +4647,7 @@ test('ammo with a recover chance: a shot that ends in a monster stays in it (car
   // 0 %: never
   s = archer(0); m = monster(s, 'skeleton', 12, 13); m.hp = 1;
   act(s, { type: 'shoot', x: 12, y: 13 }, 1000);
-  assert.strictEqual(bagsAt(s, 12, 13).length, 0); assert.strictEqual(m.stuck, undefined);
+  assert.ok(!bagsAt(s, 12, 13).some(b => b.inv.some(g => g.item === 'arrow'))); assert.strictEqual(m.stuck, undefined);   // (a bag with its loot, no arrow in it)
   assert.strictEqual(dropsAt(s, 12, 13).length + dropsAt(s, 11, 13).length, 0);
 });
 
@@ -4366,6 +4729,54 @@ test('wear depends on what is hit: the item\'s material_wear (wood 1, stone 2, m
   act(s, { type: 'attack', x: 1, y: 0 }, 9000);
   assert.strictEqual(left(), 47, 'wood: 0 = no wear');
   assert.deepStrictEqual(Content.build(Object.assign({}, tables, { Items: tables.Items.map(i => i.id === 'axe' ? Object.assign({}, i, { material_wear: 'stone:2, metal:3' }) : i) })).items.axe.wearVs, { stone: 2, metal: 3 });
+});
+
+// ------------------------------------------------------------ dialogue
+test('dialogue: opens on the first start line that fits, moves by answers, runs their actions, and remembers', () => {
+  const nodes = [
+    { id: 'hello', start: true, if: '!talked', text: 'A new face.', answers: [
+      { id: 'who', text: 'Who are you?', to: 'me' },
+      { id: 'gift', text: 'Got anything for me?', do: 'give:wood:2; flag:gifted', once: true, to: 'here' },
+      { id: 'key', text: 'About this key…', if: 'has:iron_key', to: 'me' },
+      { id: 'bye', text: 'Bye.' }] },
+    { id: 'again', start: true, text: 'You again.', answers: [{ id: 'told', text: 'You told me your name.', if: 'said:me' }, { id: 'bye', text: 'Bye.' }] },
+    { id: 'me', text: 'I am Marta.', answers: [{ id: 'back', text: 'I see.', to: 'hello' }] },
+    { id: 'here', text: 'Here.', answers: [{ id: 'back', text: 'Thanks.', to: 'hello' }] }
+  ];
+  const s = village([RATS], tb => {
+    tb.Dialogues = [{ id: 'marta', name: 'Marta', nodes: JSON.stringify(nodes) }];
+    tb.Objects.find(o => o.id === 'npc_marta').properties = JSON.stringify({ text: 'Mind the rats.', dialogue: 'marta' });
+  });
+  const npc = ev => ev.find(e => e.type === 'npc'), ids = e => e.dlg.answers.map(a => a.a).join(' ');
+  const n = id => s.p.inventory.filter(i => i.item === id).reduce((t, i) => t + i.qty, 0), had = n('wood');
+  let e = npc(s.as(s.p, { type: 'interact', x: 3, y: 1 }));
+  assert.deepStrictEqual([e.text, e.dlg.node, e.dlg.hub, ids(e)], ['A new face.', 'hello', 1, 'who gift bye'], 'a first meeting; the key answer waits for the key');
+  e = npc(s.as(s.p, { type: 'talk', key: 'field.e1', a: 'who' }));
+  assert.deepStrictEqual([e.text, ids(e)], ['I am Marta.', 'back']);
+  assert.strictEqual(npc(s.as(s.p, { type: 'talk', key: 'field.e1', a: 'gift' })).dlg.node, 'me', 'an answer of another line is not taken: the line again');
+  assert.strictEqual(n('wood'), had);
+  e = npc(s.as(s.p, { type: 'talk', key: 'field.e1', a: 'back' }));
+  e = npc(s.as(s.p, { type: 'talk', key: 'field.e1', a: 'gift' }));
+  assert.strictEqual(e.text, 'Here.'); assert.strictEqual(n('wood'), had + 2); assert.ok(s.p.flags.gifted);
+  e = npc(s.as(s.p, { type: 'talk', key: 'field.e1', a: 'back' }));
+  assert.strictEqual(ids(e), 'who bye', 'asked once only');
+  e = npc(s.as(s.p, { type: 'talk', key: 'field.e1', a: 'bye' }));
+  assert.strictEqual(e.end, 1); assert.strictEqual(s.p.talkAt, undefined);
+  assert.strictEqual(s.as(s.p, { type: 'talk', key: 'field.e1', a: 'gift' }).length, 0, 'nothing to answer once it has ended');
+  e = npc(s.as(s.p, { type: 'interact', x: 3, y: 1 }));
+  assert.deepStrictEqual([e.text, ids(e)], ['You again.', 'told bye'], 'she remembers the meeting, and what she said');
+  // across the field: the talk ends, nothing runs
+  s.p.x = 8; s.p.y = 8;
+  assert.strictEqual(npc(s.as(s.p, { type: 'talk', key: 'field.e1', a: 'told' })).end, 1);
+  // another player meets her for the first time; an NPC with no dialogue says its one line, as before
+  assert.strictEqual(npc(s.as(s.q, { type: 'interact', x: 3, y: 1 })).dlg.node, 'hello');
+  s.r.x = 9; s.r.y = 8;
+  const tom = npc(s.as(s.r, { type: 'interact', x: 9, y: 9 }));
+  assert.strictEqual(tom.dlg, undefined); assert.strictEqual(tom.name, 'Tom');
+  // a dialogue that is named but missing, or has no line to open on: the plain line
+  s.c.objects.npc_marta.properties.dialogue = 'nobody';
+  s.p.x = 2; s.p.y = 1;
+  assert.strictEqual(npc(s.as(s.p, { type: 'interact', x: 3, y: 1 })).text, 'Mind the rats.');
 });
 
 console.log(`\n${passed} world tests passed`);

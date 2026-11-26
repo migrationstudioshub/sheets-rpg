@@ -27,7 +27,7 @@
   var throwing = null;                   // belt item id armed for a throw (click to throw, Esc to cancel)
   // mouse: right-button held = aiming; left = interact (tap) / action list (hold) / fire (while aiming)
   var aiming = false, leftHeld = false, holdFired = false, pendingCell = null, holdMenuEvt = null, holdTimer = 0;
-  var lastHoldShot = 0, aimAngle = 0, aimFar = null, HOLD_CLICK_MS = 250;   // left-press longer than this opens the action list
+  var lastHoldShot = 0, aimAngle = 0, aimFar = null, lookSide = '', HOLD_CLICK_MS = 250;   // left-press longer than this opens the action list
   var hover = null, lastCam = { x: 0, y: 0 };
   // Aim lean: while the right button is held the camera drifts toward the cursor so you see further that way.
   // lastPtr = where the cursor last was (client px), so the hovered cell and aim follow the moving camera.
@@ -83,15 +83,46 @@
    *  sprite's sibling .tint.png mask. Returns null for plain-sprite monsters (slimes, rats...). */
   function monsterLayers(m) {
     if (!m.look || !m.look.length) return null;
+    var tone = Tint.lookSkin ? Tint.lookSkin(m.look) : '';                // a body rolled with a skin tone colours its hands too
     var out = m.look.map(function (l) {
-      var ramp = l.tint ? Tint.TINTS[l.tint] : null;
-      return { path: l.path, mask: ramp ? maskOf(l.path) : '', ramp: ramp };
+      var sk = tone ? Tint.skinFor(l.path, tone) : null;
+      var tint = Tint.lookTint ? Tint.lookTint(l.path, l.tint) : l.tint, ramp = tint ? Tint.TINTS[tint] : null;   // no colour given = the garment default
+      return { path: l.path, mask: ramp ? maskOf(l.path) : '', ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false };
     });
     out.forEach(function (l) {                                           // make sure late-arriving layers load
       if (!Assets.get(l.path)) Assets.load(l.path);
       if (l.mask && !Assets.get(l.mask)) Assets.load(l.mask);
     });
     return out;
+  }
+
+  /** An NPC with an outfit — object properties.outfit = [{path, tint}], bottom to top (Content Studio → Objects, kind
+   *  npc) — is drawn as a figure like a player, not as its object picture. Answers the layers that have a picture. */
+  function outfitOf(o) { return Render.outfitOf ? Render.outfitOf(o) : null; }
+  function phaseOf(id) { var s = String(id), n = 0; for (var i = 0; i < s.length; i++) n = (n * 31 + s.charCodeAt(i)) % 6283; return n / 1000; }   // where in its breath a figure is (0..2π), fixed per id
+  // The outfitted NPCs of the map you are on (looked up again only when the map or what is built on it changes).
+  var npcEnts = [], npcSig = '', npcFace = {};
+  function npcList() {
+    var sig = me.map + '|' + (struct ? struct.rev : 0);
+    if (sig === npcSig) return npcEnts;
+    npcSig = sig; npcEnts = [];
+    (mapOf().entities || []).forEach(function (e) {
+      var o = content.objects[e.ref], fit = outfitOf(o);
+      if (fit) npcEnts.push({ e: e, o: o, look: fit, ph: phaseOf(e.key) });
+    });
+    return npcEnts;
+  }
+  var NPC_NAME_R = 3;                                                    // tiles: this near, an NPC's name shows over its head (or with the mouse on it)
+  /** The NPCs as figures for the renderer. Each always faces YOU (worked out here, so every player sees it turned
+   *  towards themself); standing right above or below it, it keeps the way it last faced. */
+  function npcActors(actors, at) {
+    npcList().forEach(function (n) {
+      var e = n.e, f = at.x < e.x - 0.05 ? 'W' : at.x > e.x + 0.05 ? 'E' : (npcFace[e.key] || 'E');
+      npcFace[e.key] = f;
+      var near = Math.max(Math.abs(at.x - e.x), Math.abs(at.y - e.y)) <= NPC_NAME_R || (hover && hover.x === e.x && hover.y === e.y);
+      actors.push({ x: e.x, y: e.y, facing: f, name: near ? ((e.data && e.data.name) || n.o.name || '') : '', nameColor: '#ffe9a8',
+        layers: Render.outfitLayers(n.look), fixed: true, idle: true, ph: n.ph });
+    });
   }
 
   function setNet(text, bad) { $('hud-net').textContent = text; $('hud-net').className = bad ? 'bad' : ''; }
@@ -369,7 +400,7 @@
       if (e.type === 'npc') { openNpc(e); return; }            // you talked to someone: their window (or, with nothing to offer, a line)
       if (e.type === 'loot' && e.text) lootToast(e); else if (e.text) log(e.text, e.type);   // what reached your bag: a toast on the left
       if (e.type === 'craft') { openCrafting(); return; }   // you used a workbench: the inventory window, its recipes beside the bag
-      if (e.type === 'claim') { claim = e; $('claimp').hidden = false; claimPanel(); return; }       // your claim flag: who belongs to the base
+      if (e.type === 'claim') { claim = e; $('claimp').hidden = false; basePanel(); return; }       // your claim flag: who belongs to the base
       if (e.type === 'storage' && e.gone) { if (storage && storage.key === e.key) closeStore(); return; }   // a carcass taken clean: it is gone
       if (e.type === 'storage' && e.key === tookAll.key && tookAll.n > 0 && performance.now() - tookAll.at < 5000) { tookAll.n--; return; }   // the answer to Take all: the window stays shut
       if (e.type === 'storage') { storage = e; e._at = performance.now(); storePanel(); return; }   // (_at: when it came, for the countdowns)   // you opened (or changed) a storage container
@@ -479,10 +510,99 @@
       return;
     }
     me = Object.assign({}, me, { facing: Rules.faceFor(dir, me.facing) }, r.ok ? { x: r.x, y: r.y } : {});
-    lastCost = r.ok ? Rules.stepCost(dir, content, mapOf(), r.x, r.y) : 1;   // (wading in shallow water is slower)
+    lastCost = r.ok ? Rules.stepCost(dir, content, mapOf(), r.x, r.y, me) : 1;   // (wading in shallow water, or sneaking, is slower)
+    if (r.ok) { stepT = performance.now(); soundRing(r.x, r.y); }
     send({ type: 'move', dirs: [dir] });
   }
-  function interact() { if (me) send({ type: 'interact' }); }
+  // ---- stealth (docs/STEALTH.md): Z sneaks. The referee has the say; the page shows it at once, and works out its
+  // own noise meter from its own steps (World.noiseRadius), as the referee does from its.
+  var stepT = -1e9;                                       // when the last step was taken (performance.now)
+  function toggleSneak() {
+    if (!me || !World.stealthOn || !World.stealthOn(content)) return;
+    var on = !me.sneak;
+    if (on) {                                             // when you may not: the build tools out, someone talked to, or hunted
+      if (buildOpen || building || removing || moveTool) { log('Put the build tools away to sneak.', 'info'); return; }
+      if (questPop()) return;
+      if (me.chased) { log('You can\'t hide while something is after you.', 'info'); return; }
+    }
+    me = Object.assign({}, me, { sneak: on || undefined });
+    send({ type: 'sneak', on: on });
+    log(on ? 'Sneaking: slower, quieter and harder to spot (Z to stand up).' : 'You stand up.', 'info');
+    hud();
+  }
+  /** While sneaking, each step sends out a ring as far as its noise carries (World.noiseRadius: what monsters hear). */
+  function soundRing(x, y) {
+    if (!me || !me.sneak || !World.noiseRadius || String(content.config.stealth_rings || 'on') === 'off') return;
+    var r = World.noiseRadius(content, true, true); if (!(r > 0)) return;
+    var t0 = performance.now();
+    fx.push({ kind: 'sound', x: x, y: y, r: r, t0: t0, life: 900 });
+  }
+  /** Opening the build tools or talking to someone ends sneaking at once (the referee does the same on its side). */
+  function standUp() {
+    if (!me || !me.sneak) return;
+    me = Object.assign({}, me, { sneak: undefined });
+    send({ type: 'sneak', on: false });
+    log('You stand up.', 'info');
+    hud();
+  }
+  function myNoise() {
+    if (!me || !World.noiseRadius) return null;
+    if (!World.stealthOn(content)) return null;
+    return World.noiseRadius(content, !!me.sneak, performance.now() - stepT <= World.NOISE_LINGER_MS) / World.noiseMax(content);
+  }
+  // While sneaking: where each monster you can see would spot you (World.sightArea: the same reach and line of
+  // sight the referee's World.notices uses), drawn on the ground (Render layer 2f). Worked out again only when the
+  // monster moves, or every half second (doors). Off with Config stealth_areas = off.
+  var watchCache = {};
+  function sightAreas(map, vis) {
+    if (!me || !me.sneak || !World.sightArea || !World.stealthOn(content) || String(content.config.stealth_areas || 'on') === 'off') { watchCache = {}; return null; }
+    var out = [], tNow = Date.now(), keep = {}, lk = null;
+    (view.monsters || []).forEach(function (m) {
+      var def = content.monsters[m.ref]; if (!def) return;
+      if (vis && !vis[m.x + ',' + m.y]) return;                                   // only the ones you can see
+      if (Math.max(Math.abs(m.x - me.x), Math.abs(m.y - me.y)) > 24) return;
+      var k = me.map + ':' + m.x + ',' + m.y + ':' + (m.facing || 'S'), w = watchCache[m.id];   // (it turns: its cone turns)
+      if (!w || w.k !== k || tNow - w.at > 500) {
+        if (!lk) { lk = World.viewLookup(content, map, view, me); World.syncEdgesView(content, map, lk.stateOf); }
+        w = { k: k, at: tNow, cells: World.sightArea(content, map, m, def, true, lk.stateOf, 0) };
+      }
+      keep[m.id] = w;
+      out.push({ cells: w.cells, hot: m.alert === 2 });
+    });
+    watchCache = keep;
+    return out;
+  }
+  // While sneaking: the edges of the screen darken softly (#sneak-veil, ui.css), fading in and out.
+  function sneakVeil() { var v = $('sneak-veil'); if (v) v.classList.toggle('on', !!(me && me.sneak)); }
+  var noiseShown = null;
+  function noiseMeter() {
+    if (!hudParts) return;
+    var v = myNoise(), show = UI.FLAGS.noise && v != null && !!me.sneak;   // only while sneaking
+    $('noise').hidden = !show;
+    if (!show || v === noiseShown) return;
+    noiseShown = v;
+    UI.setBar(hudParts.noise, v);
+    $('noise').setAttribute('data-tip', (me.sneak ? 'Sneaking' : 'Walking') + ': ' + (v ? 'monsters hear you within ' + Math.round(v * World.noiseMax(content)) + ' tiles' : 'silent while you stand still') + ' (Z: ' + (me.sneak ? 'stand up' : 'sneak') + ')');
+  }
+  /** F / Space: use what lies towards the CURSOR — your own tile when the cursor is on you, else the one of the eight
+   *  tiles around you in its direction; nothing to use there, the tile a notch to either side of it (the nearer first),
+   *  so a door straight ahead is still found with the cursor a little off. No cursor over the view: the tile you face. */
+  function interact() {
+    if (!me) return;
+    if (!lastPtr || aimFar == null || !view) { send({ type: 'interact' }); return; }
+    aimAt(lastPtr);
+    var cells = [];
+    if (!aimFar) cells.push({ x: me.x, y: me.y });
+    else {
+      var turn = aimAngle / (Math.PI / 4), oct = Math.round(turn), side = turn >= oct ? 1 : -1;
+      [oct, oct + side, oct - side].forEach(function (o) { cells.push({ x: me.x + Math.round(Math.cos(o * Math.PI / 4)), y: me.y + Math.round(Math.sin(o * Math.PI / 4)) }); });
+    }
+    for (var i = 0; i < cells.length; i++) {
+      var a = actsOf(cells[i]).filter(function (q) { return q.type === 'interact'; })[0];
+      if (a) { doAction(a, cells[i]); return; }
+    }
+    send({ type: 'interact', x: cells[0].x, y: cells[0].y });   // nothing to use: the referee says so
+  }
   // from = where it is used from, {w: 'bag' | 'belt', s}: what it leaves (an empty bottle) goes back there (World leaveItem)
   function useItem(id, from) { send(from ? { type: 'use', item: id, from: from } : { type: 'use', item: id }); }
 
@@ -504,6 +624,7 @@
     else if (e.code === 'KeyH' && removing) { wallsDown = !wallsDown; log(wallsDown ? 'Walls shown low: point at the base of a wall to pick it.' : 'Walls shown whole: point at the face of a wall to pick it.', 'info'); }
     else if (e.code === 'KeyC') { if (bagOpen && !storage) toggleBag(); else openCrafting(); }   // C: the inventory window too (crafting is in it)
     else if (e.code === 'KeyL') toggleQuests();
+    else if (e.code === 'KeyZ') toggleSneak();
     else if (e.code === 'KeyT') turnBuild(1);
     else if (e.code === 'KeyV' && building && content.blueprints[building] && content.blueprints[building].places === 'tile') {
       buildRoof = !buildRoof; if (buildOpen) buildPanel(); log(buildRoof ? 'Roof: click cells of this storey to cover them (V: back to floor).' : 'Floor: click where it should be laid (V: as a roof).', 'info');
@@ -512,6 +633,7 @@
     else if (e.code === 'KeyQ' && skillsOn()) ability(0);
     else if (e.code === 'KeyE' && skillsOn()) ability(1);
     else if (e.code === 'KeyR') { if (bagOpen && storage) takeAllOpen(); else startReload(); }   // a container open: R takes everything
+    else if (/^Digit[1-9]$/.test(e.code) && npcTalk && npcTalk.dlg && !npcQuest) dlgKey(Number(e.code.slice(5)) - 1);   // in a conversation: the numbered answer
     else if (/^Digit[0-9]$/.test(e.code) && me && (Number(e.code.slice(5)) + 9) % 10 < BELT) beltKey((Number(e.code.slice(5)) + 9) % 10);   // 1-9, then 0 = the tenth
   });
   addEventListener('keyup', function (e) {
@@ -521,9 +643,27 @@
   function cellAt(e) {
     var r = canvas.getBoundingClientRect(), T = content.config.tile_size || 32;
     var px = (e.clientX - r.left) * canvas.width / r.width + lastCam.x, py = (e.clientY - r.top) * canvas.height / r.height + lastCam.y;
-    if (!Render.pickCells) return { x: Math.floor(px / T), y: Math.floor(py / T) };
-    return sameLevelPick(Render.pickCells(mapOf(), px, py, T));                 // (raised ground: the tile drawn under the cursor)
+    var cell = Render.pickCells ? sameLevelPick(Render.pickCells(mapOf(), px, py, T))   // (raised ground: the tile drawn under the cursor)
+                                : { x: Math.floor(px / T), y: Math.floor(py / T) };
+    return bigPick(cell, px - lastCam.x, py - lastCam.y);
   }
+  /** A thing drawn bigger than its tile (a tree, a wide bench) is meant by the solid pixels of its picture, and ONLY by
+   *  them (the owner's rule): a click on any of them means the object's own tile, and a click on the empty part of its own
+   *  tile means nothing (the cell comes back marked `miss`: actsOf gives no actions, no chopping starts). A creature on
+   *  the tile, or a small thing lying there, is still meant. Not while building, removing, moving, aiming or throwing:
+   *  those are about the ground. */
+  function bigPick(cell, cx, cy) {
+    if (!me || !view || !renderer || !renderer.objectAt || building || removing || moveTool || buildOpen || aiming || armed || throwing) return cell;
+    var big = renderer.objectAt(cx, cy);
+    if (big && big.x === cell.x && big.y === cell.y) return cell;
+    var map = mapOf(), lk = lookup(), hollow = renderer.bigOn(cell.x, cell.y);   // (hollow: a big thing stands on this tile, and the cursor is not on its picture)
+    function todo(c) { return World.actionsAt(content, map, lk, me, c.x, c.y).length > 0 || !!(World.harvestWith && World.harvestWith(content, map, me, c.x, c.y)); }   // something to use, or to chop / mine with what is in hand
+    if (lk.monsterAt(cell.x, cell.y) || (!hollow && todo(cell))) return cell;
+    if (big && todo(big)) return big;
+    return hollow ? { x: cell.x, y: cell.y, miss: true } : cell;
+  }
+  /** What a click on that tile offers (nothing on the empty part of a big object's tile, see bigPick). */
+  function actsOf(cell) { return cell.miss ? [] : World.actionsAt(content, mapOf(), lookup(), me, cell.x, cell.y); }
   /** Raised ground is drawn over the ground behind it, so the cursor may be on several tiles at once (the one on top
    *  first). The one on top is meant, unless there is nothing to do there and a tile under it that is ON YOUR OWN LEVEL
    *  has something (a creature, a chest): then that one — higher ground does not get in the way of what is beside you. */
@@ -542,7 +682,7 @@
     if (!content) return;
     lastPtr = { clientX: e.clientX, clientY: e.clientY };
     hover = cellAt(e); hoverLabel(e);
-    if (aiming && me) aimAt(e);                           // keep facing + gun angle tracking the cursor
+    if (me) aimAt(e);                                     // the figure looks at the cursor, always; aiming, the gun angle tracks it too
     if (buildHold) buildDrag();
   });
   canvas.addEventListener('pointerleave', function () { hover = null; lastPtr = null; $('tip').hidden = true; });
@@ -583,7 +723,7 @@
     if (throwing) { throwAt(cell); return; }
     if (aiming && heldUse()) { useHeld(); return; }       // food, a bandage… in hand: the click uses it
     if (aiming) { leftHeld = true; fireToward(cell); return; }   // fire/attack while aiming
-    if (World.harvestWith && World.harvestWith(content, mapOf(), me, cell.x, cell.y)) {
+    if (!cell.miss && World.harvestWith && World.harvestWith(content, mapOf(), me, cell.x, cell.y)) {
       leftHeld = true; holdFired = false; pendingCell = null; clearTimeout(holdTimer);
       harvesting = { x: cell.x, y: cell.y }; harvestSwing();
       return;
@@ -593,7 +733,7 @@
     clearTimeout(holdTimer);
     holdTimer = setTimeout(function () {
       if (!leftHeld || aiming) return;
-      var acts = World.actionsAt(content, mapOf(), lookup(), me, cell.x, cell.y);
+      var acts = actsOf(cell);
       if (acts.length) { holdFired = true; openMenu(holdMenuEvt, cell, acts); }
     }, HOLD_CLICK_MS);
   });
@@ -657,6 +797,31 @@
     quest: '!', questdone: '?', questgo: '?'      // over an NPC: has a quest for you / one to hand in / one of theirs under way
   };
   var markEls = {};
+  // The names over characters: text in the UI's font laid over the view (render.js only says where), so they are sharp at
+  // any size. One element per name, kept from frame to frame; only what changed is touched.
+  var nameEls = [];
+  // How far the view may scroll past each of the map's four edges (the same on all, the owner's choice), in canvas pixels: the height of the HUD along the bottom (belt and
+  // XP bar) plus half a tile, so a character on the map's last row still stands clear above it, and one at any other edge as far from it. Never more than keeps you
+  // a tile above the middle of the view.
+  function edgePad(T) {
+    var hud = $('bcbox').getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+    if (!hud.height || !cr.height) return 0;
+    var pad = Math.round((cr.bottom - hud.top) * canvas.height / cr.height + T / 2);
+    return Math.max(0, Math.min(pad, Math.floor(Math.min(canvas.width, canvas.height) / 2 - T)));
+  }
+  function nameTags(list) {
+    var box = $('marks'), k = canvas.getBoundingClientRect().width / canvas.width;
+    list = list || [];
+    for (var i = 0; i < list.length; i++) {
+      var t = list[i], el = nameEls[i];
+      if (!el) { el = nameEls[i] = document.createElement('div'); el.className = 'ntag'; box.appendChild(el); }
+      if (el._t !== t.text) { el._t = t.text; el.textContent = t.text; }
+      if (el._c !== t.color) { el._c = t.color; el.style.color = t.color; }
+      el.hidden = false;
+      el.style.left = (t.x * k).toFixed(1) + 'px'; el.style.top = (t.y * k).toFixed(1) + 'px';
+    }
+    for (var j = list.length; j < nameEls.length; j++) nameEls[j].hidden = true;
+  }
   function setMarks(list) {
     var box = $('marks'), T = content.config.tile_size || 32, k = canvas.getBoundingClientRect().width / canvas.width, live = {};
     list.forEach(function (mk) {
@@ -747,7 +912,8 @@
     var cy = (e.clientY - r.top) * canvas.height / r.height;
     var dx = cx - ((shown.x + 0.5) * T - lastCam.x), dy = cy - ((shown.y + 0.5) * T - lastCam.y - (Render.liftAt ? Render.liftAt(mapOf(), shown.x, shown.y, T) : 0));   // (from where you are drawn: raised ground lifts you)
     aimAngle = Math.atan2(dy, dx); aimFar = Math.abs(dx) > T / 2 || Math.abs(dy) > T / 2;   // aimFar = the cursor is off your own tile
-    if (dx || dy) me.facing = dx < 0 ? 'W' : 'E';
+    if (Math.abs(dx) > 2) lookSide = dx < 0 ? 'W' : 'E';        // the side the figure is drawn looking to (draw-only; a cursor straight above or below keeps the side)
+    if (aiming && (dx || dy)) me.facing = dx < 0 ? 'W' : 'E';   // only aiming turns the character itself: F / Space still act on the tile you walked towards
   }
   // Throwing down from an upper floor. The floors below are DRAWN a wall-height lower on the screen per floor, so
   // a cursor cell where your own floor has nothing (open air) stands for a cell of a floor below: same x, y + dz storeys.
@@ -802,7 +968,10 @@
   }
   function cancelThrow() { if (throwing && !holdMode()) { throwing = null; updateCursor(); hotbar(); } }   // (a held grenade stays in hand: see hotbar)
   function updateCursor() {
-    canvas.style.cursor = (aiming || armed || throwing || building || removing || moveTool) ? 'crosshair' : '';
+    // the one place the view's cursor is decided (it is asked again on every answer, so the hand must be decided here too,
+    // or it flickers back to the arrow while the mouse rests on something)
+    var cur = (aiming || armed || throwing || building || removing || moveTool) ? 'crosshair' : me && hover && tapAction(actsOf(hover)) ? 'pointer' : '';
+    if (canvas.style.cursor !== cur) canvas.style.cursor = cur;
   }
 
   function openMenu(e, cell, acts) {
@@ -829,7 +998,7 @@
     if (!me || aiming || armed || throwing || removing || moveTool) { updateCursor(); return; }
     if (!hover) { canvas.style.cursor = ''; return; }
     var hft = floorTargetAt(hover);
-    canvas.style.cursor = tapAction(World.actionsAt(content, mapOf(), lookup(), me, hover.x, hover.y)) ? 'pointer' : 'default';
+    updateCursor();
     canvas.title = hft ? hft.name + (hft.dz < 0 ? ' — on the floor below' : ' — on the floor above') : '';
   }
 
@@ -1045,7 +1214,10 @@
       if (th !== throwing) { throwing = th; updateCursor(); }
     }
     if (invDrag) { invDirty = true; return; }             // never rebuild the belt under a drag
-    var belt = $('belt'); belt.innerHTML = '';
+    // (drawn again only when what it shows changed: a slot replaced under the mouse loses its click, see unchanged)
+    var belt = $('belt'), bsig = JSON.stringify([me.belt, me.held, holdMode(), throwing, bagOpen, (me.belt || []).map(function (id) { var su = id && World.stackInUse ? World.stackInUse(me, id) : null; return id ? [count(id), su && su.dur, !!itemImageUrl(content.items[id] || {})] : 0; })]);   // (the last: its picture has arrived — until then the slot shows letters)
+    if (belt._sig === bsig && belt.firstChild) { tickHotbar(); return; }
+    belt._sig = bsig; belt.innerHTML = '';
     for (var i = 0; i < BELT; i++) (function (i) {
       var id = (me.belt || [])[i], it = id && content.items[id], b = document.createElement('div');
       var inHand = holdMode() && me.held === i;
@@ -1114,7 +1286,7 @@
     if (!was || aiming) return;                            // was firing while aiming, or not our press
     if (holdFired) { holdFired = false; return; }          // the hold already opened the action list
     if (pendingCell) {                                     // quick tap → the default interaction
-      var acts = World.actionsAt(content, mapOf(), lookup(), me, pendingCell.x, pendingCell.y);
+      var acts = actsOf(pendingCell);
       var tapA = tapAction(acts);
       if (tapA) doAction(tapA, pendingCell);
       else if (heldUse()) useHeld();                       // nothing to act on there: the click uses what is in hand
@@ -1182,8 +1354,7 @@
     $('clock').hidden = !ck; if (ck) UI.setClock($('clock'), ck.day, ck.frac, ck.text);
     var night = F.nightfall && me.clock && me.clock.nightIn > 0 && me.clock.nightIn <= 180;
     $('nightfall').hidden = !night; if (night) P.night.textContent = 'Nightfall in ' + Math.floor(me.clock.nightIn / 60) + 'h ' + Math.round(me.clock.nightIn % 60) + 'm';
-    var noise = F.noise && me.noise != null;
-    $('noise').hidden = !noise; if (noise) UI.setBar(P.noise, me.noise);
+    noiseShown = null; noiseMeter();                       // (also every frame from the loop: it falls quiet when you stop)
     $('minimap').hidden = !F.minimap;
     weaponCard();
     // what ails you (and what helps): a chip in the status's colour, its name, the time it has left
@@ -1211,7 +1382,7 @@
     if (!rw) { wset.hidden = true; weaponSig = ''; return; }
     var reserve = count(rw.ammo), clip = Number(rw.clip) || 0, loaded = (me.mags && me.mags[rw.id]) || 0, cost = rw.ammoCost || 1;
     var cond = UI.FLAGS.condition && me.cond && me.cond[rw.id] != null ? Number(me.cond[rw.id]) : null;
-    var sig = [rw.id, reserve, clip, loaded, cond].join('|');
+    var sig = [rw.id, reserve, clip, loaded, cond, itemImageUrl(rw) ? 1 : 0].join('|');   // (the last: its picture has arrived)
     wset.hidden = false;
     if (sig === weaponSig) return;
     weaponSig = sig;
@@ -1264,7 +1435,7 @@
       // only within reach: your own tile or one of the eight around it, not round a wall end (the rules' own reach)
       var reach = Math.abs(hover.x - me.x) <= 1 && Math.abs(hover.y - me.y) <= 1 && !Rules.reachBlocked(content, mapOf(), me.x, me.y, hover.x, hover.y);
       if (reach && !aiming && !armed && !throwing && !building && !removing && !moveTool && !bagOpen && !questOpen && !questPop() && $('menu').hidden) {
-        var a = tapAction(World.actionsAt(content, mapOf(), lookup(), me, hover.x, hover.y));
+        var a = tapAction(actsOf(hover));
         if (a && a.type !== 'attack') promptIs = { id: 'prompt', kind: 'prompt', x: hover.x, y: hover.y, ox: 0.6, oy: 0.5, label: a.label.replace(/\bthe\s+/gi, '') };   // "Pick up small rock", not "…the small rock"
       }
     }
@@ -1298,11 +1469,12 @@
     buildOpen = !buildOpen && !!me;
     $('buildbar').hidden = !buildOpen; $('frame').classList.toggle('building', buildOpen);
     bbSig = '';
-    if (buildOpen) { buildPanel(); didUi('build'); } else stopBuilding();   // closing the bar puts away whatever was in hand
+    if (buildOpen) { standUp(); buildPanel(); didUi('build'); } else stopBuilding();   // closing the bar puts away whatever was in hand
   }
   function stopBuilding() { building = null; removing = false; moveTool = null; buildHold = null; updateCursor(); if (buildOpen) buildPanel(); }
   function startRemoving() {
     if (!me) return;
+    standUp();
     building = null; buildHold = null; moveTool = null; removing = true; wallsDown = true;   // walls start down: what you see is what a click picks
     if (buildOpen) buildPanel();
     log('Remove tool: click something you built to take it apart. Walls are shown low so you can reach behind them (H shows them whole). Esc or X stops.', 'info');
@@ -1310,6 +1482,7 @@
   }
   function startMoving() {
     if (!me) return;
+    standUp();
     building = null; buildHold = null; removing = false; moveTool = { key: null };
     if (buildOpen) buildPanel();
     log('Move tool: drag an object you built to where it should go (T turns it while you hold it). Green = it fits, red = it does not. Esc stops.', 'info');
@@ -1449,6 +1622,7 @@
   }
   function pickBp(b, roof) {
     var o = b.places === 'object' ? content.objects[b.object] : null;
+    standUp();
     removing = false; building = b.id; buildRoof = !!roof; buildHold = null;
     buildFacing = o && o.kind === 'stairs' ? 'N' : 'S';       // stairs climb north unless turned (T)
     if (roof) log('Roof: click cells of this storey to cover them. Green = well held, yellow = as far from a wall as it can go, red = it would fall. V switches to floor.', 'info');
@@ -1622,7 +1796,7 @@
   // The members panel of your own claim flag (the referee sends a 'claim' event when you use it).
   var claim = null;
   function closeClaim() { claim = null; $('claimp').hidden = true; }
-  function claimPanel() {
+  function basePanel() {
     var box = $('claim-body'); box.innerHTML = '';
     function el(tag, cls, text) { var d = document.createElement(tag); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
     $('claim-title').textContent = 'Your base';
@@ -1653,6 +1827,10 @@
   // accepted now]. Three places show it: the window of the NPC you talk to (accept, hand in), the quest log (L)
   // and the tracker in the corner; and a mark floats over every NPC who has something for you.
   var npcTalk = null, npcQuest = '', npcPick = -1, questOpen = false, abandonArmed = '';
+  // A window drawn again from scratch on every answer (several a second) flickers, and loses clicks: the button pressed is
+  // replaced before it is let go. So each one draws again only when what it shows changed: unchanged(box, sig) says so
+  // (and remembers sig). The three that share the NPC window (#npc-body) put which one they are in their sig.
+  function unchanged(box, sig) { if (box._sig === sig && box.firstChild) return true; box._sig = sig; return false; }
   function qel(tag, cls, text) { var d = document.createElement(tag); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
   /** Text with keys in it: "[W]" or "[Left click]" is drawn as a key cap. */
   function qtext(cls, text) {
@@ -1738,8 +1916,11 @@
     return box;
   }
   function openNpc(e) {
+    if (e.end) { if (npcTalk && npcTalk.key === e.key && npcTalk.dlg) closeNpc(); return; }   // the conversation is over
+    if (me && me.sneak) { me = Object.assign({}, me, { sneak: undefined }); hud(); }   // talking: you stand up (the referee already did)
     var has = npcQuests(e.ref);
-    if (!has.ready.length && !has.open.length && !has.active.length) {      // nothing between you: just what they say
+    npcWait = false;
+    if (!e.dlg && !has.ready.length && !has.open.length && !has.active.length) {      // nothing between you: just what they say
       log(e.text ? e.name + ': ' + e.text : e.name + ' has nothing to say yet.', 'info');
       return;
     }
@@ -1748,16 +1929,68 @@
     npcTalk = e; npcQuest = ''; npcPick = -1;
     closeViews(); $('npcp').hidden = false; npcPanel();
   }
-  function closeNpc() { npcTalk = null; npcQuest = ''; $('npcp').hidden = true; claimPanel(); }   // (a finished quest may have been waiting for this window)
+  // ---- a conversation (an NPC with a dialogue: Content Studio → Story → Dialogues). The referee says each line and
+  // which answers this character may give (the npc event's dlg = {node, answers: [{a, text}], hub}); the page shows
+  // them and sends the one picked ({type: 'talk', key, a}). On a line that opens the talk (hub) the NPC's quests are
+  // listed among the answers. Keys 1-9 pick an answer.
+  var npcWait = false;                                       // an answer was sent: wait for the next line (no second click)
+  function dlgRows() {
+    if (!npcTalk || !npcTalk.dlg) return [];
+    var rows = npcTalk.dlg.answers.map(function (a) { return { text: a.text, go: function () { if (npcWait) return; npcWait = true; send({ type: 'talk', key: npcTalk.key, a: a.a }); npcPanel(); } }; });
+    if (npcTalk.dlg.hub) {
+      var has = npcQuests(npcTalk.ref);
+      [['ready', '?'], ['open', '!'], ['active', '…']].forEach(function (grp) {
+        has[grp[0]].forEach(function (one) { rows.push({ text: one.name, mark: grp[1], cls: grp[0], go: function () { npcQuest = one.id; npcPick = -1; npcPanel(); } }); });
+      });
+    }
+    if (!npcTalk.dlg.answers.length) rows.push({ text: 'Goodbye.', go: closeNpc });   // nothing to answer: you can still take your leave
+    return rows;
+  }
+  function dlgKey(i) { var r = dlgRows()[i]; if (r) r.go(); }
+  /** The NPC as a small figure beside what it says: its outfit, else its object picture. */
+  function npcPortrait(ref) {
+    var o = content.objects[ref]; if (!o) return null;
+    var fit = Render.outfitOf ? Render.outfitOf(o) : null;
+    if (!fit && !o.sprite) return null;
+    var cv = document.createElement('canvas'); cv.width = 64; cv.height = 96; cv.className = 'dface';
+    function paint() {
+      if (!cv.isConnected && cv._tries) return;
+      var g = cv.getContext('2d'); g.imageSmoothingEnabled = false; g.clearRect(0, 0, 64, 96);
+      if (fit) Render.drawOutfit(g, fit, 0, 32, 64, false);
+      else { var im = Assets.get(o.sprite); if (im) { var h = Math.min(96, Math.round(64 * im.height / (im.width / (o.frames || 1)))); g.drawImage(im, 0, 0, im.width / (o.frames || 1), im.height, 0, 96 - h, 64, h); } else Assets.load(o.sprite); }
+      if ((cv._tries = (cv._tries || 0) + 1) < 5) setTimeout(paint, 400);   // (pictures still loading are drawn when they arrive)
+    }
+    paint();
+    return cv;
+  }
+  function dlgView(box) {
+    var top = qel('div', 'dlg'), face = npcPortrait(npcTalk.ref);
+    if (face) top.appendChild(face);
+    top.appendChild(qtext('qsay', npcTalk.text || '…'));
+    box.appendChild(top);
+    var list = qel('div', 'dans');
+    dlgRows().forEach(function (r, i) {
+      var b = qel('button', 'qrow ' + (r.cls || ''));
+      b.appendChild(qel('span', 'qkey', i < 9 ? String(i + 1) : ''));
+      if (r.mark) b.appendChild(qel('span', 'qmark', r.mark));
+      b.appendChild(qtext('qans', r.text));
+      b.disabled = npcWait; b.onclick = r.go;
+      list.appendChild(b);
+    });
+    box.appendChild(list);
+  }
+  function closeNpc() { npcTalk = null; npcQuest = ''; npcWait = false; $('npcp').hidden = true; claimPanel(); }   // (a finished quest may have been waiting for this window)
   function npcPanel() {
     if (!npcTalk) return;
     // walked away (or they are gone): the window closes
     var ent = (mapOf().entities || []).filter(function (en) { return en.key === npcTalk.key; })[0];
     if (!ent || Math.abs(ent.x - me.x) > 1 || Math.abs(ent.y - me.y) > 1) { closeNpc(); return; }
     var box = $('npc-body'), has = npcQuests(npcTalk.ref), q = npcQuest && (content.quests || {})[npcQuest];
+    if (unchanged(box, JSON.stringify(['npc', npcTalk.key, npcQuest, npcPick, myQuests(), me.questsOpen || [], me.inventory, npcTalk.dlg || 0, npcTalk.text, npcWait]))) return;
     box.innerHTML = ''; $('npc-title').textContent = npcTalk.name;
     var entry = q && questEntry(q.id), offered = q && ((me.questsOpen || []).indexOf(q.id) >= 0);
     if (q && !entry && !offered) { q = null; npcQuest = ''; }                // accepted, handed in or no longer on offer: back to the list
+    if (!q && npcTalk.dlg) return dlgView(box);                              // a conversation: the line, and what you can answer
     if (!q) {
       if (npcTalk.text) box.appendChild(qtext('qsay', npcTalk.text));
       if (!has.ready.length && !has.open.length && !has.active.length) { box.appendChild(qel('div', 'empty', 'Nothing more for now.')); return; }
@@ -1805,38 +2038,68 @@
     btns.appendChild(back); box.appendChild(btns);
   }
   function toggleQuests() { if (!questOpen && questPop()) return; questOpen = !questOpen; abandonArmed = ''; $('questp').hidden = !questOpen; if (questOpen) { questPanel(); didUi('quests'); } }
+  // The quest log (L): the quests you are on down the left, the one picked on the right. Tutorial steps are never here
+  // (they teach through their own window; the referee still counts them). The box on each row = follow it: only the
+  // followed ones show in the tracker (quest op follow; new quests are followed).
+  var questPick = '';
+  function logQuests() { var qs = content.quests || {}; return myQuests().filter(function (x) { return qs[x.id] && !qs[x.id].tutorial; }); }
+  function followBox(x) {
+    var b = qel('i', 'fbox' + (x.hide ? '' : ' on'));
+    b.title = x.hide ? 'Not followed: click to show it in the tracker' : 'Followed: shown in the tracker. Click to hide it there';
+    b.onclick = function (ev) { ev.stopPropagation(); send({ type: 'quest', op: 'follow', id: x.id, on: !!x.hide }); };
+    return b;
+  }
   function questPanel() {
-    var box = $('quest-body'), qs = content.quests || {}, list = myQuests().filter(function (x) { return qs[x.id]; });
+    var box = $('quest-body'), qs = content.quests || {}, list = logQuests();
+    if (unchanged(box, JSON.stringify([questPick, abandonArmed, list, me.inventory]))) return;
     box.innerHTML = '';
     if (!list.length) { box.appendChild(qel('div', 'empty', 'No quests yet. Talk to people: someone with work for you has a ! over their head.')); return; }
+    if (!list.some(function (x) { return x.id === questPick; })) questPick = list[0].id;
+    var wrap = qel('div', 'qlog'), side = qel('div', 'qlist kinset'), sum = qel('div', 'qsum');
     list.forEach(function (x) {
-      var q = qs[x.id], card = qel('div', 'qcard' + (x.s === 'ready' ? ' ready' : ''));
-      card.appendChild(qel('b', '', q.tutorial ? 'Tutorial: ' + q.name : q.name));
-      if (questPic(q)) card.appendChild(questPic(q));
-      if (q.text) card.appendChild(qtext('qsay', q.text));
-      if (q.goals.length) card.appendChild(goalLines(q, x.n));
-      if (x.s === 'ready') card.appendChild(qel('div', 'qreturn', q.ender ? (q.goals.length ? 'Done: return to ' : 'Find ') + objName(q.ender) + '.' : 'Done.'));
-      var rw = rewardText(q), pk = choiceList(q);
-      if (pk.length) rw += (rw ? ' · ' : '') + 'one of: ' + pk.map(function (g) { return g.qty + ' ' + itemName(g.item); }).join(' / ');
-      if (rw) card.appendChild(qel('div', 'qreward', 'Reward: ' + rw));
-      var btns = qel('div', 'qbtns');
-      if (x.s === 'ready' && !q.ender) {                           // nobody to hand it to: it is claimed right here
-        var fin = qel('button', 'primary', 'Claim');
-        fin.onclick = function () { toggleQuests(); claimPanel(q.id); };
-        btns.appendChild(fin);
-      }
-      var drop = qel('button', '', q.tutorial ? 'Skip tutorial' : abandonArmed === q.id ? 'Really give up?' : 'Give up');   // (a tutorial step is not given up: the whole tutorial is skipped)
-      drop.onclick = function () { if (q.tutorial) skipTutorial(); else if (abandonArmed === q.id) { abandonArmed = ''; send({ type: 'quest', op: 'abandon', id: q.id }); } else { abandonArmed = q.id; questPanel(); } };
-      btns.appendChild(drop); card.appendChild(btns);
-      box.appendChild(card);
+      var q = qs[x.id], row = qel('div', 'qli' + (x.id === questPick ? ' on' : '') + (x.s === 'ready' ? ' ready' : ''));
+      row.appendChild(followBox(x));
+      row.appendChild(qel('span', 'qn', q.name));
+      if (x.s === 'ready') row.appendChild(qel('span', 'qst', '✓'));
+      row.title = x.s === 'ready' ? 'Done' + (q.ender ? ': return to ' + objName(q.ender) : ': claim it') : 'Under way';
+      row.onclick = function () { questPick = x.id; abandonArmed = ''; questPanel(); };
+      side.appendChild(row);
     });
+    var x = list.filter(function (e) { return e.id === questPick; })[0], q = qs[x.id];
+    var head = qel('div', 'qshead');
+    head.appendChild(qel('b', '', q.name));
+    var fl = qel('label', 'qfollow'); fl.appendChild(followBox(x)); fl.appendChild(document.createTextNode('Follow'));
+    fl.onclick = function () { send({ type: 'quest', op: 'follow', id: x.id, on: !!x.hide }); };
+    head.appendChild(fl);
+    sum.appendChild(head);
+    if (questPic(q)) sum.appendChild(questPic(q));
+    if (q.text) sum.appendChild(qtext('qsay', q.text));
+    if (q.goals.length) sum.appendChild(goalLines(q, x.n));
+    if (x.s === 'ready') sum.appendChild(qel('div', 'qreturn', q.ender ? (q.goals.length ? 'Done: return to ' : 'Find ') + objName(q.ender) + '.' : 'Done.'));
+    var rw = rewardText(q), pk = choiceList(q);
+    if (pk.length) rw += (rw ? ' · ' : '') + 'one of: ' + pk.map(function (g) { return g.qty + ' ' + itemName(g.item); }).join(' / ');
+    if (rw) sum.appendChild(qel('div', 'qreward', 'Reward: ' + rw));
+    var btns = qel('div', 'qbtns');
+    if (x.s === 'ready' && !q.ender) {                             // nobody to hand it to: it is claimed right here
+      var fin = qel('button', 'primary', 'Claim');
+      fin.onclick = function () { toggleQuests(); claimPanel(q.id); };
+      btns.appendChild(fin);
+    }
+    if (!q.noAbandon) {                                            // (a main quest, ticked "cannot be given up" in the Studio, has no such button)
+      var drop = qel('button', '', abandonArmed === q.id ? 'Really give up?' : 'Give up');
+      drop.onclick = function () { if (abandonArmed === q.id) { abandonArmed = ''; send({ type: 'quest', op: 'abandon', id: q.id }); } else { abandonArmed = q.id; questPanel(); } };
+      btns.appendChild(drop);
+    }
+    if (btns.children.length) sum.appendChild(btns);
+    wrap.appendChild(side); wrap.appendChild(sum);
+    box.appendChild(wrap);
   }
   /** The corner tracker: what you are on and how far along, without opening anything. */
   var trackerSig = '';
   function goalName(g) { return (g.label ? '' : GOAL_VERB[g.type] || '') + World.goalText(content, g) + (g.opt ? ' (optional)' : ''); }
   /** Top right: the quests you are on, a card each — its goals with a tick box, and a bar for the ones that count up. */
   function tracker() {
-    var box = $('tracker'), qs = content.quests || {}, list = myQuests().filter(function (x) { return qs[x.id]; });
+    var box = $('tracker'), qs = content.quests || {}, list = logQuests().filter(function (x) { return !x.hide; });   // followed ones only (quest log, L)
     var sig = JSON.stringify(list);
     if (sig === trackerSig) return;
     trackerSig = sig; box.innerHTML = '';
@@ -1891,7 +2154,7 @@
     var ids = all.filter(function (id) { return (content.quests || {})[id] && !introRead[id]; }).slice(0, 1);
     if (introOpen || !ids.length) return;
     introOpen = true; introId = ids[0]; claimQuest = ''; npcTalk = null; npcQuest = '';
-    var box = $('npc-body'); box.innerHTML = '';
+    var box = $('npc-body'); box.innerHTML = ''; box._sig = 'intro';
     var teach = isTutorial(introId);
     $('npc-title').textContent = teach ? 'Tutorial' : 'New quest';
     ids.forEach(function (id) {
@@ -1899,8 +2162,8 @@
       box.appendChild(qel('h4', '', q.name));
       if (questPic(q)) box.appendChild(questPic(q));
       if (q.text) box.appendChild(qtext('qsay', q.text));
-      if (q.goals.length) box.appendChild(goalLines(q, (questEntry(id) || {}).n || null));
-      else if (q.ender) box.appendChild(qel('div', 'qgoals', '• Find ' + objName(q.ender)));
+      if (q.goals.length && !q.tutorial) box.appendChild(goalLines(q, (questEntry(id) || {}).n || null));   // (a tutorial step's progress is never shown)
+      else if (q.ender && !q.tutorial) box.appendChild(qel('div', 'qgoals', '• Find ' + objName(q.ender)));
       if (rw) box.appendChild(qel('div', 'qreward', 'Reward: ' + rw));
     });
     var btns = qel('div', 'qbtns'), go = qel('button', 'primary', 'Begin');
@@ -1934,6 +2197,7 @@
       claimQuest = next.id; claimPick = -1;
     }
     var q = qs[claimQuest], entry = questEntry(claimQuest), box = $('npc-body'), rw = rewardText(q), picks = choiceList(q);
+    if (unchanged(box, JSON.stringify(['claim', claimQuest, claimPick, entry, rw])) && !$('npcp').hidden) return;   // (showing, nothing new: leave it, and the other views, alone)
     box.innerHTML = ''; $('npc-title').textContent = 'Quest complete';
     box.appendChild(qel('h4', '', q.name));
     box.appendChild(qtext('qsay', q.doneText || 'Done.'));
@@ -2463,6 +2727,16 @@
     box.appendChild(cols);
     box.appendChild(UI.hints([['R', 'take all cooked'], ['Drag', 'move'], ['Shift+click', 'send across'], ['Shift', 'half'], ['Ctrl', 'one']]));
   }
+  /** The window's close button (the red X) sits inside the window, at the right end of the top-right column's title plate,
+   *  which shrinks to make room: the same as the title bar of every other window. (Moved there each time the window is built.) */
+  var bagX = null;
+  function closeInPlate(box) {
+    bagX = bagX || $('bag-close');
+    var cols = box.querySelector('.wcols'), last = cols && cols.lastElementChild, head = last && last.querySelector('.khead');
+    if (!head) return;
+    var row = document.createElement('div'); row.className = 'hrow';
+    head.parentNode.insertBefore(row, head); row.appendChild(head); row.appendChild(bagX);
+  }
   function bag() {
     if (invDrag || invPress) { invDirty = true; return; }    // never redraw under a drag (or a press about to become one): the thing held would vanish
     // …nor when nothing it shows has changed: answers arrive several times a second
@@ -2477,6 +2751,7 @@
     if (storage && storage.cook) cookWindow(box);
     else if (storage) storeWindow(box);
     else invWindow(box);
+    closeInPlate(box);
     // abilities (only with Config skills on): which two sit on Q and E
     if (skillsOn()) {
       box.appendChild(el('h4', '', 'Abilities (Q / E)'));
@@ -2551,7 +2826,8 @@
     var dt = Math.min(100, lastFrame ? now - lastFrame : 16); lastFrame = now;
     var moving = Math.abs(shown.x - me.x) > 0.01 || Math.abs(shown.y - me.y) > 0.01;
     if (floorWait && now - floorWait > 1500) floorWait = 0;      // the answer never came: carry on
-    if (!moving && !bagOpen && !floorWait) {
+    if (questOpen || questPop()) tap = null;                    // a quest window or the quest log is up: no walking (a tap is dropped, not kept for later)
+    else if (!moving && !bagOpen && !floorWait) {
       // A tap waits a moment before stepping, so two keys pressed together count as one diagonal step, not an L.
       if (tap) { if (performance.now() - holdSince >= TAP_JOIN_MS) { step(heldDir() || tap); tap = null; lastStep = now; } }
       else if (held.length && now - holdSince >= HOLD_MS && now - lastStep >= moveMs * lastCost) { step(heldDir()); lastStep = now; }
@@ -2572,6 +2848,7 @@
     if (now - lastReply > pollMs) poll();
 
     ease(shown, me, dt / (moveMs * (lastCost || 1)));   // (a slow step, a diagonal or wading, glides slower too)
+    noiseMeter();
     if (harvesting) harvestSwing();
     // hold-to-fire: while aiming with the left button down, a semi/auto weapon keeps firing on its cadence
     if (aiming && leftHeld && hover) {
@@ -2586,23 +2863,27 @@
     var myst = me.statuses && me.statuses.length && content.statuses[me.statuses[0].id];
     // while aiming, the body faces the cursor's side derived from the aim angle — not me.facing, which a
     // poll can briefly reset to the server's value (it never hears the aim), which would flicker the flip.
-    var myFacing = aiming ? (Math.cos(aimAngle) < 0 ? 'W' : 'E') : me.facing;
-    var actors = [{ x: shown.x, y: shown.y, facing: myFacing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, aim: aiming ? aimAngle : null, swing: (performance.now() - swingT0) / SWING_MS, statusColor: myst ? myst.color : '' }];
+    if (lastPtr && !aiming) aimAt(lastPtr);               // you walked, the view moved: the cursor is somewhere else on the map
+    var myFacing = aiming ? (Math.cos(aimAngle) < 0 ? 'W' : 'E') : (lastPtr && lookSide) || me.facing;   // (cursor off the view: the way you walk)
+    var actors = [{ x: shown.x, y: shown.y, facing: myFacing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, aim: aiming ? aimAngle : null, swing: (performance.now() - swingT0) / SWING_MS, statusColor: myst ? myst.color : '',
+      idle: shown.x === me.x && shown.y === me.y && !aiming, ph: phaseOf(me.id), sneak: !!me.sneak }];   // idle = standing still: the figure breathes (Render, paintActor); sneak = drawn crouched
     var seen = {}, marks = [], tMark = performance.now(), TM = content.config.tile_size || 32;
     reloadMark(marks, TM); craftMark(marks, TM); questMarks(marks, TM); promptMark(marks); minimap();
     view.monsters.forEach(function (m) {
       var d = content.monsters[m.ref] || { name: m.ref, sprite: '' }, s = shownOthers[m.id] || (shownOthers[m.id] = { x: m.x, y: m.y });
+      var mStill = s.x === m.x && s.y === m.y;                           // (before easing: it was already there last frame)
       ease(s, m, dt / 250); seen[m.id] = 1;
       var stc = m.statuses && m.statuses.length && content.statuses[m.statuses[0]];
       var lay = monsterLayers(m);                                        // paper-doll zombies carry a rolled look
       // sprite '' (not undefined) keeps the monster health-bar colour + no name label even when layered
       actors.push({ x: s.x, y: s.y, facing: m.facing, name: d.name, sprite: lay ? '' : (d.sprite || ''),
-        layers: lay || undefined, hp: m.hp, maxHp: m.maxHp, statusColor: stc ? stc.color : '' });
-      // "!" when it starts after someone it sees, "?" when it loses them — for a moment, and only if you can see it
+        layers: lay || undefined, hp: m.hp, maxHp: m.maxHp, statusColor: stc ? stc.color : '', idle: mStill, ph: phaseOf(m.id) });
+      // "!" when it starts after someone it sees, "?" when it loses them or hears something and goes to look — for a
+      // moment, and only if you can see it
       var al = m.alert || 0, ar = alertSt[m.id] || (alertSt[m.id] = { a: al, until: 0, kind: '' });
       if (al !== ar.a) {
         if (al === 2) { ar.kind = 'alert'; ar.until = tMark + ALERT_MS; }
-        else if (al === 1 && ar.a === 2) { ar.kind = 'search'; ar.until = tMark + ALERT_MS; }
+        else if (al === 1) { ar.kind = 'search'; ar.until = tMark + ALERT_MS; }
         else ar.until = 0;
         ar.a = al;
       }
@@ -2612,20 +2893,23 @@
     setMarks(marks);
     view.players.forEach(function (q) {
       var s = shownOthers['p:' + q.id] || (shownOthers['p:' + q.id] = { x: q.x, y: q.y });
-      ease(s, q, dt / (moveMs * Rules.stepCost('N', content, mapOf(), q.x, q.y))); seen['p:' + q.id] = 1;   // (wading: slower)
+      var qStill = s.x === q.x && s.y === q.y;
+      ease(s, q, dt / (moveMs * Rules.stepCost('N', content, mapOf(), q.x, q.y, q))); seen['p:' + q.id] = 1;   // (wading or sneaking: slower)
       var act = othersAct(q, tMark);
-      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp, swing: (tMark - act.t0) / SWING_MS });
+      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp, swing: (tMark - act.t0) / SWING_MS, idle: qStill, ph: phaseOf(q.id), sneak: !!q.sn });
     });
+    npcActors(actors, shown);
     Object.keys(shownOthers).forEach(function (k) { if (!seen[k]) delete shownOthers[k]; });
 
     var T = content.config.tile_size || 32, map = renderer.map;
+    var padB = edgePad(T);                                     // room past each edge of the map, so the HUD never covers you there
     var cam = {
-      x: clamp((shown.x + 0.5) * T - canvas.width / 2, 0, map.width * T - canvas.width),
+      x: clamp((shown.x + 0.5) * T - canvas.width / 2, -padB, map.width * T + padB - canvas.width),
       y: 0
     };
     // The view is centred on where you are DRAWN: on raised ground that is higher up the screen than your tile.
     var myLift = Render.liftAt ? Render.liftAt(map, clamp(shown.x, 0, map.width - 1), clamp(shown.y, 0, map.height - 1), T) : 0;
-    cam.y = clamp((shown.y + 0.5) * T - myLift - canvas.height / 2, -myLift, map.height * T - canvas.height);
+    cam.y = clamp((shown.y + 0.5) * T - myLift - canvas.height / 2, -myLift - padB, map.height * T + padB - canvas.height);
     if (map.width * T < canvas.width) cam.x = (map.width * T - canvas.width) / 2;
     if (map.height * T < canvas.height) cam.y = (map.height * T - canvas.height) / 2;
     // Aim lean (config aim_lean, 0-1, default 0.25; 0 = off): the camera eases toward the cursor by that share
@@ -2642,8 +2926,8 @@
     lean.x += (lt.x - lean.x) * lk0; lean.y += (lt.y - lean.y) * lk0;
     if (Math.abs(lean.x) < 0.5 && !lt.x) lean.x = 0; if (Math.abs(lean.y) < 0.5 && !lt.y) lean.y = 0;
     cam.x = Math.round(cam.x + lean.x); cam.y = Math.round(cam.y + lean.y);
-    if (map.width * T >= canvas.width) cam.x = clamp(cam.x, 0, map.width * T - canvas.width);      // never past the map's edge
-    if (map.height * T >= canvas.height) cam.y = clamp(cam.y, -myLift, map.height * T - canvas.height);
+    if (map.width * T >= canvas.width) cam.x = clamp(cam.x, -padB, map.width * T + padB - canvas.width);      // never further past the map's edge
+    if (map.height * T >= canvas.height) cam.y = clamp(cam.y, -myLift - padB, map.height * T + padB - canvas.height);
     var states = view.states;
     if (timed.length) {
       states = Object.assign({}, view.states);
@@ -2675,7 +2959,9 @@
       }
       vis = sight.vis; mem = seenCells[me.map];
     }
-    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null, cutAll: removing && wallsDown, floorActors: floorActors(dt), floorStates: floorStates(), floorSight: floorSight() });
+    sneakVeil();
+    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null, cutAll: removing && wallsDown, watch: sightAreas(map, vis), floorActors: floorActors(dt), floorStates: floorStates(), floorSight: floorSight() });
+    nameTags(renderer.nameTags);                              // the names over characters, as text over the view
     if (removing) renderer.drawRemove(cam, removeTarget(), wallsDown);
     if (moveTool && !moveTool.key) renderer.drawRemove(cam, moveTarget(), false, true);
     if (moveTool && moveTool.key) renderer.drawGhost(cam, buildTarget());
@@ -2692,6 +2978,7 @@
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
   function hiddenEntity(e) {
     var o = content.objects[e.ref]; if (!o) return false;
+    if (outfitOf(o)) return true;                                               // an NPC with an outfit is drawn as a figure (npcActors)
     if (moveTool && moveTool.key && moveTool.key === e.key) return true;        // in hand (the move tool): only its ghost is drawn
     if ((o.kind === 'spawn' || o.kind === 'trigger') && !o.sprite) return true;   // spriteless markers are editor-only; a sprited one (a nest, portal…) is a visible spawner
     if (o.kind === 'trap') { var pr = World.props(content, e); return Content.bool(pr.hidden) && pr.trigger !== 'timed' && view.states[e.key] !== 'down'; }
@@ -2817,7 +3104,7 @@
     return res;
   }).then(apply).then(function () {
     setupDebug();
-    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use what you face · ' + (skillsOn() ? 'Q/E abilities · ' : '') + 'mouse wheel or 1-9, 0 choose what you hold from the belt (click to use food and the like) · I or C inventory and crafting · B build.', 'info');
+    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use what is towards the cursor · ' + (skillsOn() ? 'Q/E abilities · ' : '') + 'mouse wheel or 1-9, 0 choose what you hold from the belt (click to use food and the like) · I or C inventory and crafting · B build.', 'info');
     if (api.staleDraft) log('Your map editor draft was made from older game data, so the game is using the latest data instead. Open the editor to update or discard the draft.', 'death');
     requestAnimationFrame(frame);
   }).catch(function (e) {
@@ -2828,10 +3115,11 @@
   addEventListener('pagehide', function () { api.leave(); });
   // read-only peek for tests and debugging in the browser console
   window.SheetsRPG = { state: function () { return { me: me, view: view, queue: queue.length }; },
+                       pick: function (clientX, clientY) { return cellAt({ clientX: clientX, clientY: clientY }); },   // the tile a point of the page means (tests)
     plan: function () { return null; },    // kept for back-compat: there is no click-to-walk plan any more
     layers: function () { return me ? playerLayers(me) : null; },
     camera: function () { return lastCam; },
     content: function () { return content; },                                  // (tests: change a map in memory, then remap())
-    remap: function () { if (renderer && me) renderer.setMap(mapOf(), floorMaps()); },
+    remap: function () { npcSig = ''; if (renderer && me) renderer.setMap(mapOf(), floorMaps()); },
     aim: function () { return { aiming: aiming, aimAngle: aimAngle, facing: me && me.facing, armed: armed, throwing: throwing, hover: hover, check: armed && hover ? aimCheck(hover) : null }; } };
 })();

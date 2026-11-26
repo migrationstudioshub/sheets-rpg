@@ -207,6 +207,7 @@ test('joining and loading stores the world per map, not as one record', async ()
 
 test('moving is saved, and an idle heartbeat pushes nothing public', async () => {
   const s = setup();
+  s.content.config.stealth = 'off';     // (with stealth, the rat by the spawn hears that step, turns, sees Ana and comes: news, not idleness)
   const j = await s.referee.join('Ana', '');
   const r0 = await s.referee.step(j.token, null, -1);
   const map = s.content.maps[r0.player.map];

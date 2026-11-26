@@ -125,6 +125,32 @@ var Tint = (function () {
     return (cache[key] = c);
   }
 
-  return { TINTS: TINTS, SKINS: SKINS, getTintedLayer: getTintedLayer, tintedOver: tintedOver, skinned: skinned };
+  // A worn picture whose cloth is all in its mask (hair, clothes, hats, packs) shows nothing of it without a colour. When
+  // a look (an NPC's outfit, an appearance set) names no colour for one, it is drawn in this default instead — never half
+  // a garment. Weapons and bodies keep their own colours (no default: their masks, if any, stay unused).
+  var GARMENT = /^(hair|chest|shirt|jacket|vest|armor|coat|helm|hat|mask|hood|legs|pants|skirt|back|cape|pack|bag)$/;
+  function lookTint(path, tint) {
+    if (tint) return tint;
+    var n = String(path || '').split('/').pop().toLowerCase(), i = n.indexOf('_'), pre = i < 0 ? n : n.slice(0, i);
+    if (!/\/paperdoll\//.test(String(path || '')) || !GARMENT.test(pre)) return '';
+    return pre === 'hair' ? 'hair_brown' : 'khaki';
+  }
+
+  // A look's skin tone (an NPC's outfit, an appearance roll) is the colour given to its body layer, when that is a skin
+  // tone (SKINS). Answers {tone, all} for one layer: the body takes the tone on every skin-like pixel, what is held in the
+  // hands (paperdoll/hands/) on the three exact skin colours only — as for a player. null = leave the layer as it is.
+  function isBody(path) { return /(^|\/)body_[^\/]*$/i.test(String(path || '')); }
+  function lookSkin(look) {
+    for (var i = 0; i < (look || []).length; i++) if (look[i] && isBody(look[i].path) && SKINS[look[i].tint]) return look[i].tint;
+    return '';
+  }
+  function skinFor(path, tone) {
+    if (!tone) return null;
+    if (isBody(path)) return { tone: tone, all: true };
+    return /\/hands\//.test(String(path || '')) ? { tone: tone, all: false } : null;
+  }
+
+  return { TINTS: TINTS, SKINS: SKINS, getTintedLayer: getTintedLayer, tintedOver: tintedOver, skinned: skinned, lookTint: lookTint,
+    lookSkin: lookSkin, skinFor: skinFor };
 })();
 if (typeof module !== 'undefined') module.exports = Tint;

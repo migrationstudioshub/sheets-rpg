@@ -210,8 +210,10 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   a throw swings it about the shoulder (the weapons' `swing`). Others see both through `act` kinds `u` (used) and `t` (thrown)
   (`noteAct`, `othersAct`). **Food and the like in hand is used by HOLDING the left button half a second** (`EAT_MS`, `eatHold` /
   `eatProg` in `main.js`; the owner: a click somewhere must never eat by accident), **one per hold** however long it lasts; a quick
-  click does nothing, and a hold on something that has actions still opens its action list instead. Clicking the belt slot that is
-  already in hand still uses it at once. Not built: an offset or size per item, a hand drawn over the icon, monsters / NPCs holding things.
+  click does nothing, and a hold on something that has actions still opens its action list instead. **The belt takes no clicks** (owner): with the
+  inventory window shut, `#bcbox.through` lets every click on the bar reach the game behind it, so nothing on the map is hidden
+  under it (no hover tooltips there either); with the window open the belt is part of it (drag, Shift+click), and a plain click
+  on a slot still does nothing — the wheel and the number keys choose what is in hand. Not built: an offset or size per item, a hand drawn over the icon, monsters / NPCs holding things.
 - **Belt and what you hold:** the hotbar is `World.BELT_SIZE` (10) belt slots (keys 1-9, 0), which take consumables,
   throwables, weapons and tools. One slot is in hand: `p.held` (-1 = nothing), set by `{type:'hold', slot}` → `World.holdSlot`,
   which is the only thing that sets `equipment.weapon` (a non-weapon in hand = no weapon). Choosing never consumes; `use`/`throw` do.

@@ -190,6 +190,9 @@ button:disabled .ki { opacity: .4; }
 #bcbox { display: grid; gap: 3rem; }
 #xp-row { display: grid; grid-template-columns: 1fr; gap: 3rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
 #slots { display: flex; gap: 1rem; padding: 1rem; }
+/* the belt only shows: clicks go to the game behind it (main.js hotbar; not while the inventory window is open) */
+#bcbox.through { pointer-events: none; }
+#bcbox.through #abilities { pointer-events: auto; }
 #abilities, #belt { display: flex; gap: 1rem; }
 /* slots: the kit's pieces 9-sliced (the 2-pixel frame stays crisp); bag and worn cells half as big again as drawn, the belt as drawn (owner, 26 Nov 2026) */
 .hk { position: relative; box-sizing: border-box; width: 24rem; height: 24rem; border: 2rem solid transparent; border-image: var(--k-slot_hotbar) 2 fill / 2rem stretch; display: grid; place-items: center; cursor: pointer; user-select: none; image-rendering: pixelated; }

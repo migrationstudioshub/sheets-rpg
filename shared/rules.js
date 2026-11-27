@@ -50,7 +50,7 @@ var Rules = (function () {
       map._block = {};
       map.entities.forEach(function (e) {
         var o = content.objects[e.ref];
-        var w = Math.max(1, (o && o.footprintW) || 1), h = Math.max(1, (o && o.footprintH) || 1);
+        var fp = footprintOf(o, e), w = fp.w, h = fp.h;
         for (var ax = e.x; ax < e.x + w; ax++)
           for (var ay = e.y; ay > e.y - h; ay--)
             (map._block[ax + ',' + ay] = map._block[ax + ',' + ay] || []).push(e);
@@ -218,6 +218,27 @@ var Rules = (function () {
   }
   /** Can this object be turned? Only if it has a picture for another direction. */
   function turnable(o) { var t = turnPics(o); return !!(t.north || t.side); }
+  /**
+   * The tiles a placed object takes: {w, h}, from the anchor cell rightwards and upwards. THE one footprint question
+   * (collision, building, the outlines drawn, where the picture sits). The object's width and height describe it
+   * facing south; turned to its side picture (east or west) they swap, so a bedroll 1 wide and 2 tall lies 2 wide
+   * and 1 tall. `facing` = a placement (its data.facing) or a facing letter; nothing = as authored.
+   */
+  function footprintOf(o, facing) {
+    var w = Math.max(1, (o && o.footprintW) || 1), h = Math.max(1, (o && o.footprintH) || 1);
+    if (w === h || !facing || (o.properties && o.properties.layer === 'wall') || !turnPics(o).side) return { w: w, h: h };
+    var f = facingOf(facing);
+    return f === 'E' || f === 'W' ? { w: h, h: w } : { w: w, h: h };
+  }
+  /** Putting a thing down, it pivots on the tile pointed at: as authored it reaches up from that tile, and each turn swings it a
+   *  quarter round (right, below, left). This is the anchor cell that gives: {x, y}. Only for placing; the rules know anchors. */
+  function pivotCell(o, facing, x, y) {
+    if (!o || !turnable(o) || (o.properties && o.properties.layer === 'wall') || o.kind === 'stairs') return { x: x, y: y };
+    var fp = footprintOf(o, facing || 'S'), k = TURN.indexOf(facingOf(facing));
+    return { x: k === 2 || k === 3 ? x - (fp.w - 1) : x, y: k === 1 || k === 2 ? y + (fp.h - 1) : y };
+  }
+  /** Is this picture the object's side view? (What is drawn knows its picture, not its placement.) */
+  function sidePic(o, path) { return !!path && turnPics(o).side === path; }
   /** The picture for a facing, and whether to mirror it: {path, flip}. */
   function facingSprite(o, facing) {
     var t = turnPics(o), f = facingOf(facing);
@@ -461,6 +482,6 @@ var Rules = (function () {
     wallStyleOf: wallStyleOf, wallBlocksMove: wallBlocksMove, wallBlocksSight: wallBlocksSight,
     edgeKey: edgeKey, edgeBlocked: edgeBlocked, sharedEdge: sharedEdge, blockedBetween: blockedBetween, reachBlocked: reachBlocked,
     STAIR_LEN: STAIR_LEN, stairLen: stairLen, stairDir: stairDir, stairsOn: stairsOn, stairAt: stairAt, stairHeight: stairHeight,
-    facingOf: facingOf, turnable: turnable, facingSprite: facingSprite, nextFacing: nextFacing, looks: looks, lookSprite: lookSprite, nextLook: nextLook, passOf: passOf };
+    facingOf: facingOf, footprintOf: footprintOf, pivotCell: pivotCell, sidePic: sidePic, turnable: turnable, facingSprite: facingSprite, nextFacing: nextFacing, looks: looks, lookSprite: lookSprite, nextLook: nextLook, passOf: passOf };
 })();
 if (typeof module !== 'undefined') module.exports = Rules;

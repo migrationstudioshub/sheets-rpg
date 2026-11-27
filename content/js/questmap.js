@@ -1,6 +1,6 @@
 // Content Studio: the questline map beside the Quests view. A picture only: it reads the quest rows (the draft) and
 // draws every link one quest makes to another, so a questline can be followed at a glance. Nothing here is a rule;
-// the rules that the links stand for are in shared/world.js (rewards, on_start, a goal's on_done, requires).
+// the rules that the links stand for are in shared/world.js (rewards, before_start, on_start, a goal's on_done, requires).
 //   QuestMap.draw(box, rows, startIds, selectedId, {pick(id), move(id, x, y)})   QuestMap.fit()
 // rows = the Quests table (raw records), startIds = Config start_quests. One canvas: boxes are dragged anywhere
 // (move = where it was dropped; the Studio keeps it on the row as map_xy "x,y", so the layout is published with the
@@ -45,6 +45,7 @@ var QuestMap = (function () {
     }
     rows.forEach(function (r) {
       var id = str(r.id); if (!id) return;
+      startsIn(r.before_start).forEach(function (to) { link(id, to, 'start', 'starts with it, before its window (before_start)'); });
       startsIn(r.on_start).forEach(function (to) { link(id, to, 'start'); });
       goalsOf(r).forEach(function (g, gi) {
         startsIn(g.onDone).forEach(function (to) { link(id, to, 'goal', 'starts it when "' + (g.label || g.type + (g.ref && g.ref !== '*' ? ' ' + g.ref : '')) + '" is met (objective ' + (gi + 1) + ')'); });

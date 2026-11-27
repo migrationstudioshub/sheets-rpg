@@ -20,6 +20,33 @@ canvas { display: block; image-rendering: pixelated; }
 #sneak-veil { position: absolute; inset: 0; pointer-events: none; z-index: 1; opacity: 0; transition: opacity .5s ease;
   background: radial-gradient(ellipse at center, transparent 45%, rgba(8, 6, 14, .35) 72%, rgba(8, 6, 14, .75) 100%); }
 #sneak-veil.on { opacity: 1; }
+/* a scene (client/js/scene.js): bars, fades, pictures and lines over the view; the HUD and the windows are hidden */
+body.scene-on #frame { overflow: hidden; }
+body.scene-on .hudlayer, body.scene-on #hud > *:not(#hud-net), body.scene-on #tip, body.scene-on #menu, body.scene-on #sneak-veil { visibility: hidden; }
+#view { transform-origin: 50% 50%; }
+#scene { position: absolute; inset: 0; z-index: 20; cursor: pointer; overflow: hidden; }
+#scene.leaving { pointer-events: none; }
+#scene .sc-fade { position: absolute; inset: 0; opacity: 0; background: #000; pointer-events: none; }
+#scene .sc-bar { position: absolute; left: 0; right: 0; height: 11%; background: #000; transition: transform .4s ease; pointer-events: none; }
+#scene .sc-top { top: 0; transform: translateY(-100%); } #scene .sc-bot { bottom: 0; transform: translateY(100%); }
+#scene .sc-bar.on { transform: none; }
+#scene .sc-pic { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6rem; background: #000; }
+#scene .sc-pic img { max-width: 86%; max-height: 72%; image-rendering: pixelated; }
+#scene .sc-ptext { max-width: 70%; text-align: center; white-space: pre-wrap; font: 400 12rem/1.15 'Jersey 10', sans-serif; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
+#scene .sc-pic.card .sc-ptext { font-size: 14rem; }
+#scene .sc-line { position: absolute; left: 12%; right: 12%; bottom: 13%; padding: 5rem 8rem 6rem; background: rgba(14, 13, 17, .88); border: 1rem solid var(--grey1); box-shadow: 0 0 0 1rem var(--ink); }
+#scene .sc-line.caption { background: transparent; border-color: transparent; box-shadow: none; text-align: center; }
+#scene .sc-line.faced { display: flex; gap: 8rem; align-items: flex-end; }
+#scene .sc-face { display: none; } #scene .sc-line.faced .sc-face { display: block; flex: none; margin: -24rem 0 -2rem; }
+#scene .sc-face canvas { display: block; width: 40rem; height: 60rem; image-rendering: pixelated; }
+#scene .sc-words { flex: 1; min-width: 0; }
+#scene .sc-name { margin-bottom: 3rem; font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--yellow); }
+#scene .sc-text { white-space: pre-wrap; font: 400 12rem/1.15 'Jersey 10', sans-serif; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
+#scene .sc-line.caption .sc-text { font-style: italic; }
+#scene .sc-more { position: absolute; right: 13%; bottom: 14%; font: 700 10rem/1 'Silkscreen', monospace; color: var(--bone); animation: scmore 1s steps(2) infinite; pointer-events: none; }
+@keyframes scmore { 50% { opacity: .2; } }
+#scene .sc-skip { position: absolute; top: 3%; right: 2%; z-index: 1; }
+#scene .sc-hint { position: absolute; top: 3%; left: 50%; transform: translateX(-50%); font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); }
 [hidden] { display: none !important; }
 
 /* ---- text ---- */
@@ -161,19 +188,20 @@ button:disabled .ki { opacity: .4; }
 /* bottom centre: experience over the belt (keys 1-9, 0; Q and E before them when skills are on) */
 #hud-bc { left: 0; right: 0; bottom: 6rem; display: grid; justify-items: center; }
 #bcbox { display: grid; gap: 3rem; }
-#xp-row { display: grid; grid-template-columns: auto 1fr auto; gap: 3rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
-#xp-lv { padding: 1rem 3rem; font-weight: 700; color: var(--yellow); text-shadow: none; }
+#xp-row { display: grid; grid-template-columns: 1fr; gap: 3rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
 #slots { display: flex; gap: 1rem; padding: 1rem; }
 #abilities, #belt { display: flex; gap: 1rem; }
-.hk { position: relative; width: 24rem; height: 24rem; background: var(--k-slot_hotbar) 0 0 / 100% 100% no-repeat; display: grid; place-items: center; cursor: pointer; user-select: none; }
-.hk.held, .hk.armed { background-image: var(--k-slot_hotbar_selected); }
+/* slots: the kit's pieces 9-sliced (the 2-pixel frame stays crisp); bag and worn cells half as big again as drawn, the belt as drawn (owner, 26 Nov 2026) */
+.hk { position: relative; box-sizing: border-box; width: 24rem; height: 24rem; border: 2rem solid transparent; border-image: var(--k-slot_hotbar) 2 fill / 2rem stretch; display: grid; place-items: center; cursor: pointer; user-select: none; image-rendering: pixelated; }
+.hk.held, .hk.armed { border-image-source: var(--k-slot_hotbar_selected); }
+.hk .ico { width: 20rem; height: 20rem; }
 .hk.over { outline: 1rem solid var(--bone); outline-offset: -1rem; }
 .hk.low .ico { opacity: .4; }
 .ico { width: var(--ico, 32px); height: var(--ico, 32px); display: grid; place-items: center; image-rendering: pixelated; pointer-events: none; font: 700 8rem/1 'Silkscreen', monospace; color: var(--ink); }
-.hk .key { position: absolute; left: 3rem; top: 3rem; font: 400 8rem/1 'Silkscreen', monospace; color: var(--grey2); }
-.hk .qty, .hk .cost { position: absolute; right: 2rem; bottom: 2rem; font: 400 8rem/1 'Silkscreen', monospace; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
+.hk .key { position: absolute; left: 1rem; top: 1rem; z-index: 1; font: 400 8rem/1 'Silkscreen', monospace; color: var(--grey2); }
+.hk .qty, .hk .cost { position: absolute; right: 0; bottom: 0; font: 400 8rem/1 'Silkscreen', monospace; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
 .hk .cost { color: var(--blue); }
-.hk .cd { position: absolute; left: 1rem; right: 1rem; bottom: 1rem; background: rgba(14,13,17,.65); }
+.hk .cd { position: absolute; left: -1rem; right: -1rem; bottom: -1rem; background: rgba(14,13,17,.65); }
 .hk .cdt { position: absolute; inset: 0; display: grid; place-items: center; font: 700 8rem/1 'Silkscreen', monospace; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
 .hk.empty { cursor: default; }
 /* bottom right: what is in your hands when it shoots — rounds in it / rounds in the bag */
@@ -198,6 +226,7 @@ button:disabled .ki { opacity: .4; }
 .mark.reload .track { fill: rgba(14,13,17,.55); stroke: rgba(231,221,194,.22); stroke-width: 4; }
 .mark.reload .arc { fill: none; stroke: var(--bone); stroke-width: 4; stroke-dasharray: 100.53; stroke-dashoffset: 100.53; }
 .mark.reload .round { fill: var(--bone); }
+.mark.watch { text-align: center; font: 700 12rem/1 'Silkscreen', monospace; color: var(--grey4); text-shadow: 1rem 1rem 0 var(--ink); }
 .mark.alert, .mark.search, .mark.quest, .mark.questdone, .mark.questgo { text-align: center; font: 700 16rem/1 'Silkscreen', monospace;
   text-shadow: -1rem 0 var(--ink), 1rem 0 var(--ink), 0 -1rem var(--ink), 0 1rem var(--ink), 1rem 1rem var(--ink); }
 .mark.alert, .mark.search { animation: markpop .18s steps(3); }
@@ -293,22 +322,24 @@ h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform:
 .wnote { color: var(--grey3); }
 /* grids of cells: your bag, an open container, a cooker's cells. A stack is dragged from cell to cell. */
 .tray { padding: 1rem; width: max-content; }
-.igrid { display: grid; grid-template-columns: repeat(8, 20rem); gap: 1rem; width: max-content; }
-.icell { position: relative; width: 20rem; height: 20rem; background: var(--k-slot_empty) 0 0 / 100% 100% no-repeat; display: grid; place-items: center; user-select: none; image-rendering: pixelated; }
+.igrid { display: grid; grid-template-columns: repeat(6, 30rem); gap: 1rem; width: max-content; }
+.icell { position: relative; box-sizing: border-box; width: 20rem; height: 20rem; border: 2rem solid transparent; border-image: var(--k-slot_empty) 2 fill / 2rem stretch; display: grid; place-items: center; user-select: none; image-rendering: pixelated; }
+.igrid .icell, .icell.dslot { width: 30rem; height: 30rem; }
+.igrid .icell .ico, .icell.dslot .ico { width: 24rem; height: 24rem; }
 .icell.has { cursor: grab; }
-.igrid .icell:hover, .dslot:hover { background-image: var(--k-slot_hover); }
-.icell.sel, .icell.over, .igrid .icell.sel:hover { background-image: var(--k-slot_selected); }
-.icell.extra { background-image: var(--k-slot_warn); }                            /* a stack past the last cell: the bag is overfull */
-.icell.locked { background-image: var(--k-slot_locked); }
+.igrid .icell:hover, .dslot:hover { border-image-source: var(--k-slot_hover); }
+.icell.sel, .icell.over, .igrid .icell.sel:hover { border-image-source: var(--k-slot_selected); }
+.icell.extra { border-image-source: var(--k-slot_warn); }                            /* a stack past the last cell: the bag is overfull */
+.icell.locked { border-image-source: var(--k-slot_locked); }
 .icell.off { visibility: hidden; }
 .icell.fade .ico { opacity: .22; }                                                /* not what the bag's filter is showing */
-.icell.equipped::after { content: ''; position: absolute; left: 2rem; top: 2rem; width: 3rem; height: 3rem; background: var(--green); outline: 1rem solid var(--ink); }
+.icell.equipped::after { content: ''; position: absolute; left: 0; top: 0; width: 3rem; height: 3rem; background: var(--green); outline: 1rem solid var(--ink); }
 /* a weapon's or tool's wear: a 2 px line along the bottom of its cell (bag and belt), as long as what is left */
-.durb { position: absolute; left: 3rem; right: 3rem; bottom: 2rem; height: 2rem; background: rgba(14,13,17,.75); pointer-events: none; }
+.durb { position: absolute; left: 1rem; right: 1rem; bottom: 0; height: 2rem; background: rgba(14,13,17,.75); pointer-events: none; }
 .durb i { display: block; height: 100%; }
 .broken .ico { opacity: .4; filter: grayscale(1); }                              /* worn down to nothing: kept, good for nothing until mended */
 .broken::before { content: ''; position: absolute; inset: 3rem; background: linear-gradient(to top right, transparent 46%, var(--red) 46% 54%, transparent 54%); opacity: .8; pointer-events: none; }
-.icell .qty { position: absolute; right: 2rem; bottom: 2rem; font: 400 8rem/1 'Silkscreen', monospace; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); pointer-events: none; }
+.icell .qty { position: absolute; right: 0; bottom: 0; font: 400 8rem/1 'Silkscreen', monospace; color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); pointer-events: none; }
 .icell .ghost { opacity: 1; pointer-events: none; }
 /* the picked item: what it is and what can be done with it */
 .icard { padding: 3rem 4rem 4rem; display: grid; gap: 4rem; min-height: 50rem; align-content: start; }
@@ -349,15 +380,26 @@ h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform:
 .making .bad { color: #ff8a7a; }
 .making .prow { grid-column: 1; display: grid; grid-template-columns: 1fr auto; gap: 4rem; align-items: center; } .making .prow .kbar { grid-column: auto; }
 /* the inventory window's first column: you, what you wear, what you are */
-.doll { position: relative; width: 160rem; height: 152rem; }
+.doll { position: relative; width: 160rem; height: 172rem; }
 .doll canvas.bust { position: absolute; left: 48rem; top: 6rem; width: 64rem; height: 96rem; }
 .dslot { position: absolute; }
-.dslot .lab { position: absolute; left: -10rem; width: 40rem; top: 21rem; text-align: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey2); pointer-events: none; }
+/* the level and XP bar between the figure and the stats */
+.dlevel { display: grid; grid-template-columns: auto 1fr; gap: 5rem; align-items: center; padding: 3rem 4rem; }
+.dlevel b { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); }
+.dlevel span { color: var(--grey3); }
+/* the conditions row under the bars: an icon each, its words on hover */
+.dconds { display: flex; flex-wrap: wrap; gap: 3rem; align-items: center; min-height: 13rem; padding-top: 2rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; }
+.dconds .cond { display: grid; place-items: center; width: 13rem; height: 13rem; border-image: var(--k-slot_empty) 2 fill / 2rem stretch; }
+.dconds .dim { color: var(--grey2); }
+/* the place what is being dragged can be worn: a white outline that pulses */
+.dslot.fits { outline: 1rem solid #fff; outline-offset: 0; animation: dslotFit 0.8s ease-in-out infinite alternate; }
+@keyframes dslotFit { from { outline-color: rgba(255, 255, 255, 0.25); } to { outline-color: rgba(255, 255, 255, 0.95); } }
+.dslot .lab { position: absolute; left: -7rem; width: 40rem; top: 29rem; text-align: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey2); pointer-events: none; }
 .dslot .lab.up { top: -9rem; }
 .stats { padding: 3rem 4rem; display: grid; gap: 4rem; }
 .stat { display: flex; gap: 5rem; align-items: center; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); }
 .stat b { margin-left: auto; color: var(--bone); }
-.mebars { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2rem 3rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey3); }
+.mebars { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem 3rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey3); }
 .mebars .kbar.hp { grid-column: 1 / -1; height: 8rem; }
 .mebars .lab2 { grid-column: span 1; }
 /* the cooking window's middle column: raw > fire > cooked, the fuel, the switch */
@@ -463,10 +505,29 @@ h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform:
 #help .panel { width: 330rem; color: var(--grey4); }
 #tip { position: absolute; z-index: 9; pointer-events: none; max-width: 170rem; padding: 2rem 4rem 3rem; display: grid; gap: 2rem; box-sizing: border-box; border: 2rem solid transparent; border-image: var(--k-panel_tooltip) 2 fill / 2rem stretch; color: var(--grey4); white-space: pre-wrap; }
 #tip b { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--bone); white-space: normal; }
+/* gear against what is worn (after a second of hovering): Attack  2 → 5  +3 */
+#tip .cmp { display: grid; gap: 2rem; margin-top: 2rem; padding-top: 3rem; border-top: 1rem solid var(--grey1); white-space: normal; }
+#tip .cmp > i { font-style: normal; color: var(--grey3); }
+#tip .cmp > div { display: grid; grid-template-columns: 1fr auto 22rem; gap: 6rem; align-items: baseline; }
+#tip .cmp > div b { justify-self: end; color: var(--grey3); }
+#tip .cmp > div b.up { color: var(--green); } #tip .cmp > div b.down { color: var(--red); }
 #menu { position: absolute; z-index: 6; padding: 1rem; display: grid; gap: 1rem; min-width: 90rem; box-sizing: border-box; border: 2rem solid transparent; border-image: var(--k-panel_tooltip) 2 fill / 2rem stretch; }
 #menu button, #menu button:hover, #menu button:active { height: 12rem; padding: 0 4rem; border: 0; border-image: none; justify-content: flex-start; }
 #menu button:hover { background: var(--ink4); }
 #menu button.def { color: var(--yellow); font-weight: 700; }
+/* the emote wheel (main.js openEmotes): the emotes in a ring round your figure (left/top = its middle, on the screen);
+   held wheel button: point and let go; G: click, or a number */
+#emotewheel { position: fixed; z-index: 7; width: 0; height: 0; --ew-r: 48rem; pointer-events: none; }
+#emotewheel::before { content: ''; position: absolute; left: calc(-1 * var(--ew-r) - 20rem); top: calc(-1 * var(--ew-r) - 20rem);
+  width: calc(2 * var(--ew-r) + 40rem); height: calc(2 * var(--ew-r) + 40rem); border-radius: 50%; background: rgba(10, 8, 16, .45); }
+#emotewheel .ew-item { position: absolute; width: 28rem; height: 28rem; margin: -14rem 0 0 -14rem; padding: 0; pointer-events: auto;
+  display: grid; place-items: center; border: 1rem solid var(--ink3); border-image: none; background: var(--ink); }
+#emotewheel .ew-item.on { border-color: var(--yellow); background: var(--ink4); }
+#emotewheel canvas { width: 26rem; height: 26rem; image-rendering: pixelated; }
+#emotewheel .en { position: absolute; right: 1rem; bottom: 0; font: 7rem/1 'Silkscreen', monospace; color: var(--grey4); }
+#emotewheel .ew-name { position: absolute; top: 22rem; transform: translate(-50%, -50%); white-space: nowrap; font: 7rem/1 'Silkscreen', monospace;
+  color: var(--bone); text-shadow: 1rem 1rem 0 var(--ink); }
+body.scene-on #emotewheel { visibility: hidden; }
 /* lists that scroll */
 ::-webkit-scrollbar { width: 6rem; height: 6rem; }
 ::-webkit-scrollbar-track { background: var(--ink); box-shadow: inset 1rem 0 0 var(--ink3); }

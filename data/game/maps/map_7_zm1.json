@@ -18,8 +18,8 @@
 "floor_of": "map_7",
 "z": -1,
 "entities": [
-  {"key":"map_7_zm1.e1","x":20,"y":27,"ref":"teleport_01","data":"{\"target\":\"map_7:20:27\"}"},
-  {"key":"map_7_zm1.e2","x":34,"y":27,"ref":"teleport_01","data":"{\"target\":\"map_7:34:27\"}"},
-  {"key":"map_7_zm1.e3","x":3,"y":15,"ref":"teleport_01","data":"{\"target\":\"map_7:3:15\"}"}
+  {"key":"map_7_zm1.e1","x":20,"y":27,"ref":"teleport_test","data":"{\"target\":\"map_7:20:27\"}"},
+  {"key":"map_7_zm1.e2","x":34,"y":27,"ref":"teleport_test","data":"{\"target\":\"map_7:34:27\"}"},
+  {"key":"map_7_zm1.e3","x":3,"y":15,"ref":"teleport_test","data":"{\"target\":\"map_7:3:15\"}"}
 ]
 }

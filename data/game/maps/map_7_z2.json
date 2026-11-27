@@ -18,9 +18,9 @@
 "floor_of": "map_7",
 "z": 2,
 "entities": [
-  {"key":"map_7_z2.e1","x":18,"y":25,"ref":"barrel2","data":""},
-  {"key":"map_7_z2.e2","x":21,"y":25,"ref":"barrel2","data":""},
-  {"key":"map_7_z2.e3","x":18,"y":28,"ref":"barrel2","data":""},
-  {"key":"map_7_z2.e4","x":21,"y":28,"ref":"barrel2","data":""}
+  {"key":"map_7_z2.e1","x":18,"y":25,"ref":"container_barrel","data":""},
+  {"key":"map_7_z2.e2","x":21,"y":25,"ref":"container_barrel","data":""},
+  {"key":"map_7_z2.e3","x":18,"y":28,"ref":"container_barrel","data":""},
+  {"key":"map_7_z2.e4","x":21,"y":28,"ref":"container_barrel","data":""}
 ]
 }

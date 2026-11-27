@@ -52,8 +52,8 @@
 
     <div id="hud-bc" class="hudlayer">
       <div id="bcbox">
-        <div id="xp-row"><span id="xp-lv" class="k kplate"></span><span id="xp-slot"></span><span id="xp-text"></span></div>
         <div id="slots" class="k kplate"><div id="abilities"></div><div id="belt"></div></div>
+        <div id="xp-row"><span id="xp-slot"></span></div>
       </div>
     </div>
 
@@ -140,7 +140,7 @@
     // version right after an update (GitHub Pages otherwise lets browsers keep files for 10 minutes).
     (function () {
       var files = ['../shared/mapcode.js', '../shared/content.js', '../shared/autotile.js', '../shared/rules.js', '../shared/world.js',
-                   'js/config.js', 'js/ui.js', 'js/assets.js', 'js/scatter.js', 'js/tint.js', 'js/render.js', 'js/content_store.js', 'js/localdata.js', 'js/wire.js', 'js/api.js', 'js/main.js'];
+                   'js/config.js', 'js/ui.js', 'js/assets.js', 'js/scatter.js', 'js/tint.js', 'js/render.js', 'js/content_store.js', 'js/localdata.js', 'js/wire.js', 'js/api.js', 'js/scene.js', 'js/emotes.js', 'js/main.js'];
       var v = Date.now();
       (function next(i) {
         if (i >= files.length) return;

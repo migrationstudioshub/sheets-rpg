@@ -498,7 +498,7 @@ var Render = (function () {
     var zoneOf = (map.roof && typeof World !== 'undefined' && World.roofZones) ? World.roofZones(map) : {};
     var mx = me ? Math.round(me.x) : -99, my = me ? Math.round(me.y) : -99;
     var curZone = me ? (zoneOf[mx + ',' + my] || null) : null;
-    function seen(x, y) { return !vis || !!vis[x + ',' + y]; }
+    function seen(x, y) { var v = vis && vis[x + ',' + y]; return !vis || (!!v && v !== 3); }   // (3 = the edge of a ledge above you: who stands there is seen, its ground is not)
     function known(x, y) {
       var k = x + ',' + y, z = zoneOf[k];
       if (!vis || !z) return true;
@@ -568,10 +568,16 @@ var Render = (function () {
     } catch (e) { out = null; }
     _sil.set(img, out); return out;
   }
+  /** How many tiles wide the footprint under a picture is: the object's width, or its height when the picture is its
+   *  side view (turned east or west, the footprint turns with it — Rules.footprintOf). */
+  function footW(o, path) {
+    var side = typeof Rules !== 'undefined' && Rules.sidePic(o, path) && layerOf(o) !== 'wall';
+    return Math.max(1, (side ? o.footprintH : o.footprintW) || 1);
+  }
   /** Where drawObject puts an object's whole image (base + overflow) on screen: {x, y, w, h}, plus its frame width. */
-  function objRect(o, img, dx, dy, size) {
+  function objRect(o, img, dx, dy, size, path) {
     var fw = img.width / Math.max(1, o.frames || 1), sc = size / NT, w = Math.max(1, Math.round(fw / NT));
-    var x = dx + (Math.max(1, o.footprintW || 1) - w) * size / 2 + Number((o.properties && o.properties.offset_x) || 0) * sc;
+    var x = dx + (footW(o, path) - w) * size / 2 + Number((o.properties && o.properties.offset_x) || 0) * sc;
     var hgt = img.height * sc;
     return { x: x, y: dy + size + (o.offsetY || 0) * sc - hgt, w: w * size, h: hgt, fw: fw };
   }
@@ -857,8 +863,11 @@ var Render = (function () {
    * above that row overflows upward. A per-object offset_y nudges it vertically.
    * part 'base' = the footprint row (the part that can block); part 'top' = the overflow above it,
    * drawn after characters so they can walk behind it. `flip` mirrors the whole object (side→left).
+   * `lean` (screen pixels, signed; swayOf) = foliage in the wind: the picture stays planted at its foot and its
+   * top is that far to one side. Drawn as a few bands of rows, each moved a whole number of pixels, so the art
+   * stays crisp and both parts bend as one.
    */
-  function drawObject(g, o, path, dx, dy, size, part, now, flip) {
+  function drawObject(g, o, path, dx, dy, size, part, now, flip, lean) {
     var img = path && Assets.get(path);
     if (!img) { if (part === 'base' && path) g.drawImage(Assets.placeholder(o.name, '#7a5a3a', size), dx, dy, size, size); return; }
     // The object's frames apply to a picture wide enough to hold them; a narrower one is a still. So one object can
@@ -867,7 +876,7 @@ var Render = (function () {
     var sc = size / NT, w = Math.max(1, Math.round(fw / NT)), destW = w * size;
     // Centre the sprite over its footprint width, so a sprite wider (or narrower) than its footprint
     // straddles the footprint tiles instead of growing rightward from the anchor.
-    dx += (Math.max(1, o.footprintW || 1) - w) * size / 2;
+    dx += (footW(o, path) - w) * size / 2;
     // Per-object pixel nudges (authored at 32px/tile): offset_x (+ = right) and offset_y (+ = down, − = up).
     var offY = (o.offsetY || 0) * sc;
     var offX = Number((o.properties && o.properties.offset_x) || 0) * sc;
@@ -881,11 +890,68 @@ var Render = (function () {
       else g.drawImage(img, f.sx, srcY, fw, srcH, dx, dstY, destW, dstH);
       g.restore();
     }
+    lean = Math.round(lean || 0);
+    if (lean) {
+      var r0 = part === 'base' ? ih - baseSrcH : 0, r1 = part === 'base' ? ih : topSrcH;   // this part's rows of the picture
+      var n = Math.abs(lean), sgn = lean < 0 ? -1 : 1, x0 = dx, hi = ih, bx = inkBox(img);   // hi = the row the band above ends on
+      var inkH = bx.bot - bx.top;
+      if (swayLow(bx)) {
+        // A small plant (a bush, a tuft) is cut TWICE: its foot (SWAY_FOOT art pixels) never moves; the top goes one art
+        // pixel to the side first, then the middle follows it. Never further than that one pixel.
+        var unit = Math.max(1, Math.round(sc)), lvl = Math.min(2, Math.round(n / unit)), c1 = bx.bot - SWAY_FOOT, c2 = Math.round(bx.top + (c1 - bx.top) / 2);
+        [[c1, ih, 0], [c2, c1, lvl >= 2 ? 1 : 0], [0, c2, lvl >= 1 ? 1 : 0]].forEach(function (bd) {
+          var a = Math.max(bd[0], r0), b = Math.min(bd[1], r1);
+          if (b > a) { dx = x0 + bd[2] * unit * sgn; blit(a, b - a, baseDstY + (a - (ih - baseSrcH)) * sc, (b - a) * sc); }
+        });
+        return;
+      }
+      for (var s = 0; s <= n; s++) {                          // band s = the rows moved s pixels; rows higher up move more (a curve: the foot stays put)
+        var lo = s === n ? 0 : Math.round(bx.bot - inkH * Math.pow((s + 0.5) / n, 1 / SWAY_CURVE));
+        var a = Math.max(lo, r0), b = Math.min(hi, r1);
+        if (b > a) { dx = x0 + s * sgn; blit(a, b - a, baseDstY + (a - (ih - baseSrcH)) * sc, (b - a) * sc); }
+        hi = lo;
+      }
+      return;
+    }
     if (part === 'base') {
       blit(ih - baseSrcH, baseSrcH, baseDstY, baseDstH);
     } else {
       blit(0, topSrcH, baseDstY - topSrcH * sc, topSrcH * sc);
     }
+  }
+  // Foliage in the wind (draw-only). What sways: an object with properties.sway (true, or a number = how strongly),
+  // and an item lying on the ground whose Items `sway` is ticked. The answer is how far its top leans right now, in
+  // screen pixels: two slow waves, each thing on its own beat (from where it stands, so a wood never moves as one),
+  // taller pictures leaning further. Config foliage_sway = the strength of it all (1; 0 = off).
+  var SWAY_CURVE = 1.6, SWAY_MS = 3400, SWAY_FOOT = 4, SWAY_LOW = 48;   // (art pixels: the planted foot of a small plant; how tall "small" is)
+  function swayLow(bx) { var hgt = bx.bot - bx.top; return hgt <= SWAY_LOW && hgt > SWAY_FOOT; }
+  /** The rows of a picture that have anything drawn on them ({top, bot}): the sway bends that, not the empty rows
+   *  above a small plant. Worked out once per picture; one that cannot be read (art from another site) = all of it. */
+  function inkBox(img) {
+    if (img._ink) return img._ink;
+    var box = { top: 0, bot: img.height };
+    try {
+      var cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
+      var cg = cv.getContext('2d'); cg.drawImage(img, 0, 0);
+      var d = cg.getImageData(0, 0, img.width, img.height).data, w4 = img.width * 4, top = -1, bot = -1;
+      for (var y = 0; y < img.height; y++) for (var i = y * w4 + 3, e = i + w4; i < e; i += 4) if (d[i] > 24) { if (top < 0) top = y; bot = y + 1; break; }
+      if (top >= 0 && bot - top >= 2) box = { top: top, bot: bot };
+    } catch (err) { /* tainted: keep the whole picture */ }
+    try { img._ink = box; } catch (err2) { /* */ }
+    return box;
+  }
+  function swayOf(cfg, o, item, path, x, y, size, now) {
+    var k = item ? (item.sway ? 1 : 0) : (o.properties && o.properties.sway);
+    if (!k || !now) return 0;
+    k = k === true ? 1 : Number(k) || 0;
+    var cv = cfg && cfg.foliage_sway; k *= cv === undefined || cv === '' ? 1 : (Number(cv) > 0 ? Number(cv) : 0);
+    var img = k > 0 && path && Assets.get(path); if (!img) return 0;
+    var ph = (x * 12.9898 + y * 78.233) % 6.2832, t = now / SWAY_MS * 6.2832;
+    var wave = 0.65 * Math.sin(t + ph) + 0.35 * Math.sin(t * 2.3 + ph * 1.7);
+    var bx = inkBox(img);
+    if (swayLow(bx)) return Math.max(-2, Math.min(2, Math.round(wave * 2.4 * k))) * Math.max(1, Math.round(size / NT));   // a small plant: how far gone, 0 upright, 1 the top, 2 the middle too (drawObject)
+    var px = Math.sqrt((bx.bot - bx.top) / NT) * 1.25 * size / NT;   // a tree leans further than a tuft
+    return wave * k * Math.max(1.3, px);                           // (never less than one screen pixel at the top, or a small plant would not move at all)
   }
   function hasTop(o, path) {
     var img = path && Assets.get(path); if (!img) return false;
@@ -1281,6 +1347,7 @@ var Render = (function () {
     // names over characters are not painted here: the page lays them over the view as text in the UI's own font, sharp at any
     // size (main.js nameTags). This frame's list: {x, y (canvas pixels: the middle, the bottom of the name), text, color}.
     var nameTags = this.nameTags = [];
+    var emoteTags = this.emoteTags = [];       // emotes over heads (a.emote): {x, y (canvas pixels: the middle, just above the head), named (a name tag sits there), emote}; main.js draws them on top
     var hits = this.hits = [];                 // this frame's objects and where each is drawn: what objectAt (below) is asked about
     var states = (opts && opts.states) || {}, hidden = opts && opts.hidden;
     g.imageSmoothingEnabled = false;
@@ -1382,11 +1449,25 @@ var Render = (function () {
     });
     // layer 2d: fog and roof over the ground — a dim veil on cells out of sight, the roof on unknown interiors
     var cx, cy, xa = Math.max(0, x0), xb = Math.min(map.width - 1, x1), ya = Math.max(0, y0), yb = Math.min(map.height - 1, y1);
+    // Each spot of the screen gets its veil ONCE, from the tile that is actually seen there. Raised ground is drawn
+    // over what lies behind it, so a column is walked from the near side: a tile shows from its lifted top down to
+    // its foot (its top and its cliff face), less what nearer, higher ground already stands in front of (`sky`).
+    // Without this a ledge would also take the veil of every hidden tile behind it, one more per level of height.
     if (sight.vis) {
-      if (fogA > 0) { g.fillStyle = 'rgba(0,0,0,' + fogA + ')';
-        for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.seen(cx, cy) && sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T - L(cx, cy), T, T); }
-      g.fillStyle = roofCol;
-      for (cy = ya; cy <= yb; cy++) for (cx = xa; cx <= xb; cx++) if (!sight.known(cx, cy) && hasFloor(cx, cy)) g.fillRect(ox + cx * T, oy + cy * T - L(cx, cy), T, T);
+      var fogCol = 'rgba(0,0,0,' + fogA + ')', ybx = Math.min(map.height - 1, y1 + (EL ? elevTop + 1 : 0));
+      for (cx = xa; cx <= xb; cx++) {
+        var sky = Infinity;
+        for (cy = ybx; cy >= ya; cy--) {
+          if (!hasFloor(cx, cy)) continue;
+          var vt = oy + cy * T - L(cx, cy), vb = Math.min(oy + (cy + 1) * T, sky);
+          if (vt < sky) sky = vt;
+          if (vb <= vt) continue;
+          if (!sight.known(cx, cy)) g.fillStyle = roofCol;
+          else if (fogA > 0 && !sight.seen(cx, cy)) g.fillStyle = fogCol;
+          else continue;
+          g.fillRect(ox + cx * T, vt, T, vb - vt);
+        }
+      }
     }
     // layer 2e: indoors is darker (config indoor_dark, 0-1; 0 = off). The floor gets a veil here; whatever
     // stands indoors — objects, characters, the wall surfaces facing into the room — is drawn darker to match
@@ -1567,16 +1648,18 @@ var Render = (function () {
       var path = objPath(o, st, facing), flip = facing === 'left' || (!!facing && Rules.facingOf(String(facing)) === 'W');
       var lookP = !(st && o.spriteStates[st]) && !facing ? Rules.lookSprite(o, e) : '';
       if (lookP) path = lookP;                                        // one of the object's other looks (a differently drawn tree)
-      if (o.id === '_drop') { var lying = World.list((e.data || {}).pickup)[0], lit = lying && c.items[lying.item]; if (lit && lit.sprite) path = lit.sprite; }   // an item on the ground: its own picture
+      var lit = null;
+      if (o.id === '_drop') { var lying = World.list((e.data || {}).pickup)[0]; lit = (lying && c.items[lying.item]) || null; if (lit && lit.sprite) path = lit.sprite; else lit = null; }   // an item on the ground: its own picture
+      var lean = swayOf(c.config, o, lit, path, e.x, e.y, T, now);   // foliage in the wind
       if (!path && e.bp !== undefined) path = '#built';              // something a player built with no art yet: show a lettered box, never nothing
       var dx = ox + e.x * T, dy = oy + e.y * T - L(e.x, e.y), dz = o.draw || 'auto';
       hits.push({ e: e, o: o, path: path, dx: dx, dy: dy, flip: flip });
       if (dz === 'over') {
-        overs.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip, shade: shadeAt(e.x, e.y) });
+        overs.push({ o: o, path: path, y: e.y, dx: dx, dy: dy, flip: flip, shade: shadeAt(e.x, e.y), lean: lean });
       } else if (dz === 'under') {
         dim(shadeAt(e.x, e.y));
-        drawObject(g, o, path, dx, dy, T, 'base', now, flip);                        // always behind everyone
-        if (hasTop(o, path)) drawObject(g, o, path, dx, dy, T, 'top', now, flip);
+        drawObject(g, o, path, dx, dy, T, 'base', now, flip, lean);                  // always behind everyone
+        if (hasTop(o, path)) drawObject(g, o, path, dx, dy, T, 'top', now, flip, lean);
         drawStateMark(g, o, st, dx, dy, T);
         dim(false);
       } else {
@@ -1584,7 +1667,7 @@ var Render = (function () {
         // tile it draws after the character (+0.1: still under a wall on that line, which is +0.25). Any other
         // facing keeps the tie as it was: the character on the tile is drawn over the object.
         var back = facing && Rules.turnable(o) && Rules.facingOf(String(facing)) === 'N' ? 0.1 : 0;
-        renderables.push({ sortY: Math.round(oy + e.y * T) + T + back, dark: shadeAt(e.x, e.y), alpha: e.need && (e.prog || 0) < e.need ? 0.5 : 1, at: EL ? { x: e.x, y: e.y, w: Math.max(1, o.footprintW || 1) } : null, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path) } });
+        renderables.push({ sortY: Math.round(oy + e.y * T) + T + back, dark: shadeAt(e.x, e.y), alpha: e.need && (e.prog || 0) < e.need ? 0.5 : 1, at: EL ? { x: e.x, y: e.y, w: Rules.footprintOf(o, e).w } : null, obj: { o: o, path: path, dx: dx, dy: dy, flip: flip, st: st, tall: hasTop(o, path), lean: lean } });
       }
     });
 
@@ -1641,8 +1724,8 @@ var Render = (function () {
       if (r.obj) {
         if (r.alpha < 1) g.globalAlpha = r.alpha;
         dim(r.dark);
-        drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'base', now, r.obj.flip);
-        if (r.obj.tall) drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'top', now, r.obj.flip);
+        drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'base', now, r.obj.flip, r.obj.lean);
+        if (r.obj.tall) drawObject(g, r.obj.o, r.obj.path, r.obj.dx, r.obj.dy, T, 'top', now, r.obj.flip, r.obj.lean);
         drawStateMark(g, r.obj.o, r.obj.st, r.obj.dx, r.obj.dy, T);
         dim(false);
         g.globalAlpha = 1;
@@ -1668,7 +1751,7 @@ var Render = (function () {
       // thing's own height would begin. Those shapes are gathered into one outline, and the ground picture is
       // painted again inside it. (Ground at the same height, such as the tile being walked onto, covers nothing.)
       var hA = Rules.groundHeight(map, x + 0.5, y + 0.5), row = Math.floor(y + 0.5), pad = ground.pad || 0;
-      var left = Math.round(ox + x * T), wide = Math.round(w * T), any = false, near = false;
+      var left = Math.round(ox + x * T), wide = Math.round(w * T), any = false, near = false, pieces = [];
       var c0 = Math.max(0, Math.floor(x + 0.001)), c1 = Math.min(map.width - 1, Math.ceil(x + w - 0.001) - 1 + (x !== Math.floor(x) ? 1 : 0));
       g.save(); g.beginPath();
       for (var cx2 = c0; cx2 <= c1; cx2++) for (var k = 1; k <= elevTop + 2; k++) {
@@ -1679,7 +1762,7 @@ var Render = (function () {
         if (Math.min(yL, yR) >= bottom || yLim <= top) continue;                       // does not reach the thing's picture
         var X0 = ox + cx2 * T;
         g.moveTo(X0, yL); g.lineTo(X0 + T, yR); g.lineTo(X0 + T, yLim); g.lineTo(X0, yLim); g.closePath();
-        any = true;
+        any = true; pieces.push({ x: cx2, y: cy2, X: X0, y0: Math.min(yL, yR), y1: yLim });
         if (meActor && Math.abs(cx2 - meActor.x) <= cutR && Math.abs(cy2 - meActor.y) <= cutR + elevTop) near = true;
       }
       if (any) {
@@ -1688,6 +1771,21 @@ var Render = (function () {
         var sy = Math.max(0, pad + top - oy), sh = Math.min(ground.height - sy, bottom - top);
         var sx = Math.max(0, left - ox), sw = Math.min(ground.width - sx, wide + (left - ox < 0 ? left - ox : 0));
         if (sw > 0 && sh > 0) g.drawImage(ground, sx, sy, sw, sh, ox + sx, oy + sy - pad, sw, sh);
+        // The ground picture has no fog in it: ground that is out of sight gets its veil again (as layer 2d laid it
+        // on its top), so what stands behind a ledge never lights the ledge up. Nearest first, column by column: a
+        // nearer piece hides the part of a farther one it stands in front of.
+        if (sight.vis) for (var pi = pieces.length - 1, col = -1, floorY = Infinity; pi >= 0; pi--) {
+          var pc = pieces[pi];
+          if (pc.x !== col) { col = pc.x; floorY = Infinity; }
+          var fy0 = Math.max(pc.y0, oy + sy - pad), fy1 = Math.min(pc.y1, floorY, oy + sy - pad + sh);   // (top and face alike, as layer 2d)
+          floorY = Math.min(floorY, pc.y0);
+          var fx0 = Math.max(pc.X, ox + sx), fx1 = Math.min(pc.X + T, ox + sx + sw);   // only where the ground was painted again (a thing between two tiles covers part of each)
+          if (fy1 <= fy0 || fx1 <= fx0 || !(sw > 0 && sh > 0) || !hasFloor(pc.x, pc.y)) continue;
+          if (!sight.known(pc.x, pc.y)) g.fillStyle = roofCol;
+          else if (fogA > 0 && !sight.seen(pc.x, pc.y)) g.fillStyle = 'rgba(0,0,0,' + fogA + ')';
+          else continue;
+          g.fillRect(fx0, fy0, fx1 - fx0, fy1 - fy0);
+        }
       }
       g.restore();
     }
@@ -1766,6 +1864,8 @@ var Render = (function () {
       var top, wade = wadeAt(a.x, a.y), bob = bobOf(a);
       // sneaking (docs/STEALTH.md): the figure turns into a shadow — dark, washed of colour, see-through (Config sneak_alpha, 0.55)
       if (a.sneak) { shadeNow = true; var sa = Number(cfg.sneak_alpha); g.globalAlpha = sa > 0 && sa <= 1 ? sa : 0.55; }
+      var fading = a.alpha != null && a.alpha < 1;                   // a scene's actor fading in or out
+      if (fading) g.globalAlpha = Math.max(0, a.alpha);
       var wb = wobbleOf(a);
       if (wade > 0.02) top = drawWading(a, ax, ay, wade, isDark, bob, wb);
       else if (wb) {                                                 // walking: the figure leans a little, about its feet, and lifts a pixel
@@ -1776,6 +1876,7 @@ var Render = (function () {
       }
       else { dim(isDark); top = drawFigure(g, a, ax, ay - bob) + bob; dim(false); }
       if (a.sneak) { shadeNow = false; g.globalAlpha = 1; dim(false); }
+      if (fading) g.globalAlpha = 1;
       if (a.statusColor) {                                           // tinted while burning, chilled, stunned...
         g.globalAlpha = .35; g.fillStyle = a.statusColor; g.fillRect(ax + 4, top + 4, T - 8, ay + T - top - 8); g.globalAlpha = 1;
       }
@@ -1785,6 +1886,7 @@ var Render = (function () {
         g.fillRect(ax + 5, top - 3, Math.max(0, (T - 10) * a.hp / a.maxHp), 2);
       }
       if (a.name && a.sprite === undefined) nameTags.push({ x: ax + T / 2, y: top - 3, text: a.name, color: a.me ? '' : (a.nameColor || '#bfe0ff') });
+      if (a.emote) emoteTags.push({ x: ax + T / 2, y: top - 3, named: !!(a.name && a.sprite === undefined), emote: a.emote });
     }
 
     // layer 5c: 'over' objects — the whole sprite sits in front of everything (foreground foliage, railings)
@@ -1795,7 +1897,7 @@ var Render = (function () {
       // a resource's ring shows only to someone within reach of it: their own tile, or one of the eight around its footprint
       function reachable(e, o) {
         if (!meA) return false;
-        var mx = Math.round(meA.x), my = Math.round(meA.y), fw = Math.max(1, (o && o.footprintW) || 1), fh = Math.max(1, (o && o.footprintH) || 1);
+        var mx = Math.round(meA.x), my = Math.round(meA.y), fp = Rules.footprintOf(o, e), fw = fp.w, fh = fp.h;
         return mx >= e.x - 1 && mx <= e.x + fw && my >= e.y - 1 && my <= e.y + fh;
       }
       Object.keys(stD.walls || {}).forEach(function (k) { var w = stD.walls[k]; if ((w.prog || 0) < (w.need || 0) || w.hp < w.max) barKeys.push(k); });
@@ -1812,7 +1914,7 @@ var Render = (function () {
           info = World.structInfo(c, map, { t: 'ent', key: k }); if (!info) return;
           var en = info.e, eo = c.objects[en.ref], onWall = layerOf(eo) === 'wall';
           if (!sight.seen(en.x, en.y) && !(onWall && sight.seen(en.x, en.y - 1))) return;
-          bx = ox + (en.x + Math.max(1, eo.footprintW || 1) / 2) * T; by = oy + en.y * T - (onWall ? 10 : 6) - L(en.x, en.y);
+          bx = ox + (en.x + (onWall ? Math.max(1, eo.footprintW || 1) : Rules.footprintOf(eo, en).w) / 2) * T; by = oy + en.y * T - (onWall ? 10 : 6) - L(en.x, en.y);
         }
         var fr = info.rec && (info.rec.prog || 0) < (info.rec.need || 0);
         if (fr) drawHpBar(g, bx, by, info.rec.prog / info.rec.need, '#6fb7ff');          // a frame: how far along it is
@@ -1822,8 +1924,8 @@ var Render = (function () {
     }
     overs.sort(function (a, b) { return a.y - b.y; }).forEach(function (t) {
       dim(t.shade);
-      drawObject(g, t.o, t.path, t.dx, t.dy, T, 'base', now, t.flip);
-      if (hasTop(t.o, t.path)) drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now, t.flip);
+      drawObject(g, t.o, t.path, t.dx, t.dy, T, 'base', now, t.flip, t.lean);
+      if (hasTop(t.o, t.path)) drawObject(g, t.o, t.path, t.dx, t.dy, T, 'top', now, t.flip, t.lean);
       dim(false);
     });
 
@@ -1881,7 +1983,7 @@ var Render = (function () {
     var T = this.content.config.tile_size || 32, best = null, list = this.hits || [];
     for (var i = 0; i < list.length; i++) {
       var h = list[i], img = h.path && Assets.get(h.path); if (!img) continue;
-      var r = objRect(h.o, img, h.dx, h.dy, T);
+      var r = objRect(h.o, img, h.dx, h.dy, T, h.path);
       if (px < r.x || py < r.y || px >= r.x + r.w || py >= r.y + r.h) continue;
       if (best && h.e.y < best.e.y) continue;
       var sx = Math.floor((px - r.x) * NT / T), sy = Math.floor((py - r.y) * NT / T);
@@ -1898,7 +2000,7 @@ var Render = (function () {
     for (var i = 0; i < list.length; i++) {
       var h = list[i]; if (h.e.x !== x || h.e.y !== y) continue;
       var img = h.path && Assets.get(h.path); if (!img) return false;
-      var r = objRect(h.o, img, h.dx, h.dy, T);
+      var r = objRect(h.o, img, h.dx, h.dy, T, h.path);
       if (r.w > T || r.h > T) big = true; else return false;         // (a small thing on the same tile: the tile is its too)
     }
     return big;
@@ -1974,7 +2076,7 @@ var Render = (function () {
     } else if (o) {
       var gfs = Rules.facingSprite(o, gh.facing || 'S'), gpath = gfs.path || '#built';      // the ghost shows the way it faces
       drawObject(g, o, gpath, ox + gh.x * T, oy + gh.y * T, T, 'base', 0, gfs.flip); drawObject(g, o, gpath, ox + gh.x * T, oy + gh.y * T, T, 'top', 0, gfs.flip);
-      var fw = Math.max(1, o.footprintW || 1), fh = Math.max(1, o.footprintH || 1);
+      var gfp = Rules.footprintOf(o, gh.facing), fw = gfp.w, fh = gfp.h;
       g.globalAlpha = 1; g.strokeStyle = col; g.lineWidth = 2;
       g.fillStyle = edgy ? 'rgba(255,214,90,.30)' : gh.ok ? 'rgba(111,224,138,.30)' : 'rgba(255,107,91,.38)';
       g.fillRect(ox + gh.x * T, oy + (gh.y - fh + 1) * T, fw * T, fh * T);
@@ -2034,7 +2136,7 @@ var Render = (function () {
       var d = Rules.DIRS[Rules.stairDir(i.e)], n = Rules.stairLen();
       for (var k = 0; k < n; k++) box(i.x + k * d.dx, i.y + k * d.dy, 1, 1);
     } else {
-      var fw = Math.max(1, (i.obj && i.obj.footprintW) || 1), fh = Math.max(1, (i.obj && i.obj.footprintH) || 1);
+      var ifp = Rules.footprintOf(i.obj, i.e), fw = ifp.w, fh = ifp.h;
       box(i.x, i.y - fh + 1, fw, fh);
     }
     var text = rt.ok ? (move ? 'Move ' : 'Remove ') + i.name : rt.reason;
@@ -2136,7 +2238,7 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { burst: burst, outfitOf: outfitOf, outfitLayers: outfitLayers, drawOutfit: drawOutfit, Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
+  return { burst: burst, figureOn: figureOn, outfitOf: outfitOf, outfitLayers: outfitLayers, drawOutfit: drawOutfit, Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

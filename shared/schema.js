@@ -106,11 +106,12 @@ var Schema = (function () {
     itemTypes: { collection: 'itemTypes', id: 'id', label: 'Item Types', singular: 'item type', authored: 'studio', fields: [
       f('id', 'text', '', 'Short name the items refer to: lower-case letters, numbers and _'), f('name', 'text', '', 'Heading shown in the Items list'),
       f('equip', 'bool', false, 'Can be equipped: worn or held in a slot. Shows slot, worn art, attack, defence'),
-      f('slot', 'text', '', 'Where items of this type go when equipped: weapon, helm (head), armor (chest), pants, feet, gloves, back, or accessory (four can be worn). An item can name its own slot'),
+      f('slot', 'text', '', 'Where items of this type go when equipped: weapon, helm (head), armor (chest), pants, feet, gloves, back, belt, or accessory (two can be worn). An item can name its own slot'),
       f('shoot', 'bool', false, 'A ranged weapon when equipped and given a range: fires on click. Shows range, ammo, magazine, aim'),
       f('consume', 'bool', false, 'Can be used: one is used up each time. Shows heal, mana, hunger, thirst, on_use'),
       f('cooldown_s', 'number', 0, 'Seconds to wait before using another of the same item (0 = none). An item can set its own'),
       f('throw', 'bool', false, 'Can be thrown from the belt. Shows the throw fields'),
+      f('place', 'bool', false, 'Can be put down: in hand, a click on the ground places the object the item names (a bedroll), and picking that up gives the item back. Shows the "places" field'),
       f('ammo', 'bool', false, 'Is ammunition. Only shows the ammo fields (pierce, falloff) on the item'),
       f('tool', 'bool', false, 'A tool. Shows the tool fields on the item; if the type is not equipped, its items count as tools by their own id with no tag needed'),
       f('properties', 'propdefs', '', 'Extra settings of your own for items of this type. The game stores them with the item; no rule reads them yet'),
@@ -118,16 +119,18 @@ var Schema = (function () {
     ] },
     items: { collection: 'items', id: 'id', label: 'Items', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('sprite', 'image', ''),
-      f('type', 'select', 'material', '', { options: ['material', 'weapon', 'armor', 'consumable', 'throwable', 'ammo', 'key'] }),
+      f('type', 'select', 'material', '', { options: ['material', 'weapon', 'armor', 'consumable', 'throwable', 'placeable', 'ammo', 'key'] }),
       f('description', 'textarea', '', 'A line or two about it: shown on its card in the bag and on the page of a recipe that makes it'),
-      f('slot', 'text', '', 'Equip slot: weapon, helm (head), armor (chest), pants, feet, gloves, back, or accessory (four can be worn). Empty = the slot of its type'),
+      f('slot', 'text', '', 'Equip slot: weapon, helm (head), armor (chest), pants, feet, gloves, back, belt, or accessory (two can be worn). Empty = the slot of its type'),
       f('worn_sprite', 'image', '', 'Paper-doll layer when equipped. For a weapon that shoots: loaded and held at rest (a bow with an arrow on the string, not drawn)'),
       f('worn_empty', 'image', '', 'A weapon with a magazine (clip), held with nothing loaded: a bow with no arrow on the string. Also shown while the next one is being loaded, unless there is a reloading picture. Empty = the worn sprite'),
       f('worn_aim', 'image', '', 'The weapon loaded and being aimed (right mouse button held): a bow drawn back. Empty = the worn sprite. Draw them all on the same canvas, so the aim points fit every one'),
       f('worn_reload', 'image', '', 'Optional: the weapon while it is being reloaded (reload_ms). Empty = the worn-empty picture'),
       f('default_tint', 'tint', '', 'The colour of the worn layer (needs the sprite to have a .tint.png mask next to it). No tint = drawn as it is'),
+      f('hides_head', 'bool', false, 'Hides the head: while it is worn, the hair and whatever is worn on the head are not drawn (a poncho or a hood that covers them). Only how it looks'),
       f('stack_max', 'number', 99), f('value', 'number', 0, 'Gold value'),
       f('dispensable', 'bool', false, 'Dispensable (branches, rocks, fiber): when one lies on the ground where the loot of a monster falls, the loot bag is put on that tile and it goes inside the bag. Not ticked = a loot bag is never put on its tile while there is anywhere else for it'),
+      f('sway', 'bool', false, 'Sways in the wind while it lies on the ground (plant fibers, anything leafy). Only how it is drawn'),
       f('atk', 'number', 0), f('def', 'number', 0), f('heal', 'number', 0), f('mp', 'number', 0),
       f('hunger', 'number', 0), f('thirst', 'number', 0),
       f('toxicity', 'number', 0, 'What using it adds to the toxicity gauge (0-100). Negative = it clears that much (a cure)'),
@@ -145,6 +148,7 @@ var Schema = (function () {
       f('penetration', 'number', 1, 'Enemies one shot pierces'),
       f('falloff', 'number', 0, 'Damage lost per extra hit (0–1)'),
       f('recover', 'number', 0, 'Chance (0–100 %) that a spent one can be had back: a shot that ends in a monster leaves it stuck there (found in the loot bag it leaves); a shot that hits nothing leaves it lying where the shot stopped. 0 = never'),
+      f('places', 'ref', '', 'For an item that can be put down: the object it becomes on the ground (a bedroll item → the bedroll object). In hand, a click places it; picking it up again gives the item back', { ref: 'objects' }),
       f('throw_range', 'number', 0), f('throw_area', 'number', 0), f('throw_power', 'number', 0),
       f('throw_status', 'ref', '', '', { ref: 'statuses' }), f('throw_status_ms', 'number', 0),
       f('tool', 'text', '', 'Tool tags this item counts as, e.g. hammer or axe (recipes and harvesting can require one). Empty on an item of a tool type = it counts as a tool by its own id'),
@@ -268,7 +272,8 @@ var Schema = (function () {
       f('no_abandon', 'bool', false, 'Cannot be given up: the quest log shows no Give up button for it (main quests, the story). Tutorial steps are never in the quest log anyway'),
       f('progress_text', 'textarea', '', 'What the ender says while it is not done yet (optional)'),
       f('done_text', 'textarea', '', 'What the ender says when it is handed in (optional)'),
-      f('on_start', 'rewards', '', 'What happens the moment it starts: one row each. Start a tutorial step here to show it right after this quest\'s window (each window shows after the one before is closed). A step started here is closed with this quest if the player gives it up. Stored as an action list (quest:tut_move)', { when: 'when this one starts' }),
+      f('before_start', 'rewards', '', 'What happens the moment it starts, BEFORE its "New quest" window shows: a scene that leads into the quest, say (the window waits for it). One row each. Stored as an action list (scene:intro)', { when: 'before its window' }),
+      f('on_start', 'rewards', '', 'What happens once the player has closed its "New quest" window (or at once, for a quest taken from an NPC): a scene or a tutorial step that follows the quest. One row each. Each window shows after the one before is closed. A step started here is closed with this quest if the player gives it up. Stored as an action list (scene:test; quest:tut_move)', { when: 'after its window is closed' }),
       f('objectives', 'goals', '', 'What must be done: one row each — what kind of thing, which one, how many. All of them must be done, except those ticked optional. None = just go and talk to the ender. "When met" = a quest (a tutorial step, say) that starts the moment that objective is done'),
       f('requires', 'text', '', 'Condition to be offered it, e.g. level:3 or quest:first_steps (that quest handed in) or flag:met_mayor. Chains are made with quest:<the one before>'),
       f('rewards', 'rewards', '', 'What the player gets when it is handed in: one row each. Stored as the action list the rules run (xp:100; gold:20; give:axe:1)'),
@@ -294,6 +299,15 @@ var Schema = (function () {
       f('notes', 'text', '')
     ] },
 
+    // A scene (a cinematic) is a list of steps the page plays for one player: camera moves, lines, fades, pictures.
+    // An action list starts it with scene:<id>; whatever follows in that list happens when it ends. Each plays once
+    // per character. World.sceneQueue / sceneEnd are the rules, client/js/scene.js plays it, Content.SCENE_STEPS the kinds.
+    scenes: { collection: 'scenes', id: 'id', label: 'Scenes', singular: 'scene', authored: 'studio', fields: [
+      f('id', 'text', ''), f('name', 'text', ''),
+      f('steps', 'json', '', 'The steps: [{type, with, ...}]. Edited as a list of step cards in the Scenes view'),
+      f('notes', 'text', '')
+    ] },
+
     // ---- edited by the map editor, not the Content Studio forms ----
     maps: { collection: 'maps', id: 'id', label: 'Maps', authored: 'map', fields: [
       f('id', 'text', ''), f('name', 'text', ''), f('width', 'number', 0), f('height', 'number', 0),
@@ -315,7 +329,7 @@ var Schema = (function () {
   var TAB = {
     config: 'Config', tilesets: 'Tilesets', autotile: 'Autotile', terrain: 'Terrain', wallStyles: 'WallStyles', kinds: 'Kinds', itemTypes: 'ItemTypes',
     objects: 'Objects', items: 'Items', monsters: 'Monsters', loot: 'LootTables', classes: 'Classes',
-    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes', blueprints: 'Blueprints', quests: 'Quests', dialogues: 'Dialogues', shops: 'Shops',
+    skills: 'Skills', statuses: 'Statuses', levels: 'Levels', appearances: 'Appearances', recipes: 'Recipes', blueprints: 'Blueprints', quests: 'Quests', dialogues: 'Dialogues', shops: 'Shops', scenes: 'Scenes',
     maps: 'Maps', mapEntities: 'MapEntities'
   };
 

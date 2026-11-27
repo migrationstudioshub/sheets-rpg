@@ -192,7 +192,7 @@ test('join creates a character at the start position and a sheet row', () => {
   const head = g.sheets.SV._sheets.Players.rows[0];
   ['class', 'gold', 'inventory', 'equipment', 'flags', 'respawn'].forEach(c => assert.ok(head.includes(c), 'column ' + c + ' added'));
   const row = g.sheets.SV._sheets.Players.rows[1];
-  assert.deepStrictEqual(JSON.parse(row[head.indexOf('inventory')]), [{ item: 'potion', qty: 3, s: 0 }, { item: 'lockpick', qty: 3, s: 1 }]);
+  assert.deepStrictEqual(JSON.parse(row[head.indexOf('inventory')]), [{ item: 'potion', qty: 3, s: 1000 }, { item: 'lockpick', qty: 3, s: 1001 }]); // (both on the belt: what is there is not in the backpack)
   token = r.token;
 });
 

@@ -3704,12 +3704,21 @@
         var img = tinted(hair, color); if (img) g.drawImage(img, 0, 0, cv.width, cv.height);
       }
       function draw() {
-        var hs = $('join-hair'), cs = $('join-color'), bs = $('join-body-pick'); hs.innerHTML = ''; cs.innerHTML = ''; bs.innerHTML = '';
-        [['', 'Male'], ['female', 'Female']].forEach(function (kind) {
-          var b = document.createElement('button'); b.type = 'button'; b.className = 'jbody' + (kind[0] === look.body ? ' on' : ''); b.textContent = kind[1];
+        var hs = $('join-hair'), cs = $('join-color'), bs = $('join-body-pick'), bb = $('join-build'); hs.innerHTML = ''; cs.innerHTML = ''; bs.innerHTML = ''; bb.innerHTML = '';
+        // Body: a man or a woman; a woman then picks her build (owner, 27 Nov 2026): curvy = body 'female', slim =
+        // 'female_slim' (the man's cut of what she wears, no chest motion). Slim is what Female starts on (owner). The build picked is kept while Male is tried.
+        var woman = look.body !== '';
+        [['', 'Male'], [look.build || 'female_slim', 'Female']].forEach(function (kind) {
+          var b = document.createElement('button'); b.type = 'button'; b.className = 'jbody' + ((kind[0] !== '') === woman ? ' on' : ''); b.textContent = kind[1];
           b.onclick = function () { look.body = kind[0]; draw(); };
           bs.appendChild(b);
         });
+        [['female_slim', 'Slim'], ['female', 'Curvy']].forEach(function (kind) {
+          var b = document.createElement('button'); b.type = 'button'; b.className = 'jbody' + (kind[0] === look.body ? ' on' : ''); b.textContent = kind[1];
+          b.onclick = function () { look.body = look.build = kind[0]; draw(); };
+          bb.appendChild(b);
+        });
+        bb.hidden = $('join-build-label').hidden = !woman;
         ch.styles.forEach(function (path) {
           var b = document.createElement('button'); b.type = 'button'; b.className = 'jpick' + (path === look.hair ? ' on' : '');
           b.title = path ? path.replace(/^.*\/hair_?/, '').replace(/\.png$/i, '').replace(/_/g, ' ') : 'bald';
@@ -3754,7 +3763,7 @@
       // the pictures come in as they load: draw again when they have
       var need = [];
       Object.keys(content.classes).forEach(function (id) { if (content.classes[id].bodySprite) need.push(content.classes[id].bodySprite); });
-      ['', 'female'].forEach(function (kind) { var bp = bodyOf(kind); if (bp) need.push(bp); });
+      ['', 'female', 'female_slim'].forEach(function (kind) { var bp = bodyOf(kind); if (bp) need.push(bp); });
       ch.styles.concat(beards).forEach(function (path) { if (path) { need.push(path); need.push(maskOf(path)); } });
       Promise.all(need.map(function (path) { return Assets.load(path); })).then(function () { if (!box.hidden) draw(); });
       box.hidden = false; input.focus();

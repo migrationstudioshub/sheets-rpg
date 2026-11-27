@@ -206,6 +206,14 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   draws). Asked by `playerLayers` (`p.body === 'female'`), and for looks whose body picture ends `_female.png`
   (`Tint.femaleLook`: `monsterLayers`, `Render.outfitLayers`, the Studio's `composeLook`). Draw-only. The Studio's pickers list
   both cuts (the woman's labelled "(female)"); picking a female one outright also works.
+- **A woman's build: curvy or slim** (owner, 27 Nov 2026): a character's `body` is `''` (male), `'female'` (curvy) or
+  **`'female_slim'`** (`World.bodySprite`: Config `body_female_slim`, or the built-in `body_survivor_female_slim.png`). A slim
+  woman wears the MAN's cut of every garment and her chest never moves: the page asks `p.body === 'female'` for both, so
+  slim needs nothing more than its body picture. Character screen: Body Male / Female, then a Build row Curvy / Slim shown
+  for Female (`#join-build`; Slim first, and what Female starts on: the owner's choice). **Looks (NPC outfits, appearance sets) go by the body PICTURE**: `Tint.femaleLook`
+  is true only for a body ending `_female.png`, so one ending `_female_slim.png` (`body_zombie_female_slim.png` too) gets
+  the man's cuts and no chest motion by itself — in the Studio a slim NPC or walker is made by picking that body. A garment
+  picked outright as its "(female)" cut is still drawn as picked. Not built: changing build after creation.
 - **The bust mask** (owner, 27 Nov 2026; their idea, replacing the fixed box): `art/sprites/paperdoll/base/player/
   body_survivor_female.bust.png`, the size of the figure, the near breast painted in one colour (more red than blue) and the far
   one in another (more blue), nothing else. **One file for every woman's body** (the walkers' too, the owner's choice) and for

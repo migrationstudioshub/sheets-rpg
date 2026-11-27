@@ -3473,6 +3473,10 @@ test('a new character takes the hair and colour chosen on the character screen, 
   assert.deepStrictEqual([f.body, World.publicPlayer(c, f).body, World.bodySprite(c, f)], ['female', 'female', c.config.body_female]);
   assert.deepStrictEqual([p.body, World.publicPlayer(c, p).body, World.bodySprite(c, p)], [undefined, '', c.config.body_male]);
   assert.strictEqual(World.newPlayer(c, 'g', 'Gil', 'warrior', { body: 'dragon' }).body, undefined);
+  // a woman's slim build: a body of its own (Config body_female_slim, or the built-in picture)
+  const sl = World.newPlayer(c, 's', 'Sia', 'mage', { body: 'female_slim' });
+  assert.deepStrictEqual([sl.body, World.publicPlayer(c, sl).body], ['female_slim', 'female_slim']);
+  assert.ok(/body_survivor_female_slim.png$/.test(World.bodySprite(c, sl)) || World.bodySprite(c, sl) === c.config.body_female_slim);
   // the skin: one of the tones on offer; the art's own tone is simply not recorded
   assert.ok(ch.skins.length >= 5 && ch.skins.includes('skin_dark'));
   const k = World.newPlayer(c, 'k', 'Kai', 'warrior', { skin: 'skin_dark' });

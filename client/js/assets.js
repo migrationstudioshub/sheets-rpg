@@ -101,7 +101,7 @@ var Assets = (function () {
         if (tw) { paths[tw] = 1; if (it.defaultTint) paths[tw.replace(/\.png$/i, '.tint.png')] = 1; } }
     });
     Object.keys(content.classes || {}).forEach(function (k) { if (content.classes[k].bodySprite) paths[content.classes[k].bodySprite] = 1; });   // player base bodies
-    if (typeof World !== 'undefined' && World.bodySprite) { paths[World.bodySprite(content, { body: '' })] = 1; paths[World.bodySprite(content, { body: 'female' })] = 1; }   // …the man's and the woman's
+    if (typeof World !== 'undefined' && World.bodySprite) { paths[World.bodySprite(content, { body: '' })] = 1; paths[World.bodySprite(content, { body: 'female' })] = 1; paths[World.bodySprite(content, { body: 'female_slim' })] = 1; }   // …the man's and the woman's
     Object.keys(content.wallStyles || {}).forEach(function (k) {                                     // edge-wall art: connector sheet, cap, face
       var w = content.wallStyles[k]; if (w.tiles) paths[w.tiles] = 1; if (w.cap) paths[w.cap] = 1; if (w.face) paths[w.face] = 1;
     });

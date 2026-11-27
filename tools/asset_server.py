@@ -175,6 +175,8 @@ def rebuild_art_manifest():
                 dirnames.remove("inbox")                       # scratch drop folder, not published art
             for fn in filenames:
                 low = fn.lower()
+                if low.endswith(".bust.png"):
+                    continue                                   # a bust mask (which pixels of a woman's chest move): not a picture to pick
                 if low.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")) and not low.endswith(".tint.png"):
                     rel = os.path.relpath(os.path.join(dirpath, fn), art).replace(os.sep, "/")
                     images.append("art/" + rel)

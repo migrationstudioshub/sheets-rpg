@@ -51,7 +51,7 @@
   function playerLayers(p) {
     var cls = p && content.classes[p['class']], body = cls && (World.bodySprite ? World.bodySprite(content, p) : cls.bodySprite);   // the man's or the woman's
     if (!body) return null;
-    var eq = p.equipment || {}, out = [{ z: SLOT_Z.body, path: body, skin: p.skin || '', skinAll: true }];
+    var eq = p.equipment || {}, fem = p.body === 'female', out = [{ z: SLOT_Z.body, path: body, skin: p.skin || '', skinAll: true, jig: fem }];   // (jig: the layers a woman's chest moves in, see Render CHEST)
     function wornHas(what) { return Object.keys(eq).some(function (s) { var it = content.items[eq[s]]; return it && it[what] && it.slot === s.replace(/\d+$/, ''); }); }
     var hood = wornHas('hidesHead'), noBeard = wornHas('hidesBeard');     // (Items hides_head / hides_beard: draw-only ticks)
     if (p.hair && !eq.helm && !hood) {                                   // hair is whole-tintable; a helm (or a hood) hides it
@@ -76,7 +76,7 @@
       }
       var zk = SLOT_Z[slot] != null ? slot : slot.replace(/\d+$/, '');   // (accessory1…4)
       out.push({ z: SLOT_Z[zk] != null ? SLOT_Z[zk] : 9, path: wpath, slot: slot, skin: slot === 'weapon' || slot === 'offhand' ? (p.skin || '') : '',
-        mask: ramp ? maskOf(wpath) : '', ramp: ramp, aimPoints: it.aim || null });
+        mask: ramp ? maskOf(wpath) : '', ramp: ramp, aimPoints: it.aim || null, jig: fem && slot === 'armor' });
     });
     // Whatever else is in hand (food, a bottle, a grenade, a bedroll, a tool with no held picture): its own icon, small, at the
     // hand (Render draws a layer marked `icon` that way). Yours is your belt slot in hand; another player's comes as `hand`.
@@ -104,7 +104,7 @@
       if (fem) l = { path: Assets.wornFor(l.path, true), tint: l.tint };   // a woman's body: the woman's cut of what it wears
       var sk = tone ? Tint.skinFor(l.path, tone) : null;
       var tint = Tint.lookTint ? Tint.lookTint(l.path, l.tint) : l.tint, ramp = tint ? Tint.TINTS[tint] : null;   // no colour given = the garment default
-      return { path: l.path, mask: ramp ? maskOf(l.path) : '', ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false };
+      return { path: l.path, mask: ramp ? maskOf(l.path) : '', ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false, jig: fem && Tint.chestLayer(l.path) };
     });
     out.forEach(function (l) {                                           // make sure late-arriving layers load
       if (!Assets.get(l.path)) Assets.load(l.path);
@@ -613,8 +613,8 @@
       }
       if (e.type === 'throw') {                                  // a thrown grenade/molotov arc + blast
         if (e.by !== me.id) {
-          fx.push({ kind: 'proj', from: e.from, to: e.to, color: e.color || '#ff8c3b', t0: t0, life: 300 });
-          fx.push({ kind: 'flash', x: e.to.x, y: e.to.y, r: e.area || 0, cells: World.blastCells(content, mapOf(), e.to.x, e.to.y, e.area || 0, lookup().stateOf), color: e.color || '#ff8c3b', t0: t0 + 280, life: 450 });
+          var ea = cellPx(e.from.x, e.from.y), eb = cellPx(e.to.x, e.to.y);
+          tossFx(e.item, ea.x, ea.y - tileSize() * 0.45, eb.x, eb.y, e.from, e.to, t0, e.noise);
         }
         return;
       }
@@ -941,7 +941,7 @@
       return;
     }
     if (armed) { castAt(cell); return; }                  // an armed ability still aims + casts on left-click
-    if (throwing) { throwAt(cell); return; }
+    if (throwing) { var ta = throwAim(); throwAt(ta && ta.cell ? ta.cell : cell, ta); return; }
     if (aiming && heldUse()) { leftHeld = true; eatHold = true; eatDone = false; return; }   // food, a bandage… in hand: the button HELD uses it (the frame loop)
     if (aiming) { leftHeld = true; fireToward(cell); return; }   // fire/attack while aiming
     if (!cell.miss && World.pickAt && World.pickAt(content, mapOf(), lookup(), me, cell.x, cell.y)) {   // a berry bush: held, it is picked until empty
@@ -1175,16 +1175,15 @@
       .map(function (c) { return { x: c.x, y: c.y - ft.dz * Rules.WALL_H }; });
   }
   /** Throw the armed belt item (grenade/molotov) at a cell within its range. */
-  function throwAt(cell) {
+  function throwAt(cell, ta) {
     var it = content.items[throwing]; if (!it) { cancelThrow(); return; }
     if (count(throwing) < 1) { log('Out of ' + it.name.toLowerCase() + '.', 'info'); cancelThrow(); return; }
     var ft = throwFloorAt(cell, it);
     if (ft) {                                                                 // down onto a floor below
       me.facing = facingToward(cell.x, cell.y);
       send({ type: 'throw', item: throwing, map: ft.map.id, x: ft.x, y: ft.y }); swingT0 = performance.now();
-      var tf = performance.now();
-      fx.push({ kind: 'proj', from: { x: me.x, y: me.y }, to: { x: cell.x, y: cell.y }, color: it.tint || '#ff8c3b', t0: tf, life: 300 });
-      fx.push({ kind: 'flash', x: cell.x, y: cell.y, r: it.throwArea || 0, cells: blastOnFloor(ft, it), color: it.tint || '#ff8c3b', t0: tf + 280, life: 450 });
+      var fa = cellPx(shown.x, shown.y), fb = ta && ta.ex != null ? { x: ta.ex + lastCam.x, y: ta.ey + lastCam.y } : cellPx(cell.x, cell.y);
+      tossFx(throwing, fa.x, fa.y - tileSize() * 0.45, fb.x, fb.y, me, cell, performance.now(), 0, blastOnFloor(ft, it));
       cancelThrow();
       return;
     }
@@ -1195,10 +1194,42 @@
     // animation matches the server instead of sailing through walls.
     var map = mapOf(), sf = lookup().stateOf;
     var land = World.throwLanding(content, map, me.x, me.y, cell.x, cell.y, sf);
-    var t0 = performance.now();
-    fx.push({ kind: 'proj', from: { x: me.x, y: me.y }, to: { x: land.x, y: land.y }, color: it.tint || '#ff8c3b', t0: t0, life: 300 });
-    fx.push({ kind: 'flash', x: land.x, y: land.y, r: it.throwArea || 0, cells: World.blastCells(content, map, land.x, land.y, it.throwArea || 0, sf), color: it.tint || '#ff8c3b', t0: t0 + 280, life: 450 });
+    // it flies the arc the aim drew, to the very point aimed at (the tile's middle when a wall or the range cut it short)
+    var a0 = cellPx(shown.x, shown.y), same = ta && ta.ex != null && ta.cell && ta.cell.x === land.x && ta.cell.y === land.y;
+    var a1 = same ? { x: ta.ex + lastCam.x, y: ta.ey + lastCam.y } : cellPx(land.x, land.y);
+    tossFx(throwing, a0.x, a0.y - tileSize() * 0.45, a1.x, a1.y, me, land, performance.now(), World.throwNoise ? World.throwNoise(content, it) : 0);
     cancelThrow();
+  }
+  function tileSize() { return content.config.tile_size || 32; }
+  /** The middle of a tile as it is drawn, in map pixels (raised ground lifts it). */
+  function cellPx(x, y) {
+    var T = tileSize(), m = mapOf(), rx = Math.max(0, Math.min(m.width - 1, Math.round(x))), ry = Math.max(0, Math.min(m.height - 1, Math.round(y)));
+    return { x: (x + 0.5) * T, y: (y + 0.5) * T - (Render.liftAt ? Render.liftAt(m, rx, ry, T) : 0) };
+  }
+  /** A thrown thing in the air (owner, 27 Nov 2026; draw-only): a small copy of its picture, turning, along the very arc
+   *  the aim drew — from (sx, sy) to (ex, ey), map pixels —; then what landing does. Something that bursts (a blast area)
+   *  flashes there. Anything else bounces once towards the next tile the way it was going — on the spot when that tile is
+   *  taken, walled off or up or down a ledge — and is gone: nothing is left on the ground. `noise` = the tiles its landing
+   *  is heard from (a ring). from / land = the tiles thrown from and landed on; cells = the blast, when already known. */
+  function tossFx(itemId, sx, sy, ex, ey, from, land, t0, noise, cells) {
+    var it = content.items[itemId] || {}, T = tileSize(), map = mapOf(), dx = ex - sx, dy = ey - sy, d = Math.sqrt(dx * dx + dy * dy);
+    var fly = Math.round(200 + d / T * 45), area = it.throwArea || 0, col = it.tint || '#ff8c3b', bx = ex, by = ey, hop = 0;
+    if (it.sprite && !Assets.get(it.sprite)) Assets.load(it.sprite);
+    if (!(area > 0)) {
+      hop = 300;
+      var ux = land.x - from.x, uy = land.y - from.y, ul = Math.max(Math.abs(ux), Math.abs(uy)) || 1;
+      var nx = land.x + Math.round(ux / ul), ny = land.y + Math.round(uy / ul), sf = lookup().stateOf;
+      var open = (nx !== land.x || ny !== land.y) && nx >= 0 && ny >= 0 && nx < map.width && ny < map.height;
+      if (open) { var l2 = World.throwLanding(content, map, land.x, land.y, nx, ny, sf); open = l2.x === nx && l2.y === ny; }
+      if (open && Rules.groundHeight && Math.abs(Rules.groundHeight(map, nx + 0.5, ny + 0.5) - Rules.groundHeight(map, land.x + 0.5, land.y + 0.5)) > 0.75) open = false;
+      if (open && Rules.blockersAt && Rules.blockersAt(content, map, nx, ny).length) open = false;
+      if (open && ((view.monsters || []).some(function (m) { return m.x === nx && m.y === ny; }) || (view.players || []).some(function (q) { return q.x === nx && q.y === ny; }) || (me.x === nx && me.y === ny))) open = false;
+      if (open) { var np = cellPx(nx, ny), lp = cellPx(land.x, land.y); bx = ex + (np.x - lp.x) * 0.8; by = ey + (np.y - lp.y) * 0.8; }
+    }
+    fx.push({ kind: 'toss', path: it.sprite || '', color: col, sx: sx, sy: sy, ex: ex, ey: ey, rise: Math.max(T * 0.5, d * 0.35), bx: bx, by: by, fly: fly, hop: hop,
+      spin: (dx < 0 ? -1 : 1) * (4 + d / T), t0: t0, life: fly + hop });
+    if (area > 0) fx.push({ kind: 'flash', x: land.x, y: land.y, r: area, cells: cells || World.blastCells(content, map, land.x, land.y, area, lookup().stateOf), color: col, t0: t0 + fly, life: 450 });
+    if (noise > 0) fx.push({ kind: 'sound', x: land.x, y: land.y, r: noise, t0: t0 + fly, life: 900 });
   }
   function cancelThrow() { if (throwing && !holdMode()) { throwing = null; updateCursor(); hotbar(); } }   // (a held grenade stays in hand: see hotbar)
   function updateCursor() {
@@ -1384,6 +1415,27 @@
   // What the OTHER players do, seen from here. Each one carries `act` = "n,kind,x,y,amount" (World.noteAct): their last
   // melee swing (m) or shot that hurt something (r). A new n = it just happened: swing their weapon, flash the tile,
   // float the number. The first value seen of a player is only remembered (it may be minutes old).
+  // The jolt of doing or taking something (owner, 27 Nov 2026: a woman's chest also bounces when she uses a tool or a
+  // weapon, when she is hurt, and when she turns round): the ms since the figure last swung, shot, threw (usedAt), lost
+  // health, or turned to face the other way — `jolt` on its actor, read by the renderer's chestOf. Health and facing are
+  // watched here, per figure (the first values seen are only remembered).
+  // The way a figure is going, from where it was drawn last frame: {dx, dy} of -1 | 0 | 1, kept while it stands (`go` on
+  // its actor: the renderer times a step's motion by it — the figure itself may be looking the other way).
+  var goSt = {};
+  function goOf(id, x, y) {
+    var st = goSt[id] || (goSt[id] = { x: x, y: y, dx: 0, dy: 0 });
+    if (x !== st.x) st.dx = x > st.x ? 1 : -1;
+    if (y !== st.y) st.dy = y > st.y ? 1 : -1;
+    st.x = x; st.y = y;
+    return st;
+  }
+  var joltSt = {};
+  function joltMs(id, hp, usedAt, now, facing) {
+    var left = facing === 'W', st = joltSt[id] || (joltSt[id] = { hp: hp, left: left, at: -1e9 });
+    if (hp < st.hp || left !== st.left) st.at = now;
+    st.hp = hp; st.left = left;
+    return now - Math.max(st.at, usedAt == null ? -1e9 : usedAt);
+  }
   var actSt = {};
   function othersAct(q, now) {
     var a = String(q.act || '').split(','), n = Number(a[0]) || 0, st = actSt[q.id];
@@ -1392,6 +1444,7 @@
     if (!n || !ahead || ahead > 500) return st;                // nothing new (or an older answer arriving late)
     st.n = n;
     var x = Number(a[2]), y = Number(a[3]), amount = Number(a[4]) || 0;
+    if (a[1] === 'm' || a[1] === 'r' || a[1] === 't') st.j0 = now;   // a blow, a shot or a throw: the jolt of it (joltMs)
     if (a[1] === 't') st.t0 = now;                             // a throw: the arm swings
     if (a[1] === 'u') st.u0 = now;                             // ate or drank: lifted to the mouth
     if (a[1] === 'm') { st.t0 = now; fx.push({ kind: 'flash', x: x, y: y, r: 0, color: '#ffd9a0', t0: now, life: 260 }); }
@@ -1458,6 +1511,50 @@
     }
     return cells;
   }
+  /** Is the thing in hand being aimed to throw? Only while the right button is held, like aiming a weapon — a grenade and
+   *  a rock alike (owner, 27 Nov 2026): in hand it is otherwise just carried, and clicks do what they always do. */
+  function syncThrow() {
+    if (!holdMode()) return;
+    var hIt = content.items[heldId()], th = hIt && World.itemCan(hIt, 'throw') && count(hIt.id) > 0 && aiming ? hIt.id : null;
+    if (th !== throwing) { throwing = th; updateCursor(); }
+  }
+  /** The tiles a throw of `it` can land on from where you stand: within its range and not behind a wall (a wall stops it,
+   *  so the tiles behind are left out); from an upper floor, also the ground below it can be dropped on (as drawn). */
+  function throwCells(it) {
+    var rng = it.throwRange || 4, map = mapOf(), sf = lookup().stateOf;
+    var cells = ringCells(rng).filter(function (c) {
+      var l = World.throwLanding(content, map, me.x, me.y, c.x, c.y, sf);
+      return l.x === c.x && l.y === c.y;
+    });
+    var storeys = floorsBelow().reduce(function (n, f) { return Math.max(n, -f.dz); }, 0) * Rules.WALL_H;
+    if (storeys) for (var yy = me.y - rng; yy <= me.y + rng + storeys; yy++) for (var xx = me.x - rng; xx <= me.x + rng; xx++)
+      if (throwFloorAt({ x: xx, y: yy }, it)) cells.push({ x: xx, y: yy });
+    return cells;
+  }
+  /** Where a throw is aimed, for the drawing and for the click (owner, 27 Nov 2026: no painted tiles — a pulsing white line
+   *  round the tiles it can land on, which follows the grid, and an arc to the cursor that does not). {cells (those tiles),
+   *  fx, fy (your figure), ex, ey (where the arc ends), blastR — canvas pixels —, cell (the tile a click would throw at)}.
+   *  A cursor beyond the reach aims as far towards it as the throw goes; a wall in the way ends the arc where it lands. */
+  function throwAim() {
+    var it = content.items[throwing]; if (!it || !me) return null;
+    var T = content.config.tile_size || 32, rng = it.throwRange || 4, map = mapOf(), area = it.throwArea || 0;
+    function lift(x, y) { return Render.liftAt ? Render.liftAt(map, Math.max(0, Math.min(map.width - 1, Math.round(x))), Math.max(0, Math.min(map.height - 1, Math.round(y))), T) : 0; }
+    var fx0 = (shown.x + 0.5) * T - lastCam.x, fy0 = (shown.y + 0.5) * T - lastCam.y - lift(shown.x, shown.y);
+    var out = { fx: fx0, fy: fy0, cells: throwCells(it), blastR: area > 0 ? (area + 0.5) * T : 0, cell: null };
+    if (!lastPtr) return out;
+    var r = canvas.getBoundingClientRect();
+    var px = (lastPtr.clientX - r.left) * canvas.width / r.width, py = (lastPtr.clientY - r.top) * canvas.height / r.height;
+    var raw = cellAt(lastPtr), hft = raw && throwFloorAt(raw, it);
+    if (hft) { out.ex = px; out.ey = py; out.cell = { x: raw.x, y: raw.y }; return out; }   // down onto a floor below: wherever it is pointed
+    var cell = { x: raw.x, y: raw.y }, far = cheb(me.x, me.y, cell.x, cell.y);
+    if (far > rng) cell = { x: me.x + Math.round((cell.x - me.x) * rng / far), y: me.y + Math.round((cell.y - me.y) * rng / far) };   // beyond its range: as far that way as it goes
+    var land = World.throwLanding(content, map, me.x, me.y, cell.x, cell.y, lookup().stateOf);
+    out.cell = cell; out.ex = px; out.ey = py;
+    if (far > rng || land.x !== cell.x || land.y !== cell.y) {   // out of reach or stopped by a wall: the arc ends on the tile it comes down on
+      out.ex = (land.x + 0.5) * T - lastCam.x; out.ey = (land.y + 0.5) * T - lastCam.y - lift(land.x, land.y);
+    }
+    return out;
+  }
   /** Throw-aim overlay: the cells you can actually reach, plus the blast the grenade would make. */
   function throwOverlay() {
     var it = content.items[throwing], rng = it.throwRange || 4, map = mapOf(), sf = lookup().stateOf;
@@ -1510,10 +1607,7 @@
       b.onclick = function () { ability(i); };
       ab.appendChild(b);
     });
-    if (holdMode()) {                                      // a grenade in hand is aimed and thrown with a click
-      var hIt = content.items[heldId()], th = hIt && World.itemCan(hIt, 'throw') && count(hIt.id) > 0 ? hIt.id : null;
-      if (th !== throwing) { throwing = th; updateCursor(); }
-    }
+    syncThrow();
     if (invDrag) { invDirty = true; return; }             // never rebuild the belt under a drag
     // (drawn again only when what it shows changed: a slot replaced under the mouse loses its click, see unchanged)
     var belt = $('belt'), bsts = [];
@@ -1529,7 +1623,7 @@
       var inHand = holdMode() && me.held === i;
       b.className = 'hk' + (inHand ? ' held' : !holdMode() && throwing && throwing === id ? ' armed' : '') + (it ? '' : ' empty');
       b.title = !it ? 'Empty: assign an item from the bag (I)' : !holdMode() ? it.name + (World.itemCan(it, 'throw') ? ' (throw)' : ' (use)')
-        : it.name + (!inHand ? '' : World.itemCan(it, 'consume') ? ' — in hand: hold the click to use it' : World.itemCan(it, 'throw') ? ' — in hand: click where to throw it' : World.itemCan(it, 'place') ? ' — in hand: click the ground to put it down (T turns it)' : ' — in hand');
+        : it.name + (!inHand ? '' : World.itemCan(it, 'consume') ? ' — in hand: hold the click to use it' : World.itemCan(it, 'throw') ? ' — in hand: hold the right button to aim, click to throw it' : World.itemCan(it, 'place') ? ' — in hand: click the ground to put it down (T turns it)' : ' — in hand');
       var key = document.createElement('span'); key.className = 'key'; key.textContent = slotKey(i); b.appendChild(key);
       if (it) {
         b.appendChild(icon({ kind: 'item', id: id }));
@@ -2805,7 +2899,7 @@
   var BAG_FILTERS = [['all', 'pack', 'Everything'], ['tools', 'hammer', 'Tools and materials'], ['food', 'meat', 'Food, drink and medicine'], ['weapons', 'sword', 'Weapons, ammunition and what you wear']];
   function bagMatch(it) {
     if (bagFilter === 'all' || !it) return true;
-    var eat = World.itemCan(it, 'consume'), arm = !!it.slot || World.itemCan(it, 'shoot') || World.itemCan(it, 'throw') || it.type === 'ammo';
+    var eat = World.itemCan(it, 'consume'), arm = !!it.slot || World.itemCan(it, 'shoot') || (World.itemCan(it, 'throw') && !it.ownThrow) || it.type === 'ammo';   // (a material that can be thrown is still a material)
     return bagFilter === 'food' ? eat : bagFilter === 'weapons' ? arm : !eat && !arm;
   }
   /** "+20 hunger, +5 attack": what an item gives, or nothing. */
@@ -2997,16 +3091,30 @@
     Array.prototype.forEach.call(document.querySelectorAll('.dslot'), function (c) { c.classList.toggle('fits', !!kind && c.dataset.kind === kind); });
   }
   /** You, as you look now (body, hair, what you wear), on a small canvas. */
+  // The figure is alive (owner, 27 Nov 2026): it breathes, turns to the side of it the cursor is on, and a woman's
+  // chest moves as it does on the map — the same pose (Render.pose) and the same drawing (Render.figureOn), with
+  // turning round as its jolt. bustLive redraws it every frame for as long as its canvas is on the page.
+  var bustLook = { facing: 'E', at: -1e9 }, mouseX = null;
+  document.addEventListener('mousemove', function (e) { mouseX = e.clientX; });
   function drawBust(cv) {
-    var g = cv.getContext('2d'); g.imageSmoothingEnabled = false; g.clearRect(0, 0, cv.width, cv.height);
-    (playerLayers(me) || []).forEach(function (l) {
-      if (l.slot === 'weapon') return;
-      var img = (l.mask && l.ramp) ? Tint.layer(Assets.get(l.path), Assets.get(l.mask), l.ramp) : Assets.get(l.path);
-      var base = img; if (!base || !base.width) return;
-      if (l.skin) img = Tint.skinned(img, l.skin, !l.skinAll);
-      var h = Math.round(cv.width * base.height / base.width);
-      g.drawImage(img || base, 0, cv.height - h, cv.width, h);
-    });
+    var g = cv.getContext('2d'), now = performance.now(); g.imageSmoothingEnabled = false; g.clearRect(0, 0, cv.width, cv.height);
+    if (mouseX != null && cv.isConnected) {                        // which side of the figure the cursor is on (a little room in the middle, so it does not flicker)
+      var r = cv.getBoundingClientRect(), mid = r.left + r.width / 2, room = r.width * 0.12;
+      var want = mouseX < mid - room ? 'W' : mouseX > mid + room ? 'E' : bustLook.facing;
+      if (want !== bustLook.facing) { bustLook.facing = want; bustLook.at = now; }
+    }
+    var layers = (playerLayers(me) || []).filter(function (l) { return l.slot !== 'weapon' && !l.icon; });   // (what is in hand is not part of the figure here: the belt shows it)
+    if (!layers.length) return;
+    var a = { layers: layers, facing: bustLook.facing, idle: true, ph: phaseOf(me.id), x: 0, y: 0, jolt: now - bustLook.at };
+    Render.pose(a, now, content.config);
+    Render.figureOn(g, a, 0, cv.height - 32, 32);
+  }
+  function bustLive(cv) {
+    var born = performance.now(), was = false;
+    (function tick() {
+      if (cv.isConnected) was = true; else if (was || performance.now() - born > 3000) return;   // (taken off the page: the window was shut or drawn again)
+      drawBust(cv); requestAnimationFrame(tick);
+    })();
   }
   function invWindow(box) {
     var cols = qel('div', 'wcols');
@@ -3014,7 +3122,7 @@
     var who = qel('div', 'wcol'), doll = qel('div', 'k kinset doll'), bust = document.createElement('canvas');
     who.style.width = '160rem';
     who.appendChild(UI.head(me.name || 'Survivor', ''));
-    bust.className = 'bust'; bust.width = 32; bust.height = 48; drawBust(bust); doll.appendChild(bust);
+    bust.className = 'bust'; bust.width = 32; bust.height = 49; doll.appendChild(bust); bustLive(bust);   // (a row of room above: breathing lifts the head a pixel)
     DOLL_SLOTS.forEach(function (q) {
       var kind = q.key.replace(/\d+$/, ''), label = SLOT_NAMES[kind] || kind, id = (me.equipment || {})[q.key];
       var c = invCell(id && content.items[id] ? id : '', 1, 'worn', q.key);
@@ -3340,6 +3448,7 @@
     noiseMeter();
     if (harvesting) harvestSwing();
     if (picking) pickSwing();
+    syncThrow();                                          // (the right button may have just been pressed or let go)
     var eating = eatHold && leftHeld && !eatDone && !!heldUse();   // the button held with food in hand: it rises, then is used — once
     if (!eating) eatT0 = 0; else if (!eatT0) eatT0 = now;
     eatProg = eating ? Math.min(1, (now - eatT0) / EAT_MS) : 0;
@@ -3365,7 +3474,8 @@
     if (lastPtr && !aiming) aimAt(lastPtr);               // you walked, the view moved: the cursor is somewhere else on the map
     var myFacing = aiming ? (Math.cos(aimAngle) < 0 ? 'W' : 'E') : (lastPtr && lookSide) || me.facing;   // (cursor off the view: the way you walk)
     var actors = [{ x: shown.x, y: shown.y, facing: myFacing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, aim: aiming ? aimAngle : null, swing: (performance.now() - swingT0) / SWING_MS, lift: eatUp, bite: eatBit / EAT_BITES, statusColor: myst ? myst.color : '',
-      idle: shown.x === me.x && shown.y === me.y && !aiming, ph: phaseOf(me.id), sneak: !!me.sneak }];   // idle = standing still: the figure breathes (Render, paintActor); sneak = drawn crouched
+      idle: shown.x === me.x && shown.y === me.y && !aiming, ph: phaseOf(me.id), sneak: !!me.sneak,
+      jolt: joltMs('p:' + me.id, me.hp, Math.max(swingT0, lastHoldShot || -1e9), performance.now(), myFacing), go: goOf('p:' + me.id, shown.x, shown.y) }];   // idle = standing still: the figure breathes (Render, paintActor); sneak = drawn crouched
     var sceneEm = inScene ? Scene.emotes(now) : [];                    // emotes a scene put up: over you, an NPC, a tile, an actor
     var pups = inScene ? Scene.puppets(now) : {}, speaker = inScene ? Scene.speaker() : '';   // the scene's actors, and who is speaking
     function emFor(ref) {                                              // what shows over an actor: the scene's emote, else the mark of who speaks
@@ -3391,7 +3501,7 @@
       var lay = monsterLayers(m);                                        // paper-doll zombies carry a rolled look
       // sprite '' (not undefined) keeps the monster health-bar colour + no name label even when layered
       actors.push({ x: s.x, y: s.y, facing: m.facing, name: d.name, sprite: lay ? '' : (d.sprite || ''),
-        layers: lay || undefined, hp: m.hp, maxHp: m.maxHp, statusColor: stc ? stc.color : '', idle: mStill, ph: phaseOf(m.id) });
+        layers: lay || undefined, hp: m.hp, maxHp: m.maxHp, statusColor: stc ? stc.color : '', idle: mStill, ph: phaseOf(m.id), jolt: lay ? joltMs(m.id, m.hp, null, tMark, m.facing) : undefined, go: lay ? goOf(m.id, s.x, s.y) : undefined });
       monSnap[m.id] = { a: actors[actors.length - 1], ref: m.ref, at: tMark };   // how it looks now, should it die (deathFx)
       // "!" when it starts after someone it sees, "?" when it loses them or hears something and goes to look — for a
       // moment, and only if you can see it
@@ -3416,7 +3526,7 @@
       var qStill = s.x === q.x && s.y === q.y;
       ease(s, q, dt / (moveMs * Rules.stepCost('N', content, mapOf(), q.x, q.y, q))); seen['p:' + q.id] = 1;   // (wading or sneaking: slower)
       var act = othersAct(q, tMark), eat = othersEat(q, act, s, tMark);
-      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp, swing: (tMark - act.t0) / SWING_MS, lift: eat.lift, bite: eat.bite, idle: qStill, ph: phaseOf(q.id), sneak: !!q.sn, emote: playerEmote(q.em) });
+      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp, swing: (tMark - act.t0) / SWING_MS, lift: eat.lift, bite: eat.bite, idle: qStill, ph: phaseOf(q.id), sneak: !!q.sn, emote: playerEmote(q.em), jolt: joltMs('p:' + q.id, q.hp, act.j0, tMark, q.facing), go: goOf('p:' + q.id, s.x, s.y) });
     });
     npcActors(actors, shown, sceneEm);
     if (inScene) {
@@ -3489,7 +3599,8 @@
       vis = sight.vis; mem = seenCells[me.map];
     }
     sneakVeil();
-    renderer.draw(cam, actors, { states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null, cutAll: removing && wallsDown, watch: sightAreas(map, vis), stains: liveStains(now), floorActors: floorActors(dt), floorStates: floorStates(), floorSight: floorSight() });
+    var thAim = throwing && !inScene ? throwAim() : null;      // (its reach is hatched on the ground, under what stands there)
+    renderer.draw(cam, actors, { reach: thAim && thAim.cells, states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null, cutAll: removing && wallsDown, watch: sightAreas(map, vis), stains: liveStains(now), floorActors: floorActors(dt), floorStates: floorStates(), floorSight: floorSight() });
     nameTags(renderer.nameTags);                              // the names over characters, as text over the view
     drawEmotes(cam, map, T, sceneEm);
     if (removing) renderer.drawRemove(cam, removeTarget(), wallsDown);
@@ -3500,7 +3611,7 @@
     if (building) { var gh0 = buildTarget(); renderer.drawClaims(cam, World.claimsOn(content, mapOf()), me, gh0); renderer.drawGhost(cam, gh0); }
     else if (!moveTool && !removing && placeHeld() && $('menu').hidden && !bagOpen) { var ghP = buildTarget(); if (ghP) renderer.drawGhost(cam, ghP); }   // a bedroll in hand: where it would go
     if (armed) renderer.drawAim(cam, aimOverlay());
-    else if (throwing) renderer.drawAim(cam, throwOverlay());
+    else if (throwing) { if (renderer.drawThrow) renderer.drawThrow(cam, thAim || throwAim(), now); else renderer.drawAim(cam, throwOverlay()); }
     // a ready gun shows no on-canvas aim — the crosshair cursor is the aim (see updateCursor)
     renderer.drawFx(cam, fx, now);
     tickHotbar();

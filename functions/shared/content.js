@@ -242,9 +242,12 @@ var Content = (function () {
       if (ty) ty.properties.forEach(function (d) { props[d.name] = d.def; });
       Object.keys(own && typeof own === 'object' ? own : {}).forEach(function (k) { props[k] = own[k]; });
       c.items[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), type: tyId,
-        can: { equip: !!slot, shoot: ty ? ty.shoot : tyId === 'weapon', consume: ty ? ty.consume : tyId === 'consumable', throw: ty ? ty.throw : tyId === 'throwable',
+        can: { equip: !!slot, shoot: ty ? ty.shoot : tyId === 'weapon', consume: ty ? ty.consume : tyId === 'consumable', throw: bool(r.throwable) || (ty ? ty.throw : tyId === 'throwable'),
           place: !!str(r.places) && (ty ? ty.place : tyId === 'placeable') },   // put down from the hand as the object it names
         places: str(r.places),
+        // thrown by its own tick, not its type's (Items `throwable`: a rock that is still a material) — it is treated as its type
+        // everywhere else (World beltWorthy, the bag's filters)
+        ownThrow: bool(r.throwable) && !(ty ? ty.throw : tyId === 'throwable'),
         // seconds to wait before using another of the same item (the item's own value, else its type's)
         cooldownMs: Math.max(0, num(r.cooldown_s, ty ? ty.cooldownS : 0)) * 1000,
         props: props,
@@ -282,6 +285,7 @@ var Content = (function () {
         repairCost: str(r.repair_cost), repairStation: str(r.repair_station), salvage: str(r.salvage),
         // type 'throwable' (grenade/molotov): area damage + status at a thrown spot, up to throw_range away
         throwRange: num(r.throw_range, 0), throwArea: num(r.throw_area, 0), throwPower: num(r.throw_power, 0),
+        throwNoise: num(r.throw_noise, 0),                     // tiles its landing is heard from (0 = Config throw_noise, below 0 = silent)
         throwStatus: str(r.throw_status), throwStatusMs: num(r.throw_status_ms, 0),
         // damage to walls/objects per hit (0 = derived from attack); burns = a thrown blast also sets wood alight
         structureDmg: num(r.structure_dmg, 0), burns: bool(r.burns), fuelS: num(r.fuel_s, 0),

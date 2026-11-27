@@ -22,6 +22,7 @@ function walk(dir, out) {
     const full = path.join(dir, name);
     const st = fs.statSync(full);
     if (st.isDirectory()) walk(full, out);
+    else if (/\.bust\.png$/i.test(name)) continue;               // a bust mask (which pixels of a woman's chest move): not a picture to pick
     else if (EXT.test(name) && !/\.tint\.png$/i.test(name)) {    // skip paper-doll colour masks
       out.push('art/' + path.relative(ART, full).split(path.sep).join('/'));
     }

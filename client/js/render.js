@@ -1004,7 +1004,7 @@ var Render = (function () {
       var ramp = tint && typeof Tint !== 'undefined' ? Tint.TINTS[tint] : null, mask = ramp ? l.path.replace(/\.png$/i, '.tint.png') : '';
       if (!Assets.get(l.path)) Assets.load(l.path);
       if (mask && !Assets.get(mask)) Assets.load(mask);
-      return { path: l.path, mask: mask, ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false };
+      return { path: l.path, mask: mask, ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false, jig: fem && Tint.chestLayer && Tint.chestLayer(l.path) };
     });
   }
   /** Draw an outfit standing on the tile whose top-left is (ax, ay); answers the top of the figure. */
@@ -1013,7 +1013,7 @@ var Render = (function () {
   function figureOn(gg, a, ax, ay, T) {
     var top = ay;                                                    // top of the drawn figure (busts rise above the tile)
     if (a.layers && a.layers.length) {
-      top = drawLayers(gg, a.layers, ax, ay, T, a.facing === 'W', a.aim, a.swing, a.lift, a.bite);
+      top = drawLayers(gg, a.layers, ax, ay, T, a.facing === 'W', a.aim, a.swing, a.lift, a.bite, handSwing(a), a.jig, a.breath);
     } else if (a.sprite !== undefined) {
       var img = a.sprite && Assets.get(a.sprite);
       if (img) {
@@ -1062,7 +1062,16 @@ var Render = (function () {
   // ONE rule for every item (owner, 27 Nov 2026): nothing per item. Points are shares of the figure's 32x48 box, facing
   // right. `lift` (0..1) carries it from the hand to the mouth; `bite` (0..1) = how much of it has been eaten (taken out
   // of the corner nearest the mouth); a swing (a throw) turns it about the shoulder.
-  var HAND = { x: 0.62, y: 0.66, mx: 0.66, my: 0.44, sx: 0.5, sy: 0.6, size: 0.4 };
+  // The hand hangs at the figure's side, under the shoulder (owner, 27 Nov 2026): (x, y); the shoulder it hangs from is
+  // (x, sy), which a throw and the walking swing turn about. (mx, my) = the mouth.
+  var HAND = { x: 0.24, y: 0.72, mx: 0.66, my: 0.44, sy: 0.56, size: 0.4, walk: 0.32 };
+  /** How far the hand swings as figure `a` walks (radians): out and back once a step, the other way the next step, none
+   *  standing still or while the thing is lifted to the mouth. Timed by where the figure is drawn, like the walking sway. */
+  function handSwing(a) {
+    if (a.idle || a.fixed || a.lift > 0) return 0;
+    var s = Math.max(Math.sin(Math.PI * (a.x - Math.floor(a.x))), Math.sin(Math.PI * (a.y - Math.floor(a.y))));
+    return s > 0.02 ? ((Math.floor(a.x) + Math.floor(a.y)) % 2 ? 1 : -1) * s * HAND.walk : 0;
+  }
   function inkRect(img) {
     if (img._inkR) return img._inkR;
     var w = img.width, h = img.height, box = { x: 0, y: 0, w: w, h: h };
@@ -1099,7 +1108,7 @@ var Render = (function () {
     }
     return p;
   }
-  function drawHeld(g, img, ax, ay, T, flip, turn, lift, bite) {
+  function drawHeld(g, img, ax, ay, T, flip, turn, lift, bite, walk) {
     var b = inkRect(img), k = (handPx || HAND.size * T) / Math.max(b.w, b.h), H = 1.5 * T, top = ay + T - H;
     var w = Math.max(1, Math.round(b.w * k)), h = Math.max(1, Math.round(b.h * k));
     var e = lift > 0 ? Math.min(1, lift) : 0; e = e * e * (3 - 2 * e);
@@ -1107,7 +1116,8 @@ var Render = (function () {
     var hx = (HAND.x + (HAND.mx - HAND.x) * e) * T + e * w * 0.38, hy = top + (HAND.y + (HAND.my - HAND.y) * e) * H + e * h * 0.2;
     g.save();
     if (flip) { g.translate(ax + T, 0); g.scale(-1, 1); } else g.translate(ax, 0);
-    if (turn) { g.translate(HAND.sx * T, top + HAND.sy * H); g.rotate(turn); g.translate(-HAND.sx * T, -(top + HAND.sy * H)); }
+    var rot = (turn || 0) + (walk || 0);                        // a throw, the walking swing: both about the shoulder
+    if (rot) { g.translate(HAND.x * T, top + HAND.sy * H); g.rotate(rot); g.translate(-HAND.x * T, -(top + HAND.sy * H)); }
     if (bite > 0) {                                              // eaten so far: a round piece gone from the corner by the mouth
       if (!biteCv) biteCv = document.createElement('canvas');
       if (biteCv.width !== w || biteCv.height !== h) { biteCv.width = w; biteCv.height = h; }
@@ -1120,12 +1130,208 @@ var Render = (function () {
     } else g.drawImage(img, b.x, b.y, b.w, b.h, Math.round(hx - w / 2), Math.round(hy - h / 2), w, h);
     g.restore();
   }
-  function drawLayers(g, layers, ax, ay, T, flip, aim, swing, lift, bite) {
+  // A woman's chest moves a little as she breathes (owner, 27 Nov 2026; draw-only, standing still only): on the layers
+  // marked `jig` (her body and what she wears on the chest) the CHEST box of the 32x48 figure is drawn again one art
+  // pixel by art pixel. It has MORE FRAMES than the body's two (owner: the first try, the whole box one pixel up or
+  // down, looked squeezed, not bouncy): `jig` is how far the chest is from rest, in art pixels (+ = down, a fraction;
+  // from Renderer chestOf, a spring that swings after each breath), and each ROW of the box moves by its own share of
+  // it — the top row CHEST_TOP (0.4) of it, the bottom row all of it — so it stretches as it drops and gathers as it
+  // rises: (top, bottom) = (0,1), (1,1), (1,2), (0,-1)… chestFrame makes the layer's picture for one such frame (kept):
+  // the box's rows cut out and laid where they go, a row left empty filled with the one before it.
+  // (the box: measured on body_survivor_female and the female chest art — both breasts, the far one too, from under the
+  // straps to the band below; the near arm, columns 4-11, stays out of it)
+  var CHEST = { x: 12, y: 24, w: 17, h: 9 }, CHEST_TOP = 0.4, CHEST_MAX = 2, chestCache = {};
+  var CHEST_JOLT = 2.6, CHEST_JOLT_MS = 900;                        // …the bounce of a blow given or taken, or of turning round (a.jolt: ms since): how far, and for how long it is looked at
+  var CHEST_SWAY = 1.8;                                            // …and how far it sways sideways while walking (x the strength; it shows from 0.5 up, a pixel each way)
+  var CHEST_LATE_MS = 90, CHEST_LATE_STEP = 0.08;                   // …how far behind the near breast the far one moves: standing (ms), walking (share of a step)
+  var CHEST_LAND = 0.6;                                            // …the share of a step walked at which she comes down and the bounce starts
+  var CHEST_WALK = 3.2;                                          // …and how far while walking (more than standing: the owner's ask)
+  var CHEST_AMP = 2.4, CHEST_SWING = 450, CHEST_FADE = 350;       // the bounce: how far (art pixels), ms per swing, ms it takes to die down (Renderer chestOf)
+  // The bust mask (owner, 27 Nov 2026): a picture the size of the figure with the near breast painted in one colour
+  // (more red than blue) and the far one in another (more blue), nothing else — body_survivor_female.bust.png, drawn
+  // on the survivor and used for EVERY woman's body (the walkers' too) and for what is worn over the chest (Config
+  // bust_mask names another file). With it only those pixels move, each breast by its own amount (jig = [near, far],
+  // the far one a moment behind: Renderer chestOf). With no such file the CHEST box moves as one, as before.
+  var BUST_MASK = 'art/sprites/paperdoll/base/player/body_survivor_female.bust.png', bustPath = BUST_MASK, bustParts;
+  function setBustMask(path) { var p = path || BUST_MASK; if (p !== bustPath) { bustPath = p; bustParts = undefined; } }
+  var boxParts = null;
+  function boxBust() {                                              // the old box as one part (no mask file)
+    if (boxParts) return boxParts;
+    var cols = {}, x, y;
+    for (x = CHEST.x; x < CHEST.x + CHEST.w; x++) { cols[x] = []; for (y = CHEST.y; y < CHEST.y + CHEST.h; y++) cols[x].push(y); }
+    return (boxParts = [{ j: 0, cols: cols, top: CHEST.y, bot: CHEST.y + CHEST.h - 1 }]);
+  }
+  /** The mask's two parts, [{j: 0 near | 1 far, cols: {x: [rows]}, top, bot}]; undefined = its file is still on its way. */
+  function bustMask() {
+    if (bustParts !== undefined) return bustParts;
+    var im = Assets.get(bustPath);
+    if (!im) { if (Assets.missing(bustPath)) return (bustParts = boxBust()); Assets.load(bustPath); return undefined; }
+    var c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+    var g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0);
+    var d, parts = [{ j: 0, cols: {}, top: 1e9, bot: -1 }, { j: 1, cols: {}, top: 1e9, bot: -1 }];
+    try { d = g.getImageData(0, 0, im.width, im.height).data; } catch (e) { return (bustParts = boxBust()); }
+    for (var x = 0; x < im.width; x++) for (var y = 0; y < im.height; y++) {
+      var k = (y * im.width + x) * 4; if (d[k + 3] < 128) continue;
+      var p = parts[d[k] >= d[k + 2] ? 0 : 1];
+      (p.cols[x] = p.cols[x] || []).push(y); if (y < p.top) p.top = y; if (y > p.bot) p.bot = y;
+    }
+    parts = parts.filter(function (q) { return q.bot >= 0; });
+    return (bustParts = parts.length ? parts : boxBust());
+  }
+  function chestFrame(img, jig) {
+    if (!img || img.width !== NT) return img;                       // (not a 32-wide figure: the bust would be somewhere else)
+    var parts = bustMask(); if (!parts) return img;
+    var offs = parts.map(function (p) {                              // each part: how many pixels each of its rows moves (the lowest row the most)
+      var j = (typeof jig === 'number' ? jig : jig[p.j]) || 0, o = {};
+      for (var r = p.top; r <= p.bot; r++) { var v = Math.round(j * (CHEST_TOP + (1 - CHEST_TOP) * (p.bot > p.top ? (r - p.top) / (p.bot - p.top) : 1))); o[r] = Math.max(-CHEST_MAX, Math.min(CHEST_MAX, v)) || 0; }
+      var dx = typeof jig === 'number' ? 0 : Math.max(-1, Math.min(1, Math.round(jig[2 + p.j] || 0))) || 0;   // …and the pixel it sways sideways by (walking)
+      return { o: o, down: j > 0, dx: dx };
+    });
+    var sig = offs.map(function (q, i) { var s = ''; for (var r = parts[i].top; r <= parts[i].bot; r++) s += (i || r > parts[i].top ? ',' : '') + q.o[r]; return s + '|' + q.dx; }).join('');
+    if (!/[1-9]/.test(sig)) return img;                              // at rest
+    var key = (img._key || img.src || '') + '|chest|' + sig;
+    if (chestCache[key]) return chestCache[key];
+    var c = document.createElement('canvas'); c._key = key; c.width = img.width; c.height = img.height;
+    var g = c.getContext('2d', { willReadFrequently: true }), W = img.width, H = img.height, src, out;
+    g.drawImage(img, 0, 0);
+    try { src = g.getImageData(0, 0, W, H); out = g.getImageData(0, 0, W, H); } catch (e) { return (chestCache[key] = img); }   // (a picture from another site cannot be read)
+    function put(x, to, from) {
+      if (to < 0 || to >= H) return;
+      var a = (to * W + x) * 4, b = (from * W + x) * 4, ok = from >= 0 && from < H;
+      for (var n = 0; n < 4; n++) out.data[a + n] = ok ? src.data[b + n] : 0;
+    }
+    // Sideways first (the far breast, then the near one over it): row by row the part's pixels go one to the side, the
+    // pixel left empty filled from the one beside it; what goes up or down after that is the part where it now is.
+    var swayed = false;
+    parts.slice().reverse().forEach(function (p) {
+      var dx = offs[parts.indexOf(p)].dx; if (!dx) return;
+      var byRow = {};
+      Object.keys(p.cols).forEach(function (xs) { p.cols[xs].forEach(function (y) { (byRow[y] = byRow[y] || []).push(Number(xs)); }); });
+      Object.keys(byRow).forEach(function (ys) {
+        var y = Number(ys), xs2 = byRow[ys].sort(function (m, n) { return m - n; }), l = xs2[0], r = xs2[xs2.length - 1], has = {}, d, from;
+        if (y < 0 || y >= H) return;
+        xs2.forEach(function (v) { has[v] = 1; });
+        for (d = l + Math.min(0, dx); d <= r + Math.max(0, dx); d++) {
+          from = d - dx;
+          if (!has[from]) { if (!has[d]) continue; from = dx > 0 ? l - 1 : r + 1; }
+          if (d < 0 || d >= W) continue;
+          var a2 = (y * W + d) * 4, b2 = (y * W + from) * 4, ok = from >= 0 && from < W;
+          for (var n2 = 0; n2 < 4; n2++) out.data[a2 + n2] = ok ? src.data[b2 + n2] : 0;
+        }
+      });
+      swayed = true;
+    });
+    if (swayed) src.data.set(out.data);
+    parts.forEach(function (p, i) {
+      var o = offs[i].o, down = offs[i].down;
+      Object.keys(p.cols).forEach(function (xs) {                    // column by column: each pixel of the part goes where its row goes
+        var x = Number(xs) + offs[i].dx, rows = p.cols[xs], t = rows[0], b = rows[rows.length - 1], inSet = {}, n, d, from;
+        for (n = 0; n < rows.length; n++) inSet[rows[n]] = 1;
+        for (d = t - CHEST_MAX; d <= b + CHEST_MAX; d++) {
+          from = -1;
+          for (n = 0; n < rows.length; n++) if (rows[n] + o[rows[n]] === d) from = rows[n];                 // a pixel of the part lands here (the lower one wins)
+          if (from < 0) {
+            if (!inSet[d]) continue;                                                                         // not the part's, and nothing lands on it: as it is
+            if (down) { from = t - 1; for (n = 0; n < rows.length; n++) if (rows[n] + o[rows[n]] < d) from = rows[n]; }   // left empty: the pixel before it, the way it moved
+            else { from = b + 1; for (n = rows.length - 1; n >= 0; n--) if (rows[n] + o[rows[n]] > d) from = rows[n]; }
+          }
+          put(x, d, from);
+        }
+      });
+    });
+    g.putImageData(out, 0, 0);
+    return (chestCache[key] = c);
+  }
+  // ---- how a figure stands at a moment: its breath and, for a woman, where her chest is. Worked out HERE, outside the
+  // map's own drawing, so anything that draws a figure moves it the same way: the map (Renderer paintActor) and the
+  // figure in the inventory window (main.js drawBust) both ask pose().
+  /** Breathing: 1 while a figure standing still (a.idle) is up, 0 while it is down or not idle — slowly, each in its own
+   *  time (a.ph). Config idle_bob = off stops it. */
+  function idleUp(a, now, cfg) {
+    if (!a.idle || String((cfg || {}).idle_bob || '').toLowerCase() === 'off') return 0;
+    return Math.sin(now / 380 + (a.ph || 0)) > 0 ? 1 : 0;
+  }
+  /** How far along its step a walking figure is drawn, 0..1 (-1 = standing on a tile). By the way it is GOING (a.go =
+   *  {dx, dy}, from the page) — never by the way it faces: a player's figure looks towards the cursor, so walking away
+   *  from it ran the step backwards (the owner saw it as "better facing right than left"). No a.go = by its facing. */
+  function stepAlong(a) {
+    var fx = a.x - Math.floor(a.x), fy = a.y - Math.floor(a.y), g = a.go, d;
+    if (fx > 0.001) { d = g && g.dx ? g.dx : (a.facing === 'W' ? -1 : 1); return d < 0 ? 1 - fx : fx; }
+    if (fy > 0.001) { d = g && g.dy ? g.dy : (a.facing === 'N' ? -1 : 1); return d < 0 ? 1 - fy : fy; }
+    return -1;
+  }
+  function chestStrength(cfg) { var cb = (cfg || {}).chest_bounce; return cb === undefined || cb === '' ? 1 : (Number(cb) > 0 ? Number(cb) : (String(cb).toLowerCase() === 'on' ? 1 : 0)); }
+  /** How far a woman's chest is from rest, in art pixels (+ = down), in quarter steps: a spring that swings and dies
+   *  down, set off as her breath sinks (never as it rises: the owner), as each step sets her down, and by a jolt
+   *  (a.jolt = ms since she swung, shot, threw, was hurt or turned round). late = the far breast, a moment behind.
+   *  Config chest_bounce = a strength (1; 0 or off = none). */
+  function chestAt(a, now, cfg, late) {
+    if (!a.layers || !a.layers.length) return 0;                   // (a figure made of layers: players, NPCs, monsters with a look)
+    var on = chestStrength(cfg); if (!on) return 0;
+    setBustMask((cfg || {}).bust_mask);                            // (Config bust_mask: another mask file than the built-in one)
+    var f = chestBase(a, now, cfg, late, on), t = a.jolt;
+    if (t == null) return f;
+    if (late) t -= CHEST_LATE_MS;
+    if (t < 0 || t > CHEST_JOLT_MS) return f;
+    return Math.round((f + on * CHEST_JOLT * Math.exp(-t / CHEST_FADE) * Math.sin(2 * Math.PI * t / CHEST_SWING)) * 4) / 4;
+  }
+  function chestBase(a, now, cfg, late, on) {
+    if (a.fixed && !a.idle) return 0;
+    if (!a.idle) {
+      // Walking (owner: the same on each step, a bit more pronounced — CHEST_WALK): one bounce per tile walked, by how
+      // far along the step the figure is drawn (so it keeps the walking pace, like the sway).
+      var along = stepAlong(a); if (along < 0) return 0;           // on a tile: at rest
+      // Only as she comes DOWN (owner): nothing while the step lifts her; from where it sets her down (CHEST_LAND
+      // of the way) the chest stays up a moment, drops past its place and settles, on into the start of the next step.
+      var u = along - CHEST_LAND - (late ? CHEST_LATE_STEP : 0); if (u < 0) u += 1;
+      if (u > 0.6) return 0;
+      return Math.round(-on * CHEST_WALK * Math.exp(-u / 0.3) * Math.sin(2 * Math.PI * u / 0.45) * 4) / 4;
+    }
+    if (String((cfg || {}).idle_bob || '').toLowerCase() === 'off') return 0;   // (standing still; idle_bob off: nothing breathes)
+    var ph = (now / 380 + (a.ph || 0)) % (2 * Math.PI); if (ph < 0) ph += 2 * Math.PI;
+    var rose = ph < Math.PI, since = (rose ? ph : ph - Math.PI) * 380;   // the body's last move (up, or down) and the ms since
+    if (late) since -= CHEST_LATE_MS;
+    if (rose || since < 0) return 0;                               // (it bounces only when the chest comes down, never on the way up)
+    return Math.round(-on * CHEST_AMP * Math.exp(-since / CHEST_FADE) * Math.sin(2 * Math.PI * since / CHEST_SWING) * 4) / 4;
+  }
+  /** Walking, a woman's chest also sways SIDEWAYS (owner, 27 Nov 2026): a pixel to ONE side on a step, to the other on
+   *  the next (by the tile she left, like the walking sway) — both ways within one step was too frenetic. -1 | 0 | 1. */
+  function chestSway(a, cfg, late) {
+    if (!a.layers || !a.layers.length || a.idle || a.fixed) return 0;
+    var on = chestStrength(cfg); if (!on) return 0;
+    var along = stepAlong(a); if (along < 0) return 0;
+    along -= late ? CHEST_LATE_STEP : 0;
+    // The side is the one AWAY from the way the walking sway leans her this step (wobbleOf: the same tile rule), on the
+    // screen: the chest hangs back as the body leans. A figure facing left is drawn mirrored, so in its picture that is
+    // the other way round. (It used to go by the picture alone: facing right it swayed WITH the lean and could not be
+    // told from it, facing left against it — the owner saw it wiggle only one way round.)
+    var side = ((Math.floor(a.x) + Math.floor(a.y)) % 2 ? 1 : -1) * (a.facing === 'W' ? 1 : -1);
+    if (along < 0) return 0;
+    return Math.max(-1, Math.min(1, Math.round(side * on * CHEST_SWAY * Math.sin(Math.PI * along)))) || 0;   // (one side for the whole of a step: out in its middle, back as it ends)
+  }
+  /** Sets on actor `a` how it stands at `now`: a.jig (her chest: [near, far] or 0) and, for a figure of layers standing
+   *  still, a.breath (art pixels its upper part is up). Answers the breath a FLAT one-picture figure rises whole by. */
+  function pose(a, now, cfg) {
+    var up = idleUp(a, now, cfg), layered = !!(a.layers && a.layers.length);
+    a.breath = layered ? up : 0;
+    var jn = chestAt(a, now, cfg), jf = chestAt(a, now, cfg, 1), sn = chestSway(a, cfg), sf = chestSway(a, cfg, 1);
+    a.jig = jn || jf || sn || sf ? [jn, jf, sn, sf] : 0;           // (near, far: up-down; near, far: sideways)
+    return layered ? 0 : up;
+  }
+
+  // Breathing (owner, 27 Nov 2026: the base must not move — only the chest and what is above it rise and sink): a
+  // figure of layers that breathes (`breath` = art pixels up, from Renderer bobOf) is drawn in two pieces, cut
+  // BREATH_ROWS from the bottom of its picture — in the plain middle of the body, above the stand every bust is
+  // on —: the upper piece that much higher, the lower one where it is, the row at the cut drawn in both so the
+  // body grows by that pixel. What is held goes up with the upper piece.
+  var BREATH_ROWS = 12;
+  function drawLayers(g, layers, ax, ay, T, flip, aim, swing, lift, bite, walk, jig, breath) {
     var topY = ay, turn = swing != null && swing >= 0 && swing < 1 ? swingTurn(swing) : 0;
     layers.forEach(function (l) {
       var img = (l.mask && l.ramp) ? Tint.layer(Assets.get(l.path), Assets.get(l.mask), l.ramp) : Assets.get(l.path);
       var base = img; if (!base) return;                         // (its size; a layer that is all mask has no picture of its own)
-      if (l.icon) { drawHeld(g, img, ax, ay, T, flip, turn, lift, bite); return; }
+      var up = breath ? Math.round(breath * T / base.width) : 0;   // (screen pixels the upper piece is lifted)
+      if (l.icon) { drawHeld(g, img, ax, ay - up, T, flip, turn, lift, bite, walk); return; }
       if (l.skin) img = Tint.skinned(img, l.skin, !l.skinAll);   // the character's skin tone: the body, and the hands drawn into what it holds
       var h = Math.round(T * base.height / base.width), dy = ay + T - h;
       if (dy < topY) topY = dy;
@@ -1156,8 +1362,13 @@ var Render = (function () {
         g.restore();
       } else {
         g.save();
-        if (flip) { g.translate(ax + T, 0); g.scale(-1, 1); g.drawImage(img, 0, dy, T, h); }
-        else g.drawImage(img, ax, dy, T, h);
+        if (jig && l.jig) img = chestFrame(img, jig);       // a woman's chest, where its bounce has it now
+        var X = ax; if (flip) { g.translate(ax + T, 0); g.scale(-1, 1); X = 0; }
+        var cut = img.height - BREATH_ROWS, ky = h / img.height;
+        if (up && cut > 1) {
+          g.drawImage(img, 0, cut - 1, img.width, img.height - cut + 1, X, dy + (cut - 1) * ky, T, (img.height - cut + 1) * ky);
+          g.drawImage(img, 0, 0, img.width, cut, X, dy - up, T, cut * ky);
+        } else g.drawImage(img, X, dy, T, h);
         g.restore();
       }
     });
@@ -1575,6 +1786,20 @@ var Render = (function () {
       });
       g.globalAlpha = 1;
     }
+    // layer 2g: the tiles a throw being aimed can land on (o2.reach, main.js throwCells): thin diagonal lines on the
+    // ground itself, so under whatever stands there; its edge is drawn over everything by drawThrow.
+    if (o2.reach && o2.reach.length) {
+      var hu = Math.max(1, Math.round(T / NT)), hs = 6 * hu;
+      if (!this._hatch || this._hatchS !== hs) {
+        var hc = document.createElement('canvas'); hc.width = hc.height = hs;
+        var hg = hc.getContext('2d'); hg.fillStyle = '#fff';
+        for (var hi = 0; hi < hs; hi += hu) hg.fillRect(hi, hs - hu - hi, hu, hu);   // one line going up to the right, whole pixels
+        this._hatch = g.createPattern(hc, 'repeat'); this._hatchS = hs;
+      }
+      g.save(); g.globalAlpha = 0.16; g.translate(ox, oy); g.fillStyle = this._hatch;   // (the lines stay on the ground as the view moves)
+      o2.reach.forEach(function (c) { if (c.x >= x0 && c.x <= x1 && c.y >= y0 && c.y <= y1) g.fillRect(c.x * T, c.y * T - L(c.x, c.y), T, T); });
+      g.restore();
+    }
     // layer 2f: while you sneak, where the monsters in view would see you (docs/STEALTH.md; o2.watch from main.js
     // sightAreas, each [{cells: {"x,y": 1}, hot}] worked out by World.sightArea). Amber = it has not noticed
     // anyone, red = it is after someone. A soft fill, and a line round the edge.
@@ -1904,14 +2129,8 @@ var Render = (function () {
       g.restore();
       return ay - 4 * T + top0;
     }
-    // Breathing: a figure standing still (a.idle) rises one art pixel and sinks again, slowly, each in its own time
-    // (a.ph). Config idle_bob = off stops it. Its health bar and name stay where they are.
-    var bobPx;                                                       // (worked out on first use: figures are painted from above this line)
-    function bobOf(a) {
-      if (!a.idle) return 0;
-      if (bobPx === undefined) bobPx = String(cfg.idle_bob || '').toLowerCase() === 'off' ? 0 : Math.max(1, Math.round(T / NT));
-      return bobPx && Math.sin(now / 380 + (a.ph || 0)) > 0 ? bobPx : 0;
-    }
+    // Breathing and a woman's chest: worked out by pose() (above, shared with the inventory window's figure).
+    function bobOf(a) { return idleUp(a, now, cfg) * Math.max(1, Math.round(T / NT)); }   // (screen pixels a flat figure rises whole)
     // Walking sway: a figure on its way between two tiles leans a few degrees to one side and lifts one art pixel,
     // most at mid-step and none on the tile; the next step leans the other way (by which tile it left). It comes
     // from where the figure is drawn, so it keeps time with the steps, slow when sneaking or wading. Config
@@ -1929,6 +2148,8 @@ var Render = (function () {
     }
     function paintActor(a, ax, ay, isDark) {
       var top, wade = wadeAt(a.x, a.y), bob = bobOf(a);
+      pose(a, now, cfg);                                           // a.breath (a figure of layers breathes from the chest up, its base still: drawLayers) and a.jig (her chest)
+      if (a.breath) bob = 0;                                       // (a flat picture still rises whole)
       // sneaking (docs/STEALTH.md): the figure turns into a shadow — dark, washed of colour, see-through (Config sneak_alpha, 0.55)
       if (a.sneak) { shadeNow = true; var sa = Number(cfg.sneak_alpha); g.globalAlpha = sa > 0 && sa <= 1 ? sa : 0.55; }
       var fading = a.alpha != null && a.alpha < 1;                   // a scene's actor fading in or out
@@ -2235,6 +2456,69 @@ var Render = (function () {
     g.lineWidth = 2; g.strokeRect(Math.round(h.x * T - cam.x) + 1, Math.round(h.y * T - cam.y) + 1 - up(h.x, h.y), T - 2, T - 2);
   };
 
+  /** A throw being aimed (main.js throwAim): a pulsing white line round the tiles it can land on — it follows the grid, and
+   *  leaves out what is too far or behind a wall —, an arc from the figure to where it would land — drawn to the cursor
+   *  itself, never snapped to a tile — and a ring there (as wide as its blast, or a small mark). No tiles are painted
+   *  (owner, 27 Nov 2026). */
+  Renderer.prototype.drawThrow = function (cam, a, now) {
+    if (!a) return;
+    var g = this.g, T = this.content.config.tile_size || 32, u = Math.max(1, Math.round(T / NT)), tmap = this.map;
+    var beat = 0.5 + 0.5 * Math.sin(now / 240);
+    g.save();
+    g.lineWidth = u; g.lineCap = 'round';
+    g.strokeStyle = 'rgba(255,255,255,' + (0.3 + 0.5 * beat).toFixed(3) + ')';
+    // The edge of the reach: the sides of reachable tiles whose neighbour is not one, joined into loops and drawn with
+    // their corners rounded. Each tile is at the height of its ground, so along a ledge the line climbs its face.
+    var inSet = {}, cells = a.cells || [], from = {}, nEdges = 0;
+    cells.forEach(function (c) { inSet[c.x + ',' + c.y] = 1; });
+    function edge(x0, y0, x1, y1, l) { var k = x0 + ',' + y0; (from[k] || (from[k] = [])).push({ x0: x0, y0: y0, x1: x1, y1: y1, l: l }); nEdges++; }
+    cells.forEach(function (c) {                                 // (each loop runs clockwise round the tiles inside it)
+      var l = liftIn(tmap, c.x, c.y, T), x = c.x, y = c.y;
+      if (!inSet[x + ',' + (y - 1)]) edge(x, y, x + 1, y, l);
+      if (!inSet[(x + 1) + ',' + y]) edge(x + 1, y, x + 1, y + 1, l);
+      if (!inSet[x + ',' + (y + 1)]) edge(x + 1, y + 1, x, y + 1, l);
+      if (!inSet[(x - 1) + ',' + y]) edge(x, y + 1, x, y, l);
+    });
+    var rad = T * 0.3;
+    g.beginPath();
+    Object.keys(from).forEach(function (k0) {
+      while (from[k0] && from[k0].length) {
+        var e = from[k0].pop(), pts = [], guard = 0;
+        while (e && guard++ <= nEdges) {
+          pts.push([e.x0 * T - cam.x, e.y0 * T - cam.y - e.l], [e.x1 * T - cam.x, e.y1 * T - cam.y - e.l]);
+          var nx = from[e.x1 + ',' + e.y1]; e = nx && nx.length ? nx.pop() : null;
+        }
+        var poly = [];                                           // without the points that repeat or lie on a straight run
+        pts.forEach(function (p) { var q = poly[poly.length - 1]; if (!q || Math.abs(q[0] - p[0]) > 0.01 || Math.abs(q[1] - p[1]) > 0.01) poly.push(p); });
+        if (poly.length > 1 && Math.abs(poly[0][0] - poly[poly.length - 1][0]) < 0.01 && Math.abs(poly[0][1] - poly[poly.length - 1][1]) < 0.01) poly.pop();
+        poly = poly.filter(function (p, i) {
+          var a0 = poly[(i + poly.length - 1) % poly.length], b0 = poly[(i + 1) % poly.length];
+          return Math.abs((p[0] - a0[0]) * (b0[1] - p[1]) - (p[1] - a0[1]) * (b0[0] - p[0])) > 0.01;
+        });
+        var n = poly.length; if (n < 3) continue;
+        function len(i, j) { var dx = poly[j][0] - poly[i][0], dy = poly[j][1] - poly[i][1]; return Math.sqrt(dx * dx + dy * dy); }
+        g.moveTo((poly[0][0] + poly[1][0]) / 2, (poly[0][1] + poly[1][1]) / 2);
+        for (var i = 1; i <= n; i++) {
+          var v = poly[i % n], w = poly[(i + 1) % n], r = Math.min(rad, len((i - 1) % n, i % n) / 2, len(i % n, (i + 1) % n) / 2);
+          g.arcTo(v[0], v[1], w[0], w[1], r);
+        }
+        g.closePath();
+      }
+    });
+    g.stroke();
+    if (a.ex != null) {
+      var sx = a.fx, sy = a.fy - T * 0.45, dx = a.ex - sx, dy = a.ey - sy, d = Math.sqrt(dx * dx + dy * dy);
+      var rise = Math.max(T * 0.5, d * 0.35);                   // the further, the higher it flies
+      g.strokeStyle = 'rgba(255,255,255,.9)';
+      g.setLineDash([3 * u, 3 * u]); g.lineDashOffset = -(now / 45) % (6 * u);   // the dashes run towards where it lands
+      g.beginPath(); g.moveTo(sx, sy); g.quadraticCurveTo((sx + a.ex) / 2, (sy + a.ey) / 2 - rise * 2, a.ex, a.ey); g.stroke();
+      g.setLineDash([]);
+      g.strokeStyle = 'rgba(255,255,255,' + (0.45 + 0.45 * beat).toFixed(3) + ')';
+      g.beginPath(); g.arc(a.ex, a.ey, a.blastR > 0 ? a.blastR : 3 * u, 0, Math.PI * 2); g.stroke();
+    }
+    g.restore();
+  };
+
   /** Layer 6: projectiles, spell flashes, floating numbers and words (damage, healing, loot, level up). */
   Renderer.prototype.drawFx = function (cam, fx, now) {
     var g = this.g, T = this.content.config.tile_size || 32, fmap = this.map;
@@ -2252,6 +2536,26 @@ var Render = (function () {
         var px = (f.from.x + (f.to.x - f.from.x) * age) * T + T / 2 - cam.x, py = (f.from.y + (f.to.y - f.from.y) * age) * T + T / 2 - cam0.y - (h0 + (h1 - h0) * age);
         g.fillStyle = f.color; g.globalAlpha = .35; g.beginPath(); g.arc(px, py, 7, 0, 7); g.fill();
         g.globalAlpha = 1; g.beginPath(); g.arc(px, py, 3.5, 0, 7); g.fill();
+        continue;
+      }
+      if (f.kind === 'toss') {
+        // a thrown thing (main.js tossFx; map pixels): along the aim's own arc, turning; then one bounce and it fades
+        var el = now - f.t0, tx2, ty2, rot, al = 1;
+        if (el < f.fly) {
+          var tt = el / f.fly, mt = 1 - tt, qx = (f.sx + f.ex) / 2, qy = (f.sy + f.ey) / 2 - f.rise * 2;
+          tx2 = mt * mt * f.sx + 2 * mt * tt * qx + tt * tt * f.ex; ty2 = mt * mt * f.sy + 2 * mt * tt * qy + tt * tt * f.ey; rot = tt * f.spin;
+        } else {
+          var bb = f.hop ? Math.min(1, (el - f.fly) / f.hop) : 1;
+          tx2 = f.ex + (f.bx - f.ex) * bb; ty2 = f.ey + (f.by - f.ey) * bb - Math.sin(Math.PI * bb) * T * 0.32; rot = f.spin + bb * 2.5 * (f.spin < 0 ? -1 : 1);
+          if (bb > 0.65) al = Math.max(0, 1 - (bb - 0.65) / 0.35);
+        }
+        var timg = f.path && Assets.get(f.path);
+        g.save(); g.globalAlpha = al; g.translate(Math.round(tx2 - cam0.x), Math.round(ty2 - cam0.y)); g.rotate(rot);
+        if (timg && timg.width) {
+          var tb = inkRect(timg), tk = (handPx || HAND.size * T) * 0.6 / Math.max(tb.w, tb.h), tw = Math.max(1, Math.round(tb.w * tk)), th2 = Math.max(1, Math.round(tb.h * tk));
+          g.drawImage(timg, tb.x, tb.y, tb.w, tb.h, -tw / 2, -th2 / 2, tw, th2);
+        } else { g.fillStyle = f.color || '#ddd'; g.fillRect(-3, -3, 6, 6); }
+        g.restore();
         continue;
       }
       if (f.kind === 'tracer') {                                      // a bullet streak that fades fast
@@ -2305,7 +2609,7 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { burst: burst, crumbs: crumbs, setHandPx: setHandPx, figureOn: figureOn, outfitOf: outfitOf, outfitLayers: outfitLayers, drawOutfit: drawOutfit, Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
+  return { pose: pose, burst: burst, crumbs: crumbs, setHandPx: setHandPx, figureOn: figureOn, outfitOf: outfitOf, outfitLayers: outfitLayers, drawOutfit: drawOutfit, Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

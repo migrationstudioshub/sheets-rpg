@@ -2000,8 +2000,9 @@ var World = (function () {
     return what === 'consume' ? it.type === 'consumable' : what === 'throw' ? it.type === 'throwable' : what === 'place' ? it.type === 'placeable' && !!it.places
          : what === 'shoot' ? it.type === 'weapon' : what === 'equip' ? !!it.slot : false;
   }
-  /** Items that belong on the belt: things you consume or throw, weapons and tools. */
-  function beltWorthy(it) { return itemCan(it, 'consume') || itemCan(it, 'throw') || itemCan(it, 'place') || !!(it && (it.slot === 'weapon' || (it.tools || []).length)); }
+  /** Items that belong on the belt: things you consume or throw, weapons and tools. Decided by the item's TYPE (owner,
+   *  27 Nov 2026): a material ticked `throwable` itself (a rock) stays a material — the player puts it on the belt. */
+  function beltWorthy(it) { return itemCan(it, 'consume') || (itemCan(it, 'throw') && !it.ownThrow) || itemCan(it, 'place') || !!(it && (it.slot === 'weapon' || (it.tools || []).length)); }
   /** ...of those, the ones in the backpack (not on the belt already). */
   function beltItems(c, p) {
     return (p.inventory || []).filter(function (s) { return s.s < BELT_AT; }).map(function (s) { return s.item; }).filter(function (id, i, all) {
@@ -2751,6 +2752,30 @@ var World = (function () {
   }
   function noiseOf(c, p, now) { return noiseRadius(c, !!p.sneak, !!p.stepAt && now - Number(p.stepAt) <= NOISE_LINGER_MS); }
   /** The loudest a player gets (walking): what the noise meter is full at. */
+  /** How far (tiles) a thrown `it` is heard from where it lands: its own throw_noise, else Config throw_noise (6); 0 = silent. */
+  function throwNoise(c, it) {
+    var own = it ? Number(it.throwNoise) || 0 : 0;
+    return own < 0 ? 0 : own > 0 ? own : Math.max(0, cfgNum(c, 'throw_noise', 6));
+  }
+  /** A noise at a spot that is nobody's footsteps (a thrown thing landing; owner, 27 Nov 2026): every monster within
+   *  `radius` tiles (x its `hearing`), walls or not, that is after nobody hears it exactly as senseStep's `heard` — the ?,
+   *  the wait, then it goes to look THERE (an animal runs from there). `by` = who made it (a walker's search remembers). */
+  function soundAt(c, ws, mapId, x, y, radius, now, by) {
+    if (!stealthOn(c) || !(radius > 0)) return;
+    var ms = mapState(ws, mapId);
+    (ms.monsters || []).forEach(function (m) {
+      var def = c.monsters[m.ref]; if (!def || m.dead || m.tame || m.wait > now) return;
+      var far = radius * (def.hearing == null ? 1 : def.hearing);
+      if (!(far > 0) || cheb(m.x, m.y, x, y) > far) return;
+      if (def.brain === 'hunter' && now < (m.fedUntil || 0)) return;
+      if (def.brain === 'walker' ? m.ai && m.ai.k === 'p' : !!(m.chase || m.engaged)) return;   // after someone already
+      var on = def.brain === 'animal' ? m.fleeFrom : def.brain === 'walker' ? null : m.goTo, id = by ? by.id : '';
+      if (on) { on.x = x; on.y = y; on.until = now + (def.brain === 'animal' ? SCARE_MS : GOTO_MS); }
+      else if (m.hear) { m.hear.x = x; m.hear.y = y; m.hear.id = id; }
+      else m.hear = { x: x, y: y, at: now, id: id };
+      ws.dirty = true;
+    });
+  }
   function noiseMax(c) { return Math.max(1, cfgNum(c, 'noise_walk', 6), cfgNum(c, 'noise_sneak', 2)); }
   /**
    * What monster m notices of player p: 'seen' | 'heard' | ''. The ONE question every brain asks about a player
@@ -3946,12 +3971,19 @@ var World = (function () {
   }
   // Where a thrown item ends up when aimed at (tx,ty): it travels along the line and stops at the first
   // solid wall or blocker it cannot pass, detonating against it rather than the throw being refused.
+  // Up onto higher ground it reaches only the EDGE (owner, 27 Nov 2026): the first tile that stands a level above the
+  // thrower is where it lands, never further in; ground more than a level up is a cliff face that stops it at its foot.
+  // A ramp on the way is no step. Level ground and throwing down are untouched.
   function throwLanding(c, map, px, py, tx, ty, stateFn) {
     var line = lineCells(px, py, tx, ty), land = { x: px, y: py };
+    var R = Rl(), hilly = !!(map && map.elev && map.elev.length), h0 = hilly ? R.groundHeight(map, px + 0.5, py + 0.5) : 0;
     for (var i = 1; i < line.length; i++) {
       if (edgeBlocksMove(c, map, line[i - 1], line[i])) break;            // a wall stops it at the previous cell
       if (blocksSight(c, map, line[i].x, line[i].y, stateFn)) break;      // can't land inside a solid cell
+      var up = hilly ? R.groundHeight(map, line[i].x + 0.5, line[i].y + 0.5) - h0 : 0;
+      if (up > 1.75) break;                                               // too high a face: it drops at its foot
       land = line[i];
+      if (up > 0.75) break;                                               // the edge of the level above: no further
     }
     return land;
   }
@@ -4337,7 +4369,8 @@ var World = (function () {
       return !m.dead && cheb(m.x, m.y, land.x, land.y) <= area && clearLine(c, map, land.x, land.y, m.x, m.y, stateFn, edgeBlocksMove);
     });
     ev.push({ type: 'throw', map: blastMap, by: p.id, item: id, from: { x: p.x, y: p.y }, to: { x: land.x, y: land.y },
-      area: area, color: it.tint || '#ff8c3b', fromMap: far ? p.map : undefined });
+      area: area, color: it.tint || '#ff8c3b', fromMap: far ? p.map : undefined, noise: throwNoise(c, it) || undefined });
+    soundAt(c, ws, blastMap, land.x, land.y, throwNoise(c, it), now, p);   // it lands: whoever hears it comes to look there
     mons.forEach(function (m) {
       if (Number(it.throwPower) > 0) {
         var dmg = Math.max(1, Math.round(it.throwPower - monStats(c, m).def) + rint(rng, -1, 1));
@@ -4367,7 +4400,7 @@ var World = (function () {
         if (it.burns && !(r1 && r1.destroyed)) { var r2 = damageStructure(c, ws, blastMap, t, Number(it.throwPower) / 2, { kind: 'fire', by: p.id, player: p, now: now }, ev); if (r2 && r2.dealt) broke++; }
       });
     }
-    if (!mons.length && !broke) say('The ' + lower(it.name) + ' goes off, hitting nothing.');
+    if (!mons.length && !broke) say('The ' + lower(it.name) + (area > 0 ? ' goes off, hitting nothing.' : ' hits nothing.'));
   }
 
   /** Rearrange a bar. bar 'ability' = the 2 Q/E skill slots; 'belt' = the BELT_SIZE item slots. */
@@ -5850,7 +5883,7 @@ var World = (function () {
     syncEdges: syncEdges, syncEdgesView: syncEdgesView, isEdgeDoor: isEdgeDoor, isWallFixture: isWallFixture, openingOf: openingOf,
     mountEdgeOf: mountEdgeOf, fixtureEdges: fixtureEdges, wallMountAt: wallMountAt, wallMountUseCell: wallMountUseCell,
     visibleCells: visibleCells, perceive: perceive,
-    stealthOn: stealthOn, notices: notices, sightArea: sightArea, lookRange: lookRange, noiseOf: noiseOf, noiseRadius: noiseRadius, noiseMax: noiseMax, NOISE_LINGER_MS: NOISE_LINGER_MS,
+    stealthOn: stealthOn, throwNoise: throwNoise, soundAt: soundAt, notices: notices, sightArea: sightArea, lookRange: lookRange, noiseOf: noiseOf, noiseRadius: noiseRadius, noiseMax: noiseMax, NOISE_LINGER_MS: NOISE_LINGER_MS,
     roofZoneAt: roofZoneAt, roofZones: roofZones, covered: covered, asRoof: asRoof, roofSteps: roofSteps, roofSpan: roofSpan, roofSupport: roofSupport,
     liveMap: liveMap, liveMapFromStruct: liveMapFromStruct, structOf: structOf, publicStruct: publicStruct,
     structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure,

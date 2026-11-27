@@ -154,6 +154,7 @@ var Tint = (function () {
   // there (Assets.wornFor; the Studio's composeLook), else the picture named. femaleLook: a look whose body is a woman's.
   function twin(path) { var p = String(path || ''); return /\/male\/[^\/]+$/.test(p) ? p.replace(/\/male\/([^\/]+)$/, '/female/$1') : ''; }
   function femaleLook(look) { return (look || []).some(function (l) { return l && /(^|\/)body_[^\/]*_female\.png$/i.test(String(l.path || '')); }); }
+  function chestLayer(path) { return isBody(path) || /\/chest\//.test(String(path || '')); }   // the layers of a look a woman's chest moves in
   function isBody(path) { return /(^|\/)body_[^\/]*$/i.test(String(path || '')); }
   function lookSkin(look) {
     for (var i = 0; i < (look || []).length; i++) if (look[i] && isBody(look[i].path) && SKINS[look[i].tint]) return look[i].tint;
@@ -166,6 +167,6 @@ var Tint = (function () {
   }
 
   return { TINTS: TINTS, SKINS: SKINS, getTintedLayer: getTintedLayer, layer: layer, tintedOver: tintedOver, skinned: skinned, lookTint: lookTint,
-    twin: twin, femaleLook: femaleLook, lookSkin: lookSkin, skinFor: skinFor };
+    twin: twin, femaleLook: femaleLook, chestLayer: chestLayer, lookSkin: lookSkin, skinFor: skinFor };
 })();
 if (typeof module !== 'undefined') module.exports = Tint;

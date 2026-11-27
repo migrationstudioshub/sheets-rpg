@@ -159,6 +159,31 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   `Content.build` turns them into `item.can`, `item.cooldownMs`, `item.props`; rules ask **`World.itemCan(it, what)`**, never
   the type's name (it falls back to the old names for content built without ticks). No tab = the built-in `Content.ITEM_TYPES`.
   Object kinds the owner adds live in Config `object_kinds` (edited from the Object Kinds card).
+  **An item may add to its type** (owner, 27 Nov 2026: a small rock is a material, can be thrown, and is a slingshot's ammo):
+  Items **`throwable`** (a tick) makes `item.can.throw` true whatever the type, and the Studio then shows the throw fields.
+  Such an item carries `item.ownThrow` and is still treated as its TYPE everywhere else — `beltWorthy` (it does not go to the
+  belt by itself: the player puts it there to throw it) and the bag's filters ask that. Ammo needs nothing: a weapon names its
+  `ammo` by item id and the rules never ask the ammo's type. More per-item ticks (a bottle to drink or throw) go the same way.
+  **Aiming a throw** (owner, 27 Nov 2026; page only): anything that can be thrown, a grenade and a ticked rock alike, is aimed
+  only while the RIGHT button is held, like a weapon (`syncThrow` in `main.js`) — otherwise it is just carried in hand and
+  clicks act as usual. The aim paints no tiles: `throwAim` → `Renderer.drawThrow` = a
+  pulsing white line round the tiles the throw can land on (`throwCells`: ON the grid, within its range and not behind a wall
+  — the owner asked for this edge to snap and to show only where it can be thrown; its corners are rounded, and the tiles inside
+  are hatched with thin diagonal lines ON the ground, under whatever stands there: `Renderer.draw` `reach`, layer 2g), a dashed arc from the figure to the cursor itself (never snapped to the
+  grid), and a ring where it lands (as wide as its blast). A cursor beyond the reach throws as far towards it as it goes (no
+  more "too far"); a wall in the way ends the arc where it lands. The click throws at `throwAim().cell`.
+  **A throw up a ledge reaches only its edge** (owner; a rule, `World.throwLanding`, so the referee and the aim agree): the first
+  tile a level above the thrower is where it lands, never further in; ground more than a level up stops it at its foot; a ramp
+  is no step; level ground and throwing down are untouched.
+  **In the air and landing** (owner, 27 Nov 2026): the thrown thing is a small turning copy of its picture flying the very arc
+  the aim drew (`tossFx` in `main.js` → `drawFx` kind `toss`; draw-only, for other players from the `throw` event). What has a
+  blast area flashes where it lands; anything else (a rock) bounces once towards the next tile the way it flew — on the spot
+  when that tile is taken, walled off or across a ledge — and is gone: **a thrown thing is never left on the ground** (the
+  owner decided against getting rocks back). **Landing makes a noise** (hand throws only, not shots): Items `throw_noise`
+  tiles (0 = Config `throw_noise`, 6; -1 = silent) → `World.throwNoise` / `soundAt`: every monster within it (x its
+  `hearing`) that is after nobody hears it like footsteps — the ?, the wait, then it goes to look where it FELL (an animal
+  runs from there). The `throw` event carries `noise` (the page's ring). `soundAt` is the one way to make a noise at a spot.
+  The figure in the inventory window never shows what is in hand (`drawBust`).
 - **Facial hair** (27 Nov 2026; the owner's choices: picked on the character screen, not an item; a colour of its own): pictures
   `art/sprites/paperdoll/face/beard_*.png` + their `.tint.png` (the same folder will hold face gear art). `World.hairChoices`
   also gives `beards` ('' = none, first; the built-in `BEARD_STYLES`, or Config `beard_styles`); `newPlayer` takes `look.beard` /
@@ -177,6 +202,58 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   draws). Asked by `playerLayers` (`p.body === 'female'`), and for looks whose body picture ends `_female.png`
   (`Tint.femaleLook`: `monsterLayers`, `Render.outfitLayers`, the Studio's `composeLook`). Draw-only. The Studio's pickers list
   both cuts (the woman's labelled "(female)"); picking a female one outright also works.
+- **The bust mask** (owner, 27 Nov 2026; their idea, replacing the fixed box): `art/sprites/paperdoll/base/player/
+  body_survivor_female.bust.png`, the size of the figure, the near breast painted in one colour (more red than blue) and the far
+  one in another (more blue), nothing else. **One file for every woman's body** (the walkers' too, the owner's choice) and for
+  what is worn over the chest; Config `bust_mask` names another. `bustMask` in `render.js` reads it once; `chestFrame(img, [near,
+  far])` moves ONLY those pixels, column by column, each breast by its own amount (the far one `CHEST_LATE_MS` 90 / 
+  `CHEST_LATE_STEP` 0.08 behind: `chestOf(a, late)`), lower rows more than upper, the pixel left empty filled from the one
+  before it. No file = the old `CHEST` box as one piece. `.bust.png` files are left out of the art manifest (both builders).
+  Not built: a mask per garment (stiff armour that should not move still does).
+- **The chest also bounces on a jolt** (owner, 27 Nov 2026): when she swings a tool or weapon, shoots, throws, is hurt, or
+  turns to face the other way. `joltMs(id, hp, usedAt, now, facing)` in `main.js` watches health and facing per figure and
+  gives the ms since the last of those (`usedAt`: yours = `swingT0` / `lastHoldShot`; another player's = `act.j0`, set in
+  `othersAct` for kinds m / r / t; a monster has none — hurt and turning only) → `jolt` on the actor; `chestAt` in `render.js`
+  adds the same spring for `CHEST_JOLT_MS` (900), `CHEST_JOLT` (2.6) x `chest_bounce`, to what breathing or walking gives
+  (`chestBase`). Not built: NPCs (they turn to face you), a monster's own attacks.
+- **How a figure stands is worked out in one place** (27 Nov 2026): `Render.pose(a, now, cfg)` (module level in `render.js`:
+  `idleUp`, `chestAt`, `chestBase`) sets `a.breath` and `a.jig` on an actor; the map (`paintActor`) and **the figure in the
+  inventory window** both ask it and both draw with `Render.figureOn`. That figure is alive (owner): `bustLive` / `drawBust`
+  in `main.js` redraw it every frame while its canvas is on the page — it breathes, turns to the side of it the cursor is on
+  (`bustLook`; turning is its jolt), and a woman's chest moves as on the map. Its canvas is 32x49 (a row of room above for
+  the breath). Not built: the same on the character screen's preview.
+- **Walking, the chest also sways sideways** (owner, 27 Nov 2026): `chestSway` in `render.js` = -1 | 0 | 1, a pixel to ONE
+  side on a step and to the other on the next (the owner: both ways within a step was too frenetic; by the tile left, like the walking sway), the far
+  breast a little behind; `CHEST_SWAY` (1.8) x `chest_bounce`, so it shows from a strength of about 0.3 up. **The side is the one AWAY from the walking lean, on the
+  screen** (`wobbleOf` leans her by the same tile rule; a figure facing left is drawn mirrored, so in its picture the sign
+  flips): going by the picture alone it swayed WITH the lean facing right — invisible — and against it facing left. `a.jig` is
+  `[near, far, nearSideways, farSideways]`; `chestFrame` moves the masked pixels sideways first (row by row, far breast then
+  near), then up or down from where they now are. Not built: sideways on a jolt or while standing.
+- **A step's motion goes by the way the figure is GOING, never the way it faces** (27 Nov 2026; a bug the owner saw as "better
+  facing right than left"): a player's figure looks towards the cursor, so timing a step by `a.facing` ran it backwards
+  whenever she walked away from the cursor. `goOf(id, x, y)` in `main.js` keeps each figure's direction from where it was
+  drawn last frame → `go: {dx, dy}` on the actor; `stepAlong(a)` in `render.js` is the one "how far along its step" question
+  (the chest's bounce and sway ask it; no `a.go` = by its facing).
+- **Breathing never moves the base** (owner, 27 Nov 2026): a figure made of layers (players, NPCs, paper-doll monsters and
+  animals) standing still rises and sinks only from the chest up. `paintActor` sets `a.breath` (1 while `bobOf` says up) and
+  `drawLayers` in `render.js` draws each layer in two pieces, cut `BREATH_ROWS` (12) from the bottom of the picture — the plain
+  middle of the body, above the stand every bust is on —: the upper piece one art pixel higher, the lower one in place, the
+  row at the cut in both (the body grows by that pixel). What is held goes up with the upper piece. A flat one-picture monster
+  (rat, slime) still rises whole. New body art must keep its stand within the bottom 9 rows and a plain stretch at row 36.
+- **A woman's chest bounces as she breathes and as she walks** (owner, 27 Nov 2026; draw-only; the owner's asks: bouncy,
+  not squeezed, and MORE FRAMES than the body's two): on the layers marked `jig` (her body and what is worn on the chest:
+  `playerLayers`, and `Tint.chestLayer` for looks) `drawLayers` in `render.js` draws `chestFrame(img, jig)` instead of the
+  picture. `chestAt` (module level, see `Render.pose`) = how far the chest is from rest in art pixels (+ = down): a spring set off by each move
+  of the idle breath (`bobOf`) that swings and dies down (`CHEST_AMP` 2.4, `CHEST_SWING` 450 ms, `CHEST_FADE` 350 ms).
+  `chestFrame` moves each ROW of the `CHEST` box (x 12-28, y 24-32 of the 32x48 figure: both breasts whole, the near arm left out) by its own share — the top row
+  `CHEST_TOP` (0.4), the bottom row all — so it stretches as it drops and gathers as it rises; frames are kept per picture.
+  Config `chest_bounce` = a strength (1; 0 or off = none); `idle_bob` = off stops both. New female chest art must keep the
+  chest inside that box. **Walking** (owner: the same on each step, a bit more pronounced): one bounce per tile, from how far
+  along the step the figure is drawn (`CHEST_WALK` 3.2 x the strength, a cosine of the step, by `a.facing`). In `data/game/`
+  `chest_bounce` is the owner's to tune (1 was too much). **It bounces only as the chest comes DOWN** (owner, 27 Nov 2026): standing, only after the breath sinks (never after it
+  rises); walking, from where the step sets her down (`CHEST_LAND` 0.6 of the step) on into the start of the next.
+  **Female walkers bounce the same, by the same Config** (owner): a
+  layered monster is told by `a.layers`, never by `a.sprite` (theirs is '' even when layered). Not built: the inventory / character-screen figures.
 - **What is worn is a place of its own too** (owner, 26 Nov 2026): a worn helm/armor/pants/feet/gloves/back/accessory is not in
   the backpack, only in its slot by the figure. Worn place k is cell `World.WORN_AT` (2000) + its index in `wornKeys()`
   (`World.wornCell(k)`); `p.equipment[k]` still names the item and `wornSync` keeps it in step with the cells. Wear / take off
@@ -203,7 +280,9 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   `World.handOf`, sent wherever `wst` is, `functions/referee.js` too; '' when it is the weapon, which `equipment` already tells).
   `drawHeld` in `render.js` is the one place that draws it: the icon cut to its painted pixels, **as big as it is on the belt**
   (owner: 20 UI pixels on its longer side, whatever the view's zoom — `handSize` in `main.js` tells `Render.setHandPx`),
-  centred on the `HAND` point of the 32x48 figure. Motions: `lift` on the actor (0..1) carries it to the mouth, quickly (the
+  centred on the `HAND` point of the 32x48 figure — at its side, under the shoulder that is turned to the camera (the back one of the bust; owner; weapons and tools with a held
+  picture are not moved) — and swinging back and forth about that shoulder as the figure walks (`handSwing`, once a step,
+  the other way the next; timed by where the figure is drawn, like the walking sway). Motions: `lift` on the actor (0..1) carries it to the mouth, quickly (the
   first `EAT_UP`, a fifth, of the hold); then it is eaten in `EAT_BITES` (3) bites — `bite` on the actor = the share gone, a round
   piece out of the corner by the mouth — each throwing a few crumbs of the item's own colours (`Render.crumbs`, drawn by the
   death burst's `drawFx` kind `burst`); the last bite is the moment it is used;

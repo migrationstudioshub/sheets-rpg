@@ -384,7 +384,7 @@ h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform:
 .making .prow { grid-column: 1; display: grid; grid-template-columns: 1fr auto; gap: 4rem; align-items: center; } .making .prow .kbar { grid-column: auto; }
 /* the inventory window's first column: you, what you wear, what you are */
 .doll { position: relative; width: 160rem; height: 172rem; }
-.doll canvas.bust { position: absolute; left: 48rem; top: 6rem; width: 64rem; height: 96rem; }
+.doll canvas.bust { position: absolute; left: 48rem; top: 4rem; width: 64rem; height: 98rem; }
 .dslot { position: absolute; }
 /* the level and XP bar between the figure and the stats */
 .dlevel { display: grid; grid-template-columns: auto 1fr; gap: 5rem; align-items: center; padding: 3rem 4rem; }

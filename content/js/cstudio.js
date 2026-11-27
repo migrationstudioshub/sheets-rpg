@@ -1073,7 +1073,7 @@ var CStudio = (function () {
     range: 'shoot', ammo: 'shoot', ammo_cost: 'shoot', fire_ms: 'shoot', clip: 'shoot', reload_ms: 'shoot', fire_mode: 'shoot', aim: 'shoot',
     heal: 'consume', mp: 'consume', hunger: 'consume', thirst: 'consume', toxicity: 'consume', leaves: 'consume', on_use: 'consume', cooldown_s: 'consume',
     places: 'place',
-    throw_range: 'throw', throw_area: 'throw', throw_power: 'throw', throw_status: 'throw', throw_status_ms: 'throw', burns: 'throw',
+    throw_range: 'throw', throw_area: 'throw', throw_power: 'throw', throw_status: 'throw', throw_status_ms: 'throw', throw_noise: 'throw', burns: 'throw',
     penetration: 'ammo', falloff: 'ammo', recover: 'ammo', tool: 'tool', structure_dmg: 'tool', durability: 'tool', material_wear: 'tool', repair_cost: 'tool', repair_station: 'tool', salvage: 'tool'
   };
   function typePropDefs(ty) {
@@ -1085,6 +1085,7 @@ var CStudio = (function () {
     var ty = itemTypeRow(r.type); if (!ty) return false;
     if (fl.key === 'props') return !typePropDefs(ty).length;
     var need = ITEM_FIELD_NEEDS[fl.key]; if (!need || Content.bool(ty[need])) return false;
+    if (need === 'throw' && Content.bool(r.throwable)) return false;   // thrown by its own tick (a rock that is a material)
     var v = r[fl.key];
     return v == null || v === '' || v === 0 || v === '0' || v === false || v === fl.def;
   }
@@ -1117,6 +1118,7 @@ var CStudio = (function () {
       persist();
       if (fl.key === idField(type) || fl.key === 'name') { renderNav(); renderList(); }
       else if (type === 'items' && fl.key === 'type') { renderList(); renderForm(); }       // other fields apply to the new type
+      else if (type === 'items' && fl.key === 'throwable') renderForm();                    // its throw fields show or go
     }
     if (fl.type === 'propdefs') return propDefsField(r, fl);
     if (fl.type === 'itemprops') return itemPropsField(r, fl);

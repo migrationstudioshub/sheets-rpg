@@ -63,19 +63,21 @@ var Content = (function () {
   // them; with no such tab the game behaves exactly as it did when these names were wired into the rules.
   //   equip = can be worn/held (slot = where) · shoot = a held one with range fires · consume = used up on use
   //   throw = thrown from the belt · ammo / tool = only decide which fields the item form shows
+  //   place = put down as an object from the hand (a bedroll): the item names it in `places`
   var ITEM_TYPES = [
     { id: 'material', name: 'Material' },
     { id: 'weapon', name: 'Weapon', equip: true, slot: 'weapon', shoot: true, tool: true },
     { id: 'armor', name: 'Armor', equip: true, slot: 'armor' },
     { id: 'consumable', name: 'Consumable', consume: true },
     { id: 'throwable', name: 'Throwable', throw: true },
+    { id: 'placeable', name: 'Placeable', place: true },
     { id: 'ammo', name: 'Ammo', ammo: true },
     { id: 'key', name: 'Key' }
   ];
   function itemType(r) {
     var props = json(r.properties, []);
     return { id: str(r.id), name: str(r.name) || str(r.id), equip: bool(r.equip), slot: str(r.slot), shoot: bool(r.shoot),
-      consume: bool(r.consume), cooldownS: Math.max(0, num(r.cooldown_s, 0)), throw: bool(r.throw), ammo: bool(r.ammo), tool: bool(r.tool),
+      consume: bool(r.consume), cooldownS: Math.max(0, num(r.cooldown_s, 0)), throw: bool(r.throw), place: bool(r.place), ammo: bool(r.ammo), tool: bool(r.tool),
       properties: (Array.isArray(props) ? props : []).filter(function (d) { return d && str(d.name); })
         .map(function (d) { return { name: str(d.name), type: str(d.type) || 'text', def: d.def == null ? '' : d.def, notes: str(d.notes) }; }) };
   }
@@ -164,7 +166,7 @@ var Content = (function () {
       pickup: { type: 'item_list', 'default': '', notes: 'What lies here: item:how many (branch:1)' },
       respawn_s: { type: 'number', 'default': '', notes: 'Seconds until it is back after someone took it. Empty = Config pickup_respawn_s (0 = it never comes back)' } } };
     (tables.Objects || []).concat([{ id: '_drop', name: 'Item', kind: 'pickup', walkable: true, properties: '{}' },
-      { id: '_bag', name: 'Loot bag', kind: 'container', walkable: true, sprite: 'art/sprites/objects/loot_bag.png', properties: '{}' }]).forEach(function (r) {
+      { id: '_bag', name: 'Loot bag', kind: 'container', walkable: true, sprite: 'art/sprites/objects/container/container_loot-bag.png', properties: '{}' }]).forEach(function (r) {
       var id = str(r.id); if (!id || c.objects[id]) return;
       var pr = json(r.properties, {});
       c.objects[id] = { id: id, name: str(r.name) || id, kind: str(r.kind) || 'deco',
@@ -239,13 +241,17 @@ var Content = (function () {
       if (ty) ty.properties.forEach(function (d) { props[d.name] = d.def; });
       Object.keys(own && typeof own === 'object' ? own : {}).forEach(function (k) { props[k] = own[k]; });
       c.items[id] = { id: id, name: str(r.name) || id, sprite: str(r.sprite), type: tyId,
-        can: { equip: !!slot, shoot: ty ? ty.shoot : tyId === 'weapon', consume: ty ? ty.consume : tyId === 'consumable', throw: ty ? ty.throw : tyId === 'throwable' },
+        can: { equip: !!slot, shoot: ty ? ty.shoot : tyId === 'weapon', consume: ty ? ty.consume : tyId === 'consumable', throw: ty ? ty.throw : tyId === 'throwable',
+          place: !!str(r.places) && (ty ? ty.place : tyId === 'placeable') },   // put down from the hand as the object it names
+        places: str(r.places),
         // seconds to wait before using another of the same item (the item's own value, else its type's)
         cooldownMs: Math.max(0, num(r.cooldown_s, ty ? ty.cooldownS : 0)) * 1000,
         props: props,
         slot: slot, wornSprite: str(r.worn_sprite), defaultTint: str(r.default_tint),
+        hidesHead: bool(r.hides_head),                          // worn, the hair and the head slot's picture are not drawn (a poncho's hood)
         wornEmpty: str(r.worn_empty), wornReload: str(r.worn_reload), wornAim: str(r.worn_aim),   // a magazine weapon held empty / being reloaded (a bow: no arrow / drawing)
         stackMax: num(r.stack_max, 99), value: num(r.value, 0),
+        sway: bool(r.sway),                                     // lying on the ground it sways in the wind (draw-only: Render swayOf)
         dispensable: bool(r.dispensable),                       // lying on the ground, a loot bag may be put on its tile: it goes inside the bag (World lootSpot)
         atk: num(r.atk, 0), def: num(r.def, 0), heal: num(r.heal, 0), mp: num(r.mp, 0),
         hunger: num(r.hunger, 0), thirst: num(r.thirst, 0),
@@ -390,6 +396,7 @@ var Content = (function () {
         progressText: str(r.progress_text), doneText: str(r.done_text), goals: goals, requires: str(r.requires), rewards: str(r.rewards),
         choice: str(r.choice), repeatS: Math.max(0, num(r.repeat_h, 0)) * 3600, order: i,
         image: str(r.image), tutorial: bool(r.tutorial),        // image = a picture (a GIF plays) shown with its text; tutorial = a teaching step (World.questSweep, questSkip)
+        beforeStart: str(r.before_start),                       // an action list run the moment it starts, BEFORE its "New quest" window (a scene that leads into it)
         onStart: str(r.on_start),                               // an action list run when it starts (quest:<tutorial> = show a tutorial now)
         noAbandon: bool(r.no_abandon) };                        // the player cannot give it up (main quests)
     });
@@ -422,6 +429,23 @@ var Content = (function () {
           stock: Math.max(0, Math.round(num(o.stock, 0))), restockS: Math.max(0, num(o.restock_h, 0)) * 3600, cond: str(o['if']) };
       }).filter(function (o) { return o.gives; });
       c.shops[id] = { id: id, name: str(r.name), offers: offers };
+    });
+    // Scenes (cinematics): steps = [{type, with, ...its fields}] (JSON, or an array already; SCENE_STEPS says what each
+    // kind holds). Played by the page for the one player an action list's scene:<id> starts it for (World.sceneQueue).
+    c.scenes = {};
+    var stepKinds = {}; SCENE_STEPS.forEach(function (k) { stepKinds[k.id] = k; });
+    (tables.Scenes || []).forEach(function (r) {
+      var id = str(r.id); if (!id) return;
+      var steps = (json(r.steps, []) || []).filter(function (s) { return s && stepKinds[str(s.type)]; }).map(function (s) {
+        var o = { type: str(s.type), 'with': bool(s['with']) };
+        stepKinds[o.type].fields.forEach(function (f) {
+          var v = s[f[0]];
+          if (v === undefined || v === '') v = f[2];
+          o[f[0]] = f[1] === 'number' ? num(v, f[2]) : f[1] === 'bool' ? bool(v) : str(v);
+        });
+        return o;
+      });
+      c.scenes[id] = { id: id, name: str(r.name) || id, steps: steps };
     });
     linkFloors(c);
     return c;
@@ -468,6 +492,41 @@ var Content = (function () {
     { id: 'craft', name: 'The crafting window (C)' }, { id: 'build', name: 'The build bar (B)' }
   ];
   function goalType(id) { for (var i = 0; i < GOAL_TYPES.length; i++) if (GOAL_TYPES[i].id === id) return GOAL_TYPES[i]; return null; }
+  /**
+   * The kinds of step a scene is made of (the page plays them: client/js/scene.js; the Studio builds its step forms from
+   * this list). Every step may also have `with: true` = it starts together with the step before instead of after it.
+   * A field: [key, type (text | textarea | number | bool | color | image | select | emote | npc | actor), default, help, options].
+   */
+  var SCENE_STEPS = [
+    { id: 'bars', name: 'Black bars', fields: [['on', 'bool', true, 'On: the bars slide in. Off: they slide away (a scene starts with them on)']] },
+    { id: 'fade', name: 'Fade', fields: [['out', 'bool', true, 'On: the screen fades to the colour. Off: it fades back in'], ['color', 'color', '#000000', 'The colour'], ['s', 'number', 1, 'Seconds it takes']] },
+    { id: 'camera', name: 'Camera', fields: [['to', 'select', 'tile', 'Where it looks: a tile of the map, or back at the player', ['tile', 'me']], ['x', 'number', 0, 'Tile x'], ['y', 'number', 0, 'Tile y'],
+      ['s', 'number', 1.5, 'Seconds the glide takes (0 = a cut)'], ['zoom', 'number', 1, '1 = as in play, 2 = twice as close'], ['shake', 'number', 0, 'Shake while it moves: 0 = none, 1 = a little, 5 = a lot']] },
+    { id: 'picture', name: 'Picture', fields: [['image', 'image', '', 'A picture over the whole view (a GIF plays). Empty = a plain card with the text'], ['text', 'textarea', '', 'Words under it (optional)'],
+      ['s', 'number', 0, 'Seconds it stays. 0 = until the player clicks'], ['bg', 'color', '#000000', 'The colour around the picture']] },
+    { id: 'say', name: 'Line', fields: [['a', 'actor', '', 'The actor who says it (its figure shows beside the words, and a mark over it). None = nobody on screen'], ['name', 'text', '', 'The name shown. Empty = the name of the actor; with no actor either, a caption (the narrator)'], ['text', 'textarea', '', 'What is said'], ['s', 'number', 0, 'Seconds it stays. 0 = until the player clicks']] },
+    // actors (stage 2): a figure the scene moves. `a` = who: me | npc:<object id> | mon:<monster id> (the Studio's actor picker).
+    // An NPC that stands on the map is taken over where it stands (the nearest one) the first time a step names it; any
+    // other actor must be brought in with Show first. All of it is drawn only: when the scene ends everyone is back.
+    { id: 'show', name: 'Actor: show', fields: [['a', 'actor', 'me', 'Who appears'], ['x', 'number', 0, 'Tile x'], ['y', 'number', 0, 'Tile y'],
+      ['dir', 'select', 'E', 'The way it faces', ['E', 'W']], ['s', 'number', 0.4, 'Seconds it takes to fade in (0 = at once)'], ['stay', 'bool', false, 'On: it STAYS in the world where the scene leaves it (the last tile it was shown on or walked to), watched or skipped. A monster becomes a real one there, for everyone; the player really ends up there. Not for NPCs']] },
+    { id: 'walk', name: 'Actor: walk', fields: [['a', 'actor', 'me', 'Who walks'], ['x', 'number', 0, 'To tile x'], ['y', 'number', 0, 'To tile y'],
+      ['speed', 'number', 1, 'How fast: 1 = the walking pace of a player, 2 = twice as fast, 0.5 = half'], ['straight', 'bool', false, 'Off: it finds its way round walls and objects. On: a straight line, through anything'],
+      ['wait', 'bool', true, 'On: the scene waits until it arrives. Off: the scene goes on while it walks'], ['stay', 'bool', false, 'On: it STAYS in the world where the scene leaves it (the last tile it was shown on or walked to), watched or skipped. A monster becomes a real one there, for everyone; the player really ends up there. Not for NPCs']] },
+    { id: 'face', name: 'Actor: turn', fields: [['a', 'actor', 'me', 'Who turns'], ['dir', 'select', 'player', 'The way it faces: right, left, towards the player, or towards another actor', ['E', 'W', 'player', 'actor']], ['to', 'actor', '', 'The actor it turns towards']] },
+    { id: 'leave', name: 'Actor: leave', fields: [['a', 'actor', 'me', 'Who goes'], ['s', 'number', 0.4, 'Seconds it takes to fade out (0 = at once)']] },
+    { id: 'emote', name: 'Emote', fields: [['emote', 'emote', 'sleep', 'Which emote (none = take the one there down)'],
+      ['over', 'select', 'me', 'Over whom: the player, an NPC, a tile of the map, or an actor of this scene (a monster, a stranger)', ['me', 'npc', 'tile', 'actor']], ['npc', 'npc', '', 'The NPC (if it stands in several places on the map: the one nearest the player)'], ['a', 'actor', '', 'The actor'],
+      ['x', 'number', 0, 'Tile x'], ['y', 'number', 0, 'Tile y'], ['s', 'number', 2, 'Seconds it shows. 0 = until the scene ends (or another emote takes its place). The scene goes straight on: add a Wait to pause']] },
+    { id: 'wait', name: 'Wait', fields: [['s', 'number', 1, 'Seconds']] }
+  ];
+  /** The emotes (pictures over a head: client/js/emotes.js draws them). Used by scene steps, NPCs' standing emote
+   *  (Objects properties.emote) and players ({type: 'emote', id}, the G key). A new one = a row here + its picture there. */
+  var EMOTES = [
+    { id: 'sleep', name: 'Asleep (zzz)' }, { id: 'alert', name: 'Surprised (!)' }, { id: 'question', name: 'Puzzled (?)' },
+    { id: 'heart', name: 'Love (♥)' }, { id: 'dots', name: 'Thinking (…)' }, { id: 'angry', name: 'Angry' },
+    { id: 'sweat', name: 'Nervous (sweat)' }, { id: 'note', name: 'Singing (♪)' }
+  ];
   function parseGoals(v) {
     var list = v;
     if (typeof v === 'string') {
@@ -611,6 +670,6 @@ var Content = (function () {
     return hash({ row: row, ents: ents });
   }
 
-  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, toolTags: toolTags, linkFloors: linkFloors, GOAL_TYPES: GOAL_TYPES, UI_PARTS: UI_PARTS, parseGoals: parseGoals, autoFloors: autoFloors, tidyMaps: tidyMaps };
+  return { build: build, recordsFromValues: recordsFromValues, bool: bool, hash: hash, mapHash: mapHash, ITEM_TYPES: ITEM_TYPES, toolTags: toolTags, linkFloors: linkFloors, GOAL_TYPES: GOAL_TYPES, UI_PARTS: UI_PARTS, SCENE_STEPS: SCENE_STEPS, EMOTES: EMOTES, parseGoals: parseGoals, autoFloors: autoFloors, tidyMaps: tidyMaps };
 })();
 if (typeof module !== 'undefined') module.exports = Content;

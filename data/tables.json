@@ -337,12 +337,12 @@
   },
   {
    "key": "body_male",
-   "value": "art/sprites/paperdoll/base/body_survivor.png",
+   "value": "art/sprites/paperdoll/base/player/body_survivor.png",
    "notes": "The body under the gear of a male character (the same for every class)"
   },
   {
    "key": "body_female",
-   "value": "art/sprites/paperdoll/base/body_survivor_female.png",
+   "value": "art/sprites/paperdoll/base/player/body_survivor_female.png",
    "notes": "The body under the gear of a female character (the same for every class)"
   },
   {
@@ -2311,7 +2311,7 @@
    "id": "table",
    "name": "Table",
    "kind": "deco",
-   "sprite": "art/sprites/objects/table.png",
+   "sprite": "art/sprites/objects/decoration/decoration_table.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -2381,8 +2381,8 @@
    "id": "chair",
    "name": "Chair",
    "kind": "deco",
-   "sprite": "art/sprites/objects/chair_down.png",
-   "sprite_states": "down=art/sprites/objects/chair_down.png; up=art/sprites/objects/chair_up.png; side=art/sprites/objects/chair_side.png",
+   "sprite": "art/sprites/objects/decoration/decoration_chair-down.png",
+   "sprite_states": "down=art/sprites/objects/decoration/decoration_chair-down.png; up=art/sprites/objects/decoration/decoration_chair-up.png; side=art/sprites/objects/decoration/decoration_chair-side.png",
    "frames": "",
    "frame_ms": "",
    "walkable": false,
@@ -2395,7 +2395,7 @@
    "id": "crate",
    "name": "Crate",
    "kind": "deco",
-   "sprite": "art/sprites/objects/chest.png",
+   "sprite": "art/sprites/objects/container/container_chest.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -2409,7 +2409,7 @@
    "id": "barrel2",
    "name": "Barrel",
    "kind": "deco",
-   "sprite": "art/sprites/objects/barrel.png",
+   "sprite": "art/sprites/objects/container/container_barrel.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -2423,7 +2423,7 @@
    "id": "wardrobe",
    "name": "Wardrobe",
    "kind": "deco",
-   "sprite": "art/sprites/objects/wardrobe.png",
+   "sprite": "art/sprites/objects/container/container_wardrobe.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -2437,7 +2437,7 @@
    "id": "workbench",
    "name": "Workbench",
    "kind": "deco",
-   "sprite": "art/sprites/objects/workbench.png",
+   "sprite": "art/sprites/objects/station/station_workbench.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -2479,7 +2479,7 @@
    "id": "car_wreck",
    "name": "Car wreck",
    "kind": "deco",
-   "sprite": "art/sprites/objects/car_wreck.png",
+   "sprite": "art/sprites/objects/decoration/decoration_car-wreck.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -2493,7 +2493,7 @@
    "id": "tree_dead",
    "name": "Dead tree",
    "kind": "deco",
-   "sprite": "art/sprites/objects/tree_dead.png",
+   "sprite": "art/sprites/objects/harvest/harvest_tree-dead.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -2507,7 +2507,7 @@
    "id": "barrel_hazard",
    "name": "Hazard barrel",
    "kind": "deco",
-   "sprite": "art/sprites/objects/barrel_hazard.png",
+   "sprite": "art/sprites/objects/container/container_barrel-hazard.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -2577,7 +2577,7 @@
    "id": "obj_workbench",
    "name": "Workbench",
    "kind": "craft",
-   "sprite": "art/sprites/objects/workbench.png",
+   "sprite": "art/sprites/objects/station/station_workbench.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -2591,7 +2591,7 @@
    "id": "obj_barricade",
    "name": "Barricade",
    "kind": "deco",
-   "sprite": "art/sprites/objects/barrel.png",
+   "sprite": "art/sprites/objects/container/container_barrel.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -2605,7 +2605,7 @@
    "id": "obj_crate",
    "name": "Storage crate",
    "kind": "container",
-   "sprite": "art/sprites/objects/chest.png",
+   "sprite": "art/sprites/objects/container/container_chest.png",
    "sprite_states": "",
    "frames": "",
    "frame_ms": "",
@@ -7073,7 +7073,7 @@
    "skills": "charge@1, cleave@1, second_wind@3",
    "notes": "Front line",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/player/body_survivor.png"
   },
   {
    "id": "rogue",
@@ -7091,7 +7091,7 @@
    "skills": "throw_dagger@1, poison_strike@1, shadow_step@3",
    "notes": "Fast, ranged poke",
    "lockpicking": 0.3,
-   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/player/body_survivor.png"
   },
   {
    "id": "mage",
@@ -7109,7 +7109,7 @@
    "skills": "fireball@1, frost_bolt@1, frost_nova@3",
    "notes": "Ranged magic, fragile",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/player/body_survivor.png"
   },
   {
    "id": "paladin",
@@ -7127,7 +7127,7 @@
    "skills": "holy_strike@1, blessing@1, lay_on_hands@3",
    "notes": "Support: protects allies",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/player/body_survivor.png"
   },
   {
    "id": "priest",
@@ -7145,7 +7145,7 @@
    "skills": "heal@1, smite@1, renew@3",
    "notes": "Healer",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/player/body_survivor.png"
   },
   {
    "id": "barbarian",
@@ -7163,7 +7163,7 @@
    "skills": "whirlwind@1, rage@1, leap@3",
    "notes": "Brute force",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/player/body_survivor.png"
   },
   {
    "id": "survivor",
@@ -7181,7 +7181,7 @@
    "skills": "second_wind@1, cleave@1",
    "notes": "Demo: left-click to aim+fire the pistol (R reloads from your pistol-ammo reserve); the rifle uses rifle ammo and needs level 3; 1-5 belt; Q/E abilities",
    "lockpicking": 0,
-   "body_sprite": "art/sprites/paperdoll/base/body_survivor.png"
+   "body_sprite": "art/sprites/paperdoll/base/player/body_survivor.png"
   }
  ],
  "Statuses": [
@@ -7762,7 +7762,7 @@
   {
    "id": "zombie_plain",
    "name": "Plain zombie",
-   "layers": "[{\"name\":\"body\",\"empty\":0,\"options\":[{\"sprite\":\"art/sprites/paperdoll/base/body_zombie.png\",\"weight\":60},{\"sprite\":\"art/sprites/paperdoll/base/body_zombie_female.png\",\"weight\":40}],\"tints\":[]},{\"name\":\"hair\",\"empty\":15,\"options\":[{\"sprite\":\"art/sprites/paperdoll/hair/hair_bob.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_buzz.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_long.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_messy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_pony.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_shaggy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_slick.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_under.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v1.png\",\"weight\":3},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v2.png\",\"weight\":3}],\"tints\":[{\"tint\":\"hair_grey\",\"weight\":23},{\"tint\":\"hair_dark\",\"weight\":16},{\"tint\":\"hair_black\",\"weight\":16},{\"tint\":\"hair_brown\",\"weight\":16},{\"tint\":\"hair_white\",\"weight\":12},{\"tint\":\"hair_blonde\",\"weight\":8},{\"tint\":\"hair_auburn\",\"weight\":5},{\"tint\":\"hair_ginger\",\"weight\":5}]},{\"name\":\"clothes\",\"empty\":67,\"options\":[{\"sprite\":\"art/sprites/paperdoll/chest/chest_leather_jacket.png\",\"weight\":33}],\"tints\":[{\"tint\":\"brown\",\"weight\":22},{\"tint\":\"olive\",\"weight\":22},{\"tint\":\"charcoal\",\"weight\":22},{\"tint\":\"maroon\",\"weight\":11},{\"tint\":\"navy\",\"weight\":11},{\"tint\":\"khaki\",\"weight\":11}]}]"
+   "layers": "[{\"name\":\"body\",\"empty\":0,\"options\":[{\"sprite\":\"art/sprites/paperdoll/base/monsters/body_zombie.png\",\"weight\":60},{\"sprite\":\"art/sprites/paperdoll/base/monsters/body_zombie_female.png\",\"weight\":40}],\"tints\":[]},{\"name\":\"hair\",\"empty\":15,\"options\":[{\"sprite\":\"art/sprites/paperdoll/hair/hair_bob.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_buzz.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_long.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_messy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_pony.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_shaggy.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_slick.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_under.png\",\"weight\":10},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v1.png\",\"weight\":3},{\"sprite\":\"art/sprites/paperdoll/hair/hair_metal_mohawk_v2.png\",\"weight\":3}],\"tints\":[{\"tint\":\"hair_grey\",\"weight\":23},{\"tint\":\"hair_dark\",\"weight\":16},{\"tint\":\"hair_black\",\"weight\":16},{\"tint\":\"hair_brown\",\"weight\":16},{\"tint\":\"hair_white\",\"weight\":12},{\"tint\":\"hair_blonde\",\"weight\":8},{\"tint\":\"hair_auburn\",\"weight\":5},{\"tint\":\"hair_ginger\",\"weight\":5}]},{\"name\":\"clothes\",\"empty\":67,\"options\":[{\"sprite\":\"art/sprites/paperdoll/chest/chest_leather_jacket.png\",\"weight\":33}],\"tints\":[{\"tint\":\"brown\",\"weight\":22},{\"tint\":\"olive\",\"weight\":22},{\"tint\":\"charcoal\",\"weight\":22},{\"tint\":\"maroon\",\"weight\":11},{\"tint\":\"navy\",\"weight\":11},{\"tint\":\"khaki\",\"weight\":11}]}]"
   }
  ],
  "_version": "2737c778e9f2",

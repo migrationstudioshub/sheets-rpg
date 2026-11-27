@@ -301,7 +301,7 @@ var CStudio = (function () {
     ['World', ['tilesets', 'terrain', 'wallStyles', 'objects']],
     ['Things', ['items', 'loot', 'blueprints', 'recipes']],
     ['Characters', ['classes', 'skills', 'statuses', 'monsters', 'appearances']],
-    ['Story', ['npcs', 'dialogues', 'shops', 'quests']]
+    ['Story', ['npcs', 'dialogues', 'shops', 'quests', 'scenes']]
   ];
   // object_kinds is kept in Config but edited from the Object Kinds card, so the Config list leaves it out.
   function shownConfig(r) { return r.key !== 'object_kinds'; }
@@ -364,17 +364,19 @@ var CStudio = (function () {
         list.appendChild(h('div', { className: 'listgroup', text: grp[0] }));
         members.forEach(function (ri) { list.appendChild(recCard(type, ri[0], ri[1], idf)); });
       });
-    } else if (type === 'items') {                 // one group per item type, in the order of the type dropdown
-      var order = optionsOf('items', fieldDef('items', 'type')), groups = {};
+    } else if (type === 'items' || type === 'objects') {   // one group per item type / object kind, in the order of its dropdown
+      var gkey = type === 'items' ? 'type' : 'kind';
+      var order = optionsOf(type, fieldDef(type, gkey)), groups = {};
       all.forEach(function (r, i) {
-        if (!matches(r)) return;
-        var k = String(r.type || '').trim();
+        if (!matches(r) || (type === 'objects' && isNpc(r))) return;   // (NPCs have their own panel)
+        var k = String(r[gkey] || '').trim();
         if (order.indexOf(k) < 0) order.push(k);   // a type not in the dropdown (or none) still gets its own group, last
         (groups[k] = groups[k] || []).push([r, i]);
       });
       order.forEach(function (k) {
         if (!groups[k]) return;
-        list.appendChild(h('div', { className: 'listgroup', text: (k ? (itemTypeRow(k) && itemTypeRow(k).name) || k.charAt(0).toUpperCase() + k.slice(1) : 'No type') + '  (' + groups[k].length + ')' }));
+        var named = type === 'items' && itemTypeRow(k) && itemTypeRow(k).name;
+        list.appendChild(h('div', { className: 'listgroup', text: (k ? named || k.charAt(0).toUpperCase() + k.slice(1) : type === 'items' ? 'No type' : 'No kind') + '  (' + groups[k].length + ')' }));
         groups[k].forEach(function (ri) { list.appendChild(recCard(type, ri[0], ri[1], idf)); });
       });
     } else {
@@ -465,6 +467,7 @@ var CStudio = (function () {
     if (type === 'npcs') { var n = Schema.defaults('objects'); n.kind = 'npc'; rows('objects').push(n); curIndex = rows('objects').length - 1; persist(); renderNav(); renderList(); renderForm(); return; }
     var r = Schema.defaults(type);
     if (type === 'dialogues') r.nodes = [{ id: 'hello', start: true, text: '', answers: [] }];   // a conversation needs a line to open on
+    if (type === 'scenes') r.steps = [{ type: 'say', text: '' }];                                  // a scene needs a step to play
     rows(type).push(r); curIndex = rows(type).length - 1;
     persist(); renderNav(); renderList(); renderForm();
   }
@@ -595,6 +598,119 @@ var CStudio = (function () {
     Schema.get('shops').fields.forEach(function (fl) { if (fl.key === 'notes') form.appendChild(fieldEl(r, fl)); });
     form.scrollTop = keepTop;
   }
+  // ---------------------------------------------------------------- scenes (Story → Scenes)
+  // A scene = a list of steps the game page plays for one player (client/js/scene.js), stored on the row as `steps`:
+  // [{type, with, ...}]. The kinds and their fields are Content.SCENE_STEPS ([key, type, default, help, options]).
+  // An action list starts one with scene:<id>; what follows it in that list happens when the scene ends.
+  var STEP_LABEL = { on: 'On', out: 'Fade out', color: 'Colour', s: 'Seconds', to: 'Look at', x: 'Tile x', y: 'Tile y', zoom: 'Zoom', shake: 'Shake',
+    image: 'Picture', text: 'Text', bg: 'Around it', name: 'Name shown', emote: 'Emote', over: 'Over', npc: 'NPC', a: 'Actor', dir: 'Facing', speed: 'Speed', straight: 'Straight line', wait: 'Wait for it', stay: 'Stays after' };
+  var STEP_OPT = { me: 'the player', tile: 'a tile', npc: 'an NPC', actor: 'an actor', E: 'right', W: 'left', player: 'towards the player' };
+  /** A picker of who acts in a scene: the player, an NPC (npc:<id>) or a monster (mon:<id>). */
+  function actorPicker(val, set, none) {
+    var npcs = rows('objects').filter(isNpc).filter(function (o) { return o.id; }), mons = rows('monsters').filter(function (m) { return m.id; });
+    var known = !val || val === 'me' || npcs.some(function (o) { return 'npc:' + o.id === val; }) || mons.some(function (m) { return 'mon:' + m.id === val; });
+    return h('select', { style: 'flex:1;min-width:0' + (known ? '' : ';border-color:var(--bad)'), onchange: function (e) { set(e.target.value); } },
+      none ? h('option', { value: '', text: none, selected: !val }) : null,
+      known ? null : h('option', { value: val, text: val + ' (missing)', selected: true }),
+      h('option', { value: 'me', text: 'The player', selected: val === 'me' }),
+      h('optgroup', { label: 'NPCs' }, npcs.map(function (o) { return h('option', { value: 'npc:' + o.id, text: (o.name || o.id) + ' (' + o.id + ')', selected: val === 'npc:' + o.id }); })),
+      h('optgroup', { label: 'Monsters' }, mons.map(function (m) { return h('option', { value: 'mon:' + m.id, text: (m.name || m.id) + ' (' + m.id + ')', selected: val === 'mon:' + m.id }); })));
+  }
+  /** A picker of the emotes (Content.EMOTES), each with its picture (client/js/emotes.js); `none` first when asked. */
+  function emotePicker(val, set, withNone, noneText) {
+    var box = h('div', { className: 'row', style: 'flex:1;flex-wrap:wrap;gap:3px' });
+    var list = (withNone ? [{ id: withNone, name: noneText || 'None' }] : []).concat(Content.EMOTES || []);
+    list.forEach(function (em) {
+      var on = (val || withNone || '') === em.id;
+      var b = h('button', { title: em.name, style: 'padding:2px 4px;display:flex;align-items:center;gap:4px;' + (on ? 'outline:2px solid #e0b84a;' : ''), onclick: function () { set(em.id); } });
+      if (typeof Emotes !== 'undefined' && Emotes.known(em.id)) { var cv = Emotes.icon(em.id, 2); cv.style.imageRendering = 'pixelated'; b.appendChild(cv); }
+      b.appendChild(h('span', { style: 'font-size:11px', text: em.name }));
+      box.appendChild(b);
+    });
+    return box;
+  }
+  function stepsOf(r) {
+    if (!Array.isArray(r.steps)) { var v = []; try { v = JSON.parse(r.steps || '[]'); } catch (e) { v = []; } r.steps = Array.isArray(v) ? v : []; }
+    return r.steps;
+  }
+  function stepKind(id) { return (Content.SCENE_STEPS || []).filter(function (k) { return k.id === id; })[0] || null; }
+  /** Where a scene is started: every row whose text holds scene:<id> (quest hooks and rewards, dialogue answers, objects). */
+  function sceneUsers(id) {
+    var out = [], re = new RegExp('scene:\\s*' + String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-])');
+    [['quests', 'Quest'], ['dialogues', 'Dialogue'], ['objects', 'Object'], ['items', 'Item'], ['skills', 'Skill']].forEach(function (t) {
+      (rows(t[0]) || []).forEach(function (row) { if (re.test(JSON.stringify(row))) out.push({ t: t[0], what: t[1], row: row }); });
+    });
+    return out;
+  }
+  function tryScene(id) {
+    var url = '../client/?offline&scene=' + encodeURIComponent(id);
+    if (LOCAL) { flushFiles().then(function () { window.open(url, '_blank'); }); return; }
+    ContentStore.setDraft(T); window.open(url, '_blank');
+  }
+  function stepField(st, f) {
+    var key = f[0], kind = f[1], def = f[2], val = st[key] === undefined ? def : st[key], c;
+    function set(v) { st[key] = v; persist(); }
+    if (kind === 'bool') c = h('input', { type: 'checkbox', checked: isTrue(val), onchange: function (e) { set(e.target.checked); } });
+    else if (kind === 'number') c = h('input', { type: 'number', step: 'any', value: val, style: 'width:90px;flex:none', oninput: function (e) { set(e.target.value === '' ? def : Number(e.target.value)); } });
+    else if (kind === 'textarea') c = h('textarea', { rows: 2, value: val || '', style: 'flex:1', oninput: function (e) { set(e.target.value); } });
+    else if (kind === 'color') c = h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(val) ? val : def, style: 'width:60px;flex:none', oninput: function (e) { set(e.target.value); } });
+    else if (kind === 'select') c = h('select', { onchange: function (e) { set(e.target.value); sceneForm(); } }, (f[4] || []).map(function (o) { return h('option', { value: o, text: STEP_OPT[o] || o, selected: o === val }); }));
+    else if (kind === 'actor') c = actorPicker(val, set, st.type === 'say' ? '— nobody on screen —' : '');
+    else if (kind === 'emote') c = emotePicker(val, function (v) { set(v); sceneForm(); }, 'none', 'None (take it down)');
+    else if (kind === 'npc') c = h('select', { style: 'flex:1', onchange: function (e) { set(e.target.value); } },
+      [h('option', { value: '', text: '(pick an NPC)' })].concat(rows('objects').filter(isNpc).map(function (o) { return h('option', { value: o.id, text: (o.name || o.id) + ' (' + o.id + ')', selected: o.id === val }); })));
+    else if (kind === 'image') c = h('div', { style: 'flex:1' }, imageControl(st, { key: key, type: 'image', help: f[3] }, val, set));
+    else c = h('input', { type: 'text', value: val || '', style: 'flex:1', oninput: function (e) { set(e.target.value); } });
+    return h('div', { className: 'row', style: 'margin:3px 0;align-items:flex-start', title: f[3] || '' }, h('span', { className: 'lootlbl', style: 'min-width:70px', text: STEP_LABEL[key] || key }), c);
+  }
+  function sceneForm() {
+    var form = $('form'), keepTop = form.scrollTop; form.innerHTML = '';
+    var r = rows('scenes')[curIndex];
+    if (curIndex < 0 || !r) { form.appendChild(h('div', { className: 'empty', text: 'Select a scene, or click New.' })); return; }
+    var steps = stepsOf(r), users = r.id ? sceneUsers(r.id) : [];
+    function save(again) { persist(); if (again) sceneForm(); }
+    form.appendChild(h('div', { className: 'formhead' }, h('h2', { text: rowLabel('scenes', r) }), h('span', { className: 'pill', text: 'Scene' }),
+      h('button', { className: 'primary', style: 'margin-left:auto', text: '▶ Play this scene', title: 'Open the game offline and play this scene at once (seen or not). What follows it in an action list only happens in play', disabled: !r.id, onclick: function () { tryScene(r.id); } }),
+      h('button', { title: 'Delete this scene', text: '🗑 Delete', onclick: function () {
+        if (!confirm('Delete this scene?' + (users.length ? ' ' + users.length + ' place' + (users.length === 1 ? ' starts' : 's start') + ' it; they will simply go on without it.' : ''))) return;
+        rows('scenes').splice(curIndex, 1); curIndex = -1; persist(); renderNav(); renderList(); renderForm();
+      } })));
+    Schema.get('scenes').fields.forEach(function (fl) { if (fl.key === 'id' || fl.key === 'name') form.appendChild(fieldEl(r, fl)); });
+    form.appendChild(h('div', { className: 'field' }, h('label', { text: 'Started by' }),
+      users.length ? h('div', null, users.map(function (u, n) {
+        return h('a', { href: '#', text: u.what + ': ' + (u.row.name || u.row.id) + (n < users.length - 1 ? ', ' : ''), onclick: function (e) {
+          e.preventDefault(); var t = u.t === 'objects' && isNpc(u.row) ? 'npcs' : u.t; type = t; curIndex = rows(u.t).indexOf(u.row); filter = ''; renderNav(); renderList(); renderForm(); } });
+      })) : h('div', { className: 'help', text: 'Nothing yet. Put scene:' + (r.id || '<id>') + ' in any list of actions: a quest\'s "when it starts" or rewards, an objective\'s "when met", a dialogue answer, a trigger. Whatever comes after it in that list happens when the scene ends (watched or skipped), e.g. scene:' + (r.id || 'gate') + '; set_state:map_3.e9:open.' })));
+    form.appendChild(h('div', { className: 'sub', text: 'Steps — played one after another' }));
+    steps.forEach(function (st, i) {
+      var k = stepKind(st.type), card = h('div', { className: 'dcard' });
+      card.appendChild(h('div', { className: 'row' },
+        h('b', { style: 'font-size:12px;min-width:18px', text: String(i + 1) }),
+        h('select', { style: 'flex:1', onchange: function (e) { st.type = e.target.value; save(true); } },
+          (Content.SCENE_STEPS || []).map(function (sk) { return h('option', { value: sk.id, text: sk.name, selected: sk.id === st.type }); })),
+        i ? h('label', { className: 'row', title: 'Starts at the same time as the step before, instead of after it (a camera move while a line is said)', style: 'font-size:12px;flex:none' },
+          h('input', { type: 'checkbox', checked: isTrue(st['with']), onchange: function (e) { if (e.target.checked) st['with'] = true; else delete st['with']; save(); } }), h('span', { text: ' with the one before' })) : null,
+        h('button', { text: '↑', title: 'Earlier', disabled: i === 0, onclick: function () { steps.splice(i - 1, 0, steps.splice(i, 1)[0]); save(true); } }),
+        h('button', { text: '↓', title: 'Later', disabled: i === steps.length - 1, onclick: function () { steps.splice(i + 1, 0, steps.splice(i, 1)[0]); save(true); } }),
+        h('button', { text: '⧉', title: 'Copy this step', onclick: function () { steps.splice(i + 1, 0, JSON.parse(JSON.stringify(st))); save(true); } }),
+        h('button', { text: '✕', title: 'Remove this step', onclick: function () { steps.splice(i, 1); save(true); } })));
+      if (!k) card.appendChild(h('div', { className: 'help', text: 'Unknown kind of step "' + st.type + '": the game leaves it out.' }));
+      else k.fields.forEach(function (f) {
+        if (st.type === 'camera' && st.to === 'me' && (f[0] === 'x' || f[0] === 'y')) return;      // (looking at the player: no tile)
+        if (st.type === 'emote' && (((f[0] === 'x' || f[0] === 'y') && st.over !== 'tile') || (f[0] === 'npc' && st.over !== 'npc') || (f[0] === 'a' && st.over !== 'actor'))) return;   // (only what "over" needs)
+        if (st.type === 'face' && f[0] === 'to' && st.dir !== 'actor') return;
+        card.appendChild(stepField(st, f));
+      });
+      form.appendChild(card);
+    });
+    form.appendChild(h('div', { className: 'row', style: 'margin:2px 0 8px' },
+      (Content.SCENE_STEPS || []).map(function (sk) {
+        return h('button', { text: '+ ' + sk.name, onclick: function () { var n = { type: sk.id }; sk.fields.forEach(function (f) { n[f[0]] = f[2]; }); steps.push(n); save(true); } });
+      })));
+    form.appendChild(h('div', { className: 'help', text: '"Stays after" (on Actor: show / walk): a monster becomes a real one where the scene leaves it, and the player really ends up where their figure was walked to; it happens in play only, not in ▶ Play this scene. Actors: an NPC that stands on the map is taken over where it stands the first time a step names it (the one nearest the player); a monster, or an NPC that is not on this map, must be brought in with "Actor: show" first. Everything actors do is only drawn: when the scene ends everyone is back where they really stand, so put real changes in the action list after scene:<id>. A scene starts with black bars and the HUD hidden, the camera on the player. A line or a picture with 0 seconds waits for a click (or Space). The player can always skip it (Esc twice, or the Skip button); each character sees it once. Monsters and other players are not drawn while it plays, and nothing can touch the player meanwhile.' }));
+    Schema.get('scenes').fields.forEach(function (fl) { if (fl.key === 'notes') form.appendChild(fieldEl(r, fl)); });
+    form.scrollTop = keepTop;
+  }
   function dialogueForm() {
     var form = $('form'), keepTop = form.scrollTop; form.innerHTML = '';
     var r = rows('dialogues')[curIndex];
@@ -715,6 +831,7 @@ var CStudio = (function () {
     if (type === 'appearances') return appearanceForm();
     if (type === 'dialogues') return dialogueForm();
     if (type === 'shops') return shopForm();
+    if (type === 'scenes') return sceneForm();
     var form = $('form'); form.innerHTML = '';
     if (curIndex < 0 || !rows(type)[curIndex]) { form.appendChild(h('div', { className: 'empty', text: 'Select a ' + (Schema.get(type).singular || Schema.get(type).label.toLowerCase().replace(/s$/, '')) + ', or click New.' })); return; }
     var r = rows(type)[curIndex], def = Schema.get(type), hiddenCount = 0;
@@ -748,9 +865,10 @@ var CStudio = (function () {
   // already holds a value shows whatever the type says, so nothing set is ever out of sight.
   var showAllItemFields = false;
   var ITEM_FIELD_NEEDS = {
-    slot: 'equip', worn_sprite: 'equip', worn_empty: 'shoot', worn_aim: 'shoot', worn_reload: 'shoot', default_tint: 'equip', atk: 'equip', def: 'equip', equip_if: 'equip',
+    slot: 'equip', worn_sprite: 'equip', worn_empty: 'shoot', worn_aim: 'shoot', worn_reload: 'shoot', default_tint: 'equip', hides_head: 'equip', atk: 'equip', def: 'equip', equip_if: 'equip',
     range: 'shoot', ammo: 'shoot', ammo_cost: 'shoot', fire_ms: 'shoot', clip: 'shoot', reload_ms: 'shoot', fire_mode: 'shoot', aim: 'shoot',
     heal: 'consume', mp: 'consume', hunger: 'consume', thirst: 'consume', toxicity: 'consume', leaves: 'consume', on_use: 'consume', cooldown_s: 'consume',
+    places: 'place',
     throw_range: 'throw', throw_area: 'throw', throw_power: 'throw', throw_status: 'throw', throw_status_ms: 'throw', burns: 'throw',
     penetration: 'ammo', falloff: 'ammo', recover: 'ammo', tool: 'tool', structure_dmg: 'tool', durability: 'tool', material_wear: 'tool', repair_cost: 'tool', repair_station: 'tool', salvage: 'tool'
   };
@@ -1062,8 +1180,10 @@ var CStudio = (function () {
       else if (a[0] === 'gold' && a.length === 2 && n > 0) list.push({ what: 'gold', qty: n });
       else if (a[0] === 'give' && a[1]) list.push({ what: 'item:' + a[1], qty: parseInt(a[2], 10) > 0 ? parseInt(a[2], 10) : 1 });
       else if (a[0] === 'quest' && a[1] && a.length === 2) list.push({ what: 'quest', id: a[1] });
+      else if (a[0] === 'scene' && a[1] && a.length === 2) list.push({ what: 'scene', id: a[1].trim() });
       else other.push(cmd);
     });
+    var scenes = (T.Scenes || []).filter(function (x) { return x.id; });
     var items = (T.Items || []).filter(function (x) { return x.id; }).slice().sort(function (a, b) { return String(a.name || a.id).localeCompare(String(b.name || b.id)); });
     var quests = (T.Quests || []).filter(function (x) { return x.id && x.id !== r.id; }), box = h('div', {});
     function save() {
@@ -1071,6 +1191,7 @@ var CStudio = (function () {
         if (g.what === 'xp') return 'xp:' + g.qty;
         if (g.what === 'gold') return 'gold:' + g.qty;
         if (g.what === 'quest') return g.id ? 'quest:' + g.id : '';
+        if (g.what === 'scene') return g.id ? 'scene:' + g.id : '';
         return g.what.slice(0, 5) === 'item:' && g.what.length > 5 ? 'give:' + g.what.slice(5) + ':' + g.qty : '';
       }).filter(Boolean).concat(other);
       r[fl.key] = out.join('; ');
@@ -1080,7 +1201,12 @@ var CStudio = (function () {
       box.innerHTML = '';
       list.forEach(function (g, i) {
         var itemId = g.what.slice(0, 5) === 'item:' ? g.what.slice(5) : '', known = !itemId || items.some(function (x) { return x.id === itemId; });
-        var second = g.what === 'quest'
+        var second = g.what === 'scene'
+          ? h('select', { style: 'flex:1;min-width:0', title: 'The scene the player watches. The rows below it, and the Other actions, happen when it ends (watched or skipped). Each character sees it once', onchange: function (e) { g.id = e.target.value; save(); } },
+              h('option', { value: '', text: '— pick a scene —' }),
+              g.id && !scenes.some(function (x) { return x.id === g.id; }) ? h('option', { value: g.id, text: g.id + ' (missing scene)', selected: true }) : null,
+              scenes.map(function (x) { return h('option', { value: x.id, text: (x.name || x.id) + '  (' + x.id + ')', selected: x.id === g.id }); }))
+          : g.what === 'quest'
           ? h('select', { style: 'flex:1;min-width:0', title: 'The quest that starts ' + (fl.when || 'when this one is handed in') + '. It is shown to the player in a "New quest" window', onchange: function (e) { g.id = e.target.value; save(); } },
               h('option', { value: '', text: '— pick a quest —' }),
               g.id && !quests.some(function (x) { return x.id === g.id; }) ? h('option', { value: g.id, text: g.id + ' (missing quest)', selected: true }) : null,
@@ -1090,11 +1216,12 @@ var CStudio = (function () {
                oninput: function (e) { var q = parseInt(e.target.value, 10); g.qty = q > 0 ? q : 1; save(); },
                onchange: function (e) { e.target.value = g.qty; } })];
         box.appendChild(h('div', { className: 'row', style: 'margin-bottom:4px' },
-          h('select', { style: (g.what === 'quest' ? 'width:210px' : 'flex:1;min-width:0') + (known ? '' : ';border-color:var(--bad)'), title: known ? 'What is given' : 'There is no item with this id',
-            onchange: function (e) { g.what = e.target.value; if (g.what !== 'quest' && !(g.qty > 0)) g.qty = 1; save(); draw(); } },
+          h('select', { style: (g.what === 'quest' || g.what === 'scene' ? 'width:210px' : 'flex:1;min-width:0') + (known ? '' : ';border-color:var(--bad)'), title: known ? 'What is given' : 'There is no item with this id',
+            onchange: function (e) { g.what = e.target.value; if (g.what !== 'quest' && g.what !== 'scene' && !(g.qty > 0)) g.qty = 1; save(); draw(); } },
             h('option', { value: 'xp', text: 'XP', selected: g.what === 'xp' }),
             h('option', { value: 'gold', text: 'Gold', selected: g.what === 'gold' }),
             h('option', { value: 'quest', text: 'Start another quest', selected: g.what === 'quest' }),
+            h('option', { value: 'scene', text: 'Play a scene', selected: g.what === 'scene' }),
             known ? null : h('option', { value: g.what, text: itemId + ' (missing item)', selected: true }),
             h('optgroup', { label: 'Items' }, items.map(function (x) { return h('option', { value: 'item:' + x.id, text: (x.name || x.id) + '  (' + x.id + ')', selected: 'item:' + x.id === g.what }); }))),
           second,
@@ -1375,6 +1502,13 @@ var CStudio = (function () {
       h('label', { text: 'Horizontal nudge (px)' }),
       h('input', { type: 'number', value: p.offset_x == null ? '' : p.offset_x, style: 'width:70px', title: 'Pixels: negative = left, positive = right', oninput: function (e) { setProp(o, 'offset_x', e.target.value === '' ? undefined : Number(e.target.value)); } }),
       h('div', { className: 'help', text: 'Shifts the sprite horizontally in pixels (negative = left, positive = right) — handy to line a door or window up on its wall.' })));
+    form.appendChild(h('div', { className: 'field', title: 'Foliage: the picture stays planted at its foot and its top leans slowly from side to side' },
+      h('label', { className: 'row' },
+        h('input', { type: 'checkbox', checked: !!p.sway, onchange: function (e) { setProp(o, 'sway', e.target.checked ? true : undefined); objForm(); } }),
+        h('span', { text: '  sways in the wind' }), h('span', { className: 'help', text: '— trees, bushes, plants. Only how it is drawn' })),
+      p.sway ? h('div', { className: 'lootrow', style: 'margin-top:4px' },
+        h('span', { className: 'lootlbl', text: 'strength' }),
+        h('input', { type: 'number', min: 0.1, step: 0.1, placeholder: '1', value: p.sway === true ? '' : p.sway, style: 'width:70px', title: 'How far it leans: 1 = normal, 0.5 = half, 2 = double. Config foliage_sway scales every one (0 = off)', oninput: function (e) { var v = Number(e.target.value); setProp(o, 'sway', e.target.value === '' || !(v > 0) || v === 1 ? true : v); } })) : null));
     form.appendChild(h('div', { className: 'field', title: 'Block leaving/entering this walkable object in a direction (one-way)' },
       h('label', { text: 'Can pass (walkable objects only)' }),
       h('div', { className: 'lootrow' }, [['n', 'N'], ['e', 'E'], ['s', 'S'], ['w', 'W']].map(function (d) {
@@ -1416,6 +1550,23 @@ var CStudio = (function () {
         h('span', { className: 'lootlbl', text: 'over (blows)' }),
         h('input', { type: 'number', min: 1, value: p.harvest_bare_hits == null ? '' : p.harvest_bare_hits, style: 'width:70px', title: 'How many blows bring the whole list out, each time round (empty = 4; 1 = the whole list on every blow)', oninput: function (e) { setProp(o, 'harvest_bare_hits', e.target.value === '' ? undefined : Number(e.target.value)); } })),
       h('div', { className: 'help', text: 'Optional: what someone gets by hitting it WITHOUT one of those tools in hand (a tree punched bare-handed: a few branches and fibres). This does not damage it and never runs out: the list comes out once every that many blows. The harvest above is what cutting it down with the tool gives. Empty = it cannot be harvested without the tool.' }),
+      h('label', { text: 'picked by hand — gives' }),
+      itemsBox(p.pick, function (text) { setProp(o, 'pick', text || undefined); }),
+      h('div', { className: 'lootrow', style: 'margin-top:4px' },
+        h('span', { className: 'lootlbl', text: 'picks' }),
+        h('input', { type: 'number', min: 1, placeholder: '1', value: p.pick_times == null ? '' : p.pick_times, style: 'width:70px', title: 'How many times it can be picked before it is empty (empty = 1)', oninput: function (e) { setProp(o, 'pick_times', e.target.value === '' ? undefined : Number(e.target.value)); } }),
+        h('span', { className: 'lootlbl', text: 'full again after (s)' }),
+        h('input', { type: 'number', min: 1, placeholder: '300', value: p.pick_s == null ? '' : p.pick_s, style: 'width:70px', title: 'Seconds after it was emptied until it is full again (empty = Config pick_refill_s, 300)', oninput: function (e) { setProp(o, 'pick_s', e.target.value === '' ? undefined : Number(e.target.value)); } })),
+      h('label', { text: 'picture when empty' }),
+      (function () {
+        var pairs = function () { var out = []; String(o.sprite_states || '').split(';').forEach(function (q) { var i = q.indexOf('='); if (i > 0) out.push([q.slice(0, i).trim(), q.slice(i + 1).trim()]); }); return out; };
+        return imageControl(o, { key: 'sprite_states' }, (pairs().filter(function (q) { return q[0] === 'empty'; })[0] || [])[1] || '', function (v) {
+          var list = pairs().filter(function (q) { return q[0] !== 'empty'; }); if (v) list.push(['empty', v]);
+          o.sprite_states = list.map(function (q) { return q[0] + '=' + q[1]; }).join('; '); persist();
+          if (statesInput) statesInput.value = o.sprite_states;
+        });
+      })(),
+      h('div', { className: 'help', text: 'A berry bush: using it (F or a click; hold to keep going) gives this list each time, that many times. Then it is empty — it shows the empty picture and nothing can be done with it — until it is full again. It is never damaged and never disappears, and it is shared: whoever picks it empties it for everyone. For objects with no use of their own (not chests, doors, NPCs…). Empty = it is not picked.' }),
       h('label', { text: 'drops nearby' }),
       itemsBox(p.drops, function (text) { setProp(o, 'drops', text || undefined); }),
       h('div', { className: 'lootrow', style: 'margin-top:4px' },
@@ -1609,6 +1760,10 @@ var CStudio = (function () {
             } })),
       h('div', { className: 'help', text: scur && dcur ? 'With a dialogue, the shop opens from an answer ticked "Opens the shop" — add one, or players cannot reach it.' : 'What it sells and buys. With no dialogue, its window gets a Trade button by itself.' })));
     form.appendChild(npcOutfit(o));
+    // a standing emote: always over its head in the game (a sleeping guard: zzz); a scene can put another one up meanwhile
+    form.appendChild(h('div', { className: 'field' }, h('label', { text: 'Emote over its head' }),
+      emotePicker(p.emote, function (v) { setProp(o, 'emote', v === 'none' ? undefined : v); npcForm(); }, 'none', 'None'),
+      h('div', { className: 'help', text: 'Always shown over this NPC in the game, wherever it stands. A scene\'s Emote step can show a different one for a while.' })));
     // the quests it gives and takes back (set on each quest: giver / ender)
     var gives = questsWhere('giver'), takes = questsWhere('ender');
     function qlinks(list) {
@@ -1779,7 +1934,11 @@ var CStudio = (function () {
     'hair_bob', 'hair_buzz', 'hair_long', 'hair_messy', 'hair_metal_mohawk_v1', 'hair_metal_mohawk_v2',
     'hair_pony', 'hair_shaggy', 'hair_slick', 'hair_under',
     'chest_leather_jacket', 'chest_riot_vest', 'helm_army', 'gun_pistol', 'sword_machete'
-  ].map(function (n) { var f = PD_SUBDIR[n.split('_')[0]] || ''; return 'art/sprites/paperdoll/' + (f ? f + '/' : '') + n + '.png'; });
+  ].map(function (n) {
+    var f = PD_SUBDIR[n.split('_')[0]] || '';
+    if (f === 'base') f += /zombie/.test(n) ? '/monsters' : '/player';   // bodies: base/player, base/monsters, base/animals
+    return 'art/sprites/paperdoll/' + (f ? f + '/' : '') + n + '.png';
+  });
   // One manifest of every image under art/ (built by tools/build_art_manifest.js, auto-rebuilt by the Asset
   // Studio on save). Feeds the "Browse /art" picker; the paper-doll list is the same manifest filtered.
   function loadManifest() {

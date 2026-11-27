@@ -229,7 +229,7 @@ var E = {
     for (y = 0; y < m.height; y++) fx.push(new Array(m.width));
     var keep = function (x, y) { if (x >= 0 && y >= 0 && x < m.width && y < m.height) fx[y][x] = cur[y][x] || ''; };
     (m.entities || []).forEach(function (e) {
-      var ob = c.objects[e.ref] || {}, fw = Math.max(1, ob.footprintW || 1), fh = Math.max(1, ob.footprintH || 1);
+      var ob = c.objects[e.ref] || {}, efp = Rules.footprintOf(ob, e), fw = efp.w, fh = efp.h;
       for (var dy = 0; dy < fh; dy++) for (var dx = 0; dx < fw; dx++) keep(e.x + dx, e.y - dy);
     });
     for (y = 0; y < m.height; y++) for (x = 0; x < m.width; x++) {
@@ -702,7 +702,8 @@ var E = {
     if (E.layer === 'terrain') return setTerrain(x, y, E.brush.terrain);
     if (E.paletteTab === 'monsters') return placeMonster(x, y, E.brush.monster);
     if (E.paletteTab === 'items') return placeItem(x, y, E.brush.item);
-    return placeObject(x, y, E.brush.object);
+    var pv = Rules.pivotCell(E.content.objects[E.brush.object], E.brushFacing, x, y);   // a big thing pivots on the tile pointed at
+    return placeObject(pv.x, pv.y, E.brush.object);
   }
   function line(a, b, fn) {  // every cell between a and b, so fast strokes leave no gaps
     var dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y), sx = a.x < b.x ? 1 : -1, sy = a.y < b.y ? 1 : -1, err = dx - dy;
@@ -1243,9 +1244,12 @@ var E = {
         } else if (E.layer === 'objects' && E.brush.object) {
           var bo = c.objects[E.brush.object], bfs = bo && Rules.turnable(bo) ? Rules.facingSprite(bo, E.brushFacing) : null;
           if (bo && bo.kind === 'stairs') { var ge = { x: E.hover.x, y: E.hover.y, data: { facing: E.brushFacing } }; Render.drawStairs(g, c, bo, ge, vx, hovVy, s, 0); g.globalAlpha = 1; stairArrow(ge, bo, vx, hovVy, s); bo = null; }
-          var bi = bo && Assets.get(bfs ? bfs.path : (Rules.lookSprite(bo, E.brushLook) || bo.sprite)), bgx = vx + E.hover.x * s, bgy = hovY;
-          if (bi && bfs && bfs.flip) { g.save(); g.translate(bgx + s, bgy); g.scale(-1, 1); g.drawImage(bi, 0, 0, s, s); g.restore(); }
-          else if (bi) g.drawImage(bi, bgx, bgy, s, s);
+          // the ghost is the object as it will stand: its real size, on the tiles it will take (turned ones too)
+          var bpath = bo && (bfs ? bfs.path : (Rules.lookSprite(bo, E.brushLook) || bo.sprite)), bpv = Rules.pivotCell(bo, E.brushFacing, E.hover.x, E.hover.y), bgx = vx + bpv.x * s, bgy = E.inside(bpv.x, bpv.y) ? cy(bpv.x, bpv.y) : hovY + (bpv.y - E.hover.y) * s;
+          if (bpath && Assets.get(bpath)) {
+            Render.drawObject(g, bo, bpath, bgx, bgy, s, 'base', 0, !!(bfs && bfs.flip));
+            Render.drawObject(g, bo, bpath, bgx, bgy, s, 'top', 0, !!(bfs && bfs.flip));
+          }
         } else if (E.layer === 'terrain') {
           var tt = c.terrain[E.brush.terrain], gx = vx + E.hover.x * s, gy = hovY, gts, gimg;
           if (tt && tt.autotile && (gts = c.tilesets[tt.autotile]) && (gimg = Assets.get(gts.image))) {

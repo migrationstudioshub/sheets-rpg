@@ -61,23 +61,73 @@ var UI = (function () {
   function setPieces() {
     PIECES.forEach(function (p) { root.style.setProperty('--k-' + p, 'url("' + url(p) + '")'); });
     // The Nano Banana notebook page has its tape drawn in (PIECES.md, 6): its top edge cannot be repeated along a wide
-    // page as it is. So the page is made from it once: the same picture with a clean top edge between the corners, and
+    // page as it is. So the page is made from it once (paperSheet): a clean top edge between the corners, and
     // the two ends with their tape laid over the corners (.kpaper::before / ::after in the stylesheet).
     root.classList.toggle('paper-taped', SET.panel_paper === 'nb');
     if (SET.panel_paper !== 'nb') return;
     var img = new Image();
     img.onload = function () {
       try {
-        var cv = el('canvas'); cv.width = img.width; cv.height = img.height;
-        var g = cv.getContext('2d'); g.drawImage(img, 0, 0);
-        var CLEAN = 25, CW = 16, TOP = 14;                     // a stretch of the top edge with no tape on it: 16 px from x = 25
-        g.clearRect(3, 0, img.width - 6, TOP);
-        for (var x = 3; x < img.width - 3; x += CW) g.drawImage(img, CLEAN, 0, Math.min(CW, img.width - 3 - x), TOP, x, 0, Math.min(CW, img.width - 3 - x), TOP);
-        root.style.setProperty('--k-panel_paper', 'url("' + cv.toDataURL() + '")');
+        root.style.setProperty('--k-panel_paper', 'url("' + paperSheet(img).toDataURL() + '")');
         root.style.setProperty('--k-paper_ends', 'url("' + img.src + '")');
       } catch (e) { /* the picture as it is */ }
     };
     img.src = url('panel_paper');
+  }
+
+  // The page itself. The piece is 64x50, and its middle laid side by side shows the same stains over and over on a big
+  // page. So a big sheet is made from it once (same edges, same corners, same colours): the middle is ruled paper drawn
+  // here, with its dirt scattered unevenly, some parts grubby and some nearly clean, and never the same patch twice on a
+  // page. Always the same sheet (the dice are seeded). Its middle is bigger than any page, so it never repeats.
+  function paperSheet(img) {
+    var L = 3, R = 3, TOP = 14, BOT = 3, MW = 256, MH = 384, EH = 32;      // EH: the piece's side edges repeat every 32 rows (4 ruled lines)
+    var iw = img.width, ih = img.height, W = L + MW + R, H = TOP + MH + BOT;
+    var cv = el('canvas'); cv.width = W; cv.height = H;
+    var g = cv.getContext('2d'), x, y, n;
+    g.drawImage(img, 0, 0, L, TOP, 0, 0, L, TOP); g.drawImage(img, iw - R, 0, R, TOP, W - R, 0, R, TOP);                     // the four corners
+    g.drawImage(img, 0, ih - BOT, L, BOT, 0, H - BOT, L, BOT); g.drawImage(img, iw - R, ih - BOT, R, BOT, W - R, H - BOT, R, BOT);
+    var CLEAN = 25, CW = 16;                                   // a stretch of the top edge with no tape on it: 16 px from x = 25
+    for (x = L; x < W - R; x += CW) { n = Math.min(CW, W - R - x); g.drawImage(img, CLEAN, 0, n, TOP, x, 0, n, TOP); }
+    for (x = L; x < W - R; x += iw - L - R) { n = Math.min(iw - L - R, W - R - x); g.drawImage(img, L, ih - BOT, n, BOT, x, H - BOT, n, BOT); }
+    for (y = TOP; y < H - BOT; y += EH) { n = Math.min(EH, H - BOT - y); g.drawImage(img, 0, TOP, L, n, 0, y, L, n); g.drawImage(img, iw - R, TOP, R, n, W - R, y, R, n); }
+    // the middle, one art pixel at a time: 0 paper, 1 the ruled lines' tan (old stains are the same colour), 2 orange, 3 green, 4 brown
+    var COL = [[216, 207, 194], [200, 177, 157], [214, 170, 131], [162, 166, 131], [163, 139, 122]], px = new Uint8Array(MW * MH);
+    var seed = 20261126;
+    function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+    function ri(a, b) { return a + Math.floor(rnd() * (b - a + 1)); }
+    function put(X, Y, c) { px[((Y % MH + MH) % MH) * MW + ((X % MW + MW) % MW)] = c; }
+    function at(X, Y) { return px[((Y % MH + MH) % MH) * MW + ((X % MW + MW) % MW)]; }
+    for (y = 0; y < MH; y++) if (y % 8 === 7 || y % 8 === 0) for (x = 0; x < MW; x++) px[y * MW + x] = 1;      // ruled: 2 px every 8, in step with the piece's own
+    for (y = 7; y < MH; y += 8) {                              // the lines are hand-ruled: thin stretches, and the pen's orange here and there
+      for (x = ri(0, 30); x < MW; x += ri(14, 60)) { n = ri(2, 7); var row = y + ri(0, 1); for (var i = 0; i < n; i++) put(x + i, row, 0); }
+      for (x = ri(0, 20); x < MW; x += ri(8, 42)) { n = ri(2, 8); var row2 = y + ri(0, 1); for (var j = 0; j < n; j++) put(x + j, row2, 2); }
+    }
+    // stains: smears that grow sideways more than up and down, most of them gathered round a few grubby places
+    var spots = []; for (n = 0; n < 16; n++) spots.push([ri(0, MW - 1), ri(0, MH - 1), ri(12, 44)]);
+    function place() {
+      if (rnd() < 0.35) return [ri(0, MW - 1), ri(0, MH - 1)];
+      var sp = spots[ri(0, spots.length - 1)], a = rnd() * 6.283, d = (rnd() + rnd()) / 2 * sp[2];
+      return [Math.round(sp[0] + Math.cos(a) * d * 1.4), Math.round(sp[1] + Math.sin(a) * d)];
+    }
+    for (n = 0; n < 300; n++) {
+      var p0 = place(), cells = [p0], size = rnd() < 0.25 ? ri(30, 90) : ri(5, 20);
+      put(p0[0], p0[1], 1);
+      for (var k = 1; k < size; k++) {
+        var from = cells[ri(0, cells.length - 1)], side = rnd() < 0.68, q = [from[0] + (side ? (rnd() < 0.5 ? -1 : 1) : 0), from[1] + (side ? 0 : (rnd() < 0.5 ? -1 : 1))];
+        put(q[0], q[1], 1); cells.push(q);
+      }
+      if (rnd() < 0.5) for (k = ri(1, 5); k > 0; k--) { var o = cells[ri(0, cells.length - 1)]; put(o[0], o[1], 2); }   // some carry a rusty fleck
+      if (rnd() < 0.22) { var gr = cells[ri(0, cells.length - 1)]; put(gr[0], gr[1], rnd() < 0.5 ? 3 : 4); }             // a few, mould or dirt
+    }
+    for (n = 0; n < 600; n++) { var sp1 = rnd() < 0.5 ? place() : [ri(0, MW - 1), ri(0, MH - 1)]; put(sp1[0], sp1[1], rnd() < 0.75 ? 1 : 2); }   // specks
+    for (n = 0; n < 14; n++) {                                 // a few short scratches, like the one on the piece
+      var s0 = place(), len = ri(3, 6), dir = rnd() < 0.5 ? -1 : 1;
+      for (k = 0; k < len; k++) put(s0[0] + k * dir, s0[1] - k, k === 0 || k === len - 1 ? 3 : 4);
+    }
+    var id = g.createImageData(MW, MH), d = id.data;
+    for (n = 0; n < MW * MH; n++) { var c = COL[px[n]]; d[n * 4] = c[0]; d[n * 4 + 1] = c[1]; d[n * 4 + 2] = c[2]; d[n * 4 + 3] = 255; }
+    g.putImageData(id, L, TOP);
+    return cv;
   }
 
   // ---- the size of an art pixel: a whole number of screen pixels, from the room the view has (PIECES.md, 1)
@@ -240,10 +290,12 @@ var UI = (function () {
   }
 
   // ---- the tooltip: anything in the view with a `title` shows it on the kit's card, by the cursor, in place of the
-  // browser's own. "Name — the rest" or "Name: the rest" puts the name on a line of its own.
+  // browser's own. "Name — the rest" or "Name: the rest" puts the name on a line of its own. An element with a
+  // `_tipMore` function gets what it returns added to its card after MORE_MS of hovering (the gear comparison).
+  var MORE_MS = 1000;
   function tooltips(frame, tip) {
-    var cur = null;
-    function hide() { tip.hidden = true; cur = null; }
+    var cur = null, later = null, lastE = null;
+    function hide() { tip.hidden = true; cur = null; clearTimeout(later); later = null; }
     function place(e) {
       var r = frame.getBoundingClientRect(), x = e.clientX - r.left + 8 * scale, y = e.clientY - r.top + 8 * scale;
       if (x + tip.offsetWidth > r.width) x = Math.max(0, e.clientX - r.left - tip.offsetWidth - 4 * scale);
@@ -260,10 +312,17 @@ var UI = (function () {
         cur = t; tip._text = text; tip.innerHTML = '';
         var m = /^([^\n]{1,40}?)(?: — |: |\n)([\s\S]+)$/.exec(text);
         if (m) { tip.appendChild(el('b', '', m[1])); tip.appendChild(el('span', '', m[2])); } else tip.appendChild(el('span', '', text));
+        clearTimeout(later); later = null;
+        if (typeof t._tipMore === 'function') later = setTimeout(function () {
+          later = null;
+          if (cur !== t || tip.hidden || !t.isConnected) return;
+          var more = t._tipMore(); if (!more) return;
+          tip.appendChild(more); if (lastE) place(lastE);
+        }, MORE_MS);
       }
-      tip.hidden = false; place(e);
+      tip.hidden = false; lastE = e; place(e);
     });
-    frame.addEventListener('mousemove', function (e) { if (cur) { if (!cur.isConnected) hide(); else place(e); } });
+    frame.addEventListener('mousemove', function (e) { lastE = e; if (cur) { if (!cur.isConnected) hide(); else place(e); } });
     frame.addEventListener('mouseleave', hide);
     frame.addEventListener('mousedown', hide);
     frame.addEventListener('dragstart', hide);

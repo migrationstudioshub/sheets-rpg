@@ -95,7 +95,9 @@ function create(deps) {
         x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level,
         wst: World.weaponState ? World.weaponState(content, q) : '',   // weapon in hand: '' | empty | reload (its picture)
         act: q.act || '',                                      // their last swing or shot, for the others to draw (World.noteAct)
-        sn: q.sneak ? 1 : 0                                    // sneaking (docs/STEALTH.md): drawn crouched, and paced slower
+        sn: q.sneak ? 1 : 0,                                   // sneaking (docs/STEALTH.md): drawn crouched, and paced slower
+        wt: World.watching && World.watching(content, q, Date.now()) ? 1 : undefined,   // watching a scene: a mark over their head, nothing can touch them
+        em: World.emoteOf ? World.emoteOf(q, Date.now()) : undefined   // an emote over their head ("id@when", client/js/emotes.js)
       })),
       m: m, d: d
     };

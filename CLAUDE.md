@@ -175,6 +175,10 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   **A throw up a ledge reaches only its edge** (owner; a rule, `World.throwLanding`, so the referee and the aim agree): the first
   tile a level above the thrower is where it lands, never further in; ground more than a level up stops it at its foot; a ramp
   is no step; level ground and throwing down are untouched.
+  **A blast shows when it lands** (owner, 27 Nov 2026; draw-only): the referee settles a throw at once, so the page holds
+  back what the blast did until its flight is over — `landings` in `main.js` (added by `tossFx`): `hit` / `die` events on
+  its tiles are handled then, and the monsters that stood there are drawn as they stood (health too) meanwhile. Not held:
+  the loot bag, broken walls, and your own health if you stood in it.
   **In the air and landing** (owner, 27 Nov 2026): the thrown thing is a small turning copy of its picture flying the very arc
   the aim drew (`tossFx` in `main.js` → `drawFx` kind `toss`; draw-only, for other players from the `throw` event). What has a
   blast area flashes where it lands; anything else (a rock) bounces once towards the next tile the way it flew — on the spot
@@ -206,8 +210,8 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   body_survivor_female.bust.png`, the size of the figure, the near breast painted in one colour (more red than blue) and the far
   one in another (more blue), nothing else. **One file for every woman's body** (the walkers' too, the owner's choice) and for
   what is worn over the chest; Config `bust_mask` names another. `bustMask` in `render.js` reads it once; `chestFrame(img, [near,
-  far])` moves ONLY those pixels, column by column, each breast by its own amount (the far one `CHEST_LATE_MS` 90 / 
-  `CHEST_LATE_STEP` 0.08 behind: `chestOf(a, late)`), lower rows more than upper, the pixel left empty filled from the one
+  far])` moves ONLY those pixels, column by column, each breast by its own amount (the far one `CHEST_LATE_MS` 90 / `CHEST_LATE_STEP` 0.08 behind: `chestAt(a, …, late)` — **but breathing moves both together** (owner, 27 Nov 2026): only what
+  she does — a step, a blow, a shot, being hurt, turning round — moves them one after the other), lower rows more than upper, the pixel left empty filled from the one
   before it. No file = the old `CHEST` box as one piece. `.bust.png` files are left out of the art manifest (both builders).
   Not built: a mask per garment (stiff armour that should not move still does).
 - **The chest also bounces on a jolt** (owner, 27 Nov 2026): when she swings a tool or weapon, shoots, throws, is hurt, or
@@ -215,18 +219,27 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   gives the ms since the last of those (`usedAt`: yours = `swingT0` / `lastHoldShot`; another player's = `act.j0`, set in
   `othersAct` for kinds m / r / t; a monster has none — hurt and turning only) → `jolt` on the actor; `chestAt` in `render.js`
   adds the same spring for `CHEST_JOLT_MS` (900), `CHEST_JOLT` (2.6) x `chest_bounce`, to what breathing or walking gives
-  (`chestBase`). Not built: NPCs (they turn to face you), a monster's own attacks.
+  (`chestBase`). **A step setting her down is that same jolt** (owner, 27 Nov 2026: the landing bounce the same as turning,
+  each breast on its own): `landings(a, now)` in `render.js` keeps, per figure key `a.k` (`p:<id>` / `m:<id>`, set in
+  `main.js`), the moments its steps passed `CHEST_LAND` → `a.lands`; `chestAt` adds `jolted(now - t, late)` for each, so they
+  add up while she walks (a player's step is 140 ms, far shorter than the spring: the chest hangs a little low and each
+  breast shifts in its own time) and ring out after she stops (breathing waits meanwhile: `busy`). A figure with no key
+  keeps the old per-step bounce (`CHEST_WALK`). Not built: NPCs (they turn to face you), a monster's own attacks.
 - **How a figure stands is worked out in one place** (27 Nov 2026): `Render.pose(a, now, cfg)` (module level in `render.js`:
   `idleUp`, `chestAt`, `chestBase`) sets `a.breath` and `a.jig` on an actor; the map (`paintActor`) and **the figure in the
-  inventory window** both ask it and both draw with `Render.figureOn`. That figure is alive (owner): `bustLive` / `drawBust`
-  in `main.js` redraw it every frame while its canvas is on the page — it breathes, turns to the side of it the cursor is on
-  (`bustLook`; turning is its jolt), and a woman's chest moves as on the map. Its canvas is 32x49 (a row of room above for
-  the breath). Not built: the same on the character screen's preview.
+  inventory window** both ask it and both draw with `Render.figureOn`. **`liveFigure(cv, layersOf, o)` in `main.js` is the one way a figure is alive OFF the map** (owner): it redraws a canvas every
+  frame while it is on the page — the figure breathes and a woman's chest moves as on the map; with `o.turn` it also turns to
+  the side of it the cursor is on (turning is its jolt). Three use it: the inventory window's figure (`bustLive`, 32x49,
+  turns), the character screen's preview (`#join-preview`, 96x147, turns; its layers = `playerLayers` of the look being
+  chosen) and an NPC's portrait in its dialogue (`npcPortrait`, 64x100, class `live`; a flat-picture NPC stays still). The
+  canvas is as wide as the figure is drawn and a row or two taller than 1.5 x that (the breath lifts the head). NPCs on the
+  map breathe through `paintActor` like everyone (`idle: true`). Not built: the speaker's portrait in a scene, the small
+  pick thumbnails of the character screen.
 - **Walking, the chest also sways sideways** (owner, 27 Nov 2026): `chestSway` in `render.js` = -1 | 0 | 1, a pixel to ONE
   side on a step and to the other on the next (the owner: both ways within a step was too frenetic; by the tile left, like the walking sway), the far
   breast a little behind; `CHEST_SWAY` (1.8) x `chest_bounce`, so it shows from a strength of about 0.3 up. **The side is the one AWAY from the walking lean, on the
   screen** (`wobbleOf` leans her by the same tile rule; a figure facing left is drawn mirrored, so in its picture the sign
-  flips): going by the picture alone it swayed WITH the lean facing right — invisible — and against it facing left. `a.jig` is
+  flips): going by the picture alone it swayed WITH the lean facing right — invisible — and against it facing left. **This is where the owner wants walking to stay** (27 Nov 2026): tried and taken out again — an extra up-and-down while it sways (each breast on its own, both together, one way per step) and both breasts moving at the same time. Do not add either back unasked. `a.jig` is
   `[near, far, nearSideways, farSideways]`; `chestFrame` moves the masked pixels sideways first (row by row, far breast then
   near), then up or down from where they now are. Not built: sideways on a jolt or while standing.
 - **A step's motion goes by the way the figure is GOING, never the way it faces** (27 Nov 2026; a bug the owner saw as "better
@@ -234,6 +247,9 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   whenever she walked away from the cursor. `goOf(id, x, y)` in `main.js` keeps each figure's direction from where it was
   drawn last frame → `go: {dx, dy}` on the actor; `stepAlong(a)` in `render.js` is the one "how far along its step" question
   (the chest's bounce and sway ask it; no `a.go` = by its facing).
+- **Breathing is skipped while any other animation plays** (owner, 27 Nov 2026): `busy(a)` in `render.js` — a swing, aiming,
+  food lifted to the mouth, or within a jolt (`CHEST_JOLT_MS` after a blow, shot, throw, being hurt or turning round) — makes
+  `idleUp` answer 0 and leaves the breath's chest bounce out; the jolt's own bounce still plays. Walking is never idle.
 - **Breathing never moves the base** (owner, 27 Nov 2026): a figure made of layers (players, NPCs, paper-doll monsters and
   animals) standing still rises and sinks only from the chest up. `paintActor` sets `a.breath` (1 while `bobOf` says up) and
   `drawLayers` in `render.js` draws each layer in two pieces, cut `BREATH_ROWS` (12) from the bottom of the picture — the plain

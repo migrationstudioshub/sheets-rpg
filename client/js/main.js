@@ -583,9 +583,28 @@
   }
 
   var COLORS = { hit: '#ff6b5b', heal: '#6fe08a', loot: '#ffd65a', level: '#ffd65a', kill: '#ffffff', death: '#ff6b5b' };
+  /** Blasts still in the air (owner, 27 Nov 2026: monsters died before the grenade came down). The referee settles a
+   *  throw the moment it is made; the page holds back what the blast did — the numbers, the words, the deaths, and the
+   *  figures themselves as they stood — until the thing it drew flying has landed. Draw-only. `tossFx` adds one. */
+  var landings = [];
+  function landingAt(x, y, now) {
+    for (var i = landings.length - 1; i >= 0; i--) {
+      var l = landings[i];
+      if (l.until <= now) { landings.splice(i, 1); continue; }
+      if (l.map === me.map && cheb(Math.round(x), Math.round(y), l.x, l.y) <= l.r) return l;
+    }
+    return null;
+  }
   function handleEvents(events) {
-    var now = performance.now();
+    var now = performance.now(), holdTo = 0;
     (events || []).forEach(function (e, i) {
+      if ((e.type === 'kill' || e.type === 'level') && !e._held && holdTo > now) {   // what a held death gave: said with it
+        e._held = 1; setTimeout(function () { handleEvents([e]); }, holdTo - now); return;
+      }
+      if ((e.type === 'hit' || e.type === 'die') && !e._held && (!e.map || e.map === me.map)) {   // caught in a blast that has not landed yet
+        var hl = landingAt(e.x, e.y, now);
+        if (hl) { e._held = 1; if (e.type === 'die') holdTo = hl.until; setTimeout(function () { handleEvents([e]); }, Math.max(0, hl.until - now)); return; }
+      }
       if (e.type === 'shop') { openShop(e); return; }          // a trader's offers, as they stand for you now
       if (e.type === 'npc') { openNpc(e); return; }            // you talked to someone: their window (or, with nothing to offer, a line)
       if (e.type === 'loot' && e.text) lootToast(e); else if (e.text) log(e.text, e.type);   // what reached your bag: a toast on the left
@@ -1228,6 +1247,11 @@
     }
     fx.push({ kind: 'toss', path: it.sprite || '', color: col, sx: sx, sy: sy, ex: ex, ey: ey, rise: Math.max(T * 0.5, d * 0.35), bx: bx, by: by, fly: fly, hop: hop,
       spin: (dx < 0 ? -1 : 1) * (4 + d / T), t0: t0, life: fly + hop });
+    if (area > 0) {                                                   // what it does shows when it lands: see `landings`
+      var ld = { map: me.map, x: land.x, y: land.y, r: area, until: t0 + fly, was: {} };
+      Object.keys(monSnap).forEach(function (id) { var sn = monSnap[id]; if (cheb(Math.round(sn.a.x), Math.round(sn.a.y), land.x, land.y) <= area) ld.was[id] = sn; });
+      landings.push(ld);
+    }
     if (area > 0) fx.push({ kind: 'flash', x: land.x, y: land.y, r: area, cells: cells || World.blastCells(content, map, land.x, land.y, area, lookup().stateOf), color: col, t0: t0 + fly, life: 450 });
     if (noise > 0) fx.push({ kind: 'sound', x: land.x, y: land.y, r: noise, t0: t0 + fly, life: 900 });
   }
@@ -2399,6 +2423,11 @@
     var fit = Render.outfitOf ? Render.outfitOf(o) : null;
     if (!fit && !o.sprite) return null;
     var cv = document.createElement('canvas'); cv.width = 64; cv.height = 96; cv.className = 'dface';
+    if (fit) {                                                     // a figure: alive while it is talked to — it breathes (liveFigure); two rows of room above for that
+      cv.height = 100; cv.classList.add('live');
+      liveFigure(cv, function () { return Render.outfitLayers(fit); }, { ph: phaseOf(ref) });
+      return cv;
+    }
     function paint() {
       if (!cv.isConnected && cv._tries) return;
       var g = cv.getContext('2d'); g.imageSmoothingEnabled = false; g.clearRect(0, 0, 64, 96);
@@ -3091,30 +3120,40 @@
     Array.prototype.forEach.call(document.querySelectorAll('.dslot'), function (c) { c.classList.toggle('fits', !!kind && c.dataset.kind === kind); });
   }
   /** You, as you look now (body, hair, what you wear), on a small canvas. */
-  // The figure is alive (owner, 27 Nov 2026): it breathes, turns to the side of it the cursor is on, and a woman's
-  // chest moves as it does on the map — the same pose (Render.pose) and the same drawing (Render.figureOn), with
-  // turning round as its jolt. bustLive redraws it every frame for as long as its canvas is on the page.
+  // A figure that is alive off the map (owner, 27 Nov 2026): the one in the inventory window, the character screen's
+  // preview and an NPC's portrait in its dialogue. liveFigure redraws `cv` every frame for as long as it is on the page
+  // (o.alive: another test), with the same pose (Render.pose) and the same drawing (Render.figureOn) as the map: it
+  // breathes and a woman's chest moves. o.turn = {facing, at}: it also turns to the side of it the cursor is on (a
+  // little room in the middle, so it does not flicker), turning round being its jolt. The canvas is as wide as the
+  // figure is drawn (32 = 1:1) and a row or two taller than 1.5 x that: breathing lifts the head.
   var bustLook = { facing: 'E', at: -1e9 }, mouseX = null;
   document.addEventListener('mousemove', function (e) { mouseX = e.clientX; });
-  function drawBust(cv) {
-    var g = cv.getContext('2d'), now = performance.now(); g.imageSmoothingEnabled = false; g.clearRect(0, 0, cv.width, cv.height);
-    if (mouseX != null && cv.isConnected) {                        // which side of the figure the cursor is on (a little room in the middle, so it does not flicker)
-      var r = cv.getBoundingClientRect(), mid = r.left + r.width / 2, room = r.width * 0.12;
-      var want = mouseX < mid - room ? 'W' : mouseX > mid + room ? 'E' : bustLook.facing;
-      if (want !== bustLook.facing) { bustLook.facing = want; bustLook.at = now; }
-    }
-    var layers = (playerLayers(me) || []).filter(function (l) { return l.slot !== 'weapon' && !l.icon; });   // (what is in hand is not part of the figure here: the belt shows it)
-    if (!layers.length) return;
-    var a = { layers: layers, facing: bustLook.facing, idle: true, ph: phaseOf(me.id), x: 0, y: 0, jolt: now - bustLook.at };
-    Render.pose(a, now, content.config);
-    Render.figureOn(g, a, 0, cv.height - 32, 32);
-  }
-  function bustLive(cv) {
+  function liveFigure(cv, layersOf, o) {
+    o = o || {};
     var born = performance.now(), was = false;
+    function paint() {
+      var g = cv.getContext('2d'), now = performance.now(), T = cv.width, st = o.turn; g.imageSmoothingEnabled = false; g.clearRect(0, 0, cv.width, cv.height);
+      if (st && mouseX != null && cv.isConnected) {
+        var r = cv.getBoundingClientRect(), mid = r.left + r.width / 2, room = r.width * 0.12;
+        var want = mouseX < mid - room ? 'W' : mouseX > mid + room ? 'E' : st.facing;
+        if (want !== st.facing) { st.facing = want; st.at = now; }
+      }
+      var layers = layersOf(); if (!layers || !layers.length) return;
+      var a = { layers: layers, facing: st ? st.facing : 'E', idle: true, ph: o.ph || 0, x: 0, y: 0, jolt: st ? now - st.at : undefined };
+      Render.pose(a, now, content.config);
+      Render.figureOn(g, a, 0, cv.height - T, T);
+    }
     (function tick() {
-      if (cv.isConnected) was = true; else if (was || performance.now() - born > 3000) return;   // (taken off the page: the window was shut or drawn again)
-      drawBust(cv); requestAnimationFrame(tick);
+      var on = o.alive ? o.alive() : cv.isConnected;
+      if (on) was = true; else if (was || performance.now() - born > 3000) return;   // (taken off the page: its window was shut or drawn again)
+      if (on) paint();
+      requestAnimationFrame(tick);
     })();
+  }
+  /** You, as you look now (body, hair, what you wear), in the inventory window. */
+  function bustLive(cv) {
+    liveFigure(cv, function () { return (playerLayers(me) || []).filter(function (l) { return l.slot !== 'weapon' && !l.icon; }); },   // (what is in hand is not part of the figure here: the belt shows it)
+      { turn: bustLook, ph: phaseOf(me.id) });
   }
   function invWindow(box) {
     var cols = qel('div', 'wcols');
@@ -3475,7 +3514,7 @@
     var myFacing = aiming ? (Math.cos(aimAngle) < 0 ? 'W' : 'E') : (lastPtr && lookSide) || me.facing;   // (cursor off the view: the way you walk)
     var actors = [{ x: shown.x, y: shown.y, facing: myFacing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, aim: aiming ? aimAngle : null, swing: (performance.now() - swingT0) / SWING_MS, lift: eatUp, bite: eatBit / EAT_BITES, statusColor: myst ? myst.color : '',
       idle: shown.x === me.x && shown.y === me.y && !aiming, ph: phaseOf(me.id), sneak: !!me.sneak,
-      jolt: joltMs('p:' + me.id, me.hp, Math.max(swingT0, lastHoldShot || -1e9), performance.now(), myFacing), go: goOf('p:' + me.id, shown.x, shown.y) }];   // idle = standing still: the figure breathes (Render, paintActor); sneak = drawn crouched
+      jolt: joltMs('p:' + me.id, me.hp, Math.max(swingT0, lastHoldShot || -1e9), performance.now(), myFacing), go: goOf('p:' + me.id, shown.x, shown.y), k: 'p:' + me.id }];   // idle = standing still: the figure breathes (Render, paintActor); sneak = drawn crouched
     var sceneEm = inScene ? Scene.emotes(now) : [];                    // emotes a scene put up: over you, an NPC, a tile, an actor
     var pups = inScene ? Scene.puppets(now) : {}, speaker = inScene ? Scene.speaker() : '';   // the scene's actors, and who is speaking
     function emFor(ref) {                                              // what shows over an actor: the scene's emote, else the mark of who speaks
@@ -3493,6 +3532,9 @@
     var seen = {}, marks = [], tMark = performance.now(), TM = content.config.tile_size || 32;
     reloadMark(marks, TM); craftMark(marks, TM); questMarks(marks, TM); promptMark(marks); minimap();
     // (in a scene only the map, the NPCs and you are drawn: it looks the same every time and gives nobody away)
+    var inBlast = {};                                                     // monsters in a blast that is still in the air, as they stood
+    landingAt(-99, -99, tMark);                                        // (drops the ones that have landed)
+    landings.forEach(function (l) { if (l.map === me.map) Object.keys(l.was).forEach(function (id) { inBlast[id] = l.was[id]; }); });
     (inScene ? [] : view.monsters).forEach(function (m) {
       var d = content.monsters[m.ref] || { name: m.ref, sprite: '' }, s = shownOthers[m.id] || (shownOthers[m.id] = { x: m.x, y: m.y });
       var mStill = s.x === m.x && s.y === m.y;                           // (before easing: it was already there last frame)
@@ -3501,7 +3543,8 @@
       var lay = monsterLayers(m);                                        // paper-doll zombies carry a rolled look
       // sprite '' (not undefined) keeps the monster health-bar colour + no name label even when layered
       actors.push({ x: s.x, y: s.y, facing: m.facing, name: d.name, sprite: lay ? '' : (d.sprite || ''),
-        layers: lay || undefined, hp: m.hp, maxHp: m.maxHp, statusColor: stc ? stc.color : '', idle: mStill, ph: phaseOf(m.id), jolt: lay ? joltMs(m.id, m.hp, null, tMark, m.facing) : undefined, go: lay ? goOf(m.id, s.x, s.y) : undefined });
+        layers: lay || undefined, hp: m.hp, maxHp: m.maxHp, statusColor: stc ? stc.color : '', idle: mStill, ph: phaseOf(m.id), jolt: lay ? joltMs(m.id, m.hp, null, tMark, m.facing) : undefined, go: lay ? goOf(m.id, s.x, s.y) : undefined, k: lay ? 'm:' + m.id : undefined });
+      var heldM = inBlast[m.id]; if (heldM) actors[actors.length - 1].hp = heldM.a.hp;   // (a blast still in the air has not hurt it yet)
       monSnap[m.id] = { a: actors[actors.length - 1], ref: m.ref, at: tMark };   // how it looks now, should it die (deathFx)
       // "!" when it starts after someone it sees, "?" when it loses them or hears something and goes to look — for a
       // moment, and only if you can see it
@@ -3513,6 +3556,11 @@
         ar.a = al;
       }
       if (tMark < ar.until && (!sight.vis || sight.vis[m.x + ',' + m.y])) marks.push({ id: 'm:' + m.id, kind: ar.kind, x: s.x, y: s.y, up: lay ? TM * 0.5 + 4 : 4 });
+    });
+    if (!inScene) Object.keys(inBlast).forEach(function (id) {             // one the blast will kill: still standing until it lands
+      if (seen[id]) return;
+      var ga = Object.assign({}, inBlast[id].a, { idle: true });
+      actors.push(ga); monSnap[id] = { a: ga, ref: inBlast[id].ref, at: tMark };
     });
     Object.keys(alertSt).forEach(function (id) { if (!seen[id]) delete alertSt[id]; });
     Object.keys(monSnap).forEach(function (id) { if (!seen[id] && tMark - monSnap[id].at > 3000) delete monSnap[id]; });
@@ -3526,7 +3574,7 @@
       var qStill = s.x === q.x && s.y === q.y;
       ease(s, q, dt / (moveMs * Rules.stepCost('N', content, mapOf(), q.x, q.y, q))); seen['p:' + q.id] = 1;   // (wading or sneaking: slower)
       var act = othersAct(q, tMark), eat = othersEat(q, act, s, tMark);
-      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp, swing: (tMark - act.t0) / SWING_MS, lift: eat.lift, bite: eat.bite, idle: qStill, ph: phaseOf(q.id), sneak: !!q.sn, emote: playerEmote(q.em), jolt: joltMs('p:' + q.id, q.hp, act.j0, tMark, q.facing), go: goOf('p:' + q.id, s.x, s.y) });
+      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp, swing: (tMark - act.t0) / SWING_MS, lift: eat.lift, bite: eat.bite, idle: qStill, ph: phaseOf(q.id), sneak: !!q.sn, emote: playerEmote(q.em), jolt: joltMs('p:' + q.id, q.hp, act.j0, tMark, q.facing), go: goOf('p:' + q.id, s.x, s.y), k: 'p:' + q.id });
     });
     npcActors(actors, shown, sceneEm);
     if (inScene) {
@@ -3656,7 +3704,6 @@
         var img = tinted(hair, color); if (img) g.drawImage(img, 0, 0, cv.width, cv.height);
       }
       function draw() {
-        doll($('join-preview'), look.hair, look.hairColor);
         var hs = $('join-hair'), cs = $('join-color'), bs = $('join-body-pick'); hs.innerHTML = ''; cs.innerHTML = ''; bs.innerHTML = '';
         [['', 'Male'], ['female', 'Female']].forEach(function (kind) {
           var b = document.createElement('button'); b.type = 'button'; b.className = 'jbody' + (kind[0] === look.body ? ' on' : ''); b.textContent = kind[1];
@@ -3711,6 +3758,11 @@
       ch.styles.concat(beards).forEach(function (path) { if (path) { need.push(path); need.push(maskOf(path)); } });
       Promise.all(need.map(function (path) { return Assets.load(path); })).then(function () { if (!box.hidden) draw(); });
       box.hidden = false; input.focus();
+      // the big figure is alive: it breathes and turns to the cursor, as you will in the game (liveFigure)
+      liveFigure($('join-preview'), function () {
+        return playerLayers({ id: 'new', 'class': cls.value, body: look.body, skin: look.skin === 'skin_light' ? '' : look.skin, hair: look.hair, hairColor: look.hairColor,
+          beard: look.beard, beardColor: look.beardColor, equipment: {} });
+      }, { turn: { facing: 'E', at: -1e9 }, alive: function () { return !box.hidden; } });
       $('join-form').onsubmit = function (e) {
         e.preventDefault();
         var name = input.value.trim().slice(0, 16);

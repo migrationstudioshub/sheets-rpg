@@ -476,6 +476,7 @@ h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform:
 /* a conversation: the NPC's figure beside its line, then the answers (numbered: keys 1-9) */
 .dlg { display: flex; gap: 4rem; align-items: flex-end; }
 .dlg .dface { flex: none; width: 40rem; height: 60rem; image-rendering: pixelated; }
+.dlg .dface.live { height: 62.5rem; }   /* (a figure that breathes: its canvas has two rows of room above) */
 .dlg .qsay { flex: 1; min-width: 0; align-self: stretch; }
 .dans { display: grid; gap: 2rem; }
 .dans .qrow { height: auto; min-height: 16rem; align-items: center; text-align: left; }
@@ -496,7 +497,7 @@ h4 { margin: 3rem 0 0; font: 700 8rem/1 'Silkscreen', monospace; text-transform:
 #join .panel > strong { font: 700 8rem/1 'Silkscreen', monospace; text-transform: uppercase; }
 #join label { display: grid; gap: 2rem; font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); }
 #join-body { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8rem; align-items: start; }
-#join-preview { width: 64rem; height: 96rem; background: var(--ink2); border: 1rem solid var(--ink); }
+#join-preview { width: 64rem; height: 98rem; background: var(--ink2); border: 1rem solid var(--ink); }
 #join-fields { display: grid; gap: 5rem; width: 190rem; }
 #join .jlabel { font: 400 8rem/1 'Silkscreen', monospace; text-transform: uppercase; color: var(--grey4); margin-bottom: -2rem; }
 #join .jrow { display: flex; flex-wrap: wrap; gap: 2rem; }

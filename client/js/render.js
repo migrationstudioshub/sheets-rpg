@@ -1143,7 +1143,7 @@ var Render = (function () {
   var CHEST = { x: 12, y: 24, w: 17, h: 9 }, CHEST_TOP = 0.4, CHEST_MAX = 2, chestCache = {};
   var CHEST_JOLT = 2.6, CHEST_JOLT_MS = 900;                        // …the bounce of a blow given or taken, or of turning round (a.jolt: ms since): how far, and for how long it is looked at
   var CHEST_SWAY = 1.8;                                            // …and how far it sways sideways while walking (x the strength; it shows from 0.5 up, a pixel each way)
-  var CHEST_LATE_MS = 90, CHEST_LATE_STEP = 0.08;                   // …how far behind the near breast the far one moves: standing (ms), walking (share of a step)
+  var CHEST_LATE_MS = 90, CHEST_LATE_STEP = 0.08;                   // …how far behind the near breast the far one moves: on a jolt (ms), walking (share of a step). Breathing moves both at the same time
   var CHEST_LAND = 0.6;                                            // …the share of a step walked at which she comes down and the bounce starts
   var CHEST_WALK = 3.2;                                          // …and how far while walking (more than standing: the owner's ask)
   var CHEST_AMP = 2.4, CHEST_SWING = 450, CHEST_FADE = 350;       // the bounce: how far (art pixels), ms per swing, ms it takes to die down (Renderer chestOf)
@@ -1245,10 +1245,16 @@ var Render = (function () {
   // ---- how a figure stands at a moment: its breath and, for a woman, where her chest is. Worked out HERE, outside the
   // map's own drawing, so anything that draws a figure moves it the same way: the map (Renderer paintActor) and the
   // figure in the inventory window (main.js drawBust) both ask pose().
+  /** Doing something else than standing there (owner, 27 Nov 2026: breathing is skipped while any other animation
+   *  plays): swinging, aiming, lifting food to the mouth, or within a jolt (a.jolt: a blow, a shot, a throw, being hurt,
+   *  turning round). Walking is not asked here: a walking figure is not idle to begin with. */
+  function busy(a) {
+    return (a.jolt != null && a.jolt >= 0 && a.jolt < CHEST_JOLT_MS) || !!(a.lands && a.lands.length) || (a.swing != null && a.swing >= 0 && a.swing < 1) || a.lift > 0 || a.aim != null;
+  }
   /** Breathing: 1 while a figure standing still (a.idle) is up, 0 while it is down or not idle — slowly, each in its own
    *  time (a.ph). Config idle_bob = off stops it. */
   function idleUp(a, now, cfg) {
-    if (!a.idle || String((cfg || {}).idle_bob || '').toLowerCase() === 'off') return 0;
+    if (!a.idle || busy(a) || String((cfg || {}).idle_bob || '').toLowerCase() === 'off') return 0;
     return Math.sin(now / 380 + (a.ph || 0)) > 0 ? 1 : 0;
   }
   /** How far along its step a walking figure is drawn, 0..1 (-1 = standing on a tile). By the way it is GOING (a.go =
@@ -1269,28 +1275,52 @@ var Render = (function () {
     if (!a.layers || !a.layers.length) return 0;                   // (a figure made of layers: players, NPCs, monsters with a look)
     var on = chestStrength(cfg); if (!on) return 0;
     setBustMask((cfg || {}).bust_mask);                            // (Config bust_mask: another mask file than the built-in one)
-    var f = chestBase(a, now, cfg, late, on), t = a.jolt;
-    if (t == null) return f;
+    var f = chestBase(a, now, cfg, late, on);
+    if (a.jolt != null) f += on * jolted(a.jolt, late);
+    // Each step that set her down is a jolt of its own, the very one turning round gives (owner, 27 Nov 2026): they
+    // add up while she walks and ring out after she stops.
+    for (var i = 0; a.lands && i < a.lands.length; i++) f += on * jolted(now - a.lands[i], late);
+    return Math.round(f * 4) / 4;
+  }
+  /** The spring a jolt sets off, t ms after it (art pixels, + = down, at full strength); late = the far breast. */
+  function jolted(t, late) {
     if (late) t -= CHEST_LATE_MS;
-    if (t < 0 || t > CHEST_JOLT_MS) return f;
-    return Math.round((f + on * CHEST_JOLT * Math.exp(-t / CHEST_FADE) * Math.sin(2 * Math.PI * t / CHEST_SWING)) * 4) / 4;
+    return t < 0 || t > CHEST_JOLT_MS ? 0 : CHEST_JOLT * Math.exp(-t / CHEST_FADE) * Math.sin(2 * Math.PI * t / CHEST_SWING);
+  }
+  /** When the steps of the figure with key a.k set it down (the moment each passed CHEST_LAND of its way), as times on
+   *  `now`'s clock, kept while their jolt lasts → a.lands. Kept per figure from frame to frame (landLog); a figure
+   *  with no key has none (it gets the old bounce, by how far along its step it is). */
+  var landLog = {};
+  function landings(a, now) {
+    if (!a.k || !a.layers || !a.layers.length) return;
+    var L = landLog[a.k], al = a.idle ? -1 : stepAlong(a);
+    if (!L) { if (al < 0) return; L = landLog[a.k] = { al: -1, t: [] }; }
+    if (al >= CHEST_LAND ? L.al < CHEST_LAND : L.al >= 0 && L.al < CHEST_LAND && (al < 0 || al < L.al)) L.t.push(now);   // it passed the point (or the step ended, or a new one began, before a frame showed it there)
+    L.al = al;
+    while (L.t.length && now - L.t[0] > CHEST_JOLT_MS + CHEST_LATE_MS) L.t.shift();
+    if (!L.t.length && al < 0) { delete landLog[a.k]; return; }
+    a.lands = L.t;
   }
   function chestBase(a, now, cfg, late, on) {
     if (a.fixed && !a.idle) return 0;
     if (!a.idle) {
       // Walking (owner: the same on each step, a bit more pronounced — CHEST_WALK): one bounce per tile walked, by how
       // far along the step the figure is drawn (so it keeps the walking pace, like the sway).
+      if (a.lands) return 0;                                       // (a figure whose landings are kept: chestAt adds their jolts)
       var along = stepAlong(a); if (along < 0) return 0;           // on a tile: at rest
       // Only as she comes DOWN (owner): nothing while the step lifts her; from where it sets her down (CHEST_LAND
       // of the way) the chest stays up a moment, drops past its place and settles, on into the start of the next step.
+      // (An extra up-and-down while it sways, and both breasts moving at the same time, were tried and taken out again:
+      // the owner, 27 Nov 2026, went back to this — the landing bounce and the sideways sway, the far breast a little behind.)
       var u = along - CHEST_LAND - (late ? CHEST_LATE_STEP : 0); if (u < 0) u += 1;
-      if (u > 0.6) return 0;
-      return Math.round(-on * CHEST_WALK * Math.exp(-u / 0.3) * Math.sin(2 * Math.PI * u / 0.45) * 4) / 4;
+      var land = u > 0.6 ? 0 : -on * CHEST_WALK * Math.exp(-u / 0.3) * Math.sin(2 * Math.PI * u / 0.45);
+      return Math.round(land * 4) / 4;
     }
-    if (String((cfg || {}).idle_bob || '').toLowerCase() === 'off') return 0;   // (standing still; idle_bob off: nothing breathes)
+    if (busy(a) || String((cfg || {}).idle_bob || '').toLowerCase() === 'off') return 0;   // (standing still; not while something else plays; idle_bob off: nothing breathes)
     var ph = (now / 380 + (a.ph || 0)) % (2 * Math.PI); if (ph < 0) ph += 2 * Math.PI;
     var rose = ph < Math.PI, since = (rose ? ph : ph - Math.PI) * 380;   // the body's last move (up, or down) and the ms since
-    if (late) since -= CHEST_LATE_MS;
+    // (breathing moves both breasts TOGETHER — the owner: only what she does, a step, a blow, turning round, moves them
+    // one after the other; so `late` is not used here)
     if (rose || since < 0) return 0;                               // (it bounces only when the chest comes down, never on the way up)
     return Math.round(-on * CHEST_AMP * Math.exp(-since / CHEST_FADE) * Math.sin(2 * Math.PI * since / CHEST_SWING) * 4) / 4;
   }
@@ -1312,6 +1342,7 @@ var Render = (function () {
   /** Sets on actor `a` how it stands at `now`: a.jig (her chest: [near, far] or 0) and, for a figure of layers standing
    *  still, a.breath (art pixels its upper part is up). Answers the breath a FLAT one-picture figure rises whole by. */
   function pose(a, now, cfg) {
+    landings(a, now);
     var up = idleUp(a, now, cfg), layered = !!(a.layers && a.layers.length);
     a.breath = layered ? up : 0;
     var jn = chestAt(a, now, cfg), jf = chestAt(a, now, cfg, 1), sn = chestSway(a, cfg), sf = chestSway(a, cfg, 1);

@@ -96,9 +96,9 @@
   {"key":"map_9.e93","x":24,"y":31,"ref":"harvest_berrybush","data":""},
   {"key":"map_9.e94","x":25,"y":25,"ref":"container_barrel","data":"{\"contents\":\"throwable_grenade:6, throwable_molotov:6, material_small_rock:6, armor_survivor-rag:1, armor_leather-jacket:1, armor_poncho:1\"}"},
   {"key":"map_9.e95","x":30,"y":46,"ref":"spawner_base-zombie","data":"{\"monster\":\"walker_female_test\",\"count\":1,\"radius\":2}"},
-  {"key":"map_9.e96","x":25,"y":28,"ref":"npc_doc-Riley","data":""},
   {"key":"map_9.e97","x":28,"y":24,"ref":"harvest_aloe-vera","data":""},
   {"key":"map_9.e98","x":26,"y":23,"ref":"harvest_aloe-vera","data":""},
-  {"key":"map_9.e99","x":26,"y":25,"ref":"container_chest","data":"{\"contents\":\"armor_doctor-coat:1\"}"}
+  {"key":"map_9.e99","x":26,"y":25,"ref":"container_chest","data":"{\"contents\":\"armor_doctor-coat:1\"}"},
+  {"key":"map_9.e100","x":25,"y":28,"ref":"npc_sister-Riley","data":""}
 ]
 }

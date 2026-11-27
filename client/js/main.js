@@ -1517,6 +1517,9 @@
     if (invDrag) { invDirty = true; return; }             // never rebuild the belt under a drag
     // (drawn again only when what it shows changed: a slot replaced under the mouse loses its click, see unchanged)
     var belt = $('belt'), bsts = [];
+    // The belt only SHOWS what you carry (owner, 27 Nov 2026): a click on it goes to the game behind it, so nothing on the
+    // map is out of reach under the bar. With the inventory window open it is part of that window (drag, Shift+click).
+    $('bcbox').classList.toggle('through', !bagOpen);
     for (var bi = 0; bi < BELT; bi++) bsts.push(beltSt(bi));
     var bsig = JSON.stringify([me.held, holdMode(), throwing, bagOpen, bsts.map(function (st) { return st ? [st.item, st.qty, st.dur, !!itemImageUrl(content.items[st.item] || {})] : 0; })]);   // (the last: its picture has arrived — until then the slot shows letters)
     if (belt._sig === bsig && belt.firstChild) { tickHotbar(); return; }
@@ -1526,7 +1529,7 @@
       var inHand = holdMode() && me.held === i;
       b.className = 'hk' + (inHand ? ' held' : !holdMode() && throwing && throwing === id ? ' armed' : '') + (it ? '' : ' empty');
       b.title = !it ? 'Empty: assign an item from the bag (I)' : !holdMode() ? it.name + (World.itemCan(it, 'throw') ? ' (throw)' : ' (use)')
-        : it.name + (!inHand ? '' : World.itemCan(it, 'consume') ? ' — in hand: click to use it' : World.itemCan(it, 'throw') ? ' — in hand: click where to throw it' : World.itemCan(it, 'place') ? ' — in hand: click the ground to put it down (T turns it)' : ' — in hand');
+        : it.name + (!inHand ? '' : World.itemCan(it, 'consume') ? ' — in hand: hold the click to use it' : World.itemCan(it, 'throw') ? ' — in hand: click where to throw it' : World.itemCan(it, 'place') ? ' — in hand: click the ground to put it down (T turns it)' : ' — in hand');
       var key = document.createElement('span'); key.className = 'key'; key.textContent = slotKey(i); b.appendChild(key);
       if (it) {
         b.appendChild(icon({ kind: 'item', id: id }));
@@ -1538,7 +1541,7 @@
       }
       b.onclick = function (e) {
         if (e && e.shiftKey && bagOpen && bs) { invMove('belt', i, storage && !storage.takeOnly ? 'box' : 'bag'); return; }   // into the open container or station, else into the backpack
-        if (holdMode() && me.held === i && heldUse()) useHeld(); else beltKey(i);
+        // (a plain click does nothing: the wheel and the number keys choose, a held click in the game uses)
       };
       // With the inventory window open the belt is part of it: drop a stack on a slot to move it there (out of the
       // backpack or a container: it is then no longer there), drag a slot back onto a cell, or onto another slot.

@@ -25,6 +25,11 @@ function walk(dir, out) {
     else if (EXT.test(name) && !/\.tint\.png$/i.test(name)) {    // skip paper-doll colour masks
       out.push('art/' + path.relative(ART, full).split(path.sep).join('/'));
     }
+    // A mask with no picture next to it (stubble, make-up: nothing but colour) is listed under the name its picture
+    // would have, so the Studio can pick it — the game draws such a layer from its mask alone (Tint.layer).
+    else if (/\.tint\.png$/i.test(name) && !fs.existsSync(full.replace(/\.tint\.png$/i, '.png'))) {
+      out.push('art/' + path.relative(ART, full).split(path.sep).join('/').replace(/\.tint\.png$/i, '.png'));
+    }
   }
 }
 

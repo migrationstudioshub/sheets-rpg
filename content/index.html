@@ -116,6 +116,20 @@
   #list .rec.dragging { opacity: .4; }
   #list .rec.dropbefore { box-shadow: 0 -3px 0 var(--accent); }
   #list .rec.dropafter { box-shadow: 0 3px 0 var(--accent); }
+  /* questlines: the Quests list's folders */
+  #list .qlhead { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #1a1d24; cursor: pointer; user-select: none; }
+  #list .qlhead .qlname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  #list .qlhead .qlarrow { width: 10px; color: var(--dim); }
+  #list .qlhead small { color: var(--dim); }
+  #list .qlhead button { padding: 0 5px; border: 0; background: none; color: var(--dim); cursor: pointer; }
+  #list .qlhead button:hover { color: inherit; }
+  #list .qlhead input { flex: 1; min-width: 0; }
+  #list .rec.inql { margin-left: 14px; }
+  #list .qlempty { margin-left: 14px; padding: 6px 8px; border: 1px dashed var(--line); border-radius: 6px; color: var(--dim); font-size: 12px; }
+  #list .rec.sel { border-color: var(--accent); background: #26384f; }
+  #list .qladd { margin-top: 8px; border: 1px dashed var(--line); border-radius: 6px; padding: 5px 8px; background: none; color: var(--dim); cursor: pointer; text-align: left; }
+  #list .qladd:hover { color: inherit; border-color: var(--accent); }
+  #list .dropin { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
   #main.withmap { grid-template-columns: 280px minmax(360px, 1fr) 440px; }
   #main.withmap.wide { grid-template-columns: 280px minmax(360px, 1fr) minmax(400px, 1.3fr); }
   #main.withmap.mapshut { grid-template-columns: 280px 1fr 34px; }
@@ -156,6 +170,12 @@
   #form .dcard .row label.tick { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 12px; color: var(--dim); }
   #form .dcard .row label.tick input { width: auto; }
   #form .dcard .field { margin: 0; }
+  /* Scenes: the real map beside the steps (js/scenemap.js) */
+  #qmap canvas.smcanvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; user-select: none; }
+  #qmap canvas.smcanvas.panning { cursor: grabbing; }
+  #qmap .qmhead select { max-width: 150px; padding: 2px 4px; font-size: 12px; }
+  #qmap .qmhead button.on { border-color: var(--accent); color: var(--accent); }
+  .dcard.picked { outline: 2px solid var(--accent); }
   #qmap .qmshut { writing-mode: vertical-rl; border: 0; background: transparent; color: var(--dim); padding: 10px 6px; }
 </style>
 </head>
@@ -166,7 +186,9 @@
 
   <script>
     (function () {
-      var files = ['../shared/mapcode.js', '../shared/schema.js', '../shared/content.js', '../client/js/config.js', '../client/js/content_store.js', '../client/js/localdata.js', '../client/js/tint.js', '../client/js/emotes.js', 'js/questmap.js', 'js/dialogmap.js', 'js/cstudio.js'];
+      var files = ['../shared/mapcode.js', '../shared/schema.js', '../shared/content.js', '../client/js/config.js', '../client/js/content_store.js', '../client/js/localdata.js', '../client/js/tint.js', '../client/js/emotes.js',
+                   '../shared/autotile.js', '../shared/rules.js', '../shared/world.js', '../client/js/assets.js', '../client/js/scatter.js', '../client/js/render.js',   // (the scene map draws the real map)
+                   'js/questmap.js', 'js/dialogmap.js', 'js/scenemap.js', 'js/cstudio.js'];
       var v = Date.now();
       (function next(i) {
         if (i >= files.length) { if (window.CStudio) CStudio.init(); return; }

@@ -304,7 +304,8 @@ var CStudio = (function () {
     ['Story', ['npcs', 'dialogues', 'shops', 'quests', 'scenes']]
   ];
   // object_kinds is kept in Config but edited from the Object Kinds card, so the Config list leaves it out.
-  function shownConfig(r) { return r.key !== 'object_kinds'; }
+  // (so are the lists' folders: questlines, scene_folders, dialogue_folders)
+  function shownConfig(r) { return ['object_kinds', 'questlines', 'scene_folders', 'dialogue_folders'].indexOf(r.key) < 0; }
   // The thumbnail for a list card: the row's art. Terrain shows its sprite (or its autotile's tileset
   // image); everything else shows the first image-typed field that has a value.
   function rowThumbSrc(t, r) {
@@ -326,10 +327,10 @@ var CStudio = (function () {
     var base = pvImg(path), mask = pvImg(maskPath(path)), want = spritePath(path);
     el._tintOf = want;
     function go() {
-      if (el._tintOf !== want || !base.complete || !base.width || !mask.complete || !mask.width) return;
-      try { var cv = Tint.getTintedLayer(base, mask, ramp); if (cv && cv.toDataURL) el.src = cv.toDataURL(); } catch (e) { /* keep the plain picture */ }
+      if (el._tintOf !== want || !base.complete || !mask.complete || !mask.width) return;   // (a picture that is all mask has no base: Tint.layer)
+      try { var cv = Tint.layer(base, mask, ramp); if (cv && cv.toDataURL) el.src = cv.toDataURL(); } catch (e) { /* keep the plain picture */ }
     }
-    [base, mask].forEach(function (im) { if (!im.complete) im.addEventListener('load', go); });
+    [base, mask].forEach(function (im) { if (!im.complete) { im.addEventListener('load', go); im.addEventListener('error', go); } });
     go();
     return el;
   }
@@ -379,18 +380,166 @@ var CStudio = (function () {
         list.appendChild(h('div', { className: 'listgroup', text: (k ? named || k.charAt(0).toUpperCase() + k.slice(1) : type === 'items' ? 'No type' : 'No kind') + '  (' + groups[k].length + ')' }));
         groups[k].forEach(function (ri) { list.appendChild(recCard(type, ri[0], ri[1], idf)); });
       });
+    } else if (FOLDERS[type] && !q) {                // quests, scenes, dialogues: in their folders (a search shows them flat)
+      questFolders(list, all, idf);
     } else {
-      var sortable = type === 'quests' && !q;      // quests: the order is the order an NPC offers them in — drag to change it
+      var sortable = false;      // quests: the order is the order an NPC offers them in — drag to change it
       all.forEach(function (r, i) {
         if (!matches(r) || (type === 'config' && !shownConfig(r)) || (type === 'objects' && isNpc(r))) return;   // (NPCs have their own panel)
         var card = recCard(type, r, i, idf);
         if (sortable) dragSort(card, i);
         list.appendChild(card);
       });
-      if (type === 'quests') list.appendChild(h('div', { className: 'note', style: 'padding:4px 2px', text: q ? 'Clear the search to drag quests into order.' : 'Drag a quest to change the order. An NPC offers its quests in this order.' }));
+      if (FOLDERS[type]) list.appendChild(h('div', { className: 'note', style: 'padding:4px 2px', text: 'Clear the search to drag ' + fo().many + ' into order and into ' + fo().word + 's.' }));
     }
     if (!list.querySelector('.rec')) list.appendChild(h('div', { className: 'note', style: 'padding:8px', text: all.length ? 'No match.' : 'Nothing here yet — click New.' }));
   }
+  // ---------------------------------------------------------------- folders in a list (Quests: "questlines"; Scenes, Dialogues)
+  // Only for keeping the list tidy (the game never reads them). FOLDERS says which lists have them: a row names its
+  // folder in `field`; the folders themselves, in order and empty ones included, are Config `key` (names joined by |). Which are shut
+  // is this browser's own business (localStorage). The row order stays one list — the order an NPC offers its quests —
+  // so a folder only gathers its quests; dragging still moves the row.
+  var FOLDERS = {
+    quests:    { field: 'questline', key: 'questlines',       ls: 'sheetsrpg.studioQuestlinesShut',        word: 'questline', Word: 'Questline', one: 'quest',    many: 'quests',    tail: ' An NPC offers its quests in this order.' },
+    scenes:    { field: 'folder',    key: 'scene_folders',    ls: 'sheetsrpg.studioFoldersShut.scenes',    word: 'folder',    Word: 'Folder',    one: 'scene',    many: 'scenes',    tail: '' },
+    dialogues: { field: 'folder',    key: 'dialogue_folders', ls: 'sheetsrpg.studioFoldersShut.dialogues', word: 'folder',    Word: 'Folder',    one: 'dialogue', many: 'dialogues', tail: '' }
+  };
+  function fo() { return FOLDERS[type]; }
+  var qlEdit = '';
+  function qlOf(r) { return String((r && fo() && r[fo().field]) || '').trim(); }
+  function qlList() {
+    var row = rows('config').filter(function (c) { return c.key === fo().key; })[0];
+    var names = String(row && row.value != null ? row.value : '').split('|').map(function (x) { return x.trim(); }).filter(Boolean);
+    rows(type).forEach(function (r) { var n = qlOf(r); if (n && names.indexOf(n) < 0) names.push(n); });   // (named on a row only: still a folder)
+    return names.filter(function (n, i) { return names.indexOf(n) === i; });
+  }
+  function qlSet(names) {
+    var cfg = rows('config'), row = cfg.filter(function (c) { return c.key === fo().key; })[0];
+    if (!row) { row = { key: fo().key, value: '', notes: fo().Word + ' folders of the Content Studio\'s ' + Schema.get(type).label + ' list (names joined by |). The game does not read this' }; cfg.push(row); }
+    row.value = names.join('|');
+  }
+  function qlShut() { try { return JSON.parse(localStorage.getItem(fo().ls)) || {}; } catch (e) { return {}; } }
+  function qlToggle(name) { var s = qlShut(); if (s[name]) delete s[name]; else s[name] = 1; try { localStorage.setItem(fo().ls, JSON.stringify(s)); } catch (e) { /* private mode */ } renderList(); }
+  function qlAdd() {
+    var names = qlList(), n = 1, name = 'New ' + fo().word;
+    while (names.indexOf(name) >= 0) name = 'New ' + fo().word + ' ' + (++n);
+    qlSet(names.concat([name])); qlEdit = name;
+    persist(); renderList();
+  }
+  function qlRename(from, to) {
+    to = String(to || '').replace(/\|/g, ' ').trim(); qlEdit = '';
+    if (!to || to === from) return renderList();
+    rows(type).forEach(function (r) { if (qlOf(r) === from) r[fo().field] = to; });
+    var names = qlList().map(function (n) { return n === from ? to : n; });    // (a name already taken: the two become one)
+    qlSet(names.filter(function (n, i) { return names.indexOf(n) === i; }));
+    var s = qlShut(); if (s[from]) { delete s[from]; s[to] = 1; try { localStorage.setItem(fo().ls, JSON.stringify(s)); } catch (e) { /* private mode */ } }
+    persist(); renderList();
+  }
+  function qlRemove(name) {
+    var n = rows(type).filter(function (r) { return qlOf(r) === name; }).length;
+    if (n && !confirm('Remove the ' + fo().word + ' "' + name + '"? Its ' + n + ' ' + (n === 1 ? fo().one + ' is' : fo().many + ' are') + ' kept, outside any ' + fo().word + '.')) return;
+    rows(type).forEach(function (r) { if (qlOf(r) === name) delete r[fo().field]; });
+    qlSet(qlList().filter(function (x) { return x !== name; }));
+    persist(); renderList();
+  }
+  /** Put quest row `from` into questline `name` ('' = none) and move it to just before row `to` (counted before the move; -1 = stay). */
+  // Several at once: quests picked with Shift+click (a run) or Ctrl+click (one more) all go when one of them is dragged,
+  // keeping their order. qlSel holds the rows themselves; qlAnchor = the row a Shift+click runs from.
+  var qlSel = [], qlAnchor = null, qlShown = [];
+  function qlPick(e, i) {
+    var all = rows(type), r = all[i];
+    if (e.shiftKey) {
+      var a = qlShown.indexOf(all.indexOf(qlAnchor || all[curIndex])), b = qlShown.indexOf(i);
+      if (a < 0) a = b;
+      var run = qlShown.slice(Math.min(a, b), Math.max(a, b) + 1).map(function (k) { return all[k]; });
+      qlSel = (e.ctrlKey || e.metaKey ? qlSel : []).concat(run);
+      if (!qlAnchor) qlAnchor = all[qlShown[a]];
+    } else {
+      if (!qlSel.length && all[curIndex] && all[curIndex] !== r) qlSel = [all[curIndex]];   // (the open quest counts as the first pick)
+      if (qlSel.indexOf(r) >= 0) qlSel = qlSel.filter(function (x) { return x !== r; }); else qlSel.push(r);
+      qlAnchor = r;
+    }
+    qlSel = qlSel.filter(function (x, k) { return qlSel.indexOf(x) === k; });
+    renderList();
+  }
+  function qlDrop(from, name, to) {
+    var all = rows(type), open = all[curIndex], r = all[from]; if (!r) return;
+    var moving = qlSel.indexOf(r) >= 0 ? all.filter(function (x) { return qlSel.indexOf(x) >= 0; }) : [r];
+    var target = to >= 0 ? all[to] : null;                       // the row to land before (none = the end)
+    while (target && moving.indexOf(target) >= 0) target = all[all.indexOf(target) + 1] || null;   // (dropped among themselves: before the next that stays)
+    moving.forEach(function (x) { if (name) x[fo().field] = name; else delete x[fo().field]; });
+    if (to >= 0) {
+      var rest = all.filter(function (x) { return moving.indexOf(x) < 0; }), at = target ? rest.indexOf(target) : rest.length;
+      rest.splice.apply(rest, [at, 0].concat(moving));
+      all.length = 0; rest.forEach(function (x) { all.push(x); });
+    }
+    curIndex = open ? all.indexOf(open) : -1;
+    persist(); renderList(); renderForm();
+  }
+  function qlClear() { Array.prototype.forEach.call(document.querySelectorAll('#list .dropbefore, #list .dropafter, #list .dropin'), function (c) { c.classList.remove('dropbefore', 'dropafter', 'dropin'); }); }
+  /** A quest card: dragged; dropped on, the dragged quest joins this one's questline, above or below it. */
+  function qlCard(card, i, name) {
+    card.draggable = true;
+    if (qlSel.indexOf(rows(type)[i]) >= 0) card.classList.add('sel');
+    card.addEventListener('click', function (e) {              // Shift / Ctrl+click picks; a plain click opens it and lets the picks go
+      if (e.shiftKey || e.ctrlKey || e.metaKey) { e.stopImmediatePropagation(); e.preventDefault(); return qlPick(e, i); }
+      qlSel = []; qlAnchor = rows(type)[i];
+    }, true);
+    function below(e) { var b = card.getBoundingClientRect(); return e.clientY > b.top + b.height / 2; }
+    card.addEventListener('dragstart', function (e) {
+      dragFrom = i; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(i)); } catch (x) { /* old browsers */ }
+      var many = card.classList.contains('sel');                 // one of the picked ones: they all go
+      Array.prototype.forEach.call(many ? document.querySelectorAll('#list .rec.sel') : [card], function (c) { c.classList.add('dragging'); });
+    });
+    card.addEventListener('dragend', function () { dragFrom = -1; Array.prototype.forEach.call(document.querySelectorAll('#list .rec.dragging'), function (c) { c.classList.remove('dragging'); }); qlClear(); });
+    card.addEventListener('dragover', function (e) { if (dragFrom < 0) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; qlClear(); card.classList.add(below(e) ? 'dropafter' : 'dropbefore'); });
+    card.addEventListener('drop', function (e) { e.preventDefault(); qlClear(); if (dragFrom < 0) return; var f = dragFrom; dragFrom = -1; qlDrop(f, name, below(e) ? i + 1 : i); });
+  }
+  /** A folder's heading (or its empty body): dropped on, the dragged quest goes into it, after its last quest. */
+  function qlTarget(el, name, last) {
+    el.addEventListener('dragover', function (e) { if (dragFrom < 0) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; qlClear(); el.classList.add('dropin'); });
+    el.addEventListener('dragleave', function () { el.classList.remove('dropin'); });
+    el.addEventListener('drop', function (e) { e.preventDefault(); qlClear(); if (dragFrom < 0) return; var f = dragFrom; dragFrom = -1; qlDrop(f, name, last >= 0 ? last + 1 : -1); });
+  }
+  function questFolders(list, all, idf) {
+    var names = qlList(), shut = qlShut(), groups = { '': [] };
+    qlSel = qlSel.filter(function (x) { return all.indexOf(x) >= 0; }); qlShown = [];
+    names.forEach(function (n) { groups[n] = []; });
+    all.forEach(function (r, i) { groups[qlOf(r)].push([r, i]); });
+    function body(name) {
+      var g = groups[name];
+      g.forEach(function (ri) { qlShown.push(ri[1]); var card = recCard(type, ri[0], ri[1], idf); if (name) card.classList.add('inql'); qlCard(card, ri[1], name); list.appendChild(card); });
+    }
+    function lastOf(name) { var g = groups[name]; return g.length ? g[g.length - 1][1] : -1; }
+    if (names.length && groups[''].length) {
+      var loose = h('div', { className: 'listgroup', text: 'No ' + fo().word + '  (' + groups[''].length + ')' });
+      qlTarget(loose, '', lastOf('')); list.appendChild(loose);
+    }
+    body('');
+    names.forEach(function (name) {
+      var g = groups[name], isShut = !!shut[name], head;
+      if (qlEdit === name) {
+        var done = false, commit = function (v) { if (done) return; done = true; qlRename(name, v); };   // (once: redrawing the list blurs the box again)
+        var inp = h('input', { value: name, onkeydown: function (e) { if (e.key === 'Enter') commit(inp.value); else if (e.key === 'Escape') commit(name); }, onblur: function () { commit(inp.value); } });
+        head = h('div', { className: 'qlhead' }, inp);
+        setTimeout(function () { inp.focus(); inp.select(); }, 0);
+      } else {
+        head = h('div', { className: 'qlhead' + (isShut ? ' shut' : ''), title: 'Click to ' + (isShut ? 'open' : 'close') + '. Drop a ' + fo().one + ' here to put it in this ' + fo().word,
+          onclick: function () { qlToggle(name); } },
+          h('span', { className: 'qlarrow', text: isShut ? '▸' : '▾' }), h('span', { className: 'qlname', text: name }), h('small', { text: String(g.length) }),
+          h('button', { title: 'Rename', text: '✎', onclick: function (e) { e.stopPropagation(); qlEdit = name; renderList(); } }),
+          h('button', { title: 'Remove this ' + fo().word + ' (its ' + fo().many + ' are kept)', text: '✕', onclick: function (e) { e.stopPropagation(); qlRemove(name); } }));
+        qlTarget(head, name, lastOf(name));
+      }
+      list.appendChild(head);
+      if (isShut) return;
+      if (!g.length) { var empty = h('div', { className: 'qlempty', text: 'Empty. Drag ' + fo().many + ' here.' }); qlTarget(empty, name, -1); list.appendChild(empty); }
+      body(name);
+    });
+    list.appendChild(h('button', { className: 'qladd', title: 'A new ' + fo().word + ': a folder to keep ' + fo().many + ' together in this list', text: '+ New ' + fo().word, onclick: qlAdd }));
+    list.appendChild(h('div', { className: 'note', style: 'padding:4px 2px', text: 'Drag a ' + fo().one + ' to change the order or to put it in a ' + fo().word + '. Shift+click picks a run, Ctrl+click one more: drag any of them and they all go.' + fo().tail }));
+  }
+
   // Drag a record card onto another: it moves above or below it (whichever half of the card it is dropped on).
   var dragFrom = -1;
   function dragSort(card, i) {
@@ -428,6 +577,7 @@ var CStudio = (function () {
   function renderQuestMap() {
     var box = $('qmap'), main = $('main'); if (!box || !main) return;
     if (type === 'dialogues' && typeof DialogMap !== 'undefined') return renderDialogMap(box, main);
+    if (type === 'scenes' && typeof SceneMap !== 'undefined') return renderSceneMap(box, main);
     var on = type === 'quests' && typeof QuestMap !== 'undefined', mode = qmapMode();
     box.hidden = !on;
     main.classList.toggle('withmap', on); main.classList.toggle('wide', on && mode === 'wide'); main.classList.toggle('mapshut', on && mode === 'shut');
@@ -462,12 +612,13 @@ var CStudio = (function () {
     });
   }
   var qmapTimer = 0;
-  function questMapSoon() { if (type !== 'quests' && type !== 'dialogues') return; clearTimeout(qmapTimer); qmapTimer = setTimeout(renderQuestMap, 350); }
+  function questMapSoon() { if (type !== 'quests' && type !== 'dialogues' && type !== 'scenes') return; clearTimeout(qmapTimer); qmapTimer = setTimeout(renderQuestMap, 350); }
   function addRecord() {
     if (type === 'npcs') { var n = Schema.defaults('objects'); n.kind = 'npc'; rows('objects').push(n); curIndex = rows('objects').length - 1; persist(); renderNav(); renderList(); renderForm(); return; }
     var r = Schema.defaults(type);
     if (type === 'dialogues') r.nodes = [{ id: 'hello', start: true, text: '', answers: [] }];   // a conversation needs a line to open on
     if (type === 'scenes') r.steps = [{ type: 'say', text: '' }];                                  // a scene needs a step to play
+    if (FOLDERS[type] && qlOf(rows(type)[curIndex])) r[fo().field] = qlOf(rows(type)[curIndex]);   // (made with one of a folder open: it joins it)
     rows(type).push(r); curIndex = rows(type).length - 1;
     persist(); renderNav(); renderList(); renderForm();
   }
@@ -490,6 +641,45 @@ var CStudio = (function () {
     var i = -1; rows('dialogues').forEach(function (d, n) { if (i < 0 && String(d.id || '') === String(id)) i = n; });
     if (i < 0) return;
     type = 'dialogues'; curIndex = i; filter = ''; renderNav(); renderList(); renderForm();
+  }
+  // ---- the scene map (Scenes; js/scenemap.js): the real map beside the steps. The scene's `map` says which one, its
+  // `start_xy` where the player stands on it (both for the Studio, and for Play this scene). A step's tile is set
+  // with its "Pick on map" button and a click, or by dragging its marker; a click on a marker picks its step.
+  var scenePick = null, sceneSel = -1, sceneOf = null;        // pick: 'start' | a step's index | null
+  function sceneStart(r) { var m = /^\s*(-?\d+)\s*,\s*(-?\d+)\s*$/.exec(String(r.start_xy || '')); return m ? { x: Number(m[1]), y: Number(m[2]) } : null; }
+  function stepHasTile(st) { return (st.type === 'camera' && st.to !== 'me') || st.type === 'show' || st.type === 'walk' || (st.type === 'emote' && st.over === 'tile'); }
+  function renderSceneMap(box, main) {
+    var mode = qmapMode();
+    box.hidden = false;
+    main.classList.add('withmap'); main.classList.toggle('wide', mode === 'wide'); main.classList.toggle('mapshut', mode === 'shut');
+    if (mode === 'shut') { box.innerHTML = ''; box.appendChild(h('button', { className: 'qmshut', text: 'Scene map ▸', title: 'Show the map of this scene', onclick: function () { setQmapMode(''); } })); return; }
+    var r = rows('scenes')[curIndex];
+    if (sceneOf !== r) { sceneOf = r; scenePick = null; sceneSel = -1; }
+    var maps = SceneMap.info(T), body = box.querySelector('.qmbody.sm');
+    if (!body) { box.innerHTML = ''; body = h('div', { className: 'qmbody sm' }); } else { while (box.firstChild) box.removeChild(box.firstChild); }
+    function again() { renderSceneMap(box, main); }
+    box.appendChild(h('div', { className: 'qmhead' }, h('b', { text: 'Scene map' }),
+      r ? h('select', { title: 'The map this scene plays on (for picking tiles here; the game plays it wherever it is started)', onchange: function (e) { r.map = e.target.value; delete r.start_xy; scenePick = null; keep(); sceneForm(); again(); } },
+        [h('option', { value: '', text: '— pick a map —', selected: !r.map })].concat(maps.map(function (m) { return h('option', { value: m.id, text: m.name + ' (' + m.id + ')', selected: m.id === String(r.map || '') }); }))) : null,
+      h('span', { className: 'sp', style: 'margin-left:auto' }),
+      r && r.map ? h('button', { className: scenePick === 'start' ? 'on' : '', text: sceneStart(r) ? 'Move player' : 'Set player', title: 'Click the map where the player stands when the scene starts. Play this scene puts the test character there', onclick: function () { scenePick = scenePick === 'start' ? null : 'start'; again(); } }) : null,
+      h('button', { text: 'Fit', title: 'Show the whole map', onclick: function () { SceneMap.fit(); } }),
+      h('button', { text: '↻', title: 'Read the maps again (after saving in the map editor)', onclick: function () { SceneMap.reload(); } }),
+      h('button', { text: mode === 'wide' ? 'Narrow' : 'Wide', title: 'Give the map more room', onclick: function () { setQmapMode(mode === 'wide' ? '' : 'wide'); } }),
+      h('button', { text: 'Hide', title: 'Fold the map away', onclick: function () { setQmapMode('shut'); } })));
+    box.appendChild(SceneMap.legend());
+    box.appendChild(h('div', { className: 'qmhint', text: 'A numbered dot = that step\'s tile · drag a dot to move it, click it to find its step · P = where the player stands · a dashed ring = it stays after the scene · wheel to zoom, drag the ground to move' }));
+    box.appendChild(body);
+    if (!r) { body.innerHTML = ''; body.appendChild(h('div', { className: 'note qmempty', text: 'Pick a scene to see its map.' })); return; }
+    if (!maps.length) { body.innerHTML = ''; body.appendChild(h('div', { className: 'note qmempty', text: 'This draft holds no maps, so there is nothing to draw. Maps come with the project files (the desktop app), or are made in the map editor.' })); return; }
+    var old = body.querySelector('.qmempty'); if (old) old.remove();
+    var steps = stepsOf(r);
+    SceneMap.draw(body, { tables: T, mapId: r.map || '', start: sceneStart(r), steps: steps, sel: sceneSel, pick: scenePick, on: {
+      move: function (i, x, y) { var st = steps[i]; if (!st) return; st.x = x; st.y = y; sceneSel = i; keep(); sceneForm(); again(); },
+      start: function (x, y) { r.start_xy = x + ',' + y; keep(); again(); },
+      select: function (i) { sceneSel = i; sceneForm(); again(); var card = document.querySelector('#form .dcard.picked'); if (card && card.scrollIntoView) card.scrollIntoView({ block: 'nearest' }); },
+      picked: function () { scenePick = null; again(); }
+    } });
   }
   function renderDialogMap(box, main) {
     var mode = qmapMode();
@@ -603,18 +793,27 @@ var CStudio = (function () {
   // [{type, with, ...}]. The kinds and their fields are Content.SCENE_STEPS ([key, type, default, help, options]).
   // An action list starts one with scene:<id>; what follows it in that list happens when the scene ends.
   var STEP_LABEL = { on: 'On', out: 'Fade out', color: 'Colour', s: 'Seconds', to: 'Look at', x: 'Tile x', y: 'Tile y', zoom: 'Zoom', shake: 'Shake',
-    image: 'Picture', text: 'Text', bg: 'Around it', name: 'Name shown', emote: 'Emote', over: 'Over', npc: 'NPC', a: 'Actor', dir: 'Facing', speed: 'Speed', straight: 'Straight line', wait: 'Wait for it', stay: 'Stays after' };
+    image: 'Picture', text: 'Text', bg: 'Around it', name: 'Name shown', emote: 'Emote', over: 'Over', npc: 'NPC', a: 'Actor', dir: 'Facing', speed: 'Speed', straight: 'Straight line', wait: 'Wait for it', stay: 'Stays after', count: 'How many' };
   var STEP_OPT = { me: 'the player', tile: 'a tile', npc: 'an NPC', actor: 'an actor', E: 'right', W: 'left', player: 'towards the player' };
   /** A picker of who acts in a scene: the player, an NPC (npc:<id>) or a monster (mon:<id>). */
-  function actorPicker(val, set, none) {
+  // Another of the same is "#<n>" after it (mon:rat#2 = the second rat): the number box beside the list. For an NPC that
+  // stands on the map several times, 2 = the second nearest to the player.
+  function actorPicker(full, set, none) {
+    var cut = String(full || '').split('#'), val = cut[0], copy = Math.max(1, Math.round(Number(cut[1]) || 1));
+    function put(v, n) { set(v && v !== 'me' && n > 1 ? v + '#' + n : v); }
     var npcs = rows('objects').filter(isNpc).filter(function (o) { return o.id; }), mons = rows('monsters').filter(function (m) { return m.id; });
     var known = !val || val === 'me' || npcs.some(function (o) { return 'npc:' + o.id === val; }) || mons.some(function (m) { return 'mon:' + m.id === val; });
-    return h('select', { style: 'flex:1;min-width:0' + (known ? '' : ';border-color:var(--bad)'), onchange: function (e) { set(e.target.value); } },
+    var box = h('div', { className: 'row', style: 'flex:1;min-width:0' });
+    box.appendChild(actorList());
+    if (val && val !== 'me') box.appendChild(h('input', { type: 'number', min: 1, max: 20, step: 1, value: copy, style: 'width:54px;flex:none', title: 'Which one, when the scene has several of the same: 1 = the first, 2 = another one, 3 = a third… (for an NPC that stands on the map several times: 2 = the second nearest to the player)',
+      onchange: function (e) { put(val, Math.max(1, Math.round(Number(e.target.value) || 1))); } }));
+    return box;
+    function actorList() { return h('select', { style: 'flex:1;min-width:0' + (known ? '' : ';border-color:var(--bad)'), onchange: function (e) { put(e.target.value, copy); sceneForm(); } },
       none ? h('option', { value: '', text: none, selected: !val }) : null,
       known ? null : h('option', { value: val, text: val + ' (missing)', selected: true }),
       h('option', { value: 'me', text: 'The player', selected: val === 'me' }),
       h('optgroup', { label: 'NPCs' }, npcs.map(function (o) { return h('option', { value: 'npc:' + o.id, text: (o.name || o.id) + ' (' + o.id + ')', selected: val === 'npc:' + o.id }); })),
-      h('optgroup', { label: 'Monsters' }, mons.map(function (m) { return h('option', { value: 'mon:' + m.id, text: (m.name || m.id) + ' (' + m.id + ')', selected: val === 'mon:' + m.id }); })));
+      h('optgroup', { label: 'Monsters' }, mons.map(function (m) { return h('option', { value: 'mon:' + m.id, text: (m.name || m.id) + ' (' + m.id + ')', selected: val === 'mon:' + m.id }); }))); }
   }
   /** A picker of the emotes (Content.EMOTES), each with its picture (client/js/emotes.js); `none` first when asked. */
   function emotePicker(val, set, withNone, noneText) {
@@ -683,7 +882,7 @@ var CStudio = (function () {
       })) : h('div', { className: 'help', text: 'Nothing yet. Put scene:' + (r.id || '<id>') + ' in any list of actions: a quest\'s "when it starts" or rewards, an objective\'s "when met", a dialogue answer, a trigger. Whatever comes after it in that list happens when the scene ends (watched or skipped), e.g. scene:' + (r.id || 'gate') + '; set_state:map_3.e9:open.' })));
     form.appendChild(h('div', { className: 'sub', text: 'Steps — played one after another' }));
     steps.forEach(function (st, i) {
-      var k = stepKind(st.type), card = h('div', { className: 'dcard' });
+      var k = stepKind(st.type), card = h('div', { className: 'dcard' + (sceneSel === i ? ' picked' : '') });
       card.appendChild(h('div', { className: 'row' },
         h('b', { style: 'font-size:12px;min-width:18px', text: String(i + 1) }),
         h('select', { style: 'flex:1', onchange: function (e) { st.type = e.target.value; save(true); } },
@@ -699,8 +898,13 @@ var CStudio = (function () {
         if (st.type === 'camera' && st.to === 'me' && (f[0] === 'x' || f[0] === 'y')) return;      // (looking at the player: no tile)
         if (st.type === 'emote' && (((f[0] === 'x' || f[0] === 'y') && st.over !== 'tile') || (f[0] === 'npc' && st.over !== 'npc') || (f[0] === 'a' && st.over !== 'actor'))) return;   // (only what "over" needs)
         if (st.type === 'face' && f[0] === 'to' && st.dir !== 'actor') return;
+        if (st.type === 'show' && f[0] === 'count' && st.a === 'me') return;                       // (there is one of you)
         card.appendChild(stepField(st, f));
       });
+      if (k && stepHasTile(st) && typeof SceneMap !== 'undefined') card.appendChild(h('div', { className: 'row', style: 'margin:3px 0' }, h('span', { className: 'lootlbl', style: 'min-width:70px', text: '' }),
+        h('button', { className: scenePick === i ? 'primary' : '', text: scenePick === i ? 'Now click the map…' : '📍 Pick on map', title: 'Then click the tile on the scene map (or drag this step\'s dot there)', disabled: !r.map,
+          onclick: function () { scenePick = scenePick === i ? null : i; sceneSel = i; sceneForm(); renderQuestMap(); } }),
+        r.map ? null : h('span', { className: 'note', text: ' pick the scene\'s map first (top of the map on the right)' })));
       form.appendChild(card);
     });
     form.appendChild(h('div', { className: 'row', style: 'margin:2px 0 8px' },
@@ -865,7 +1069,7 @@ var CStudio = (function () {
   // already holds a value shows whatever the type says, so nothing set is ever out of sight.
   var showAllItemFields = false;
   var ITEM_FIELD_NEEDS = {
-    slot: 'equip', worn_sprite: 'equip', worn_empty: 'shoot', worn_aim: 'shoot', worn_reload: 'shoot', default_tint: 'equip', hides_head: 'equip', atk: 'equip', def: 'equip', equip_if: 'equip',
+    slot: 'equip', worn_sprite: 'equip', worn_empty: 'shoot', worn_aim: 'shoot', worn_reload: 'shoot', default_tint: 'equip', hides_head: 'equip', hides_beard: 'equip', atk: 'equip', def: 'equip', equip_if: 'equip',
     range: 'shoot', ammo: 'shoot', ammo_cost: 'shoot', fire_ms: 'shoot', clip: 'shoot', reload_ms: 'shoot', fire_mode: 'shoot', aim: 'shoot',
     heal: 'consume', mp: 'consume', hunger: 'consume', thirst: 'consume', toxicity: 'consume', leaves: 'consume', on_use: 'consume', cooldown_s: 'consume',
     places: 'place',
@@ -1663,7 +1867,7 @@ var CStudio = (function () {
   // figure like a player, turned towards whoever looks at it; its plain sprite is then what the map editor shows.
   function npcOutfit(o) {
     var fit = (propsObj(o).outfit || []).map(function (l) { return { type: l.type || '', path: l.path || '', tint: l.tint || '' }; });
-    function isHair(l) { return l.type === 'hair' || /(^|\/)hair_[^\/]*$/.test(l.path); }
+    function isHair(l) { return l.type === 'hair' || l.type === 'beard' || /(^|\/)(hair|beard)_[^\/]*$/.test(l.path); }
     function save() {
       fit.forEach(function (l) { if (l.path && !l.tint && isHair(l)) l.tint = 'hair_brown'; });   // hair shows only through its colour: never leave it without one
       setProp(o, 'outfit', fit.map(function (l) { var q = { path: l.path }; if (l.tint) q.tint = l.tint; if (l.type) q.type = l.type; return q; }));
@@ -1929,7 +2133,7 @@ var CStudio = (function () {
   // a built-in list is the fallback when the manifest can't be fetched. Paths follow the type subfolders
   // (base/ hair/ head/ chest/ hands/). We also fold in any sprite already referenced in content.
   var pdManifest = null, artManifest = null;
-  var PD_SUBDIR = { body: 'base', hair: 'hair', helm: 'head', chest: 'chest', gun: 'hands', sword: 'hands' };
+  var PD_SUBDIR = { body: 'base', hair: 'hair', helm: 'head', chest: 'chest/male', gun: 'hands', sword: 'hands' };
   var PD_FALLBACK = ['body_zombie', 'body_zombie_female', 'body_survivor', 'body_survivor_female',
     'hair_bob', 'hair_buzz', 'hair_long', 'hair_messy', 'hair_metal_mohawk_v1', 'hair_metal_mohawk_v2',
     'hair_pony', 'hair_shaggy', 'hair_slick', 'hair_under',
@@ -1962,15 +2166,15 @@ var CStudio = (function () {
   // reference like art/sprites/paperdoll/chest_leather_jacket.png maps onto .../chest/chest_leather_jacket.png.
   function canonSprite(p) {
     if (!p) return p;
-    var want = baseName(p);
-    var hit = pdBase().filter(function (q) { return baseName(q) === want; })[0];
-    return hit || p;
+    if (pdBase().indexOf(p) >= 0) return p;                  // it is where it says (a man's and a woman's cut share one file name)
+    var want = baseName(p), hits = pdBase().filter(function (q) { return baseName(q) === want; });
+    return hits.filter(function (q) { return !isFemaleCut(q); })[0] || hits[0] || p;
   }
   // The sprite options, de-duplicated by filename (the manifest/base path wins), so a moved-and-renamed
   // file never appears twice — once broken (old path), once working (new path).
   function paperdollSprites() {
     var byName = {};
-    function add(p, preferred) { if (!p) return; var n = baseName(p); if (preferred || !byName[n]) byName[n] = p; }
+    function add(p, preferred) { if (!p) return; var n = baseName(p) + (isFemaleCut(p) ? '|f' : ''); if (preferred || !byName[n]) byName[n] = p; }
     pdBase().forEach(function (p) { add(p, true); });
     (T.Classes || []).forEach(function (r) { if (r.body_sprite) add(canonSprite(r.body_sprite)); });
     (T.Items || []).forEach(function (r) { if (r.worn_sprite) add(canonSprite(r.worn_sprite)); });
@@ -1985,6 +2189,8 @@ var CStudio = (function () {
   var LAYER_TYPES = [
     { id: 'body',    label: 'Body',     match: ['body'] },
     { id: 'hair',    label: 'Hair',     match: ['hair'] },
+    { id: 'beard',   label: 'Beard',    match: ['beard'] },
+    { id: 'face',    label: 'Face',     match: ['face', 'glasses'] },
     { id: 'head',    label: 'Head',     match: ['helm', 'hat', 'mask', 'hood'] },
     { id: 'chest',   label: 'Chest',    match: ['chest', 'shirt', 'jacket', 'vest', 'armor', 'coat'] },
     { id: 'legs',    label: 'Legs',     match: ['legs', 'pants', 'skirt'] },
@@ -1994,6 +2200,9 @@ var CStudio = (function () {
     { id: 'any',     label: 'Any',      match: [] }
   ];
   function fileName(path) { return String(path || '').split('/').pop().replace(/\.png$/i, ''); }
+  // Gear cut for a woman's body lives in a female/ folder under the same file name as the man's (in male/): see Tint.twin.
+  function isFemaleCut(path) { return /\/female\/[^\/]+$/.test(String(path || '')); }
+  function spriteLabel(path) { return fileName(path) + (isFemaleCut(path) ? ' (female)' : ''); }
   function spritePrefix(path) { var n = fileName(path).toLowerCase(), i = n.indexOf('_'); return i < 0 ? n : n.slice(0, i); }
   function layerTypeDef(id) { for (var i = 0; i < LAYER_TYPES.length; i++) if (LAYER_TYPES[i].id === id) return LAYER_TYPES[i]; return LAYER_TYPES[LAYER_TYPES.length - 1]; }
   function typeOfSprite(path) {
@@ -2065,7 +2274,7 @@ var CStudio = (function () {
   }
   function spritePicker(L, current, onPick) {
     var items = [{ value: '', label: '— none —', visual: function () { return h('span', { className: 'thumb ph' }); } }]
-      .concat(spritesForType(layerType(L)).map(function (p) { return { value: p, label: fileName(p), visual: function () { return spriteThumb(p); } }; }));
+      .concat(spritesForType(layerType(L)).map(function (p) { return { value: p, label: spriteLabel(p), visual: function () { return spriteThumb(p); } }; }));
     return visualPicker(canonSprite(current), items, onPick, 'sprite…');
   }
   function skinNames() { return (typeof Tint !== 'undefined' && Tint.SKINS) ? Object.keys(Tint.SKINS) : []; }
@@ -2220,13 +2429,14 @@ var CStudio = (function () {
     function draw() {
       g.clearRect(0, 0, c.width, c.height);
       var tone = typeof Tint !== 'undefined' && Tint.lookSkin ? Tint.lookSkin(look) : '';
+      var fem = typeof Tint !== 'undefined' && Tint.femaleLook && Tint.femaleLook(look);
       look.forEach(function (l) {
-        var base = pvImg(l.path); if (!base.complete || !base.width) return;
-        var layer = base, tint = lookTint(l.path, l.tint);
-        if (tint && typeof Tint !== 'undefined' && Tint.TINTS[tint]) {
-          var mask = pvImg(maskPath(l.path));
-          if (mask.complete && mask.width) layer = Tint.getTintedLayer(base, mask, Tint.TINTS[tint]);
-        }
+        var tw = fem ? Tint.twin(l.path) : '';                   // a woman's body wears the woman's cut, when the file is there (as in the game)
+        if (tw) { var ti = pvImg(tw); if (ti.complete && ti.width) l = { path: tw, tint: l.tint }; else if (!ti.complete) ti.addEventListener('load', draw, { once: true }); }
+        var base = pvImg(l.path); if (!base.complete) return;
+        var tint = lookTint(l.path, l.tint), ramp = tint && typeof Tint !== 'undefined' ? Tint.TINTS[tint] : null;
+        var layer = Tint.layer(base, ramp ? pvImg(maskPath(l.path)) : null, ramp);   // (the picture, its coloured mask, or both)
+        if (!layer) return;
         var sk = tone ? Tint.skinFor(l.path, tone) : null;
         if (sk) layer = Tint.skinned(layer, sk.tone, !sk.all);
         try { g.drawImage(layer, 0, 0, c.width, c.height); } catch (e) { /* image still loading */ }
@@ -2234,7 +2444,7 @@ var CStudio = (function () {
     }
     draw();
     look.forEach(function (l) {                               // redraw as each sprite/mask finishes loading
-      [pvImg(l.path), lookTint(l.path, l.tint) ? pvImg(maskPath(l.path)) : null].forEach(function (im) { if (im && !im.complete) im.addEventListener('load', draw, { once: true }); });
+      [pvImg(l.path), lookTint(l.path, l.tint) ? pvImg(maskPath(l.path)) : null].forEach(function (im) { if (im && !im.complete) { im.addEventListener('load', draw, { once: true }); im.addEventListener('error', draw, { once: true }); } });
     });
     return c;
   }

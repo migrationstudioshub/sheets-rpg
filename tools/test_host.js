@@ -74,8 +74,14 @@ async function saving() {
   ok(JSON.parse(kept).x === at.x && JSON.parse(kept).y === at.y, 'the file holds where the character stands');
 
   await crash();
-  ok(fs.readdirSync(pf).concat(fs.readdirSync(mf)).every(n => /\.json$/.test(n)), 'a crash leaves no half-written record behind');
+  // (killed in the middle of a save it may leave the record it was writing as <name>.json.tmp: that is no record, and
+  // every real one is whole; the next start throws the leftover away)
+  const whole = f => fs.readdirSync(f).filter(n => /\.json$/.test(n)).every(n => { try { JSON.parse(fs.readFileSync(path.join(f, n), 'utf8')); return true; } catch (e) { return false; } });
+  ok(whole(pf) && whole(mf) && whole(dir), 'a crash leaves no half-written record behind');
+  ok(fs.readdirSync(pf).concat(fs.readdirSync(mf)).every(n => /\.json(\.tmp)?$/.test(n)), 'and nothing but records, or one it was in the middle of writing');
+  fs.writeFileSync(path.join(pf, 'leftover.json.tmp'), '{"half":');        // (as if it had been killed mid-save)
   up = await start(file);
+  ok(fs.readdirSync(pf).concat(fs.readdirSync(mf), fs.readdirSync(dir)).every(n => !/\.tmp$/.test(n)), 'the next start throws away what a crash left half-written');
   ok(/Resumed the game/.test(up.text) && /1 character/.test(up.text), 'after a crash the host resumes the game');
   const back = await post({ action: 'load', token: j.token });
   ok(back.player && back.player.name === 'Keeper' && back.player.x === at.x && back.player.y === at.y, 'the character is where it was');

@@ -289,7 +289,7 @@ function handleGame(body, conn) {
   if (conn && body.token && (body.action === 'load' || body.action === 'poll' || body.action === 'act')) conn.token = body.token;
   const since = conn && conn.since !== undefined ? conn.since : body.since;
   switch (body.action) {
-    case 'join': return join(body.name, body['class'], { body: body.body, skin: body.skin, hair: body.hair, hairColor: body.hairColor });
+    case 'join': return join(body.name, body['class'], { body: body.body, skin: body.skin, hair: body.hair, hairColor: body.hairColor, beard: body.beard, beardColor: body.beardColor });
     case 'load': return step(body.token, null, -1);
     case 'poll': return step(body.token, null, since, body.structRev, body.floorRevs);
     case 'act':  return step(body.token, body['do'], since, body.structRev, body.floorRevs);

@@ -21,7 +21,7 @@ IMP = os.path.join(ROOT, 'data', 'import')
 
 # Paper-doll art lives in type subfolders (base/ hair/ head/ chest/ hands/); route a sprite by its prefix.
 PD_SUBDIR = {'body': 'base', 'hair': 'hair', 'helm': 'head', 'hat': 'head', 'hood': 'head',
-             'chest': 'chest', 'shirt': 'chest', 'jacket': 'chest', 'vest': 'chest', 'armor': 'chest', 'coat': 'chest',
+             'chest': 'chest/male', 'shirt': 'chest/male', 'jacket': 'chest/male', 'vest': 'chest/male', 'armor': 'chest/male', 'coat': 'chest/male',   # (the man's cut; a woman's body draws its twin in chest/female/)
              'back': 'back', 'sword': 'hands', 'gun': 'hands', 'offhand': 'hands'}
 def pd_path(name):
     f = PD_SUBDIR.get(name.split('_', 1)[0], '')

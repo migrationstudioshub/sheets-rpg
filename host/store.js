@@ -29,16 +29,23 @@ function files(dir, legacyFile) {
     const out = {};
     let names = [];
     try { names = fs.readdirSync(folder); } catch (e) { return out; }
+    tidy(folder, names);
     names.filter(n => /\.json$/.test(n)).forEach(n => {
       try { out[idOf(n)] = JSON.parse(fs.readFileSync(path.join(folder, n), 'utf8')); }
       catch (e) { warn.push(path.join(folder, n)); }
     });
     return out;
   }
+  // A host killed in the middle of a save (a crash, a power cut) leaves the record it was writing as <name>.json.tmp:
+  // the real record beside it is whole (that is what write-then-rename is for), so the leftover is only thrown away.
+  function tidy(folder, names) {
+    names.filter(n => /\.json\.tmp$/.test(n)).forEach(n => { try { fs.unlinkSync(path.join(folder, n)); } catch (e) { /* in use, or gone: leave it */ } });
+  }
   return {
     where: dir,
     async load() {
       const unread = [];
+      try { tidy(dir, fs.readdirSync(dir)); } catch (e) { /* no folder yet */ }
       const players = readAll(sub.player, unread), maps = readAll(sub.map, unread);
       let world = null;
       try { world = JSON.parse(fs.readFileSync(path.join(dir, 'world.json'), 'utf8')); } catch (e) { /* none yet */ }

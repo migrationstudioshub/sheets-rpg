@@ -89,6 +89,8 @@ A game action is sent as `do` (not `action`!): `{type: 'move', dirs} | {type: 'i
   the 250 ms poll, as before. `LAG_MS` fakes lag. Tests: `node tools/test_host.js`. **Saving (stage 2)** goes through
   `host/store.js` (`load()` / `put(kind, id, json)`; files today, the database later): `host/save.live/` holds one file per
   character, per map, and `world.json`; `save()` writes only records whose JSON changed, every `SAVE_MS` (3 s) and on Ctrl+C.
+  A record is written as `<name>.json.tmp` and renamed, so a host killed mid-save leaves whole records plus at most a
+  stray `.tmp`, which `load()` throws away (`tidy`).
   All map state stays in memory (no load/unload). **Messages (stage 3)**: `client/js/wire.js` holds both ends
   (`Wire.pack` host, `Wire.unpack` page; the format is in its header) — answers and pushes alike carry only what changed on
   that socket, monsters/players one by one, and only those within Config `interest_radius` (20) of the player. Change the
@@ -144,9 +146,9 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   (every input in the raw cells, room for every output); an input taken back out of the raw cells makes the job fail and stop (`cookLost`, owner 26 Nov 2026; no room for the output only waits); `cookTick` counts the time. A recipe short of more than one ingredient reads "missing ingredients" (`lackText`). Actions: `inv` moves (a cell picks
   the run), `store` ops `light` / `douse` / `load` (`recipe`, `qty`: sets or adds to the job, moves what is missing from the bag into
   the raw cells, lights it if there is fuel) / `cancel`. Page: `cookWindow` in `main.js` (backpack | the fire: raw > fire > cooked, fuel, the switch | its recipes), drawn from `storage.cook`. The campfire in `data/game/` has 6 raw, 4 fuel, 6 cooked cells.
-- **What is worn:** an item's `slot` = `weapon` (in hand), `helm` (head), `armor` (chest), `pants`, `feet`, `gloves`, `back`,
+- **What is worn:** an item's `slot` = `weapon` (in hand), `helm` (head), `face` (masks, glasses; owner, 27 Nov 2026 — its worn cell is numbered AFTER the accessories, `late` in `WORN_SLOTS`, so old saves keep their cells), `armor` (chest), `pants`, `feet`, `gloves`, `back`,
   `belt` (a worn belt, not the hotbar) (`World.WORN_SLOTS`), or `accessory` — two at once (`World.ACC_SLOTS`), in `p.equipment.accessory1…2`
-  (owner's layout, 26 Nov 2026: Head, Chest, Pants, Acc on the left; Back, Gloves, Feet, Acc on the right; Belt under the figure;
+  (owner's layout, 27 Nov 2026: Head, Chest, Pants, Feet on the left; Face, Back, Gloves, Belt on the right; the two Acc under the figure;
   under the tray the level and XP bar, `.dlevel`; the HUD shows only an XP bar under the belt, `#xp-row`, no level or numbers). Items `hides_head` (a tick, `item.hidesHead`; owner, 26 Nov 2026: a poncho's hood): while worn, the hair and the helm's picture are not drawn (`playerLayers` in `main.js`; draw-only). While an item is dragged, the place it can be worn pulses white (`dollHint`, `.dslot.fits`). Every slot has its ghost icon (the extra kit icons helm, pants, glove, boot, belt, ring, snow, weight are drawn by `tools/gen_ui_icons.js`). Under the bars (health, then water | food as wide as it; hover = the numbers) is the **conditions row** (`conditions()` in `main.js`: statuses, toxicity, thirsty / hungry at 25% or less, and — behind `UI.FLAGS` temperature / load — freezing, too hot, encumbered), where the HP line was. `World.wornAt` / `slotFor` are the only
   two that know the accessory places; `use` takes `slot` (which place; a worn accessory dropped on another place moves).
   Page: with no container open the inventory is `invWindow` in `main.js` — who you are (the worn slots as cells beside
@@ -157,6 +159,24 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   `Content.build` turns them into `item.can`, `item.cooldownMs`, `item.props`; rules ask **`World.itemCan(it, what)`**, never
   the type's name (it falls back to the old names for content built without ticks). No tab = the built-in `Content.ITEM_TYPES`.
   Object kinds the owner adds live in Config `object_kinds` (edited from the Object Kinds card).
+- **Facial hair** (27 Nov 2026; the owner's choices: picked on the character screen, not an item; a colour of its own): pictures
+  `art/sprites/paperdoll/face/beard_*.png` + their `.tint.png` (the same folder will hold face gear art). `World.hairChoices`
+  also gives `beards` ('' = none, first; the built-in `BEARD_STYLES`, or Config `beard_styles`); `newPlayer` takes `look.beard` /
+  `look.beardColor` (a hair ramp; not stored when it is the hair's) → `p.beard`, `p.beardColor`, sent wherever `hair` is. Drawn
+  by `playerLayers` under the hair and under face gear (`SLOT_Z.beard`), never hidden by a helm or hood; Items **`hides_beard`**
+  (a tick, `item.hidesBeard`, draw-only, any worn slot) hides it — off by default (owner). **A layer may be nothing but its
+  mask** (owner, 27 Nov 2026: stubble now, make-up later): `foo.tint.png` with no `foo.png` still draws, named by the path its
+  picture would have. **`Tint.layer(picture, mask, ramp)` is the one place that decides what a paper-doll layer draws** (game,
+  character screen, Studio previews) — never require the picture; both manifest builders (`tools/build_art_manifest.js`,
+  `asset_server.py`) list a lone mask under that name. Not built: changing hair or beard after creation.
+- **Gear cut for a man and for a woman** (27 Nov 2026; the owner's choices: two folders with the SAME file names, no data per
+  item): `art/sprites/paperdoll/chest/male/chest_x.png` and `…/chest/female/chest_x.png` (masks beside each). Content always
+  names the MAN's picture (Items `worn_sprite`, outfits, appearance options). `Tint.twin(path)` = where the woman's would be
+  (any `…/male/<file>` → `…/female/<file>`, so another slot only needs the two folders); **`Assets.wornFor(path, female)` is the
+  one place the game picks** — the twin when its file is there, else the picture named (so a garment with no woman's cut still
+  draws). Asked by `playerLayers` (`p.body === 'female'`), and for looks whose body picture ends `_female.png`
+  (`Tint.femaleLook`: `monsterLayers`, `Render.outfitLayers`, the Studio's `composeLook`). Draw-only. The Studio's pickers list
+  both cuts (the woman's labelled "(female)"); picking a female one outright also works.
 - **What is worn is a place of its own too** (owner, 26 Nov 2026): a worn helm/armor/pants/feet/gloves/back/accessory is not in
   the backpack, only in its slot by the figure. Worn place k is cell `World.WORN_AT` (2000) + its index in `wornKeys()`
   (`World.wornCell(k)`); `p.equipment[k]` still names the item and `wornSync` keeps it in step with the cells. Wear / take off
@@ -176,6 +196,22 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   onto the belt first (owner, 26 Nov 2026): stacks of it there with room, then free slots, then the backpack (`World` `carryAdd`, used by `give`, box `take`, `takeall` and box → bag moves). What the player takes off the belt is never put back behind their back. The one
   in use (`stackInUse`) is the one in the slot in hand. Bag / worn cells are 50% bigger than the kit draws them (30, 9-sliced; the belt stays 24),
   and item icons are cropped to their drawn pixels (`itemIconUrl` in `main.js`) so they fill the slot.
+- **What is in hand is drawn in the hand** (27 Nov 2026; the owner's choices: the item's own icon with no hand drawn over it, everyone
+  sees it, one rule for every item — nothing per item —, a small motion when it is used). A weapon or tool with a held picture
+  (`worn_sprite`) is drawn as before. Anything else in hand (food, a bottle, a grenade, a bedroll, a tool with no held picture) is a
+  paper-doll layer marked `icon` (`playerLayers` in `main.js`: yours from `belt[held]`, another player's from **`hand`** —
+  `World.handOf`, sent wherever `wst` is, `functions/referee.js` too; '' when it is the weapon, which `equipment` already tells).
+  `drawHeld` in `render.js` is the one place that draws it: the icon cut to its painted pixels, **as big as it is on the belt**
+  (owner: 20 UI pixels on its longer side, whatever the view's zoom — `handSize` in `main.js` tells `Render.setHandPx`),
+  centred on the `HAND` point of the 32x48 figure. Motions: `lift` on the actor (0..1) carries it to the mouth, quickly (the
+  first `EAT_UP`, a fifth, of the hold); then it is eaten in `EAT_BITES` (3) bites — `bite` on the actor = the share gone, a round
+  piece out of the corner by the mouth — each throwing a few crumbs of the item's own colours (`Render.crumbs`, drawn by the
+  death burst's `drawFx` kind `burst`); the last bite is the moment it is used;
+  a throw swings it about the shoulder (the weapons' `swing`). Others see both through `act` kinds `u` (used) and `t` (thrown)
+  (`noteAct`, `othersAct`). **Food and the like in hand is used by HOLDING the left button half a second** (`EAT_MS`, `eatHold` /
+  `eatProg` in `main.js`; the owner: a click somewhere must never eat by accident), **one per hold** however long it lasts; a quick
+  click does nothing, and a hold on something that has actions still opens its action list instead. Clicking the belt slot that is
+  already in hand still uses it at once. Not built: an offset or size per item, a hand drawn over the icon, monsters / NPCs holding things.
 - **Belt and what you hold:** the hotbar is `World.BELT_SIZE` (10) belt slots (keys 1-9, 0), which take consumables,
   throwables, weapons and tools. One slot is in hand: `p.held` (-1 = nothing), set by `{type:'hold', slot}` → `World.holdSlot`,
   which is the only thing that sets `equipment.weapon` (a non-weapon in hand = no weapon). Choosing never consumes; `use`/`throw` do.
@@ -333,7 +369,16 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   them (`sceneActors`; your own is `actors[0]` moved; a taken-over NPC's real figure is hidden through `scenePupKeys` in
   `npcActors` / `hiddenEntity`). A monster's look is rolled once per scene (`sceneLooks`). The speaker's mark is the
   `talk` picture in `emotes.js` (not in `Content.EMOTES`). Actors carry `alpha` (`paintActor`); `Render.figureOn` is
-  exported for the portrait. **No name tags are drawn during a scene.** Until a scene's first camera step the camera stays
+  exported for the portrait. **Several of the same** (owner, 27 Nov 2026: numbered copies AND packs; for monsters,
+  brought-in NPCs and NPCs placed several times on the map; each copy its own look): a ref takes `#<n>` =
+  another of the same (`mon:rat#2`; the number box beside the Studio's actor list; for an NPC on the map `#2` =
+  the second nearest placement), each its own actor. A **pack** = `show` with `count` over 1 (at most 12): its
+  members are puppets of their own named `<ref>|2`, `<ref>|3`… (`members` in `scene.js`), and every step naming the
+  actor is done by all of them, each on its own tile of `World.packSpots(c, map, at, n, opts)` (the tile, then the
+  nearest that can be walked to) — the one rule the page (`sceneSpots`) and the referee (a pack that stays) both ask,
+  so a pack stays where it was seen. `sceneRef` in `main.js` takes a ref apart. Figures have ONE side-on picture
+  (mirrored for left), so actors face left or right only: up / down would need new art.
+  **No name tags are drawn during a scene.** Until a scene's first camera step the camera stays
   on the player (wherever the scene walks them). Steps that take no time (a camera cut, an emote, a `bars` step that
   changes nothing — a scene starts with the bars on) are all done within one frame (`update` in `scene.js` loops until
   a step takes time), so a scene that opens with a cut never shows where the player stands first. **Actors that stay** (owner, 27 Nov 2026; their choices: monsters and
@@ -345,9 +390,20 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   nobody's (`m.free`: no spawner, gone for good when killed, real for everyone, counts for kills), with `m.wait` =
   2 s during which `advance` and `senseStep` leave it be; `me` = `p.x, p.y` really change. Its look is rolled when the
   scene is queued (`q.cast`, `publicPlayer.sceneCast`) so the one on screen is the one that stays. Not in the Studio's
-  ▶ Play (no referee). Not built: two of the same monster or NPC in one
-  scene, actors facing north / south, a puppet's walking changing the real world, stage 3 picking camera spots and paths
-  on a map in the Studio, stage 4 sound / other maps / shared scenes; watching again.
+  ▶ Play (no referee). Not built: a puppet's walking changing the real world, stage 4 sound / other maps / shared scenes; watching again.
+  **Stage 3, the scene map in the Studio** (built 27 Nov 2026; the owner's choices: a Map picker on the scene, the
+  real map, a pick button AND draggable markers, a "player starts here" marker that ▶ Play also uses). Scenes rows
+  carry `map` and `start_xy` ("x,y") — for the Studio and its Play only; the game still plays a scene wherever it
+  is started (`c.scenes[id].map / .start`). `content/js/scenemap.js` (`SceneMap.draw / fit / reload / info`,
+  drawn into `#qmap` by `renderSceneMap` in `cstudio.js`): the map is drawn ONCE into a picture by the game's own
+  `Render.Renderer` (so the Studio page now loads autotile, rules, world, assets, scatter, render), from a content
+  built from the Studio's tables and kept until ↻ (maps are edited in the map editor); over it, worked out from the
+  steps in order (`planOf`): a numbered dot per step that has a tile (camera stop, show, walk, emote on a tile), the
+  camera's way, each actor's walk (the way the game would find it, `pathOf`; dashed = straight), P = the player, a
+  dashed ring = it stays. Drag a dot = that step's `x, y`; click a dot = its step card (`sceneSel`); a step's
+  "📍 Pick on map" (or Set player) then a click = the tile (`scenePick`). Wheel zooms, dragging the ground moves.
+  ▶ Play this scene first puts the offline test character on `start` (`api.warp(map, x, y)`). A draft with no maps
+  (the hosted Studio before maps are loaded) shows a note instead.
 - **Emotes** (26 Nov 2026; the owner's choices: a fixed pixel-art set, not system emoji; each shows for its seconds or, at 0,
   for the whole scene; over the player, an NPC or a tile; also a standing emote on an NPC and emotes players make). The ids
   and names are **`Content.EMOTES`** (sleep, alert, question, heart, dots, angry, sweat, note); the pictures are rows of
@@ -421,7 +477,7 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   **Follow** box (quest op `follow` + `on`; unfollowed = `p.quests[id].hide`, sent as `hide` in the log entry). The tracker
   (right of the game view) shows only followed quests; a quest is followed when it starts.
   **Studio, Quests view** (Nov 2026): the cards can be dragged into order (`dragSort` / `moveRow` in `cstudio.js`; the row
-  order is `q.order`, the order an NPC offers its quests; off while searching). On the right, the **questline map**
+  order is `q.order`, the order an NPC offers its quests; off while searching). **Questlines** (27 Nov 2026) are folders of that list, for tidiness only (the game never reads them): a quest row names its folder in `questline`, the folders (order, empty ones) are Config `questlines` (names joined by `|`, hidden from the Config list), which are shut is `sheetsrpg.studioQuestlinesShut`. `questFolders` / `qlCard` / `qlTarget` / `qlDrop` in `cstudio.js`: drop a quest on a heading or beside a quest of a folder to put it in; Shift+click picks a run, Ctrl+click one more (`qlSel`), and dragging one of the picked moves them all; + New questline, ✎ rename, ✕ remove (its quests are kept). The rows stay one ordered list. **Scenes and Dialogues have the same folders**, called Folders (owner, 27 Nov 2026): `FOLDERS` in `cstudio.js` is the one table of which lists have them (row field `folder`, Config `scene_folders` / `dialogue_folders`, shut ones in `sheetsrpg.studioFoldersShut.<list>`); another list = one row there. On the right, the **questline map**
   (`content/js/questmap.js`, draw-only, reads the draft rows): every `quest:` link in `on_start`, an objective's `on_done`,
   `rewards`, and `quest:` / `quest_active:` in `requires` is an arrow (colour = kind); quests joined by links form one
   questline, laid out top to bottom, links going back up drawn round the side; a link to a missing id shows dashed red.

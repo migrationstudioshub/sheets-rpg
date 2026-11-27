@@ -93,6 +93,7 @@
   {"key":"map_9.e90","x":31,"y":4,"ref":"container_loot-bag","data":""},
   {"key":"map_9.e91","x":42,"y":50,"ref":"harvest_tree","data":"{\"look\":\"v2\"}"},
   {"key":"map_9.e92","x":28,"y":27,"ref":"harvest_berrybush","data":""},
-  {"key":"map_9.e93","x":24,"y":31,"ref":"harvest_berrybush","data":""}
+  {"key":"map_9.e93","x":24,"y":31,"ref":"harvest_berrybush","data":""},
+  {"key":"map_9.e94","x":29,"y":23,"ref":"container_barrel","data":"{\"capacity\":13,\"contents\":\"armor_poncho:1, armor_leather-jacket:1, armor_survivor-rag:1\"}"}
 ]
 }

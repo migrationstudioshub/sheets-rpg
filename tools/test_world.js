@@ -3486,8 +3486,26 @@ test('a new character takes the hair and colour chosen on the character screen, 
   assert.deepStrictEqual([q.hair, q.hairColor], [c.config.start_hair, c.config.start_hair_color], 'anything else is ignored');
   const d = World.newPlayer(c, 'd', 'Dee', 'warrior');
   assert.deepStrictEqual([d.hair, d.hairColor], [c.config.start_hair, c.config.start_hair_color], 'no choice = the starting look');
+  // facial hair: none unless one on offer is picked; its own colour, or the hair's
+  assert.ok(ch.beards[0] === '' && ch.beards.length > 3);
+  const b = World.newPlayer(c, 'h', 'Hal', 'warrior', { hairColor: 'hair_blonde', beard: ch.beards[1], beardColor: 'hair_grey' });
+  assert.deepStrictEqual([b.beard, World.publicPlayer(c, b).beardColor], [ch.beards[1], 'hair_grey']);
+  assert.deepStrictEqual([d.beard, World.publicPlayer(c, d).beard], [undefined, '']);
+  assert.strictEqual(World.newPlayer(c, 'i', 'Ian', 'warrior', { beard: 'art/else.png', beardColor: 'hair_grey' }).beard, undefined);
   c.config.hair_styles = 'art/a.png, art/b.png'; c.config.hair_colors = 'hair_black';
   assert.deepStrictEqual(World.hairChoices(c).styles, [c.config.start_hair, 'art/a.png', 'art/b.png', ''], 'the Config can name its own');
+});
+
+test('the face is a worn place of its own (masks, glasses), numbered after the accessories so old saves keep their cells', () => {
+  const t = JSON.parse(JSON.stringify(tables));
+  t.Items.push({ id: 'shades', name: 'Shades', type: 'armor', slot: 'face', def: 1 });
+  const c = Content.build(t), p = World.newPlayer(c, 'a', 'Ana', 'warrior'), ws = { maps: {} };
+  assert.strictEqual(World.wornCell('accessory1'), World.WORN_AT + 7, 'the accessories did not move');
+  assert.strictEqual(World.wornCell('face'), World.WORN_AT + 9);
+  World.give(c, p, 'shades', 1, [], true);
+  World.act(c, ws, p, { type: 'use', item: 'shades' }, 1000, mid, [p]);
+  assert.strictEqual(p.equipment.face, 'shades');
+  assert.ok(p.inventory.some(st => st.item === 'shades' && st.s === World.wornCell('face')));
 });
 
 
@@ -5037,6 +5055,26 @@ test('scenes: an actor ticked "stays" is made real when the scene ends: a monste
   const n1 = count();
   World.run(s.c, s.ws, s.p, 'scene:none', s.t, []); s.as(s.p, { type: 'scene', op: 'end', id: 'none' });
   assert.strictEqual(count(), n1);
+});
+
+test('scenes: several of the same monster (numbered copies, and packs) each stay as a monster of their own', () => {
+  const steps = JSON.stringify([
+    { type: 'show', a: 'mon:rat', x: 6, y: 6, count: 3, stay: true },        // a pack of three
+    { type: 'show', a: 'mon:rat#2', x: 9, y: 3, stay: true },                // another rat, on its own
+    { type: 'show', a: 'mon:rat#3', x: 1, y: 9 },                            // a third kind of copy that does not stay
+    { type: 'walk', a: 'mon:rat', x: 8, y: 8 }]);
+  const s = village([RATS], tb => { tb.Scenes = [{ id: 'pack', steps }]; });
+  const live = () => s.ws.maps.field.monsters.filter(m => !m.dead), n0 = live().length;
+  World.run(s.c, s.ws, s.p, 'scene:pack', s.t, []);
+  s.as(s.p, { type: 'scene', op: 'end', id: 'pack' });
+  const made = live().slice(n0);
+  assert.strictEqual(made.length, 4, 'three of the pack and the second rat');
+  assert.ok(made.every(m => m.ref === 'rat' && m.free), 'all rats, nobody\'s');
+  assert.strictEqual(new Set(made.map(m => m.x + ',' + m.y)).size, 4, 'each on a tile of its own');
+  assert.strictEqual(new Set(made.map(m => m.id)).size, 4, 'each with an id of its own');
+  const pack = made.filter(m => Math.abs(m.x - 8) + Math.abs(m.y - 8) <= 3), lone = made.filter(m => m.x === 9 && m.y === 3);
+  assert.deepStrictEqual([pack.length, lone.length], [3, 1], 'the pack round where it walked to, the other where it was shown');
+  assert.ok(pack.some(m => m.x === 8 && m.y === 8), 'one of the pack on the very tile');
 });
 
 test('emotes: a player emote is sent to everyone around for a while; unknown ones are refused; scenes take an emote step', () => {

@@ -2136,7 +2136,7 @@ var CStudio = (function () {
   // (base/ hair/ head/ chest/ hands/). We also fold in any sprite already referenced in content.
   var pdManifest = null, artManifest = null;
   var PD_SUBDIR = { body: 'base', hair: 'hair', helm: 'head', chest: 'chest/male', gun: 'hands', sword: 'hands' };
-  var PD_FALLBACK = ['body_zombie', 'body_zombie_female', 'body_survivor', 'body_survivor_female',
+  var PD_FALLBACK = ['body_zombie', 'body_zombie_female', 'body_zombie_female_slim', 'body_survivor', 'body_survivor_female', 'body_survivor_female_slim',
     'hair_bob', 'hair_buzz', 'hair_long', 'hair_messy', 'hair_metal_mohawk_v1', 'hair_metal_mohawk_v2',
     'hair_pony', 'hair_shaggy', 'hair_slick', 'hair_under',
     'chest_leather_jacket', 'chest_riot_vest', 'helm_army', 'gun_pistol', 'sword_machete'

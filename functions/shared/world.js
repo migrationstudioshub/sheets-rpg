@@ -1722,12 +1722,17 @@ var World = (function () {
     'beard_chops_v1_final', 'beard_full_only_final', 'beard_full_final', 'beard_long_final'].map(function (n) { return BEARD_DIR + n + '.png'; });
   var HAIR_COLORS = ['hair_black', 'hair_dark', 'hair_brown', 'hair_auburn', 'hair_ginger', 'hair_blonde', 'hair_grey', 'hair_white'];
   // The body under the gear: one for men, one for women, the same for every class (Config body_male / body_female).
-  // A character carries body: 'female' or nothing (= male). The class's own body_sprite is only the fallback for a
+  // A character carries body: 'female', 'female_slim' or nothing (= male). The class's own body_sprite is only the fallback for a
   // male body when the Config names none (content made before bodies were a choice).
-  var BODY_MALE = 'art/sprites/paperdoll/base/player/body_survivor.png', BODY_FEMALE = 'art/sprites/paperdoll/base/player/body_survivor_female.png';
+  // A woman's body comes in two builds (owner, 27 Nov 2026): 'female' = curvy (the woman's cut of what she wears, and her
+  // chest moves) and 'female_slim' = slim (Config body_female_slim): drawn in the MAN's cut of every garment and with no
+  // chest motion — to the page a slim woman is like a man in all but her body picture (it asks body === 'female').
+  var BODY_MALE = 'art/sprites/paperdoll/base/player/body_survivor.png', BODY_FEMALE = 'art/sprites/paperdoll/base/player/body_survivor_female.png',
+    BODY_SLIM = 'art/sprites/paperdoll/base/player/body_survivor_female_slim.png', BODIES = ['', 'female', 'female_slim'];
   function bodySprite(c, p) {
     var cls = p && c.classes && c.classes[p['class']];
     if (p && p.body === 'female') return c.config.body_female || BODY_FEMALE;
+    if (p && p.body === 'female_slim') return c.config.body_female_slim || BODY_SLIM;
     return c.config.body_male || (cls && cls.bodySprite) || BODY_MALE;
   }
   // Skin tones a character may have: names of the page's Tint.SKINS (which holds the colours). skin_light is the
@@ -1761,7 +1766,7 @@ var World = (function () {
       questBegin(c, null, p, q, Date.now() + i, [], { announce: true });
     });
     if (look) {
-      if (look.body === 'female') p.body = 'female';
+      if (look.body && BODIES.indexOf(look.body) > 0) p.body = look.body;
       if (SKIN_TONES.indexOf(look.skin) >= 0 && look.skin !== 'skin_light') p.skin = look.skin;
       var ch = hairChoices(c);
       if (typeof look.hair === 'string' && ch.styles.indexOf(look.hair) >= 0) p.hair = look.hair;

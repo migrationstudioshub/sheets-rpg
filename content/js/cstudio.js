@@ -1073,6 +1073,7 @@ var CStudio = (function () {
     range: 'shoot', ammo: 'shoot', ammo_cost: 'shoot', fire_ms: 'shoot', clip: 'shoot', reload_ms: 'shoot', fire_mode: 'shoot', aim: 'shoot',
     heal: 'consume', mp: 'consume', hunger: 'consume', thirst: 'consume', toxicity: 'consume', leaves: 'consume', on_use: 'consume', cooldown_s: 'consume',
     places: 'place',
+    noise: 'equip',
     throw_range: 'throw', throw_area: 'throw', throw_power: 'throw', throw_status: 'throw', throw_status_ms: 'throw', throw_noise: 'throw', burns: 'throw',
     penetration: 'ammo', falloff: 'ammo', recover: 'ammo', tool: 'tool', structure_dmg: 'tool', durability: 'tool', material_wear: 'tool', repair_cost: 'tool', repair_station: 'tool', salvage: 'tool'
   };

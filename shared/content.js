@@ -285,6 +285,7 @@ var Content = (function () {
         // type 'throwable' (grenade/molotov): area damage + status at a thrown spot, up to throw_range away
         throwRange: num(r.throw_range, 0), throwArea: num(r.throw_area, 0), throwPower: num(r.throw_power, 0),
         throwNoise: num(r.throw_noise, 0),                     // tiles its landing is heard from (0 = Config throw_noise, below 0 = silent)
+        noise: num(r.noise, 0),                                // tiles USING it is heard from: a shot, a blow (0 = Config noise_shot / noise_melee, below 0 = silent)
         throwStatus: str(r.throw_status), throwStatusMs: num(r.throw_status_ms, 0),
         // damage to walls/objects per hit (0 = derived from attack); burns = a thrown blast also sets wood alight
         structureDmg: num(r.structure_dmg, 0), burns: bool(r.burns), fuelS: num(r.fuel_s, 0),
@@ -310,6 +311,8 @@ var Content = (function () {
         // prey = walkers hunt this monster as they hunt players (animals).
         // hearing: times every noise radius for this one (docs/STEALTH.md; empty = 1, 0 = deaf)
         hearing: num(r.hearing, 1),
+        // noise: tiles a player hears it from while it MOVES out of their sight (empty = Config monster_noise, 5; 0 = never heard)
+        noise: r.noise === undefined || r.noise === '' || r.noise === null ? -1 : num(r.noise, -1),
         blood: str(r.blood),                                         // draw-only: the colour it bleeds when it dies ('' = red, 'none' = no blood)
         brain: str(r.brain), sight: num(r.sight_range, 0), aggroS: num(r.aggro_s, 0), structureDmg: num(r.structure_dmg, 0), prey: bool(r.prey),
         // animals: how near a threat may come before it runs, what it leaves when killed, what tames it, what a tame one lays and how often

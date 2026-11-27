@@ -198,22 +198,24 @@ Skills, Statuses, Levels. Server spreadsheet: Players, WorldState (the server ad
   picture would have. **`Tint.layer(picture, mask, ramp)` is the one place that decides what a paper-doll layer draws** (game,
   character screen, Studio previews) — never require the picture; both manifest builders (`tools/build_art_manifest.js`,
   `asset_server.py`) list a lone mask under that name. Not built: changing hair or beard after creation.
-- **Gear cut for a man and for a woman** (27 Nov 2026; the owner's choices: two folders with the SAME file names, no data per
-  item): `art/sprites/paperdoll/chest/male/chest_x.png` and `…/chest/female/chest_x.png` (masks beside each). Content always
-  names the MAN's picture (Items `worn_sprite`, outfits, appearance options). `Tint.twin(path)` = where the woman's would be
-  (any `…/male/<file>` → `…/female/<file>`, so another slot only needs the two folders); **`Assets.wornFor(path, female)` is the
-  one place the game picks** — the twin when its file is there, else the picture named (so a garment with no woman's cut still
-  draws). Asked by `playerLayers` (`p.body === 'female'`), and for looks whose body picture ends `_female.png`
-  (`Tint.femaleLook`: `monsterLayers`, `Render.outfitLayers`, the Studio's `composeLook`). Draw-only. The Studio's pickers list
-  both cuts (the woman's labelled "(female)"); picking a female one outright also works.
+- **Gear cut for a man and for each build of a woman** (27 Nov 2026; the owner's layout, no data per item):
+  `art/sprites/paperdoll/chest/male/chest_x.png`, `…/chest/female/curvy/chest_x_curvy.png` and
+  `…/chest/female/slim/chest_x_slim.png` (masks beside each). Content always names the MAN's picture (Items `worn_sprite`,
+  outfits, appearance options). `Tint.twin(path, build)` (build = `curvy` | `slim`) = where that build's would be (any
+  `…/male/<file>.png` → `…/female/<build>/<file>_<build>.png`, so another slot only needs the folders);
+  **`Assets.wornFor(path, build)` is the one place the game picks** — the twin when its file is there, else the picture named
+  (so a garment with no cut for that build still draws as the man's). Asked by `playerLayers` (`Tint.buildOf(p.body)`), and
+  for looks by their body picture (`Tint.femaleLook` = `'curvy'` for `…_female.png`, `'slim'` for `…_female_slim.png`, else
+  `''`: `monsterLayers`, `Render.outfitLayers`, the Studio's `composeLook`). Draw-only. The Studio's pickers list every cut
+  (the women's labelled "(female)"); picking one outright also works.
 - **A woman's build: curvy or slim** (owner, 27 Nov 2026): a character's `body` is `''` (male), `'female'` (curvy) or
   **`'female_slim'`** (`World.bodySprite`: Config `body_female_slim`, or the built-in `body_survivor_female_slim.png`). A slim
-  woman wears the MAN's cut of every garment and her chest never moves: the page asks `p.body === 'female'` for both, so
-  slim needs nothing more than its body picture. Character screen: Body Male / Female, then a Build row Curvy / Slim shown
-  for Female (`#join-build`; Slim first, and what Female starts on: the owner's choice). **Looks (NPC outfits, appearance sets) go by the body PICTURE**: `Tint.femaleLook`
-  is true only for a body ending `_female.png`, so one ending `_female_slim.png` (`body_zombie_female_slim.png` too) gets
-  the man's cuts and no chest motion by itself — in the Studio a slim NPC or walker is made by picking that body. A garment
-  picked outright as its "(female)" cut is still drawn as picked. Not built: changing build after creation.
+  woman always wears the SLIM cut of a garment (the man's only when it has none) and her chest never moves: chest motion
+  (`jig`) is for `p.body === 'female'` / a look that is `'curvy'` only. Character screen: Body Male / Female, then a Build row Curvy / Slim shown
+  for Female (`#join-build`; Slim first, and what Female starts on: the owner's choice). **Looks (NPC outfits, appearance sets) go by the body PICTURE**:
+  a body ending `_female_slim.png` (`body_zombie_female_slim.png` too) gets the slim cuts and no chest motion by itself — in
+  the Studio a slim NPC or walker is made by picking that body. A garment
+  picked outright as a "(female)" cut is still drawn as picked. Not built: changing build after creation.
 - **The bust mask** (owner, 27 Nov 2026; their idea, replacing the fixed box): `art/sprites/paperdoll/base/player/
   body_survivor_female.bust.png`, the size of the figure, the near breast painted in one colour (more red than blue) and the far
   one in another (more blue), nothing else. **One file for every woman's body** (the walkers' too, the owner's choice) and for

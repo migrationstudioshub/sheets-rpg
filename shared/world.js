@@ -1726,8 +1726,8 @@ var World = (function () {
   // A character carries body: 'female', 'female_slim' or nothing (= male). The class's own body_sprite is only the fallback for a
   // male body when the Config names none (content made before bodies were a choice).
   // A woman's body comes in two builds (owner, 27 Nov 2026): 'female' = curvy (the woman's cut of what she wears, and her
-  // chest moves) and 'female_slim' = slim (Config body_female_slim): drawn in the MAN's cut of every garment and with no
-  // chest motion — to the page a slim woman is like a man in all but her body picture (it asks body === 'female').
+  // chest moves) and 'female_slim' = slim (Config body_female_slim): drawn in the SLIM cut of what she wears (the man's
+  // when a garment has none) and with no chest motion (the page: Tint.buildOf / Assets.wornFor; draw-only).
   var BODY_MALE = 'art/sprites/paperdoll/base/player/body_survivor.png', BODY_FEMALE = 'art/sprites/paperdoll/base/player/body_survivor_female.png',
     BODY_SLIM = 'art/sprites/paperdoll/base/player/body_survivor_female_slim.png', BODIES = ['', 'female', 'female_slim'];
   function bodySprite(c, p) {

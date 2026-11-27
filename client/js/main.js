@@ -68,7 +68,7 @@
       var ramp = it.defaultTint ? Tint.TINTS[it.defaultTint] : null;     // item is tintable iff it names a default tint
       // A weapon with a magazine may look different empty or being reloaded (a bow: no arrow / being drawn). Yours is
       // known from your own magazine and reload; another player's comes with them (wst).
-      var wpath = Assets.wornFor(it.wornSprite, p.body === 'female');   // (the woman's cut, when the garment has one)
+      var wpath = Assets.wornFor(it.wornSprite, Tint.buildOf(p.body));   // (the cut for a woman's build, when the garment has one)
       if (slot === 'weapon' && (it.wornEmpty || it.wornReload || it.wornAim)) {
         var wst = p.mags ? (World.weaponState ? World.weaponState(content, p) : '') : (p.wst || '');
         if (wst === 'reload') wpath = it.wornReload || it.wornEmpty || wpath; else if (wst === 'empty') wpath = it.wornEmpty || wpath;
@@ -101,10 +101,10 @@
     var tone = Tint.lookSkin ? Tint.lookSkin(m.look) : '';                // a body rolled with a skin tone colours its hands too
     var fem = Tint.femaleLook && Tint.femaleLook(m.look);
     var out = m.look.map(function (l) {
-      if (fem) l = { path: Assets.wornFor(l.path, true), tint: l.tint };   // a woman's body: the woman's cut of what it wears
+      if (fem) l = { path: Assets.wornFor(l.path, fem), tint: l.tint };   // a woman's body: her build's cut of what it wears
       var sk = tone ? Tint.skinFor(l.path, tone) : null;
       var tint = Tint.lookTint ? Tint.lookTint(l.path, l.tint) : l.tint, ramp = tint ? Tint.TINTS[tint] : null;   // no colour given = the garment default
-      return { path: l.path, mask: ramp ? maskOf(l.path) : '', ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false, jig: fem && Tint.chestLayer(l.path) };
+      return { path: l.path, mask: ramp ? maskOf(l.path) : '', ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false, jig: fem === 'curvy' && Tint.chestLayer(l.path) };
     });
     out.forEach(function (l) {                                           // make sure late-arriving layers load
       if (!Assets.get(l.path)) Assets.load(l.path);
@@ -3744,7 +3744,7 @@
       function draw() {
         var hs = $('join-hair'), cs = $('join-color'), bs = $('join-body-pick'), bb = $('join-build'); hs.innerHTML = ''; cs.innerHTML = ''; bs.innerHTML = ''; bb.innerHTML = '';
         // Body: a man or a woman; a woman then picks her build (owner, 27 Nov 2026): curvy = body 'female', slim =
-        // 'female_slim' (the man's cut of what she wears, no chest motion). Slim is what Female starts on (owner). The build picked is kept while Male is tried.
+        // 'female_slim' (the slim cut of what she wears, no chest motion). Slim is what Female starts on (owner). The build picked is kept while Male is tried.
         var woman = look.body !== '';
         [['', 'Male'], [look.build || 'female_slim', 'Female']].forEach(function (kind) {
           var b = document.createElement('button'); b.type = 'button'; b.className = 'jbody' + ((kind[0] !== '') === woman ? ' on' : ''); b.textContent = kind[1];

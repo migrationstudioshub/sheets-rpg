@@ -2203,8 +2203,8 @@ var CStudio = (function () {
     { id: 'any',     label: 'Any',      match: [] }
   ];
   function fileName(path) { return String(path || '').split('/').pop().replace(/\.png$/i, ''); }
-  // Gear cut for a woman's body lives in a female/ folder under the same file name as the man's (in male/): see Tint.twin.
-  function isFemaleCut(path) { return /\/female\/[^\/]+$/.test(String(path || '')); }
+  // Gear cut for a woman's body lives in female/curvy/ and female/slim/, named as the man's (in male/) + _curvy / _slim: see Tint.twin.
+  function isFemaleCut(path) { return /\/female\/(?:[^\/]+\/)?[^\/]+$/.test(String(path || '')); }
   function spriteLabel(path) { return fileName(path) + (isFemaleCut(path) ? ' (female)' : ''); }
   function spritePrefix(path) { var n = fileName(path).toLowerCase(), i = n.indexOf('_'); return i < 0 ? n : n.slice(0, i); }
   function layerTypeDef(id) { for (var i = 0; i < LAYER_TYPES.length; i++) if (LAYER_TYPES[i].id === id) return LAYER_TYPES[i]; return LAYER_TYPES[LAYER_TYPES.length - 1]; }
@@ -2434,7 +2434,7 @@ var CStudio = (function () {
       var tone = typeof Tint !== 'undefined' && Tint.lookSkin ? Tint.lookSkin(look) : '';
       var fem = typeof Tint !== 'undefined' && Tint.femaleLook && Tint.femaleLook(look);
       look.forEach(function (l) {
-        var tw = fem ? Tint.twin(l.path) : '';                   // a woman's body wears the woman's cut, when the file is there (as in the game)
+        var tw = fem ? Tint.twin(l.path, fem) : '';              // a woman's body wears her build's cut, when the file is there (as in the game)
         if (tw) { var ti = pvImg(tw); if (ti.complete && ti.width) l = { path: tw, tint: l.tint }; else if (!ti.complete) ti.addEventListener('load', draw, { once: true }); }
         var base = pvImg(l.path); if (!base.complete) return;
         var tint = lookTint(l.path, l.tint), ramp = tint && typeof Tint !== 'undefined' ? Tint.TINTS[tint] : null;

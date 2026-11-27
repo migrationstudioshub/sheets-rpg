@@ -148,12 +148,25 @@ var Tint = (function () {
   // A look's skin tone (an NPC's outfit, an appearance roll) is the colour given to its body layer, when that is a skin
   // tone (SKINS). Answers {tone, all} for one layer: the body takes the tone on every skin-like pixel, what is held in the
   // hands (paperdoll/hands/) on the three exact skin colours only — as for a player. null = leave the layer as it is.
-  // Gear cut for a man and for a woman (owner, 27 Nov 2026): two folders, male/ and female/, holding the SAME file
-  // names (paperdoll/chest/male/chest_hoodie.png, …/female/chest_hoodie.png). Content names the man's; twin() answers
-  // where the woman's would be ('' = this picture has no such folder). A woman's body draws the twin when the file is
-  // there (Assets.wornFor; the Studio's composeLook), else the picture named. femaleLook: a look whose body is a woman's.
-  function twin(path) { var p = String(path || ''); return /\/male\/[^\/]+$/.test(p) ? p.replace(/\/male\/([^\/]+)$/, '/female/$1') : ''; }
-  function femaleLook(look) { return (look || []).some(function (l) { return l && /(^|\/)body_[^\/]*_female\.png$/i.test(String(l.path || '')); }); }
+  // Gear cut for a man and for each build of a woman (owner, 27 Nov 2026): male/ holds the man's picture, and
+  // female/curvy/ and female/slim/ the same garment under the same name + _curvy / _slim
+  // (paperdoll/chest/male/chest_hoodie.png → …/chest/female/slim/chest_hoodie_slim.png). Content names the man's;
+  // twin(path, build) answers where that build's would be ('' = this picture has no such folder, or no build). A
+  // woman's body draws the twin when the file is there (Assets.wornFor; the Studio's composeLook), else the picture
+  // named. buildOf: a character's body ('female' | 'female_slim') as a build. femaleLook: the build of a look's body,
+  // by its picture (…_female.png = 'curvy', …_female_slim.png = 'slim', else '').
+  function twin(path, build) {
+    var p = String(path || ''), b = build === 'slim' ? 'slim' : (build ? 'curvy' : '');
+    return b && /\/male\/[^\/]+\.png$/i.test(p) ? p.replace(/\/male\/([^\/]+)\.png$/i, '/female/' + b + '/$1_' + b + '.png') : '';
+  }
+  function buildOf(body) { return body === 'female' ? 'curvy' : (body === 'female_slim' ? 'slim' : ''); }
+  function femaleLook(look) {
+    for (var i = 0; i < (look || []).length; i++) {
+      var m = look[i] && /(^|\/)body_[^\/]*_female(_slim)?\.png$/i.exec(String(look[i].path || ''));
+      if (m) return m[2] ? 'slim' : 'curvy';
+    }
+    return '';
+  }
   function chestLayer(path) { return isBody(path) || /\/chest\//.test(String(path || '')); }   // the layers of a look a woman's chest moves in
   function isBody(path) { return /(^|\/)body_[^\/]*$/i.test(String(path || '')); }
   function lookSkin(look) {
@@ -167,6 +180,6 @@ var Tint = (function () {
   }
 
   return { TINTS: TINTS, SKINS: SKINS, getTintedLayer: getTintedLayer, layer: layer, tintedOver: tintedOver, skinned: skinned, lookTint: lookTint,
-    twin: twin, femaleLook: femaleLook, chestLayer: chestLayer, lookSkin: lookSkin, skinFor: skinFor };
+    twin: twin, buildOf: buildOf, femaleLook: femaleLook, chestLayer: chestLayer, lookSkin: lookSkin, skinFor: skinFor };
 })();
 if (typeof module !== 'undefined') module.exports = Tint;

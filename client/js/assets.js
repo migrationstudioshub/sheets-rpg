@@ -32,9 +32,9 @@ var Assets = (function () {
   function missing(path) { var e = cache[resolve(path)]; return !!e && e.done && !e.img; }
 
   /** The picture of something worn, for the body wearing it (owner, 27 Nov 2026): a woman's body draws the garment's
-   *  twin in the female/ folder (Tint.twin) when there is one; no twin, or not arrived yet, = the picture named. */
-  function wornFor(path, female) {
-    var tw = female && typeof Tint !== 'undefined' && Tint.twin ? Tint.twin(path) : '';
+   *  cut for her build ('curvy' | 'slim': Tint.twin) when there is one; none, or not arrived yet, = the picture named. */
+  function wornFor(path, build) {
+    var tw = build && typeof Tint !== 'undefined' && Tint.twin ? Tint.twin(path, build) : '';
     if (!tw) return path;
     if (get(tw)) return tw;
     if (!missing(tw)) load(tw);
@@ -97,8 +97,10 @@ var Assets = (function () {
       [it.wornEmpty, it.wornReload, it.wornAim].forEach(function (wp) { if (wp) { paths[wp] = 1; if (it.defaultTint) paths[wp.replace(/\.png$/i, '.tint.png')] = 1; } });   // a weapon's other pictures
       if (it.wornSprite) { paths[it.wornSprite] = 1;                                              // worn paper-doll layer
         if (it.defaultTint) paths[it.wornSprite.replace(/\.png$/i, '.tint.png')] = 1;             // + its grey tint mask
-        var tw = typeof Tint !== 'undefined' && Tint.twin ? Tint.twin(it.wornSprite) : '';         // + the woman's cut of it, if there is one
-        if (tw) { paths[tw] = 1; if (it.defaultTint) paths[tw.replace(/\.png$/i, '.tint.png')] = 1; } }
+        ['curvy', 'slim'].forEach(function (b) {                                                   // + the woman's cuts of it, if there are any
+          var tw = typeof Tint !== 'undefined' && Tint.twin ? Tint.twin(it.wornSprite, b) : '';
+          if (tw) { paths[tw] = 1; if (it.defaultTint) paths[tw.replace(/\.png$/i, '.tint.png')] = 1; }
+        }); }
     });
     Object.keys(content.classes || {}).forEach(function (k) { if (content.classes[k].bodySprite) paths[content.classes[k].bodySprite] = 1; });   // player base bodies
     if (typeof World !== 'undefined' && World.bodySprite) { paths[World.bodySprite(content, { body: '' })] = 1; paths[World.bodySprite(content, { body: 'female' })] = 1; paths[World.bodySprite(content, { body: 'female_slim' })] = 1; }   // …the man's and the woman's

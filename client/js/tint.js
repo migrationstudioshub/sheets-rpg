@@ -46,12 +46,12 @@ var Tint = (function () {
   /** Returns a canvas of `img` with its `maskImg` cloth recoloured by `ramp` (4 hex colours).
    *  Falls back to the plain image when there is no mask or ramp (or the mask isn't loaded). */
   function getTintedLayer(img, maskImg, ramp) {
-    if (!img || !maskImg || !ramp) return img;
-    var key = (img.src || '') + '|' + ramp.join();
+    if (!maskImg || !ramp) return img;
+    var key = (img ? img.src || '' : 'mask:' + (maskImg.src || '')) + '|' + ramp.join();   // (img missing = a layer that is all mask: see layer)
     if (cache[key]) return cache[key];
 
     var c = document.createElement('canvas'); c._key = key;
-    c.width = img.width; c.height = img.height;
+    c.width = (img || maskImg).width; c.height = (img || maskImg).height;
     var ctx = c.getContext('2d');
 
     // 1. recolour the mask: shade index = round(grey / 64) - 1, clamped to 0..3
@@ -65,8 +65,17 @@ var Tint = (function () {
     ctx.putImageData(d, 0, 0);
 
     // 2. fixed (untinted) part on top; the two never overlap
-    ctx.drawImage(img, 0, 0);
+    if (img) ctx.drawImage(img, 0, 0);
     return (cache[key] = c);
+  }
+  /** What to draw for one paper-doll layer: its picture `foo.png`, with its mask `foo.tint.png` coloured by `ramp`
+   *  under it. EITHER may be missing (owner, 27 Nov 2026): a layer that is nothing but colour — stubble, make-up — has
+   *  only the mask and still draws; one with no mask or no colour is the plain picture. null = nothing to draw yet.
+   *  The one place that decides this: the game, the character screen and the Studio's previews all ask it. */
+  function ready(im) { return !!im && im.width > 0 && im.complete !== false; }
+  function layer(img, maskImg, ramp) {
+    var b = ready(img) ? img : null, m = ramp && ready(maskImg) ? maskImg : null;
+    return m ? getTintedLayer(b, m, ramp) : b;
   }
 
   /** Ground sheets (water, lava): the picture is complete as drawn, in its own colours, and the mask marks what a
@@ -128,17 +137,23 @@ var Tint = (function () {
   // A worn picture whose cloth is all in its mask (hair, clothes, hats, packs) shows nothing of it without a colour. When
   // a look (an NPC's outfit, an appearance set) names no colour for one, it is drawn in this default instead — never half
   // a garment. Weapons and bodies keep their own colours (no default: their masks, if any, stay unused).
-  var GARMENT = /^(hair|chest|shirt|jacket|vest|armor|coat|helm|hat|mask|hood|legs|pants|skirt|back|cape|pack|bag)$/;
+  var GARMENT = /^(hair|beard|chest|shirt|jacket|vest|armor|coat|helm|hat|mask|hood|legs|pants|skirt|back|cape|pack|bag)$/;
   function lookTint(path, tint) {
     if (tint) return tint;
     var n = String(path || '').split('/').pop().toLowerCase(), i = n.indexOf('_'), pre = i < 0 ? n : n.slice(0, i);
     if (!/\/paperdoll\//.test(String(path || '')) || !GARMENT.test(pre)) return '';
-    return pre === 'hair' ? 'hair_brown' : 'khaki';
+    return pre === 'hair' || pre === 'beard' ? 'hair_brown' : 'khaki';
   }
 
   // A look's skin tone (an NPC's outfit, an appearance roll) is the colour given to its body layer, when that is a skin
   // tone (SKINS). Answers {tone, all} for one layer: the body takes the tone on every skin-like pixel, what is held in the
   // hands (paperdoll/hands/) on the three exact skin colours only — as for a player. null = leave the layer as it is.
+  // Gear cut for a man and for a woman (owner, 27 Nov 2026): two folders, male/ and female/, holding the SAME file
+  // names (paperdoll/chest/male/chest_hoodie.png, …/female/chest_hoodie.png). Content names the man's; twin() answers
+  // where the woman's would be ('' = this picture has no such folder). A woman's body draws the twin when the file is
+  // there (Assets.wornFor; the Studio's composeLook), else the picture named. femaleLook: a look whose body is a woman's.
+  function twin(path) { var p = String(path || ''); return /\/male\/[^\/]+$/.test(p) ? p.replace(/\/male\/([^\/]+)$/, '/female/$1') : ''; }
+  function femaleLook(look) { return (look || []).some(function (l) { return l && /(^|\/)body_[^\/]*_female\.png$/i.test(String(l.path || '')); }); }
   function isBody(path) { return /(^|\/)body_[^\/]*$/i.test(String(path || '')); }
   function lookSkin(look) {
     for (var i = 0; i < (look || []).length; i++) if (look[i] && isBody(look[i].path) && SKINS[look[i].tint]) return look[i].tint;
@@ -150,7 +165,7 @@ var Tint = (function () {
     return /\/hands\//.test(String(path || '')) ? { tone: tone, all: false } : null;
   }
 
-  return { TINTS: TINTS, SKINS: SKINS, getTintedLayer: getTintedLayer, tintedOver: tintedOver, skinned: skinned, lookTint: lookTint,
-    lookSkin: lookSkin, skinFor: skinFor };
+  return { TINTS: TINTS, SKINS: SKINS, getTintedLayer: getTintedLayer, layer: layer, tintedOver: tintedOver, skinned: skinned, lookTint: lookTint,
+    twin: twin, femaleLook: femaleLook, lookSkin: lookSkin, skinFor: skinFor };
 })();
 if (typeof module !== 'undefined') module.exports = Tint;

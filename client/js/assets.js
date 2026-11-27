@@ -12,11 +12,11 @@ var Assets = (function () {
     var url = resolve(path);
     if (!url) return Promise.resolve(null);
     if (cache[url]) return cache[url].promise;
-    var entry = cache[url] = { img: null };
+    var entry = cache[url] = { img: null, done: false };
     entry.promise = new Promise(function (done) {
       var img = new Image();
-      img.onload = function () { entry.img = img; done(img); };
-      img.onerror = function () { entry.img = null; done(null); };
+      img.onload = function () { entry.img = img; entry.done = true; done(img); };
+      img.onerror = function () { entry.img = null; entry.done = true; done(null); };
       setTimeout(function () { done(entry.img); }, 8000);
       img.src = url;
     });
@@ -26,6 +26,19 @@ var Assets = (function () {
   function get(path) {
     var e = cache[resolve(path)];
     return e ? e.img : null;
+  }
+
+  /** Asked for and not there (the load failed) — not the same as still on its way. */
+  function missing(path) { var e = cache[resolve(path)]; return !!e && e.done && !e.img; }
+
+  /** The picture of something worn, for the body wearing it (owner, 27 Nov 2026): a woman's body draws the garment's
+   *  twin in the female/ folder (Tint.twin) when there is one; no twin, or not arrived yet, = the picture named. */
+  function wornFor(path, female) {
+    var tw = female && typeof Tint !== 'undefined' && Tint.twin ? Tint.twin(path) : '';
+    if (!tw) return path;
+    if (get(tw)) return tw;
+    if (!missing(tw)) load(tw);
+    return path;
   }
 
   /** Loads every image a map needs before it is drawn. */
@@ -83,7 +96,9 @@ var Assets = (function () {
       if (it.sprite && it.defaultTint) paths[it.sprite.replace(/\.png$/i, '.tint.png')] = 1;       // its icon's tint mask (clothes: the cloth is in the mask)
       [it.wornEmpty, it.wornReload, it.wornAim].forEach(function (wp) { if (wp) { paths[wp] = 1; if (it.defaultTint) paths[wp.replace(/\.png$/i, '.tint.png')] = 1; } });   // a weapon's other pictures
       if (it.wornSprite) { paths[it.wornSprite] = 1;                                              // worn paper-doll layer
-        if (it.defaultTint) paths[it.wornSprite.replace(/\.png$/i, '.tint.png')] = 1; }           // + its grey tint mask
+        if (it.defaultTint) paths[it.wornSprite.replace(/\.png$/i, '.tint.png')] = 1;             // + its grey tint mask
+        var tw = typeof Tint !== 'undefined' && Tint.twin ? Tint.twin(it.wornSprite) : '';         // + the woman's cut of it, if there is one
+        if (tw) { paths[tw] = 1; if (it.defaultTint) paths[tw.replace(/\.png$/i, '.tint.png')] = 1; } }
     });
     Object.keys(content.classes || {}).forEach(function (k) { if (content.classes[k].bodySprite) paths[content.classes[k].bodySprite] = 1; });   // player base bodies
     if (typeof World !== 'undefined' && World.bodySprite) { paths[World.bodySprite(content, { body: '' })] = 1; paths[World.bodySprite(content, { body: 'female' })] = 1; }   // …the man's and the woman's
@@ -141,5 +156,5 @@ var Assets = (function () {
     return (heroes[key] = c);
   }
 
-  return { load: load, get: get, loadForMap: loadForMap, placeholder: placeholder, hero: hero, resolve: resolve };
+  return { load: load, get: get, missing: missing, wornFor: wornFor, loadForMap: loadForMap, placeholder: placeholder, hero: hero, resolve: resolve };
 })();

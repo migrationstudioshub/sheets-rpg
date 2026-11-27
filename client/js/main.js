@@ -40,7 +40,7 @@
 
   // Paper-doll stacking order (low = drawn first / behind). The base body sits near the
   // bottom; worn gear draws over it, weapon last. Unknown slots land on top.
-  var SLOT_Z = { back: 0, body: 1, legs: 2, pants: 2, feet: 2.5, armor: 3, belt: 3.2, gloves: 3.5, head: 4, helm: 5, accessory: 5.5, offhand: 6, weapon: 7 };
+  var SLOT_Z = { back: 0, body: 1, legs: 2, pants: 2, feet: 2.5, armor: 3, belt: 3.2, gloves: 3.5, beard: 3.8, head: 4, face: 4.5, helm: 5, accessory: 5.5, offhand: 6, weapon: 7 };
   function maskOf(path) { return path ? path.replace(/\.png$/i, '.tint.png') : ''; }   // sibling grey tint mask
   /** Ordered layer descriptors for a player, lowest slot first: the class base body, the hair
    *  (head slot, hidden when anything is worn in `helm`, or anything worn hides the head — Items hides_head,
@@ -52,9 +52,13 @@
     var cls = p && content.classes[p['class']], body = cls && (World.bodySprite ? World.bodySprite(content, p) : cls.bodySprite);   // the man's or the woman's
     if (!body) return null;
     var eq = p.equipment || {}, out = [{ z: SLOT_Z.body, path: body, skin: p.skin || '', skinAll: true }];
-    var hood = Object.keys(eq).some(function (s) { var it = content.items[eq[s]]; return it && it.hidesHead && it.slot === s.replace(/\d+$/, ''); });
+    function wornHas(what) { return Object.keys(eq).some(function (s) { var it = content.items[eq[s]]; return it && it[what] && it.slot === s.replace(/\d+$/, ''); }); }
+    var hood = wornHas('hidesHead'), noBeard = wornHas('hidesBeard');     // (Items hides_head / hides_beard: draw-only ticks)
     if (p.hair && !eq.helm && !hood) {                                   // hair is whole-tintable; a helm (or a hood) hides it
       out.push({ z: SLOT_Z.head, path: p.hair, mask: maskOf(p.hair), ramp: Tint.TINTS[p.hairColor] });
+    }
+    if (p.beard && !noBeard) {                                                     // facial hair: its own colour (the hair's when none was picked); under the hair and whatever is worn on the face
+      out.push({ z: SLOT_Z.beard, path: p.beard, mask: maskOf(p.beard), ramp: Tint.TINTS[p.beardColor || p.hairColor] });
     }
     Object.keys(eq).forEach(function (slot) {
       var it = content.items[eq[slot]];
@@ -64,7 +68,7 @@
       var ramp = it.defaultTint ? Tint.TINTS[it.defaultTint] : null;     // item is tintable iff it names a default tint
       // A weapon with a magazine may look different empty or being reloaded (a bow: no arrow / being drawn). Yours is
       // known from your own magazine and reload; another player's comes with them (wst).
-      var wpath = it.wornSprite;
+      var wpath = Assets.wornFor(it.wornSprite, p.body === 'female');   // (the woman's cut, when the garment has one)
       if (slot === 'weapon' && (it.wornEmpty || it.wornReload || it.wornAim)) {
         var wst = p.mags ? (World.weaponState ? World.weaponState(content, p) : '') : (p.wst || '');
         if (wst === 'reload') wpath = it.wornReload || it.wornEmpty || wpath; else if (wst === 'empty') wpath = it.wornEmpty || wpath;
@@ -74,6 +78,13 @@
       out.push({ z: SLOT_Z[zk] != null ? SLOT_Z[zk] : 9, path: wpath, slot: slot, skin: slot === 'weapon' || slot === 'offhand' ? (p.skin || '') : '',
         mask: ramp ? maskOf(wpath) : '', ramp: ramp, aimPoints: it.aim || null });
     });
+    // Whatever else is in hand (food, a bottle, a grenade, a bedroll, a tool with no held picture): its own icon, small, at the
+    // hand (Render draws a layer marked `icon` that way). Yours is your belt slot in hand; another player's comes as `hand`.
+    var hid = typeof p.held === 'number' ? (p.held >= 0 ? (p.belt || [])[p.held] || '' : '') : (p.hand || ''), hit = hid && content.items[hid];
+    if (hit && hit.sprite && !(hit.slot === 'weapon' && hit.wornSprite) && !out.some(function (l) { return l.slot === 'weapon'; })) {
+      var hr = hit.defaultTint ? Tint.TINTS[hit.defaultTint] : null;
+      out.push({ z: SLOT_Z.weapon, path: hit.sprite, slot: 'hand', icon: true, mask: hr ? maskOf(hit.sprite) : '', ramp: hr });
+    }
     out.sort(function (a, b) { return a.z - b.z; });
     out.forEach(function (l) {                                           // make sure late-arriving layers load
       if (!Assets.get(l.path)) Assets.load(l.path);
@@ -88,7 +99,9 @@
   function monsterLayers(m) {
     if (!m.look || !m.look.length) return null;
     var tone = Tint.lookSkin ? Tint.lookSkin(m.look) : '';                // a body rolled with a skin tone colours its hands too
+    var fem = Tint.femaleLook && Tint.femaleLook(m.look);
     var out = m.look.map(function (l) {
+      if (fem) l = { path: Assets.wornFor(l.path, true), tint: l.tint };   // a woman's body: the woman's cut of what it wears
       var sk = tone ? Tint.skinFor(l.path, tone) : null;
       var tint = Tint.lookTint ? Tint.lookTint(l.path, l.tint) : l.tint, ramp = tint ? Tint.TINTS[tint] : null;   // no colour given = the garment default
       return { path: l.path, mask: ramp ? maskOf(l.path) : '', ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false };
@@ -144,18 +157,29 @@
   var scenePupKeys = {}, sceneLooks = {};
   function sceneActorAt(ref) {                                           // where an actor stands before the scene moves it
     if (ref === 'me') return { x: shown.x, y: shown.y, facing: me.facing === 'W' ? 'W' : 'E' };
-    if (ref.indexOf('npc:') !== 0) return null;
-    var id = ref.slice(4), best = null, bd = Infinity;
-    (mapOf().entities || []).forEach(function (e) {
-      if (e.ref !== id) return;
-      var d = Math.abs(e.x - shown.x) + Math.abs(e.y - shown.y);
-      if (d < bd) { bd = d; best = e; }
-    });
+    if (ref.indexOf('npc:') !== 0 || ref.indexOf('|') >= 0) return null;
+    // (copy n of an NPC that stands on the map several times = the n-th nearest to you)
+    var who = sceneRef(ref), list = (mapOf().entities || []).filter(function (e) { return e.ref === who.id; })
+      .map(function (e) { return { e: e, d: Math.abs(e.x - shown.x) + Math.abs(e.y - shown.y) }; }).sort(function (a, b) { return a.d - b.d; });
+    var best = list[who.n - 1] && list[who.n - 1].e;
     return best ? { x: best.x, y: best.y, key: best.key, facing: shown.x < best.x ? 'W' : 'E' } : null;
+  }
+  /** An actor's ref taken apart: "mon:rat#2|3" = {kind: 'mon', id: 'rat', n: 2 (which copy), base: 'mon:rat#2' (its pack)}. */
+  function sceneRef(ref) {
+    var base = String(ref).split('|')[0], m = /^(\w+):([^#]*)(?:#(\d+))?$/.exec(base);
+    return m ? { kind: m[1], id: m[2], n: Math.max(1, Number(m[3]) || 1), base: base } : { kind: ref === 'me' ? 'me' : '', id: '', n: 1, base: base };
+  }
+  /** The n free tiles nearest a tile that can be walked to from it (the tile itself first): where a pack stands. */
+  function sceneSpots(at, n) {
+    // (World.packSpots: the referee asks the same when a pack stays, so it stays where it was seen)
+    var map = mapOf(), opts = World.viewOpts(content, map, Object.assign({}, view, { monsters: [], players: [] }), me.id);
+    var out = World.packSpots(content, map, at, n, opts);
+    while (out.length < n) out.push(out[0]);
+    return out;
   }
   function sceneFigure(ref) {                                            // how an actor looks: {layers} or {sprite}, and its name
     if (ref === 'me') return { layers: playerLayers(me) || undefined, name: me.name };
-    var id = ref.slice(4);
+    var id = sceneRef(ref).id;
     if (ref.indexOf('npc:') === 0) {
       var o = content.objects[id]; if (!o) return null;
       var fit = outfitOf(o);
@@ -388,7 +412,7 @@
   var playerLooks = {};
   function rememberLooks(list) {
     (list || []).forEach(function (q) {
-      if (q['class']) playerLooks[q.id] = { 'class': q['class'], equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '' };
+      if (q['class']) playerLooks[q.id] = { 'class': q['class'], equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '', beard: q.beard || '', beardColor: q.beardColor || '', body: q.body || '', skin: q.skin || '' };
       else if (playerLooks[q.id]) Object.assign(q, playerLooks[q.id]);
     });
   }
@@ -918,7 +942,7 @@
     }
     if (armed) { castAt(cell); return; }                  // an armed ability still aims + casts on left-click
     if (throwing) { throwAt(cell); return; }
-    if (aiming && heldUse()) { useHeld(); return; }       // food, a bandage… in hand: the click uses it
+    if (aiming && heldUse()) { leftHeld = true; eatHold = true; eatDone = false; return; }   // food, a bandage… in hand: the button HELD uses it (the frame loop)
     if (aiming) { leftHeld = true; fireToward(cell); return; }   // fire/attack while aiming
     if (!cell.miss && World.pickAt && World.pickAt(content, mapOf(), lookup(), me, cell.x, cell.y)) {   // a berry bush: held, it is picked until empty
       leftHeld = true; holdFired = false; pendingCell = null; clearTimeout(holdTimer);
@@ -938,6 +962,7 @@
     }
     // not aiming: left-click interacts. A quick tap does the default action; holding opens the action list.
     leftHeld = true; holdFired = false; pendingCell = cell; holdMenuEvt = e;
+    eatHold = !!heldUse() && !actsOf(cell).length; eatDone = false;   // nothing to act on there: held, it uses what is in hand
     clearTimeout(holdTimer);
     holdTimer = setTimeout(function () {
       if (!leftHeld || aiming) return;
@@ -1156,7 +1181,7 @@
     var ft = throwFloorAt(cell, it);
     if (ft) {                                                                 // down onto a floor below
       me.facing = facingToward(cell.x, cell.y);
-      send({ type: 'throw', item: throwing, map: ft.map.id, x: ft.x, y: ft.y });
+      send({ type: 'throw', item: throwing, map: ft.map.id, x: ft.x, y: ft.y }); swingT0 = performance.now();
       var tf = performance.now();
       fx.push({ kind: 'proj', from: { x: me.x, y: me.y }, to: { x: cell.x, y: cell.y }, color: it.tint || '#ff8c3b', t0: tf, life: 300 });
       fx.push({ kind: 'flash', x: cell.x, y: cell.y, r: it.throwArea || 0, cells: blastOnFloor(ft, it), color: it.tint || '#ff8c3b', t0: tf + 280, life: 450 });
@@ -1165,7 +1190,7 @@
     }
     if (cheb(me.x, me.y, cell.x, cell.y) > (it.throwRange || 4)) { log(TOO_FAR, 'info'); return; }
     me.facing = facingToward(cell.x, cell.y);
-    send({ type: 'throw', item: throwing, x: cell.x, y: cell.y });
+    send({ type: 'throw', item: throwing, x: cell.x, y: cell.y }); swingT0 = performance.now();   // (the arm swings)
     // Predict where it actually lands (stops at a wall) and which cells the blast reaches, so the
     // animation matches the server instead of sailing through walls.
     var map = mapOf(), sf = lookup().stateOf;
@@ -1255,6 +1280,38 @@
   }
   /** The thing in hand if a click should use it up (eat, drink, bandage), else null. */
   function heldUse() { var it = content.items[heldId()]; return it && World.itemCan(it, 'consume') ? it : null; }
+  // Food, drink, a bandage in hand is used by HOLDING the left button EAT_MS (owner, 27 Nov 2026): a click somewhere must not
+  // eat it by accident, and one hold uses one, however long it lasts. eatProg (0..1) is the hold so far: the item goes
+  // quickly to the mouth (the first EAT_UP of the hold), then is eaten in EAT_BITES bites, each throwing a few crumbs of
+  // its own colours (Render.crumbs; the death burst's drawing, far gentler); the last bite is the moment it is used.
+  // eatUp (0..1) = how far up it is drawn; it comes back down when the button is let go or the thing is used.
+  var EAT_MS = 500, EAT_UP = 0.2, EAT_BITES = 3, eatHold = false, eatDone = false, eatProg = 0, eatUp = 0, eatBit = 0, eatT0 = 0;   // (eatT0: when this hold began to count — by the clock, not by frames)
+  function bitesAt(prog) { return prog <= EAT_UP ? 0 : Math.min(EAT_BITES, Math.floor((prog - EAT_UP) / ((1 - EAT_UP) / EAT_BITES) + 1e-6)); }
+  /** A bite: a few crumbs of that item fly from the mouth of the figure drawn at (x, y) tiles. */
+  function crumbFx(itemId, x, y, facing, now) {
+    var it = content.items[itemId], img = it && it.sprite && Assets.get(it.sprite);
+    if (!img || !Render.crumbs) return;
+    fx.push({ kind: 'burst', x: x, y: y, p: Render.crumbs(img, content.config.tile_size || 32, facing === 'W'), drops: [], t0: now, life: 520 });
+  }
+  /** ANOTHER player who just used theirs (their `act` u, t ms ago): the same eating, played after the fact → {lift, bite}. */
+  function othersEat(q, st, s, now) {
+    var t = now - (st.u0 || -1e9);
+    if (t < 0 || t > EAT_MS + 150) { st.b = 0; return { lift: 0, bite: 0 }; }
+    if (t > EAT_MS) return { lift: 1 - (t - EAT_MS) / 150, bite: 0 };
+    var b = bitesAt(t / EAT_MS);
+    if (b > (st.b || 0)) crumbFx(q.hand, s.x, s.y, q.facing, now);
+    st.b = b;
+    return { lift: Math.min(1, t / (EAT_MS * EAT_UP)), bite: b / EAT_BITES };
+  }
+  // A thing in hand is drawn as big as it is on the belt (owner, 27 Nov 2026): the belt's icon is 20 UI pixels, told to
+  // the renderer in the canvas's own pixels (looked at again now and then: the UI scale or the window may change).
+  var handPxAt = -1e9;
+  function handSize(now) {
+    if (now - handPxAt < 500 || !Render.setHandPx) return;
+    handPxAt = now;
+    var u = parseFloat(getComputedStyle(document.documentElement).fontSize) || 1, cw = canvas.clientWidth || canvas.width;
+    Render.setHandPx(20 * u * canvas.width / cw);
+  }
   function useHeld() {
     var it = heldUse(); if (!it) return;
     if (count(it.id) < 1) { log('No ' + it.name.toLowerCase() + ' left.', 'info'); return; }
@@ -1330,11 +1387,13 @@
   var actSt = {};
   function othersAct(q, now) {
     var a = String(q.act || '').split(','), n = Number(a[0]) || 0, st = actSt[q.id];
-    if (!st) return (actSt[q.id] = { n: n, t0: -1e9 });
+    if (!st) return (actSt[q.id] = { n: n, t0: -1e9, u0: -1e9 });
     var ahead = (n - st.n + 999) % 999;
     if (!n || !ahead || ahead > 500) return st;                // nothing new (or an older answer arriving late)
     st.n = n;
     var x = Number(a[2]), y = Number(a[3]), amount = Number(a[4]) || 0;
+    if (a[1] === 't') st.t0 = now;                             // a throw: the arm swings
+    if (a[1] === 'u') st.u0 = now;                             // ate or drank: lifted to the mouth
     if (a[1] === 'm') { st.t0 = now; fx.push({ kind: 'flash', x: x, y: y, r: 0, color: '#ffd9a0', t0: now, life: 260 }); }
     if (amount) fx.push({ x: x, y: y, text: '-' + amount, color: '#ffffff', t0: now + (a[1] === 'm' ? SWING_MS * 0.4 : 0) });
     return st;
@@ -1527,7 +1586,7 @@
       return;
     }
     buildHold = null;
-    var was = leftHeld; leftHeld = false; clearTimeout(holdTimer);
+    var was = leftHeld; leftHeld = false; eatHold = false; clearTimeout(holdTimer);
     if (harvesting) { harvesting = null; return; }         // the press was the work itself
     if (picking && was) { picking = null; return; }
     if (!was || aiming) return;                            // was firing while aiming, or not our press
@@ -1535,8 +1594,7 @@
     if (pendingCell) {                                     // quick tap → the default interaction
       var acts = actsOf(pendingCell);
       var tapA = tapAction(acts);
-      if (tapA) doAction(tapA, pendingCell);
-      else if (heldUse()) useHeld();                       // nothing to act on there: the click uses what is in hand
+      if (tapA) doAction(tapA, pendingCell);               // (food in hand is never used by a quick click: see eatHold)
     }
   });
   // the chevron over the log folds it away (remembered in this browser)
@@ -2595,7 +2653,7 @@
     if (armed) disarm(); if (throwing && !holdMode()) cancelThrow();
     held = []; tap = null; aiming = false; leftHeld = false; harvesting = null; picking = null;
     sceneLooks = {};
-    Scene.start(sc, { at: { x: shown.x, y: shown.y }, done: done, lift: sceneLift, actor: sceneActorAt, path: scenePath, portrait: scenePortrait, nameOf: sceneName,
+    Scene.start(sc, { at: { x: shown.x, y: shown.y }, done: done, lift: sceneLift, actor: sceneActorAt, path: scenePath, portrait: scenePortrait, nameOf: sceneName, spots: sceneSpots,
       pace: 1000 / (content.config.move_ms || 140) });
   }
   function questsChanged() {
@@ -2926,10 +2984,10 @@
   // it ('use', with `slot` for the accessory places), drag it back or double-click it to take it off. What may go
   // where is the item's `slot`; the referee has the last word.
   var DOLL_SLOTS = [
-    { key: 'helm', x: 6, y: 4, ghost: 'helm' }, { key: 'armor', x: 6, y: 44, ghost: 'shield' }, { key: 'pants', x: 6, y: 84, ghost: 'pants' }, { key: 'accessory1', x: 6, y: 124, ghost: 'ring' },
-    { key: 'back', x: 124, y: 4, ghost: 'pack' }, { key: 'gloves', x: 124, y: 44, ghost: 'glove' }, { key: 'feet', x: 124, y: 84, ghost: 'boot' }, { key: 'accessory2', x: 124, y: 124, ghost: 'ring' },
-    { key: 'belt', x: 65, y: 104, ghost: 'belt' }];   // (under the figure)
-  var SLOT_NAMES = { helm: 'Head', armor: 'Chest', pants: 'Pants', feet: 'Feet', gloves: 'Gloves', back: 'Back', belt: 'Belt', accessory: 'Acc' };
+    { key: 'helm', x: 6, y: 4, ghost: 'helm' }, { key: 'armor', x: 6, y: 44, ghost: 'shield' }, { key: 'pants', x: 6, y: 84, ghost: 'pants' }, { key: 'feet', x: 6, y: 124, ghost: 'boot' },
+    { key: 'face', x: 124, y: 4, ghost: 'mask' }, { key: 'back', x: 124, y: 44, ghost: 'pack' }, { key: 'gloves', x: 124, y: 84, ghost: 'glove' }, { key: 'belt', x: 124, y: 124, ghost: 'belt' },
+    { key: 'accessory1', x: 47, y: 124, ghost: 'ring' }, { key: 'accessory2', x: 83, y: 124, ghost: 'ring' }];   // (owner, 27 Nov 2026: the two accessories under the figure)
+  var SLOT_NAMES = { helm: 'Head', face: 'Face', armor: 'Chest', pants: 'Pants', feet: 'Feet', gloves: 'Gloves', back: 'Back', belt: 'Belt', accessory: 'Acc' };
   /** While something is dragged, the worn place(s) it can go to pulse (owner): `on` = the item, null = the drag ended. */
   function dollHint(it) {
     var kind = it && it.slot;
@@ -2940,8 +2998,8 @@
     var g = cv.getContext('2d'); g.imageSmoothingEnabled = false; g.clearRect(0, 0, cv.width, cv.height);
     (playerLayers(me) || []).forEach(function (l) {
       if (l.slot === 'weapon') return;
-      var base = Assets.get(l.path); if (!base || !base.width) return;
-      var img = (l.mask && l.ramp) ? Tint.getTintedLayer(base, Assets.get(l.mask), l.ramp) : base;
+      var img = (l.mask && l.ramp) ? Tint.layer(Assets.get(l.path), Assets.get(l.mask), l.ramp) : Assets.get(l.path);
+      var base = img; if (!base || !base.width) return;
       if (l.skin) img = Tint.skinned(img, l.skin, !l.skinAll);
       var h = Math.round(cv.width * base.height / base.width);
       g.drawImage(img || base, 0, cv.height - h, cv.width, h);
@@ -3162,7 +3220,7 @@
     if (invDrag || invPress) { invDirty = true; return; }    // never redraw under a drag (or a press about to become one): the thing held would vanish
     // …nor when nothing it shows has changed: answers arrive several times a second
     var sig = JSON.stringify([me.inventory, me.belt, me.held, me.equipment, me.atk, me.def, me.gold, me.abilities, me.skills, storage && [storage.key, storage.inv, storage.slots, storage.cook, storage.takeOnly], cookSt, handSt, craftQty, invSel, bagFilter,
-      me.craft && [me.craft.id, me.craft.qty, me.craft.made, !!(craftFrac() || {}).on], me.level, me.hp, me.maxHp, Math.round(me.hunger == null ? 100 : me.hunger), Math.round(me.thirst == null ? 100 : me.thirst), me.hair, me.hairColor]);
+      me.craft && [me.craft.id, me.craft.qty, me.craft.made, !!(craftFrac() || {}).on], me.level, me.hp, me.maxHp, Math.round(me.hunger == null ? 100 : me.hunger), Math.round(me.thirst == null ? 100 : me.thirst), me.hair, me.hairColor, me.beard, me.beardColor]);
     var box = $('bag-items');
     if (sig === invSig && box.firstChild) return;
     invSig = sig; box.innerHTML = '';
@@ -3279,6 +3337,15 @@
     noiseMeter();
     if (harvesting) harvestSwing();
     if (picking) pickSwing();
+    var eating = eatHold && leftHeld && !eatDone && !!heldUse();   // the button held with food in hand: it rises, then is used — once
+    if (!eating) eatT0 = 0; else if (!eatT0) eatT0 = now;
+    eatProg = eating ? Math.min(1, (now - eatT0) / EAT_MS) : 0;
+    eatUp = eating ? Math.max(eatUp, Math.min(1, eatProg / EAT_UP)) : Math.max(0, eatUp - dt / 150);
+    var bitesNow = bitesAt(eatProg);
+    if (bitesNow > eatBit) crumbFx(heldId(), shown.x, shown.y, aiming ? (Math.cos(aimAngle) < 0 ? 'W' : 'E') : (lastPtr && lookSide) || me.facing, now);
+    eatBit = bitesNow;
+    if (eating && eatProg >= 1) { eatDone = true; useHeld(); }
+    handSize(now);
     // hold-to-fire: while aiming with the left button down, a semi/auto weapon keeps firing on its cadence
     if (aiming && leftHeld && hover) {
       var hw = World.rangedWeapon(content, me);
@@ -3294,12 +3361,13 @@
     // poll can briefly reset to the server's value (it never hears the aim), which would flicker the flip.
     if (lastPtr && !aiming) aimAt(lastPtr);               // you walked, the view moved: the cursor is somewhere else on the map
     var myFacing = aiming ? (Math.cos(aimAngle) < 0 ? 'W' : 'E') : (lastPtr && lookSide) || me.facing;   // (cursor off the view: the way you walk)
-    var actors = [{ x: shown.x, y: shown.y, facing: myFacing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, aim: aiming ? aimAngle : null, swing: (performance.now() - swingT0) / SWING_MS, statusColor: myst ? myst.color : '',
+    var actors = [{ x: shown.x, y: shown.y, facing: myFacing, name: me.name, hp: me.hp, maxHp: me.maxHp, me: true, layers: playerLayers(me) || undefined, aim: aiming ? aimAngle : null, swing: (performance.now() - swingT0) / SWING_MS, lift: eatUp, bite: eatBit / EAT_BITES, statusColor: myst ? myst.color : '',
       idle: shown.x === me.x && shown.y === me.y && !aiming, ph: phaseOf(me.id), sneak: !!me.sneak }];   // idle = standing still: the figure breathes (Render, paintActor); sneak = drawn crouched
     var sceneEm = inScene ? Scene.emotes(now) : [];                    // emotes a scene put up: over you, an NPC, a tile, an actor
     var pups = inScene ? Scene.puppets(now) : {}, speaker = inScene ? Scene.speaker() : '';   // the scene's actors, and who is speaking
     function emFor(ref) {                                              // what shows over an actor: the scene's emote, else the mark of who speaks
-      return sceneEm.filter(function (em) { return em.ref === ref; })[0] || (speaker === ref ? { id: 'talk', t: 100000 + now % 100000, left: Infinity } : null);
+      var base = String(ref).split('|')[0];                             // (an emote over a pack is over each of them)
+      return sceneEm.filter(function (em) { return em.ref === base; })[0] || (speaker === ref ? { id: 'talk', t: 100000 + now % 100000, left: Infinity } : null);
     }
     scenePupKeys = {};
     Object.keys(pups).forEach(function (ref) { if (pups[ref].key) scenePupKeys[pups[ref].key] = 1; });
@@ -3344,8 +3412,8 @@
       var s = shownOthers['p:' + q.id] || (shownOthers['p:' + q.id] = { x: q.x, y: q.y });
       var qStill = s.x === q.x && s.y === q.y;
       ease(s, q, dt / (moveMs * Rules.stepCost('N', content, mapOf(), q.x, q.y, q))); seen['p:' + q.id] = 1;   // (wading or sneaking: slower)
-      var act = othersAct(q, tMark);
-      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp, swing: (tMark - act.t0) / SWING_MS, idle: qStill, ph: phaseOf(q.id), sneak: !!q.sn, emote: playerEmote(q.em) });
+      var act = othersAct(q, tMark), eat = othersEat(q, act, s, tMark);
+      actors.push({ x: s.x, y: s.y, facing: q.facing, name: q.name, tint: '#b6553d', layers: playerLayers(q) || undefined, hp: q.hp, maxHp: q.maxHp, swing: (tMark - act.t0) / SWING_MS, lift: eat.lift, bite: eat.bite, idle: qStill, ph: phaseOf(q.id), sneak: !!q.sn, emote: playerEmote(q.em) });
     });
     npcActors(actors, shown, sceneEm);
     if (inScene) {
@@ -3461,15 +3529,17 @@
       });
       cls.parentNode.hidden = Object.keys(content.classes).length < 2;
       var ch = World.hairChoices ? World.hairChoices(content) : { styles: [content.config.start_hair || ''], colors: [content.config.start_hair_color || 'hair_brown'], style: content.config.start_hair || '', color: content.config.start_hair_color || 'hair_brown' };
-      var look = { body: '', skin: ch.skin || 'skin_light', hair: ch.style, hairColor: ch.color };
+      var look = { body: '', skin: ch.skin || 'skin_light', hair: ch.style, hairColor: ch.color, beard: '', beardColor: '' };   // (beardColor '' = the hair's)
+      var beards = ch.beards || [''];
+      function tinted(path, color) { return path ? Tint.layer(Assets.get(path), Assets.get(maskOf(path)), Tint.TINTS[color]) : null; }
       // one figure: the class's body with a hair shape in a colour, scaled up without smoothing
       function bodyOf(kind) { return World.bodySprite ? World.bodySprite(content, { 'class': cls.value, body: kind }) : ((content.classes[cls.value] || {}).bodySprite || ''); }
-      function doll(cv, hair, color, kind) {
+      function doll(cv, hair, color, kind, beard) {
         var g = cv.getContext('2d'), bp = bodyOf(kind === undefined ? look.body : kind), body = bp && Assets.get(bp);
         g.clearRect(0, 0, cv.width, cv.height); g.imageSmoothingEnabled = false;
         if (body) g.drawImage(Tint.skinned ? Tint.skinned(body, look.skin, false) : body, 0, 0, cv.width, cv.height);
-        var img = hair && Assets.get(hair);
-        if (img) g.drawImage(Tint.getTintedLayer(img, Assets.get(maskOf(hair)), Tint.TINTS[color]) || img, 0, 0, cv.width, cv.height);
+        var bd = tinted(beard === undefined ? look.beard : beard, look.beardColor || look.hairColor); if (bd) g.drawImage(bd, 0, 0, cv.width, cv.height);
+        var img = tinted(hair, color); if (img) g.drawImage(img, 0, 0, cv.width, cv.height);
       }
       function draw() {
         doll($('join-preview'), look.hair, look.hairColor);
@@ -3486,6 +3556,22 @@
           b.onclick = function () { look.hair = path; draw(); };
           hs.appendChild(b);
         });
+        var fs = $('join-beard'), fc = $('join-beard-color'); fs.innerHTML = ''; fc.innerHTML = '';
+        beards.forEach(function (path) {
+          var b = document.createElement('button'); b.type = 'button'; b.className = 'jpick' + (path === look.beard ? ' on' : '');
+          b.title = path ? path.replace(/^.*\/beard_?/, '').replace(/\.png$/i, '').replace(/_final$/, '').replace(/_/g, ' ') : 'none';
+          var cv = document.createElement('canvas'); cv.width = 32; cv.height = 48; doll(cv, look.hair, look.hairColor, undefined, path); b.appendChild(cv);
+          b.onclick = function () { look.beard = path; draw(); };
+          fs.appendChild(b);
+        });
+        ch.colors.forEach(function (name) {
+          var ramp = Tint.TINTS[name]; if (!ramp) return;
+          var b = document.createElement('button'); b.type = 'button'; b.className = 'jswatch' + (name === (look.beardColor || look.hairColor) ? ' on' : '');
+          b.title = name.replace(/^hair_/, ''); b.style.background = 'linear-gradient(135deg, ' + ramp[3] + ', ' + ramp[1] + ')';
+          b.onclick = function () { look.beardColor = name; draw(); };
+          fc.appendChild(b);
+        });
+        $('join-beard-color').hidden = $('join-beard-color-label').hidden = !look.beard;
         var ss = $('join-skin'); ss.innerHTML = '';
         (ch.skins || []).forEach(function (name) {
           var col = Tint.SKINS && Tint.SKINS[name]; if (!col) return;
@@ -3508,7 +3594,7 @@
       var need = [];
       Object.keys(content.classes).forEach(function (id) { if (content.classes[id].bodySprite) need.push(content.classes[id].bodySprite); });
       ['', 'female'].forEach(function (kind) { var bp = bodyOf(kind); if (bp) need.push(bp); });
-      ch.styles.forEach(function (path) { if (path) { need.push(path); need.push(maskOf(path)); } });
+      ch.styles.concat(beards).forEach(function (path) { if (path) { need.push(path); need.push(maskOf(path)); } });
       Promise.all(need.map(function (path) { return Assets.load(path); })).then(function () { if (!box.hidden) draw(); });
       box.hidden = false; input.focus();
       $('join-form').onsubmit = function (e) {
@@ -3561,11 +3647,14 @@
     var want = new URLSearchParams(location.search).get('map');
     // …unless the character is already somewhere in that building: a floor is a map of its own, and reopening the
     // page must leave you on the floor and the spot you were on, not send you back to the ground floor's start.
+    // ?scene=<id> (the Studio's Play this scene): the test character first goes where the scene's map says the player stands
+    var trySc = api.mode === 'offline' && (content.scenes || {})[new URLSearchParams(location.search).get('scene')];
+    if (trySc && trySc.start && content.maps[trySc.map] && !(res.player.map === trySc.map && res.player.x === trySc.start.x && res.player.y === trySc.start.y)) return api.warp(trySc.map, trySc.start.x, trySc.start.y);
     if (want && api.mode === 'offline' && content.maps[want] && World.groundId(content, want) !== World.groundId(content, res.player.map)) return api.warp(want);
     return res;
   }).then(apply).then(function () {
     setupDebug();
-    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use what is towards the cursor · ' + (skillsOn() ? 'Q/E abilities · ' : '') + 'mouse wheel or 1-9, 0 choose what you hold from the belt (click to use food and the like) · I or C inventory and crafting · B build.', 'info');
+    log('WASD / arrows move · hold right-click to aim (left-click fires toward the cursor; R reloads) · left-click to interact, hold it for options · F/Space to use what is towards the cursor · ' + (skillsOn() ? 'Q/E abilities · ' : '') + 'mouse wheel or 1-9, 0 choose what you hold from the belt (hold the click to use food and the like) · I or C inventory and crafting · B build.', 'info');
     if (api.staleDraft) log('Your map editor draft was made from older game data, so the game is using the latest data instead. Open the editor to update or discard the draft.', 'death');
     // ?scene=<id> (the Content Studio's "Play this scene", offline only): that scene at once, seen or not, told to nobody
     var tryScene = new URLSearchParams(location.search).get('scene');

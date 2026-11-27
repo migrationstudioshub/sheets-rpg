@@ -91,9 +91,10 @@ function create(deps) {
       doors: Object.keys(fst).length ? JSON.stringify(fst) : null,
       players: (players || []).filter(q => q.map === mapId).map(q => ({
         // class + equipment + hair: what the others need to draw this player as they are (the same fields an answer carries)
-        id: q.id, name: q.name, 'class': q['class'] || '', equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '',
+        id: q.id, name: q.name, 'class': q['class'] || '', equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '', beard: q.beard || '', beardColor: q.beardColor || '', body: q.body || '', skin: q.skin || '',
         x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: World.stats(content, q).maxHp, level: q.level,
         wst: World.weaponState ? World.weaponState(content, q) : '',   // weapon in hand: '' | empty | reload (its picture)
+        hand: World.handOf ? World.handOf(content, q) : '',     // what they hold that is not their weapon (drawn in their hand)
         act: q.act || '',                                      // their last swing or shot, for the others to draw (World.noteAct)
         sn: q.sneak ? 1 : 0,                                   // sneaking (docs/STEALTH.md): drawn crouched, and paced slower
         wt: World.watching && World.watching(content, q, Date.now()) ? 1 : undefined,   // watching a scene: a mark over their head, nothing can touch them

@@ -1714,6 +1714,11 @@ var World = (function () {
   var HAIR_DIR = 'art/sprites/paperdoll/hair/';
   var HAIR_STYLES = ['hair_messy', 'hair_buzz', 'hair_slick', 'hair_shaggy', 'hair_under', 'hair_bob', 'hair_pony', 'hair_long', 'hair_metal_mohawk_v1', 'hair_metal_mohawk_v2']
     .map(function (n) { return HAIR_DIR + n + '.png'; });
+  // Facial hair (27 Nov 2026): the same kind of layer, in paperdoll/face/, picked on the character screen with a colour
+  // of its own (the hair ramps). '' = none, the start. Config beard_styles (a list) replaces the built-in ones.
+  var BEARD_DIR = 'art/sprites/paperdoll/face/';
+  var BEARD_STYLES = ['beard_stubble_final', 'beard_goatee_only_final', 'beard_goatee_stubble_final', 'beard_goatee_moustache_final', 'beard_goatee_stubble_moustache_final',
+    'beard_chops_v1_final', 'beard_full_only_final', 'beard_full_final', 'beard_long_final'].map(function (n) { return BEARD_DIR + n + '.png'; });
   var HAIR_COLORS = ['hair_black', 'hair_dark', 'hair_brown', 'hair_auburn', 'hair_ginger', 'hair_blonde', 'hair_grey', 'hair_white'];
   // The body under the gear: one for men, one for women, the same for every class (Config body_male / body_female).
   // A character carries body: 'female' or nothing (= male). The class's own body_sprite is only the fallback for a
@@ -1736,9 +1741,11 @@ var World = (function () {
     if (s0 && styles.indexOf(s0) < 0) styles.unshift(s0);
     if (colors.indexOf(c0) < 0) colors.unshift(c0);
     if (styles.indexOf('') < 0) styles.push('');
-    return { styles: styles, colors: colors, style: s0, color: c0, skins: SKIN_TONES.slice(), skin: 'skin_light' };
+    var beards = cfgList(c, 'beard_styles'); if (!beards.length) beards = BEARD_STYLES.slice();
+    if (beards.indexOf('') < 0) beards.unshift('');
+    return { styles: styles, colors: colors, style: s0, color: c0, skins: SKIN_TONES.slice(), skin: 'skin_light', beards: beards, beard: '' };
   }
-  /** look (optional) = {body, skin, hair, hairColor} chosen on the character screen; anything not on offer is ignored. */
+  /** look (optional) = {body, skin, hair, hairColor, beard, beardColor} chosen on the character screen; anything not on offer is ignored. */
   function newPlayer(c, id, name, cls, look) {
     var p = { id: id, name: name, 'class': c.classes[cls] ? cls : (c.config.start_class || Object.keys(c.classes)[0] || ''),
       map: '', x: 0, y: 0, facing: 'S', level: 1, xp: 0, gold: 0, inventory: [], equipment: {}, flags: {}, quests: {}, questsDone: {}, explored: {}, respawn: '',
@@ -1758,6 +1765,10 @@ var World = (function () {
       var ch = hairChoices(c);
       if (typeof look.hair === 'string' && ch.styles.indexOf(look.hair) >= 0) p.hair = look.hair;
       if (ch.colors.indexOf(look.hairColor) >= 0) p.hairColor = look.hairColor;
+      if (look.beard && ch.beards.indexOf(look.beard) >= 0) {             // facial hair: none unless picked; its colour = the hair's unless picked too
+        p.beard = look.beard;
+        if (ch.colors.indexOf(look.beardColor) >= 0 && look.beardColor !== p.hairColor) p.beardColor = look.beardColor;
+      }
     }
     var map = startMap(c), sp = map && map.spawn;                           // the map's own spawn point wins over config.start_x/y
     var sx = sp ? Number(sp.x) || 0 : Number(c.config.start_x) || 0, sy = sp ? Number(sp.y) || 0 : Number(c.config.start_y) || 0;
@@ -1796,7 +1807,11 @@ var World = (function () {
   // WORN_AT + its index in wornKeys(); p.equipment[k] still names the item (stats and drawing read that). A place the
   // rules have no cell for (a slot name of the content's own) is worn from the bag, as before.
   var WORN_AT = 2000;
-  function wornKeys() { return WORN_SLOTS.map(function (w) { return w.id; }).concat(accKeys()); }
+  // (a place added later — `late`, the face — is numbered after the accessories, so the cells of old saves stay as they are)
+  function wornKeys() {
+    function ids(late) { return WORN_SLOTS.filter(function (w) { return !!w.late === late; }).map(function (w) { return w.id; }); }
+    return ids(false).concat(accKeys(), ids(true));
+  }
   function wornCell(k) { var i = wornKeys().indexOf(k); return i < 0 ? -1 : WORN_AT + i; }
   function onWornCell(s) { return s >= WORN_AT && s < WORN_AT + wornKeys().length; }
   /** Puts a stack on in worn place k: it moves to that place's cell, and what was worn there takes the cell it left. */
@@ -3915,8 +3930,8 @@ var World = (function () {
     // what players built or broke there travels only when the asker is behind (haveRev = the revision they hold)
     var sv = ms && ms.struct, srev = sv ? sv.rev || 0 : 0;
     return { structRev: srev, struct: srev && haveRev !== srev ? publicStruct(sv) : undefined, states: fixtureStates(c, ws, mapId), players: (everyone || []).filter(function (q) { return q.map === mapId && q.hp > 0 && !(but && q.id === but.id); }).map(function (q) {
-      return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '',
-        x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level, act: q.act || '', wst: weaponState(c, q), sn: q.sneak ? 1 : 0 };
+      return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {}, hair: q.hair || '', hairColor: q.hairColor || '', beard: q.beard || '', beardColor: q.beardColor || '', body: q.body || '', skin: q.skin || '',
+        x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level, act: q.act || '', wst: weaponState(c, q), hand: handOf(c, q), sn: q.sneak ? 1 : 0 };
     }), monsters: ((ms && ms.monsters) || []).filter(function (m) { return !m.dead; }).map(function (m) {
       var d = c.monsters[m.ref];
       return { id: m.id, ref: m.ref, x: m.x, y: m.y, hp: m.hp, maxHp: d ? d.hp : m.hp, facing: m.facing, look: m.look || undefined };
@@ -4017,6 +4032,12 @@ var World = (function () {
   // ------------------------------------------------------------ firearms (shooting is the click action, not a skill)
   /** The equipped weapon if it is a ranged one (range > 0), else null. */
   /** How the weapon in hand stands, for its picture: 'reload' (being reloaded), 'empty' (a magazine with nothing in it) or ''. */
+  /** What a player holds that is NOT the weapon they fight with (food, a bottle, a grenade, a bedroll…), for the others to
+   *  draw in their hand: its item id, or ''. (The weapon is already told in `equipment`.) */
+  function handOf(c, p) {
+    var id = typeof p.held === 'number' && p.held >= 0 ? beltOf(p)[p.held] || '' : '';
+    return id && c.items[id] && id !== (p.equipment || {}).weapon ? id : '';
+  }
   function weaponState(c, p) {
     var w = c.items[(p.equipment || {}).weapon];
     if (!w || !itemCan(w, 'shoot') || !(Number(w.clip) > 0)) return '';
@@ -4307,6 +4328,7 @@ var World = (function () {
       land = throwLanding(c, map, p.x, p.y, tx, ty, stateFn);
     }
     take(p, id, 1);
+    noteAct(p, 't', tx, ty, 0);                                  // (the others see the arm swing)
     p.cooldowns = p.cooldowns || {}; p.cooldowns._throw = now + (Number(it.fireMs) || 0);
     faceTo(p, tx, ty);
     var ms = mapState(ws, blastMap), area = Number(it.throwArea) || 0;
@@ -4617,13 +4639,32 @@ var World = (function () {
     ((sc && sc.steps) || []).forEach(function (s) {
       var a = s.a; if (!a || (a !== 'me' && a.indexOf('mon:') !== 0)) return;
       var rec = at[a];
-      if (s.type === 'show') rec = at[a] = { on: true, stay: !!(rec && rec.stay) };
+      if (s.type === 'show') rec = at[a] = { on: true, stay: !!(rec && rec.stay), n: a === 'me' ? 1 : Math.max(1, Math.min(12, Math.round(Number(s.count) || 1))) };
       else if (s.type === 'walk') { if (!rec && a === 'me') rec = at[a] = { on: true, stay: false }; if (!rec || !rec.on) return; }
       else { if (s.type === 'leave' && rec) rec.on = false; return; }
       rec.x = Math.round(Number(s.x) || 0); rec.y = Math.round(Number(s.y) || 0);
       if (s.stay) rec.stay = true;
     });
-    Object.keys(at).forEach(function (a) { if (at[a].on && at[a].stay && at[a].x !== undefined) out[a] = { x: at[a].x, y: at[a].y }; });
+    Object.keys(at).forEach(function (a) { if (at[a].on && at[a].stay && at[a].x !== undefined) out[a] = { x: at[a].x, y: at[a].y, n: at[a].n || 1 }; });
+    return out;
+  }
+  // An actor's ref is mon:<id> or mon:<id>#<copy>; a pack's members are <ref>, <ref>|2, <ref>|3… (client/js/scene.js).
+  function sceneMonster(c, ref) { return c.monsters[String(ref).slice(4).split('#')[0].split('|')[0]]; }
+  function sceneMembers(ref, n) { var out = [ref]; for (var k = 2; k <= n; k++) out.push(ref + '|' + k); return out; }
+  /** Where a pack of n stands round a tile: the tile itself, then the nearest tiles that can be WALKED to from it
+   *  (eight ways, as players walk; `opts` = the move options, with nobody counted as in the way). The page (the pack in
+   *  the scene) and the referee (the pack that stays) both ask this, so a pack stays where it was seen. */
+  function packSpots(c, map, at, n, opts) {
+    var R = Rl(), dirs = Object.keys(R.DIRS).concat(Object.keys(R.DIAG || {})), seen = {}, out = [], guard = 0;
+    var q = [{ x: Math.round(at.x), y: Math.round(at.y) }]; seen[q[0].x + ',' + q[0].y] = 1;
+    while (q.length && out.length < n && guard++ < 400) {
+      var cur = q.shift(); out.push(cur);
+      for (var i = 0; i < dirs.length; i++) {
+        var r = R.tryMove(c, map, cur.x, cur.y, dirs[i], opts);
+        if (!r.ok || r.map || seen[r.x + ',' + r.y]) continue;
+        seen[r.x + ',' + r.y] = 1; q.push({ x: r.x, y: r.y });
+      }
+    }
     return out;
   }
   function sceneSpot(c, ws, p, x, y, self) {                    // the free tile nearest (x, y) with no player on it, or null
@@ -4641,14 +4682,20 @@ var World = (function () {
     if (stays.me) { var sp = sceneSpot(c, ws, p, stays.me.x, stays.me.y, p); if (sp) { p.x = sp.x; p.y = sp.y; } }   // (first: the monsters keep off that tile)
     Object.keys(stays).forEach(function (ref) {
       if (ref === 'me') return;
-      var def = c.monsters[ref.slice(4)]; if (!def) return;
-      var ms = mapState(ws, p.map), at = sceneSpot(c, ws, p, stays[ref].x, stays[ref].y, null); if (!at) return;
-      var m = { id: 'scene_' + q.id + '_' + p.id + '_' + now.toString(36) + '_' + (n++), ref: def.id, spawn: '', x: at.x, y: at.y, hp: def.hp, dead: false,
-        last: now, respawnAt: 0, facing: at.x > p.x ? 'W' : at.x < p.x ? 'E' : 'S', free: true, wait: now + SCENE_STAY_WAIT_MS };
-      var look = (q.cast && q.cast[ref]) || rollLook(c, def, Math.random);
-      if (look) m.look = look;
-      (ms.monsters = ms.monsters || []).push(m);
-      ws.dirty = true;
+      var def = sceneMonster(c, ref); if (!def) return;
+      // a pack: each on its own tile of the pack's spots (the same the page showed), or the nearest one still free
+      var nobody = Object.assign(moveOpts(c, ws, p.map, [], null), { occupied: function () { return null; } });
+      var spots = stays[ref].n > 1 ? packSpots(c, liveMap(c, ws, p.map), stays[ref], stays[ref].n, nobody) : [];
+      sceneMembers(ref, stays[ref].n).forEach(function (mref, k) {
+        var ms = mapState(ws, p.map), want = spots[k] || stays[ref];
+        var at = sceneSpot(c, ws, p, want.x, want.y, null); if (!at) return;
+        var m = { id: 'scene_' + q.id + '_' + p.id + '_' + now.toString(36) + '_' + (n++), ref: def.id, spawn: '', x: at.x, y: at.y, hp: def.hp, dead: false,
+          last: now, respawnAt: 0, facing: at.x > p.x ? 'W' : at.x < p.x ? 'E' : 'S', free: true, wait: now + SCENE_STAY_WAIT_MS };
+        var look = (q.cast && q.cast[mref]) || rollLook(c, def, Math.random);
+        if (look) m.look = look;
+        (ms.monsters = ms.monsters || []).push(m);
+        ws.dirty = true;
+      });
     });
   }
   function sceneQueue(c, ws, p, id, then, now, by) {
@@ -4656,9 +4703,13 @@ var World = (function () {
     if (!sc || !sc.steps.length || (p.scenes || {})[id] || (p.sceneQ || []).some(function (q) { return q.id === id; })) return false;
     p.sceneQ = p.sceneQ || [];
     var cast = null;                                            // the looks of the monsters that will stay, rolled now
-    Object.keys(sceneStays(sc)).forEach(function (ref) {
-      var look = ref !== 'me' && rollLook(c, c.monsters[ref.slice(4)], Math.random);
-      if (look) (cast = cast || {})[ref] = look;
+    var staying = sceneStays(sc);
+    Object.keys(staying).forEach(function (ref) {
+      if (ref === 'me') return;
+      sceneMembers(ref, staying[ref].n).forEach(function (mref) {        // (each its own look, as monsters have when they spawn)
+        var look = rollLook(c, sceneMonster(c, ref), Math.random);
+        if (look) (cast = cast || {})[mref] = look;
+      });
     });
     p.sceneQ.push({ id: id, then: String(then || '').trim(), by: by || '', at: 0, cast: cast || undefined });
     if (p.sceneQ.length === 1) sceneBegin(c, ws, p, now);
@@ -5432,7 +5483,7 @@ var World = (function () {
   // name the content uses, or 'accessory' — of which ACC_SLOTS are worn at once, in p.equipment.accessory1…N.
   // p.equipment[place] = item id, as ever; wornAt / slotFor are the only two that know about the accessory places.
   var WORN_SLOTS = [{ id: 'helm', name: 'Head' }, { id: 'armor', name: 'Chest' }, { id: 'pants', name: 'Pants' }, { id: 'feet', name: 'Feet' },
-    { id: 'gloves', name: 'Gloves' }, { id: 'back', name: 'Back' }, { id: 'belt', name: 'Belt' }], ACC_SLOTS = 2;   // (owner, 26 Nov 2026: a belt place, two accessories)
+    { id: 'gloves', name: 'Gloves' }, { id: 'back', name: 'Back' }, { id: 'belt', name: 'Belt' }, { id: 'face', name: 'Face', late: true }], ACC_SLOTS = 2;   // (owner, 26 Nov 2026: a belt place, two accessories; 27 Nov: a face place — masks, glasses)
   function accKeys() { var out = []; for (var i = 1; i <= ACC_SLOTS; i++) out.push('accessory' + i); return out; }
   /** Where p wears this item ('' = nowhere). */
   function wornAt(p, it) {
@@ -5465,6 +5516,7 @@ var World = (function () {
           it.mp && !it.heal ? 'Your mana is already full.' : 'You are already at full health.' }); return;
       }
       var gone = takeOne(p, id, from);                           // (the cell it was used from, when that stack is now empty)
+      noteAct(p, 'u', p.x, p.y, 0);                              // (the others see it lifted to the mouth)
       questCount(c, p, 'use', id, now, ev);
       if (it.leaves && c.items[it.leaves]) leaveItem(c, p, it.leaves, gone, from, ev);   // the empty bottle stays: where the full one was
       if (it.cooldownMs > 0) { p.cooldowns = p.cooldowns || {}; p.cooldowns['use:' + id] = now + it.cooldownMs; }
@@ -5724,7 +5776,7 @@ var World = (function () {
       players: (players || []).filter(function (q) { return q.id !== p.id && q.map === mapId; }).map(function (q) {
         // class + equipment + hair let other clients draw this player's paper-doll (base body, hair, worn gear)
         return { id: q.id, name: q.name, 'class': q['class'], equipment: q.equipment || {},
-          hair: q.hair || '', hairColor: q.hairColor || '', body: q.body || '', skin: q.skin || '', x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level, act: q.act || '', wst: weaponState(c, q), sn: q.sneak ? 1 : 0, wt: watching(c, q, now) ? 1 : undefined, em: emoteOf(q, now) };   // sn: sneaking; wt: watching a scene (a mark over their head); em: an emote
+          hair: q.hair || '', hairColor: q.hairColor || '', beard: q.beard || '', beardColor: q.beardColor || '', body: q.body || '', skin: q.skin || '', x: q.x, y: q.y, facing: q.facing, hp: q.hp, maxHp: stats(c, q).maxHp, level: q.level, act: q.act || '', wst: weaponState(c, q), hand: handOf(c, q), sn: q.sneak ? 1 : 0, wt: watching(c, q, now) ? 1 : undefined, em: emoteOf(q, now) };   // sn: sneaking; wt: watching a scene (a mark over their head); em: an emote
       })
     };
   }
@@ -5763,7 +5815,7 @@ var World = (function () {
   function publicPlayer(c, p) {
     var s = stats(c, p);
     return { id: p.id, name: p.name, 'class': p['class'], map: p.map, x: p.x, y: p.y, facing: p.facing,
-      hair: p.hair || '', hairColor: p.hairColor || '', body: p.body || '', skin: p.skin || '',
+      hair: p.hair || '', hairColor: p.hairColor || '', beard: p.beard || '', beardColor: p.beardColor || '', body: p.body || '', skin: p.skin || '',
       hp: p.hp, maxHp: s.maxHp, mp: Math.floor(Number(p.mp) || 0), maxMp: s.maxMp, atk: s.atk, def: s.def, level: p.level, xp: p.xp,
       hunger: Math.round(Number(p.hunger) == null || isNaN(Number(p.hunger)) ? 100 : Number(p.hunger)),
       thirst: Math.round(Number(p.thirst) == null || isNaN(Number(p.thirst)) ? 100 : Number(p.thirst)),
@@ -5803,12 +5855,12 @@ var World = (function () {
     liveMap: liveMap, liveMapFromStruct: liveMapFromStruct, structOf: structOf, publicStruct: publicStruct,
     structInfo: structInfo, strikeTarget: strikeTarget, damageStructure: damageStructure,
     WORN_SLOTS: WORN_SLOTS, ACC_SLOTS: ACC_SLOTS, wornAt: wornAt,
-    recipesFor: recipesFor, hasTool: hasTool, craftingHere: craftingHere, CRAFT_MAX: CRAFT_MAX, heldItem: heldItem, weaponState: weaponState, cookRecipe: cookRecipe, COOK_S: COOK_S, hitMonster: hitMonster, bagSlots: bagSlots, stackMaxOf: stackMaxOf, durOf: durOf, stackInUse: stackInUse, isBroken: isBroken, repairInfo: repairInfo, salvageInfo: salvageInfo, recipeMaking: recipeMaking, take: take, harvestWith: harvestWith, pickAt: pickAt, placeBp: placeBp, canPlace: canPlace, stationName: stationName,
+    recipesFor: recipesFor, hasTool: hasTool, craftingHere: craftingHere, CRAFT_MAX: CRAFT_MAX, heldItem: heldItem, weaponState: weaponState, handOf: handOf, cookRecipe: cookRecipe, COOK_S: COOK_S, hitMonster: hitMonster, bagSlots: bagSlots, stackMaxOf: stackMaxOf, durOf: durOf, stackInUse: stackInUse, isBroken: isBroken, repairInfo: repairInfo, salvageInfo: salvageInfo, recipeMaking: recipeMaking, take: take, harvestWith: harvestWith, pickAt: pickAt, placeBp: placeBp, canPlace: canPlace, stationName: stationName,
     canBuild: canBuild, buildUnlocked: buildUnlocked, blueprintsFor: blueprintsFor, noBuild: noBuild, buildSpot: buildSpot,
     claimsOn: claimsOn, claimAt: claimAt, mayUse: mayUse, isMember: isMember, mayDismantle: mayDismantle, canRemove: canRemove, canMove: canMove, leaveBag: leaveBag, bagObject: bagObject, waterAt: waterAt, fillables: fillables, itemCan: itemCan, beltItems: beltItems, beltOf: beltOf, beltStack: beltStack, BELT_AT: BELT_AT, WORN_AT: WORN_AT, wornCell: wornCell, BELT_SIZE: BELT_SIZE, skillsOn: skillsOn, holdSlot: holdSlot,
     groundId: groundId, floorId: floorId, floorsOf: floorsOf, deliver: deliver,
     sightRadius: sightRadius, seesAcross: seesAcross, peek: peek, advanceFloors: advanceFloors, findPath: findPath, reloadMsOf: reloadMsOf, alertOf: alertOf, hairChoices: hairChoices, blocksSight: blocksSight, bodySprite: bodySprite, fixtureStates: fixtureStates,
     applyNotice: applyNotice, shotAcross: shotAcross, throwAcross: throwAcross, tileMine: tileMine,
-    questState: questState, questLog: questLog, questsOpen: questsOpen, goalText: goalText, watching: watching, emoteOf: emoteOf };
+    questState: questState, questLog: questLog, questsOpen: questsOpen, goalText: goalText, watching: watching, emoteOf: emoteOf, packSpots: packSpots };
 })();
 if (typeof module !== 'undefined') module.exports = World;

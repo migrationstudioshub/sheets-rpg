@@ -106,7 +106,7 @@ var Schema = (function () {
     itemTypes: { collection: 'itemTypes', id: 'id', label: 'Item Types', singular: 'item type', authored: 'studio', fields: [
       f('id', 'text', '', 'Short name the items refer to: lower-case letters, numbers and _'), f('name', 'text', '', 'Heading shown in the Items list'),
       f('equip', 'bool', false, 'Can be equipped: worn or held in a slot. Shows slot, worn art, attack, defence'),
-      f('slot', 'text', '', 'Where items of this type go when equipped: weapon, helm (head), armor (chest), pants, feet, gloves, back, belt, or accessory (two can be worn). An item can name its own slot'),
+      f('slot', 'text', '', 'Where items of this type go when equipped: weapon, helm (head), face (masks, glasses), armor (chest), pants, feet, gloves, back, belt, or accessory (two can be worn). An item can name its own slot'),
       f('shoot', 'bool', false, 'A ranged weapon when equipped and given a range: fires on click. Shows range, ammo, magazine, aim'),
       f('consume', 'bool', false, 'Can be used: one is used up each time. Shows heal, mana, hunger, thirst, on_use'),
       f('cooldown_s', 'number', 0, 'Seconds to wait before using another of the same item (0 = none). An item can set its own'),
@@ -121,12 +121,13 @@ var Schema = (function () {
       f('id', 'text', ''), f('name', 'text', ''), f('sprite', 'image', ''),
       f('type', 'select', 'material', '', { options: ['material', 'weapon', 'armor', 'consumable', 'throwable', 'placeable', 'ammo', 'key'] }),
       f('description', 'textarea', '', 'A line or two about it: shown on its card in the bag and on the page of a recipe that makes it'),
-      f('slot', 'text', '', 'Equip slot: weapon, helm (head), armor (chest), pants, feet, gloves, back, belt, or accessory (two can be worn). Empty = the slot of its type'),
+      f('slot', 'text', '', 'Equip slot: weapon, helm (head), face (masks, glasses), armor (chest), pants, feet, gloves, back, belt, or accessory (two can be worn). Empty = the slot of its type'),
       f('worn_sprite', 'image', '', 'Paper-doll layer when equipped. For a weapon that shoots: loaded and held at rest (a bow with an arrow on the string, not drawn)'),
       f('worn_empty', 'image', '', 'A weapon with a magazine (clip), held with nothing loaded: a bow with no arrow on the string. Also shown while the next one is being loaded, unless there is a reloading picture. Empty = the worn sprite'),
       f('worn_aim', 'image', '', 'The weapon loaded and being aimed (right mouse button held): a bow drawn back. Empty = the worn sprite. Draw them all on the same canvas, so the aim points fit every one'),
       f('worn_reload', 'image', '', 'Optional: the weapon while it is being reloaded (reload_ms). Empty = the worn-empty picture'),
       f('default_tint', 'tint', '', 'The colour of the worn layer (needs the sprite to have a .tint.png mask next to it). No tint = drawn as it is'),
+      f('hides_beard', 'bool', false, 'Hides the beard: while it is worn, the wearer\'s facial hair is not drawn (a mask that covers the chin). Only how it looks'),
       f('hides_head', 'bool', false, 'Hides the head: while it is worn, the hair and whatever is worn on the head are not drawn (a poncho or a hood that covers them). Only how it looks'),
       f('stack_max', 'number', 99), f('value', 'number', 0, 'Gold value'),
       f('dispensable', 'bool', false, 'Dispensable (branches, rocks, fiber): when one lies on the ground where the loot of a monster falls, the loot bag is put on that tile and it goes inside the bag. Not ticked = a loot bag is never put on its tile while there is anywhere else for it'),
@@ -305,6 +306,8 @@ var Schema = (function () {
     scenes: { collection: 'scenes', id: 'id', label: 'Scenes', singular: 'scene', authored: 'studio', fields: [
       f('id', 'text', ''), f('name', 'text', ''),
       f('steps', 'json', '', 'The steps: [{type, with, ...}]. Edited as a list of step cards in the Scenes view'),
+      f('map', 'text', '', 'The map the Studio shows beside the steps, to pick tiles on (the game plays the scene wherever it is started)'),
+      f('start_xy', 'text', '', 'Where the player stands on that map, "x,y": the Studio draws from it, and Play this scene puts the test character there'),
       f('notes', 'text', '')
     ] },
 

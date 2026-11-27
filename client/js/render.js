@@ -995,7 +995,9 @@ var Render = (function () {
   /** An outfit as paper-doll layers ({path, mask, ramp}), starting the loads of what is not loaded yet. */
   function outfitLayers(fit) {
     var tone = typeof Tint !== 'undefined' && Tint.lookSkin ? Tint.lookSkin(fit) : '';   // the body's skin tone (and the hands' in what it holds)
+    var fem = typeof Tint !== 'undefined' && Tint.femaleLook && Tint.femaleLook(fit);
     return (fit || []).map(function (l) {
+      if (fem && Assets.wornFor) l = { path: Assets.wornFor(l.path, true), tint: l.tint };   // a woman's body: the woman's cut of what it wears
       var sk = tone ? Tint.skinFor(l.path, tone) : null;
       // a garment's cloth is all in its colour mask: one with no colour given gets the default (Tint.lookTint), never half drawn
       var tint = typeof Tint !== 'undefined' && Tint.lookTint ? Tint.lookTint(l.path, l.tint) : l.tint;
@@ -1011,7 +1013,7 @@ var Render = (function () {
   function figureOn(gg, a, ax, ay, T) {
     var top = ay;                                                    // top of the drawn figure (busts rise above the tile)
     if (a.layers && a.layers.length) {
-      top = drawLayers(gg, a.layers, ax, ay, T, a.facing === 'W', a.aim, a.swing);
+      top = drawLayers(gg, a.layers, ax, ay, T, a.facing === 'W', a.aim, a.swing, a.lift, a.bite);
     } else if (a.sprite !== undefined) {
       var img = a.sprite && Assets.get(a.sprite);
       if (img) {
@@ -1054,11 +1056,76 @@ var Render = (function () {
     }
     return { p: p, drops: drops, cy: cy / T };
   }
-  function drawLayers(g, layers, ax, ay, T, flip, aim, swing) {
+  // What is in hand with no held picture of its own (a layer marked `icon`: food, a bottle, a grenade…): the item's own
+  // icon, cut to what is drawn in it, as big as it is on the belt (handPx canvas pixels on its longer side, told by the
+  // page: setHandPx; HAND.size of a tile until it is), centred on the hand.
+  // ONE rule for every item (owner, 27 Nov 2026): nothing per item. Points are shares of the figure's 32x48 box, facing
+  // right. `lift` (0..1) carries it from the hand to the mouth; `bite` (0..1) = how much of it has been eaten (taken out
+  // of the corner nearest the mouth); a swing (a throw) turns it about the shoulder.
+  var HAND = { x: 0.62, y: 0.66, mx: 0.66, my: 0.44, sx: 0.5, sy: 0.6, size: 0.4 };
+  function inkRect(img) {
+    if (img._inkR) return img._inkR;
+    var w = img.width, h = img.height, box = { x: 0, y: 0, w: w, h: h };
+    try {
+      var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      var cg = cv.getContext('2d'); cg.drawImage(img, 0, 0);
+      var d = cg.getImageData(0, 0, w, h).data, x0 = w, y0 = h, x1 = -1, y1 = -1;
+      for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3] > 24) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 >= 0) box = { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+    } catch (err) { /* a picture from another site cannot be read: the whole of it */ }
+    try { img._inkR = box; } catch (err2) { /* */ }
+    return box;
+  }
+  var handPx = 0, biteCv = null;
+  function setHandPx(n) { handPx = n > 0 ? n : 0; }
+  /** A few crumbs of a picture, flying from the mouth of a figure (for drawFx, kind 'burst': see burst): its own colours. */
+  function crumbs(img, T, flip) {
+    var pal = img._crumb;
+    if (!pal) {
+      pal = [];
+      try {
+        var cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
+        var cg = cv.getContext('2d'); cg.drawImage(img, 0, 0);
+        var d = cg.getImageData(0, 0, img.width, img.height).data;
+        for (var i = 0; i < d.length; i += 4) if (d[i + 3] > 200) pal.push('rgb(' + d[i] + ',' + d[i + 1] + ',' + d[i + 2] + ')');
+      } catch (err) { /* a picture from another site cannot be read */ }
+      if (!pal.length) pal = ['#c9b48a'];
+      try { img._crumb = pal; } catch (err2) { /* */ }
+    }
+    var u = Math.max(1, Math.round(T / NT)), dir = flip ? -1 : 1, mx = (flip ? 1 - HAND.mx : HAND.mx) * T, my = T - 1.5 * T + HAND.my * 1.5 * T, p = [];
+    for (var n = 0; n < 6; n++) {
+      p.push({ x: mx + (Math.random() - 0.5) * 0.12 * T, y: my + (Math.random() - 0.3) * 0.12 * T, vx: (dir * (0.15 + Math.random() * 0.75) + (Math.random() - 0.5) * 0.5) * T,
+        vy: -(0.3 + Math.random() * 1.1) * T, c: pal[Math.floor(Math.random() * pal.length)], s: u, l: 0.6 + Math.random() * 0.4 });
+    }
+    return p;
+  }
+  function drawHeld(g, img, ax, ay, T, flip, turn, lift, bite) {
+    var b = inkRect(img), k = (handPx || HAND.size * T) / Math.max(b.w, b.h), H = 1.5 * T, top = ay + T - H;
+    var w = Math.max(1, Math.round(b.w * k)), h = Math.max(1, Math.round(b.h * k));
+    var e = lift > 0 ? Math.min(1, lift) : 0; e = e * e * (3 - 2 * e);
+    // (at the mouth it is held IN FRONT of the face, its upper back corner at the lips, so the face still shows)
+    var hx = (HAND.x + (HAND.mx - HAND.x) * e) * T + e * w * 0.38, hy = top + (HAND.y + (HAND.my - HAND.y) * e) * H + e * h * 0.2;
+    g.save();
+    if (flip) { g.translate(ax + T, 0); g.scale(-1, 1); } else g.translate(ax, 0);
+    if (turn) { g.translate(HAND.sx * T, top + HAND.sy * H); g.rotate(turn); g.translate(-HAND.sx * T, -(top + HAND.sy * H)); }
+    if (bite > 0) {                                              // eaten so far: a round piece gone from the corner by the mouth
+      if (!biteCv) biteCv = document.createElement('canvas');
+      if (biteCv.width !== w || biteCv.height !== h) { biteCv.width = w; biteCv.height = h; }
+      var bg = biteCv.getContext('2d');
+      bg.globalCompositeOperation = 'source-over'; bg.clearRect(0, 0, w, h); bg.imageSmoothingEnabled = false;
+      bg.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, w, h);
+      bg.globalCompositeOperation = 'destination-out';
+      bg.beginPath(); bg.arc(0, 0, Math.min(1, bite) * 1.05 * Math.sqrt(w * w + h * h), 0, Math.PI * 2); bg.fill();
+      g.drawImage(biteCv, Math.round(hx - w / 2), Math.round(hy - h / 2));
+    } else g.drawImage(img, b.x, b.y, b.w, b.h, Math.round(hx - w / 2), Math.round(hy - h / 2), w, h);
+    g.restore();
+  }
+  function drawLayers(g, layers, ax, ay, T, flip, aim, swing, lift, bite) {
     var topY = ay, turn = swing != null && swing >= 0 && swing < 1 ? swingTurn(swing) : 0;
     layers.forEach(function (l) {
-      var base = Assets.get(l.path); if (!base) return;
-      var img = (l.mask && l.ramp) ? Tint.getTintedLayer(base, Assets.get(l.mask), l.ramp) : base;
+      var img = (l.mask && l.ramp) ? Tint.layer(Assets.get(l.path), Assets.get(l.mask), l.ramp) : Assets.get(l.path);
+      var base = img; if (!base) return;                         // (its size; a layer that is all mask has no picture of its own)
+      if (l.icon) { drawHeld(g, img, ax, ay, T, flip, turn, lift, bite); return; }
       if (l.skin) img = Tint.skinned(img, l.skin, !l.skinAll);   // the character's skin tone: the body, and the hands drawn into what it holds
       var h = Math.round(T * base.height / base.width), dy = ay + T - h;
       if (dy < topY) topY = dy;
@@ -2238,7 +2305,7 @@ var Render = (function () {
     g.globalAlpha = 1;
   };
 
-  return { burst: burst, figureOn: figureOn, outfitOf: outfitOf, outfitLayers: outfitLayers, drawOutfit: drawOutfit, Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
+  return { burst: burst, crumbs: crumbs, setHandPx: setHandPx, figureOn: figureOn, outfitOf: outfitOf, outfitLayers: outfitLayers, drawOutfit: drawOutfit, Renderer: Renderer, bakeGround: bakeGround, animatedCells: animatedCells, shallowCells: shallowCells, drawAnimated: drawAnimated, fallCells: fallCells, fallAt: fallAt, cliffFoot: cliffFoot, cliffRect: cliffRect, drawCliffThing: drawCliffThing, drawCliffThings: drawCliffThings, drawFalls: drawFalls, southDrop: southDrop, FALL_SPRITE: FALL_SPRITE, foamPaths: foamPaths, elevOn: elevOn, maxElev: maxElev, drawRelief: drawRelief, pickCell: pickCell, pickCells: pickCells, liftAt: liftAt, groundSheet: groundSheet, drawObject: drawObject, frameOf: frameOf,
     parseWallTok: parseWallTok, wall25: wall25, prim25SortY: prim25SortY, drawPrim25: drawPrim25, makeSight: makeSight,
     layerOf: layerOf, wallMountPlace: wallMountPlace, drawStairs: drawStairs, doorstepPath: doorstepPath, drawDoorstep: drawDoorstep, sideDoorEdges: sideDoorEdges };
 })();

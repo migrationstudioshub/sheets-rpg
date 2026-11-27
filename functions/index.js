@@ -171,7 +171,7 @@ exports.game = onRequest({ region: 'us-central1', cors: true, secrets: [EDITOR_K
     const body = req.body || {};
     let out;
     switch (body.action) {
-      case 'join': out = await join(body.name, body['class'], { body: body.body, skin: body.skin, hair: body.hair, hairColor: body.hairColor }); break;
+      case 'join': out = await join(body.name, body['class'], { body: body.body, skin: body.skin, hair: body.hair, hairColor: body.hairColor, beard: body.beard, beardColor: body.beardColor }); break;
       case 'load': out = await step(body.token, null, -1, undefined, { at: body.at }); break;
       case 'poll': out = await step(body.token, null, body.since, body.structRev, { at: body.at, live: body.live }); break;
       case 'act':  out = await step(body.token, body['do'], body.since, body.structRev, { at: body.at, live: body.live }); break;

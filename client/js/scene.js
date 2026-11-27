@@ -51,8 +51,8 @@ var Scene = (function () {
     var at = o.at || { x: 0, y: 0 };
     liftOf = o.lift || function () { return 0; };
     host = { actor: o.actor || function () { return null; }, path: o.path || function () { return null; }, portrait: o.portrait || function () { return null; },
-      nameOf: o.nameOf || function () { return ''; }, pace: o.pace > 0 ? o.pace : 5 };
-    cur = { sc: sc, i: 0, run: [], done: o.done || function () {}, moves: null, emotes: {}, puppets: {}, speaker: '' };
+      nameOf: o.nameOf || function () { return ''; }, pace: o.pace > 0 ? o.pace : 5, spots: o.spots || function (at, n) { var a = []; while (a.length < n) a.push(at); return a; } };
+    cur = { sc: sc, i: 0, run: [], done: o.done || function () {}, moves: null, emotes: {}, puppets: {}, packs: {}, speaker: '' };
     cam = { x: at.x, y: at.y, z: 1, l: liftOf(at.x, at.y) }; back = null; escAt = 0;
     root.hidden = false; root.className = '';
     els.fade.style.transition = 'none'; els.fade.style.opacity = '0';
@@ -73,6 +73,14 @@ var Scene = (function () {
     p = cur.puppets[ref] = init ? { x: init.x, y: init.y, facing: init.facing || 'E', key: init.key || '', on: true, a0: 1, a1: 1, at: 0, as: 0 }
                                 : { x: 0, y: 0, facing: 'E', key: '', on: false, a0: 1, a1: 1, at: 0, as: 0 };
     return p;
+  }
+  // A PACK: a Show step with "how many" over 1. Its members are puppets of their own, named <ref>|2, <ref>|3… (the
+  // first is <ref> itself); every step that names the actor is done by all of them, each to its own tile round the
+  // one the step names (host.spots).
+  function members(ref) {
+    var n = (cur.packs[ref] || 1), out = [ref];
+    for (var k = 2; k <= n; k++) out.push(ref + '|' + k);
+    return out;
   }
   function alphaOf(p, now) { return !p.as || now >= p.at + p.as ? p.a1 : p.a0 + (p.a1 - p.a0) * Math.max(0, (now - p.at) / p.as); }
   function turnTo(p, x) { if (x > p.x + 0.05) p.facing = 'E'; else if (x < p.x - 0.05) p.facing = 'W'; }
@@ -141,33 +149,49 @@ var Scene = (function () {
       if (!s.emote || s.emote === 'none') delete cur.emotes[key];
       else cur.emotes[key] = { id: s.emote, over: s.over || 'me', ref: eref, npc: s.npc || '', x: Number(s.x) || 0, y: Number(s.y) || 0, t0: now, until: secs(s.s) ? now + secs(s.s) : Infinity };
     } else if (s.type === 'show') {                                    // an actor appears on a tile
-      var ps = puppet(s.a, true); if (!ps) return r;
-      ps.x = Number(s.x) || 0; ps.y = Number(s.y) || 0; ps.facing = s.dir === 'W' ? 'W' : 'E'; ps.on = true; ps.walk = null;
-      ps.a0 = secs(s.s) ? 0 : 1; ps.a1 = 1; ps.at = now; ps.as = secs(s.s);
+      var howMany = s.a === 'me' ? 1 : Math.max(1, Math.min(12, Math.round(Number(s.count) || 1)));
+      members(s.a).slice(howMany).forEach(function (ref) { delete cur.puppets[ref]; });   // (shown again as a smaller pack)
+      cur.packs[s.a] = howMany;
+      var at0 = { x: Number(s.x) || 0, y: Number(s.y) || 0 }, sps = howMany > 1 ? host.spots(at0, howMany) : [at0];
+      members(s.a).forEach(function (ref, k) {
+        var ps = puppet(ref, true), sp = sps[k] || at0;
+        ps.x = sp.x; ps.y = sp.y; ps.facing = s.dir === 'W' ? 'W' : 'E'; ps.on = true; ps.walk = null;
+        ps.a0 = secs(s.s) ? 0 : 1; ps.a1 = 1; ps.at = now; ps.as = secs(s.s);
+      });
       r.until = now + secs(s.s);
     } else if (s.type === 'leave') {                                   // and goes
-      var pl = puppet(s.a); if (!pl) return r;
-      pl.a0 = alphaOf(pl, now); pl.a1 = 0; pl.at = now; pl.as = secs(s.s); pl.walk = null;
-      if (!pl.as) pl.on = false;
+      if (!puppet(s.a)) return r;
+      members(s.a).forEach(function (ref) {
+        var pl = puppet(ref); if (!pl) return;
+        pl.a0 = alphaOf(pl, now); pl.a1 = 0; pl.at = now; pl.as = secs(s.s); pl.walk = null;
+        if (!pl.as) pl.on = false;
+      });
       r.until = now + secs(s.s);
     } else if (s.type === 'face') {
-      var pf = puppet(s.a); if (!pf) return r;
-      if (s.dir === 'E' || s.dir === 'W') pf.facing = s.dir;
-      else { var tgt = s.dir === 'actor' ? puppet(s.to) : puppet('me'); if (tgt) turnTo(pf, tgt.x); }
+      if (!puppet(s.a)) return r;
+      var tgt = s.dir === 'actor' ? puppet(s.to) : s.dir === 'player' ? puppet('me') : null;
+      members(s.a).forEach(function (ref) {
+        var pf = puppet(ref); if (!pf) return;
+        if (s.dir === 'E' || s.dir === 'W') pf.facing = s.dir; else if (tgt) turnTo(pf, tgt.x);
+      });
     } else if (s.type === 'walk') {                                    // it walks to a tile: round what is in the way, or straight
-      var pw = puppet(s.a); if (!pw || !pw.on) return r;
-      var to = { x: Number(s.x) || 0, y: Number(s.y) || 0 }, from = { x: Math.round(pw.x), y: Math.round(pw.y) };
-      var pts = s.straight ? null : host.path(from, to);
-      pw.walk = { pts: pts && pts.length ? pts : [to], i: 0, v: host.pace * (Number(s.speed) > 0 ? Number(s.speed) : 1), last: now };
-      r.walker = pw; r.walk = pw.walk;
-      r.until = s.wait === false ? now : Infinity;                     // (until it arrives: update() says when)
+      var lead = puppet(s.a); if (!lead || !lead.on) return r;
+      var to = { x: Number(s.x) || 0, y: Number(s.y) || 0 }, pack = members(s.a), ends = pack.length > 1 ? host.spots(to, pack.length) : [to];
+      r.walkers = [];
+      pack.forEach(function (ref, k) {
+        var pw = puppet(ref); if (!pw || !pw.on) return;
+        var end = ends[k] || to, from = { x: Math.round(pw.x), y: Math.round(pw.y) }, pts = s.straight ? null : host.path(from, end);
+        pw.walk = { pts: pts && pts.length ? pts : [end], i: 0, v: host.pace * (Number(s.speed) > 0 ? Number(s.speed) : 1), last: now };
+        r.walkers.push({ p: pw, w: pw.walk });
+      });
+      r.until = s.wait === false ? now : Infinity;                     // (until all have arrived: update() says when)
     }
     return r;
   }
   function endStep(r) {
     if (r.s.type === 'picture') els.pic.hidden = true;
     if (r.s.type === 'say') { els.line.hidden = true; cur.speaker = ''; }
-    if (r.s.type === 'leave') { var p = cur.puppets[r.s.a]; if (p && p.a1 === 0) p.on = false; }
+    if (r.s.type === 'leave') members(r.s.a).forEach(function (ref) { var p = cur.puppets[ref]; if (p && p.a1 === 0) p.on = false; });
   }
   /** Every walking actor a little further along its way (tiles per second, tile by tile). */
   function stepWalkers(now) {
@@ -194,7 +218,7 @@ var Scene = (function () {
       stepWalkers(now);
       waiting = false;
       cur.run = cur.run.filter(function (r) {
-        if (r.walk && r.until === Infinity && r.walker.walk !== r.walk) r.until = 0;   // it has arrived (or was sent elsewhere)
+        if (r.walkers && r.until === Infinity && r.walkers.every(function (m) { return m.p.walk !== m.w; })) r.until = 0;   // all have arrived (or were sent elsewhere)
         if (now < r.until) { if (r.click) waiting = true; return true; }
         endStep(r); return false;
       });

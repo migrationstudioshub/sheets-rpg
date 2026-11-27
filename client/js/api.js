@@ -75,9 +75,9 @@ var Api = (function () {
   };
   Offline.prototype.act = function (action, since) { return this.step(action, since); };
   Offline.prototype.poll = function (since) { return this.step(null, since); };
-  Offline.prototype.warp = function (mapId) {
+  Offline.prototype.warp = function (mapId, x, y) {           // (x, y: near that tile; none = near the middle of the map)
     var map = this.content.maps[mapId];
-    var at = Rules.nearestStandable(this.content, map, Math.floor(map.width / 2), Math.floor(map.height / 2));
+    var at = Rules.nearestStandable(this.content, map, x == null ? Math.floor(map.width / 2) : x, y == null ? Math.floor(map.height / 2) : y);
     this.p.map = mapId; this.p.x = at.x; this.p.y = at.y;
     return this.step(null, -1);
   };
@@ -104,7 +104,7 @@ var Api = (function () {
     return this.call({ action: 'load', token: token }).catch(function () { return null; });
   };
   Online.prototype.join = function (name, cls, look) {       // look = {hair, hairColor} from the character screen
-    return this.call({ action: 'join', name: name, 'class': cls, body: look && look.body, skin: look && look.skin, hair: look && look.hair, hairColor: look && look.hairColor }).then(function (r) {
+    return this.call({ action: 'join', name: name, 'class': cls, body: look && look.body, skin: look && look.skin, hair: look && look.hair, hairColor: look && look.hairColor, beard: look && look.beard, beardColor: look && look.beardColor }).then(function (r) {
       this.token = r.token; store(this.tokenKey, r.token);
       return this.call({ action: 'load', token: r.token });
     }.bind(this));

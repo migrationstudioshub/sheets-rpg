@@ -249,7 +249,8 @@ var Content = (function () {
         cooldownMs: Math.max(0, num(r.cooldown_s, ty ? ty.cooldownS : 0)) * 1000,
         props: props,
         slot: slot, wornSprite: str(r.worn_sprite), defaultTint: str(r.default_tint),
-        hidesHead: bool(r.hides_head),                          // worn, the hair and the head slot's picture are not drawn (a poncho's hood)
+        hidesBeard: bool(r.hides_beard),                        // worn, the wearer's facial hair is not drawn (a full mask)
+        hidesHead: bool(r.hides_head),                         // worn, the hair and the head slot's picture are not drawn (a poncho's hood)
         wornEmpty: str(r.worn_empty), wornReload: str(r.worn_reload), wornAim: str(r.worn_aim),   // a magazine weapon held empty / being reloaded (a bow: no arrow / drawing)
         stackMax: num(r.stack_max, 99), value: num(r.value, 0),
         sway: bool(r.sway),                                     // lying on the ground it sways in the wind (draw-only: Render swayOf)
@@ -446,7 +447,8 @@ var Content = (function () {
         });
         return o;
       });
-      c.scenes[id] = { id: id, name: str(r.name) || id, steps: steps };
+      var sxy = /^\s*(-?\d+)\s*,\s*(-?\d+)\s*$/.exec(str(r.start_xy));   // (map + start: the Studio's scene map, and where its Play puts the test character)
+      c.scenes[id] = { id: id, name: str(r.name) || id, steps: steps, map: str(r.map), start: sxy ? { x: Number(sxy[1]), y: Number(sxy[2]) } : null };
     });
     linkFloors(c);
     return c;
@@ -506,11 +508,12 @@ var Content = (function () {
     { id: 'picture', name: 'Picture', fields: [['image', 'image', '', 'A picture over the whole view (a GIF plays). Empty = a plain card with the text'], ['text', 'textarea', '', 'Words under it (optional)'],
       ['s', 'number', 0, 'Seconds it stays. 0 = until the player clicks'], ['bg', 'color', '#000000', 'The colour around the picture']] },
     { id: 'say', name: 'Line', fields: [['a', 'actor', '', 'The actor who says it (its figure shows beside the words, and a mark over it). None = nobody on screen'], ['name', 'text', '', 'The name shown. Empty = the name of the actor; with no actor either, a caption (the narrator)'], ['text', 'textarea', '', 'What is said'], ['s', 'number', 0, 'Seconds it stays. 0 = until the player clicks']] },
-    // actors (stage 2): a figure the scene moves. `a` = who: me | npc:<object id> | mon:<monster id> (the Studio's actor picker).
+    // actors (stage 2): a figure the scene moves. `a` = who: me | npc:<object id> | mon:<monster id> (the Studio's actor picker),
+    // with #<n> after it for another of the same (mon:rat#2 = the second rat; npc:guard#2 on the map = the second nearest).
     // An NPC that stands on the map is taken over where it stands (the nearest one) the first time a step names it; any
     // other actor must be brought in with Show first. All of it is drawn only: when the scene ends everyone is back.
     { id: 'show', name: 'Actor: show', fields: [['a', 'actor', 'me', 'Who appears'], ['x', 'number', 0, 'Tile x'], ['y', 'number', 0, 'Tile y'],
-      ['dir', 'select', 'E', 'The way it faces', ['E', 'W']], ['s', 'number', 0.4, 'Seconds it takes to fade in (0 = at once)'], ['stay', 'bool', false, 'On: it STAYS in the world where the scene leaves it (the last tile it was shown on or walked to), watched or skipped. A monster becomes a real one there, for everyone; the player really ends up there. Not for NPCs']] },
+      ['dir', 'select', 'E', 'The way it faces', ['E', 'W']], ['count', 'number', 1, 'How many: more than 1 = a pack. They appear on the free tiles round that one, and every later step that names this actor moves all of them together'], ['s', 'number', 0.4, 'Seconds it takes to fade in (0 = at once)'], ['stay', 'bool', false, 'On: it STAYS in the world where the scene leaves it (the last tile it was shown on or walked to), watched or skipped. A monster becomes a real one there, for everyone; the player really ends up there. Not for NPCs']] },
     { id: 'walk', name: 'Actor: walk', fields: [['a', 'actor', 'me', 'Who walks'], ['x', 'number', 0, 'To tile x'], ['y', 'number', 0, 'To tile y'],
       ['speed', 'number', 1, 'How fast: 1 = the walking pace of a player, 2 = twice as fast, 0.5 = half'], ['straight', 'bool', false, 'Off: it finds its way round walls and objects. On: a straight line, through anything'],
       ['wait', 'bool', true, 'On: the scene waits until it arrives. Off: the scene goes on while it walks'], ['stay', 'bool', false, 'On: it STAYS in the world where the scene leaves it (the last tile it was shown on or walked to), watched or skipped. A monster becomes a real one there, for everyone; the player really ends up there. Not for NPCs']] },

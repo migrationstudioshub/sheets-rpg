@@ -178,6 +178,10 @@ def rebuild_art_manifest():
                 if low.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")) and not low.endswith(".tint.png"):
                     rel = os.path.relpath(os.path.join(dirpath, fn), art).replace(os.sep, "/")
                     images.append("art/" + rel)
+                elif low.endswith(".tint.png") and not os.path.exists(os.path.join(dirpath, fn[:-9] + ".png")):
+                    # a mask with no picture next to it (stubble, make-up): listed under the name its picture would have
+                    rel = os.path.relpath(os.path.join(dirpath, fn[:-9] + ".png"), art).replace(os.sep, "/")
+                    images.append("art/" + rel)
         images.sort()
         with open(os.path.join(art, "manifest.json"), "w", encoding="utf-8") as fh:
             json.dump({"images": images}, fh, indent=2)

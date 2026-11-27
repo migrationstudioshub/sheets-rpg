@@ -19,6 +19,9 @@ tables.Config = tables.Config.filter(r => r.key !== 'move_burst').concat([{ key:
 // (docs/STEALTH.md stage 3). The stealth tests set Config ambush_mult back themselves.
 // Likewise most monsters here are placed facing nowhere in particular: they see all round unless a test says otherwise.
 tables.Config = tables.Config.filter(r => r.key !== 'ambush_mult' && r.key !== 'sight_cone').concat([{ key: 'ambush_mult', value: 1 }, { key: 'sight_cone', value: 360 }]);
+// Walls muffle sound since stage 2 (Config sound_muffle, 2 tiles a wall): the older tests were written with sound
+// passing through walls at full strength, and keep that; the "stealth: sound" tests turn it back on.
+tables.Config = tables.Config.filter(r => r.key !== 'sound_muffle').concat([{ key: 'sound_muffle', value: 0 }]);
 let passed = 0;
 function test(name, fn) { fn(); passed++; console.log('ok -', name); }
 
@@ -5079,6 +5082,68 @@ test('scenes: several of the same monster (numbered copies, and packs) each stay
   const pack = made.filter(m => Math.abs(m.x - 8) + Math.abs(m.y - 8) <= 3), lone = made.filter(m => m.x === 9 && m.y === 3);
   assert.deepStrictEqual([pack.length, lone.length], [3, 1], 'the pack round where it walked to, the other where it was shown');
   assert.ok(pack.some(m => m.x === 8 && m.y === 8), 'one of the pack on the very tile');
+});
+
+// ---------------------------------------------------------------- stealth, stage 2: loud events, and walls that muffle
+test('stealth: sound - every wall between takes Config sound_muffle tiles off how far it carries', () => {
+  const s = arena(), map = liveOf(s); s.c.config.sound_muffle = 2;
+  const C = (lx, ly, r) => World.soundCarries(s.c, map, 3, 5, lx, ly, r, stOf(s));      // a sound south of the arena's wall
+  assert.strictEqual(C(3, 4, 2), true, 'the same side: nothing in the way');
+  assert.strictEqual(C(3, 1, 6), true, 'across the wall, 4 tiles off: 6 - 2 still reaches');
+  assert.strictEqual(C(3, 1, 5), false, '5 - 2 does not');
+  assert.strictEqual(C(3, 6, 0), false, 'no sound at all');
+  // footsteps are a sound like any other
+  const def = { aggro: 1, hearing: 1 }, walker = { x: 3, y: 5, stepAt: 9500 };
+  const N = (mx, my) => World.notices(s.c, map, { x: mx, y: my }, def, walker, 10000, 1, stOf(s));
+  assert.strictEqual(N(3, 1), 'heard', 'walking (6 tiles), 4 off behind the wall');
+  assert.strictEqual(N(3, 0), '', '5 off behind it: muffled');
+  s.c.config.sound_muffle = 0;
+  assert.deepStrictEqual([C(3, 1, 5), N(3, 0)], [true, 'heard'], 'Config sound_muffle 0: walls muffle nothing');
+});
+
+test('stealth: sound - a fight, a blow on a wall and a door are heard; whoever made it does not hear itself', () => {
+  const s = arena(); s.c.config.sound_muffle = 0;
+  const ms = World.mapState(s.ws, 'arena');
+  const mk = (id, x, y) => ({ id, ref: 'rat', x, y, hp: 999, dead: false, last: 1e12, respawnAt: 0, facing: 'N', spawn: '' });
+  const hit = mk('a', 2, 2), near = mk('b', 5, 2), far = mk('c', 6, 0);
+  ms.monsters = [hit, near, far]; ms.spawnSig = '';
+  s.c.config.noise_melee = 3;                                         // (so the far one is out of earshot)
+  put(s, 'arena', 2, 3, 'N'); World.mapState(s.ws, 'arena').states['arena.e1'] = 'open';
+  s.p.x = 2; s.p.y = 1; s.p.facing = 'S';
+  act(s, { type: 'attack', x: 2, y: 2 }, 5000);
+  assert.ok(hit.engaged, 'the one struck knows who did it');
+  assert.ok(near.hear && near.hear.x === 2 && near.hear.y === 2 && !near.hear.loud, 'the one nearby hears the fight (a quiet noise)');
+  assert.strictEqual(far.hear, undefined, 'out of earshot: nothing');
+  // a blow on something is loud, and heard from where it was struck
+  delete near.hear;
+  const res = World.damageStructure(s.c, s.ws, 'arena', { t: 'ent', key: 'arena.e2' }, 3, { kind: 'melee', by: 'p1', player: s.p, now: 6000 }, []);
+  assert.ok(res && res.dealt > 0);
+  assert.deepStrictEqual([near.hear && near.hear.x, near.hear && near.hear.y, near.hear && near.hear.loud], [5, 1, 1], 'heard, and loud');
+  assert.ok(far.hear && far.hear.loud, 'and from further off (Config noise_break, 10)');
+  // a monster breaking something does not go looking for its own blows
+  delete near.hear; delete far.hear;
+  World.damageStructure(s.c, s.ws, 'arena', { t: 'ent', key: 'arena.e2' }, 3, { kind: 'monster', by: 'b', monster: near, now: 7000 }, []);
+  assert.deepStrictEqual([near.hear, !!far.hear], [undefined, true]);
+  // a noise of your own making, straight from the rules
+  delete far.hear;
+  World.soundAt(s.c, s.ws, 'arena', 6, 1, 14, 8000, s.p);
+  assert.ok(far.hear && far.hear.loud && far.hear.id === 'p1', 'a shot (14 tiles): loud, and it remembers whose');
+});
+
+test('stealth: sound - a LOUD noise brings a walker through a shut door; a quiet one only sends it to look', () => {
+  const damaged = s => Object.keys(World.structOf(s.ws, 'arena').dmg || {}).length + (World.structOf(s.ws, 'arena').gone ? Object.keys(World.structOf(s.ws, 'arena').gone).length : 0);
+  const run = radius => {
+    const s = arena(); s.c.config.sound_muffle = 0;
+    put(s, 'arena', 6, 6, 'N');                                       // you, far off in a corner south of the wall, standing still
+    const w = withWalker(s, 'arena', 3, 1, { sight: 1 });             // north of it, nearly blind: only the noise can bring it
+    World.soundAt(s.c, s.ws, 'arena', 3, 5, radius, s.at, null);
+    const loud = !!(w.hear && w.hear.loud);
+    turns(s, 30);
+    return { loud, broke: damaged(s) > 0 || w.y >= 3, w };
+  };
+  const quiet = run(6), loud = run(14);
+  assert.deepStrictEqual([quiet.loud, quiet.broke], [false, false], 'a quiet noise: it looks about on its own side');
+  assert.deepStrictEqual([loud.loud, loud.broke], [true, true], 'a loud one: it breaks its way to where the noise was');
 });
 
 test('emotes: a player emote is sent to everyone around for a while; unknown ones are refused; scenes take an emote step', () => {

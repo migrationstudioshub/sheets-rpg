@@ -997,14 +997,14 @@ var Render = (function () {
     var tone = typeof Tint !== 'undefined' && Tint.lookSkin ? Tint.lookSkin(fit) : '';   // the body's skin tone (and the hands' in what it holds)
     var fem = typeof Tint !== 'undefined' && Tint.femaleLook && Tint.femaleLook(fit);
     return (fit || []).map(function (l) {
-      if (fem && Assets.wornFor) l = { path: Assets.wornFor(l.path, true), tint: l.tint };   // a woman's body: the woman's cut of what it wears
+      if (fem && Assets.wornFor) l = { path: Assets.wornFor(l.path, fem), tint: l.tint };   // a woman's body: her build's cut of what it wears
       var sk = tone ? Tint.skinFor(l.path, tone) : null;
       // a garment's cloth is all in its colour mask: one with no colour given gets the default (Tint.lookTint), never half drawn
       var tint = typeof Tint !== 'undefined' && Tint.lookTint ? Tint.lookTint(l.path, l.tint) : l.tint;
       var ramp = tint && typeof Tint !== 'undefined' ? Tint.TINTS[tint] : null, mask = ramp ? l.path.replace(/\.png$/i, '.tint.png') : '';
       if (!Assets.get(l.path)) Assets.load(l.path);
       if (mask && !Assets.get(mask)) Assets.load(mask);
-      return { path: l.path, mask: mask, ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false, jig: fem && Tint.chestLayer && Tint.chestLayer(l.path) };
+      return { path: l.path, mask: mask, ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false, jig: fem === 'curvy' && Tint.chestLayer && Tint.chestLayer(l.path) };
     });
   }
   /** Draw an outfit standing on the tile whose top-left is (ax, ay); answers the top of the figure. */

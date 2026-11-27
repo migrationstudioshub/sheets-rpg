@@ -329,6 +329,8 @@ var World = (function () {
       if (is > was) give(c, src.player, g.item, is - was, ev);
     });
     if (left <= 0) destroyStructure(c, ws, mapId, tg, src, ev);
+    // a blow on a wall or an object is heard (not a fire eating at it): whoever hears it comes to look
+    if (src.now && src.kind !== 'fire') soundAt(c, ws, mapId, tg.x, tg.y, cfgNum(c, 'noise_break', 10), src.now, src.player || null, src.monster || null);
     return { dealt: dealt, destroyed: left <= 0, tg: tg };
   }
   // ------------------------------------------------------------ claims (who owns a base)
@@ -1724,8 +1726,8 @@ var World = (function () {
   // A character carries body: 'female', 'female_slim' or nothing (= male). The class's own body_sprite is only the fallback for a
   // male body when the Config names none (content made before bodies were a choice).
   // A woman's body comes in two builds (owner, 27 Nov 2026): 'female' = curvy (the woman's cut of what she wears, and her
-  // chest moves) and 'female_slim' = slim (Config body_female_slim): drawn in the MAN's cut of every garment and with no
-  // chest motion — to the page a slim woman is like a man in all but her body picture (it asks body === 'female').
+  // chest moves) and 'female_slim' = slim (Config body_female_slim): drawn in the SLIM cut of what she wears (the man's
+  // when a garment has none) and with no chest motion (the page: Tint.buildOf / Assets.wornFor; draw-only).
   var BODY_MALE = 'art/sprites/paperdoll/base/player/body_survivor.png', BODY_FEMALE = 'art/sprites/paperdoll/base/player/body_survivor_female.png',
     BODY_SLIM = 'art/sprites/paperdoll/base/player/body_survivor_female_slim.png', BODIES = ['', 'female', 'female_slim'];
   function bodySprite(c, p) {
@@ -2762,22 +2764,49 @@ var World = (function () {
     var own = it ? Number(it.throwNoise) || 0 : 0;
     return own < 0 ? 0 : own > 0 ? own : Math.max(0, cfgNum(c, 'throw_noise', 6));
   }
+  // DOES A SOUND REACH THERE (stage 2, owner 27 Nov 2026: walls muffle). A sound made at (sx, sy) that carries `radius`
+  // tiles is heard at (lx, ly) when that is within the radius LESS Config sound_muffle (2) tiles for every wall, shut
+  // door or solid cell on the straight line between them (0 = walls muffle nothing). The ONE question for hearing:
+  // a monster hearing footsteps (notices), a noise at a spot (soundAt), and the player hearing creatures (the page).
+  function wallsBetween(c, map, x0, y0, x1, y1, stateFn) {
+    var flip = x0 > x1 || (x0 === x1 && y0 > y1), cells = flip ? lineCells(x1, y1, x0, y0) : lineCells(x0, y0, x1, y1), n = 0;
+    for (var i = 1; i < cells.length - 1; i++) if (blocksSight(c, map, cells[i].x, cells[i].y, stateFn)) n++;
+    for (var j = 0; j < cells.length - 1; j++) if (edgeBlocksSight(c, map, cells[j], cells[j + 1], null)) n++;
+    return n;
+  }
+  function soundCarries(c, map, sx, sy, lx, ly, radius, stateFn) {
+    var d = cheb(sx, sy, lx, ly);
+    if (!(radius > 0) || d > radius) return false;
+    var muffle = cfgNum(c, 'sound_muffle', 2);
+    if (!(muffle > 0) || d <= 1 || !map) return true;
+    return d <= radius - muffle * wallsBetween(c, map, sx, sy, lx, ly, stateFn || function () { return undefined; });
+  }
+  /** How far (tiles) USING an item is heard: its own `noise`, else the Config value named (a shot, a blow); below 0 = silent. */
+  function useNoise(c, it, key, dflt) {
+    var own = it ? Number(it.noise) || 0 : 0;
+    return own < 0 ? 0 : own > 0 ? own : Math.max(0, cfgNum(c, key, dflt));
+  }
   /** A noise at a spot that is nobody's footsteps (a thrown thing landing; owner, 27 Nov 2026): every monster within
    *  `radius` tiles (x its `hearing`), walls or not, that is after nobody hears it exactly as senseStep's `heard` — the ?,
    *  the wait, then it goes to look THERE (an animal runs from there). `by` = who made it (a walker's search remembers). */
-  function soundAt(c, ws, mapId, x, y, radius, now, by) {
+  // LOUD (owner): a noise of Config noise_loud (9) tiles or more — a shot, something being broken — makes a walker
+  // that goes to look BREAK what is in its way (a shut door it cannot open); a quieter one only sends it to look.
+  // `skip` = the monster that made it (it does not go looking for its own blows).
+  function soundAt(c, ws, mapId, x, y, radius, now, by, skip) {
     if (!stealthOn(c) || !(radius > 0)) return;
-    var ms = mapState(ws, mapId);
+    var ms = mapState(ws, mapId), map = null, loud = radius >= cfgNum(c, 'noise_loud', 9);
+    function sfn(e) { return stateOf(c, ws, mapId, e); }
     (ms.monsters || []).forEach(function (m) {
-      var def = c.monsters[m.ref]; if (!def || m.dead || m.tame || m.wait > now) return;
+      var def = c.monsters[m.ref]; if (!def || m.dead || m.tame || m.wait > now || m === skip) return;
       var far = radius * (def.hearing == null ? 1 : def.hearing);
       if (!(far > 0) || cheb(m.x, m.y, x, y) > far) return;
       if (def.brain === 'hunter' && now < (m.fedUntil || 0)) return;
-      if (def.brain === 'walker' ? m.ai && m.ai.k === 'p' : !!(m.chase || m.engaged)) return;   // after someone already
+      if (m.engaged || (def.brain === 'walker' ? m.ai && m.ai.k === 'p' : !!m.chase)) return;   // after someone already
+      if (!soundCarries(c, map || (map = liveMap(c, ws, mapId)), x, y, m.x, m.y, far, sfn)) return;   // (walls muffle)
       var on = def.brain === 'animal' ? m.fleeFrom : def.brain === 'walker' ? null : m.goTo, id = by ? by.id : '';
       if (on) { on.x = x; on.y = y; on.until = now + (def.brain === 'animal' ? SCARE_MS : GOTO_MS); }
-      else if (m.hear) { m.hear.x = x; m.hear.y = y; m.hear.id = id; }
-      else m.hear = { x: x, y: y, at: now, id: id };
+      else if (m.hear) { m.hear.x = x; m.hear.y = y; m.hear.id = id; if (loud) m.hear.loud = 1; }
+      else { m.hear = { x: x, y: y, at: now, id: id }; if (loud) m.hear.loud = 1; }
       ws.dirty = true;
     });
   }
@@ -2798,7 +2827,7 @@ var World = (function () {
     if (!stealthOn(c)) return d <= range && (!o.los || canSee(c, map, m.x, m.y, p.x, p.y, stateFn)) ? 'seen' : '';
     if (looksAt(c, map, m, range, p.sneak, p.x, p.y, stateFn, o.manhattan)) return 'seen';
     var hear = noiseOf(c, p, now) * (def.hearing == null ? 1 : def.hearing);
-    return hear > 0 && d <= hear ? 'heard' : '';
+    return hear > 0 && d <= hear && soundCarries(c, map, p.x, p.y, m.x, m.y, hear, stateFn) ? 'heard' : '';
   }
   // SPOTTED (owner, 25 Nov 2026). A monster that sees a sneaking player (or is struck by one and lives) makes them
   // stand up: spotted() is the one way that happens. While any monster on their map is after them — it has seen
@@ -3178,7 +3207,7 @@ var World = (function () {
   }
   /** A blow at a wall or object. */
   function walkerBash(c, ws, mapId, m, def, ms2, t, now, ev, ctx) {
-    var res = damageStructure(c, ws, mapId, t, def.structureDmg > 0 ? def.structureDmg : ms2.atk, { kind: 'monster', by: m.id, now: now }, ev);
+    var res = damageStructure(c, ws, mapId, t, def.structureDmg > 0 ? def.structureDmg : ms2.atk, { kind: 'monster', by: m.id, now: now, monster: m }, ev);
     ctx.stale = true;                                         // the map changed: everyone after this one looks again
     if (t.t === 'wall') m.facing = t.orient === 'h' ? (m.y >= t.y ? 'N' : 'S') : (m.x >= t.x ? 'W' : 'E');
     else if (res && res.tg) m.facing = Math.abs(res.tg.x - m.x) >= Math.abs(res.tg.y - m.y) ? (res.tg.x > m.x ? 'E' : res.tg.x < m.x ? 'W' : m.facing) : (res.tg.y > m.y ? 'S' : 'N');
@@ -3203,7 +3232,9 @@ var World = (function () {
     if (m.hear && !(ai && ai.k === 'p')) {                    // it heard something (senseStep): ? — a moment, then it goes to look there
       if (now - m.hear.at < hearDelay(c)) return;             // surprised: frozen, facing as it was
       faceToward(m, m.hear.x, m.hear.y);
-      ai = m.ai = { k: 'p', id: m.hear.id, a: full, x: m.hear.x, y: m.hear.y, w: 1 }; delete m.hear;
+      ai = m.ai = { k: 'p', id: m.hear.id, a: full, x: m.hear.x, y: m.hear.y, w: 1 };
+      if (m.hear.loud) ai.bang = 1;                           // a loud one: it breaks what is in its way there (a shut door)
+      delete m.hear;
     }
     if (ai && ai.k === 'p') tgt = byId(here, ai.id);
     else if (ai && ai.k === 'm') { tgt = byId(ms.monsters, ai.id); if (!tgt || tgt.dead) { delete m.ai; ai = tgt = null; } }      // it won
@@ -3214,7 +3245,7 @@ var World = (function () {
     if (ai && ai.k !== 's') {
       var how = !tgt ? '' : ai.k === 'p' ? aware(tgt) : sees(tgt.x, tgt.y) ? 'seen' : '';
       if (how === 'seen') {
-        seen = true; ai.a = full; ai.x = tgt.x; ai.y = tgt.y; ai.s = 1; delete ai.w;          // s: it has them in sight (alertOf)
+        seen = true; ai.a = full; ai.x = tgt.x; ai.y = tgt.y; ai.s = 1; delete ai.w; delete ai.bang;   // s: it has them in sight (alertOf)
         if (ai.k === 'p') { ai.spot = 1; spotted(c, tgt, m, ev); }                            // (a search it heard its way into: now it has seen them)
       }
       else {
@@ -3284,7 +3315,7 @@ var World = (function () {
     }
     if (!goal.s && !goal.adj && at(m.x, m.y)) {                 // it is where it last knew them to be, and they are not: poke around
       ai.x = Math.max(0, Math.min(map.width - 1, m.x + rint(rng, -4, 4))); ai.y = Math.max(0, Math.min(map.height - 1, m.y + rint(rng, -4, 4)));
-      ai.w = 1; ai.p = ''; delete ai.n;
+      ai.w = 1; ai.p = ''; delete ai.n; delete ai.bang;         // (it got to where the noise was: from here it only pokes about)
       return;
     }
     // a way it worked out is kept between turns, and followed, while it still leads where it wants to go
@@ -3303,7 +3334,7 @@ var World = (function () {
       if (same && ai.n > 0) { ai.n--; millStep(c, ws, mapId, map, m, here, rng); return; }
       if (ctx.budget <= 0) return;                              // enough thinking on this map for one turn: it stands a moment
       ctx.budget--;
-      var path = findPath(c, ws, mapId, map, m, at, ai.w ? 0 : dmg, ctx);
+      var path = findPath(c, ws, mapId, map, m, at, ai.w && !ai.bang ? 0 : dmg, ctx);
       ai.g = goal.s ? gk : [goal.x, goal.y];
       if (!path) {                                              // no way there for now: mill about, look again in a few turns
         ai.p = ''; ai.n = 5;
@@ -3323,7 +3354,7 @@ var World = (function () {
       if (rng() < 0.25) ai.p = '';                              // stuck behind another one: now and then, think again
       return;
     }
-    var ob = ai.w || r.map ? null : obstacleFor(c, map, m.x, m.y, d, r, dmg, ctx);
+    var ob = (ai.w && !ai.bang) || r.map ? null : obstacleFor(c, map, m.x, m.y, d, r, dmg, ctx);
     if (ob) { walkerBash(c, ws, mapId, m, def, ms2, ob.t, now, ev, ctx); return 'stop'; }
     ai.p = '';
   }
@@ -3594,6 +3625,7 @@ var World = (function () {
     var def = c.monsters[m.ref], dmg = damage(stats(c, p).atk, monStats(c, m).def, rng);
     noteAct(p, 'm', m.x, m.y, dmg);
     hitMonster(c, ws, mapId, p, m, dmg, now, rng, ev, 'You hit the ' + lower(def.name) + ' for ' + dmg + '.');
+    soundAt(c, ws, mapId, m.x, m.y, useNoise(c, heldItem(c, p), 'noise_melee', 5), now, p);   // a fight is heard
     wear(c, p, heldItem(c, p), ev, def.material || 'flesh');   // a creature is flesh (unless the monster says otherwise)
     return true;
   }
@@ -4308,6 +4340,7 @@ var World = (function () {
       hitMonster(c, ws, p.map, p, m, dmg, now, rng, ev, 'You shoot the ' + lower(c.monsters[m.ref].name) + ' for ' + dmg + '.');
       hits++;
     }
+    soundAt(c, ws, p.map, p.x, p.y, useNoise(c, w, 'noise_shot', 14), now, p);   // the shot is heard from where it was fired
     ev.push({ type: 'shoot', map: p.map, by: p.id, from: { x: p.x, y: p.y }, to: { x: end.x, y: end.y },
       aim: { x: tx, y: ty }, color: w.tint || '#ffd36b' });
     if (back) layOnGround(c, ws, p.map, reach.cells.slice(0, endAt + 1), ammoId, back, now);   // it hit nothing: it lies where it stopped
@@ -5328,7 +5361,7 @@ var World = (function () {
     got.forEach(function (g) { give(c, p, g.item, g.qty, ev); });
   }
 
-  function useDoor(c, ws, p, e, o, pr, ev, players) {
+  function useDoor(c, ws, p, e, o, pr, ev, players, now) {
     var st = stateOf(c, ws, p.map, e);
     if (st === 'locked') {
       if (!(pr.locked_by && count(p, pr.locked_by) > 0)) { lockedMessage(c, p, pr, ev); return; }
@@ -5343,6 +5376,7 @@ var World = (function () {
       }
       setState(ws, p.map, e.key, 'closed');
     } else setState(ws, p.map, e.key, 'open');
+    if (now) soundAt(c, ws, p.map, e.x, e.y, cfgNum(c, 'noise_door', 5), now, p);   // a door is heard
   }
 
   function lockedMessage(c, p, pr, ev) {
@@ -5472,7 +5506,7 @@ var World = (function () {
         }
         else openContainer(c, ws, p, e, o, pr, now, rng, ev);
         break;
-      case 'door': useDoor(c, ws, p, e, o, pr, ev, players); break;
+      case 'door': useDoor(c, ws, p, e, o, pr, ev, players, now); break;
       case 'teleport':
         if (stateOf(c, ws, p.map, e) === 'inactive') ev.push({ type: 'info', to: p.id, text: 'It won\'t open.' });
         else if (pr.requires && count(p, pr.requires) < 1) ev.push({ type: 'info', to: p.id, text: 'You need: ' + itemName(c, pr.requires) + '.' });
@@ -5899,6 +5933,6 @@ var World = (function () {
     groundId: groundId, floorId: floorId, floorsOf: floorsOf, deliver: deliver,
     sightRadius: sightRadius, seesAcross: seesAcross, peek: peek, advanceFloors: advanceFloors, findPath: findPath, reloadMsOf: reloadMsOf, alertOf: alertOf, hairChoices: hairChoices, blocksSight: blocksSight, bodySprite: bodySprite, fixtureStates: fixtureStates,
     applyNotice: applyNotice, shotAcross: shotAcross, throwAcross: throwAcross, tileMine: tileMine,
-    questState: questState, questLog: questLog, questsOpen: questsOpen, goalText: goalText, watching: watching, emoteOf: emoteOf, packSpots: packSpots };
+    questState: questState, questLog: questLog, questsOpen: questsOpen, goalText: goalText, watching: watching, emoteOf: emoteOf, packSpots: packSpots, soundCarries: soundCarries, soundAt: soundAt };
 })();
 if (typeof module !== 'undefined') module.exports = World;

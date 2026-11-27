@@ -2,7 +2,8 @@
 
 **Status (25 Nov 2026): the owner agreed the plan and its four choices. Stage 1 is built** (one change from the
 plan: the sneak key is **Z**, not Ctrl — Ctrl+click already means something in the inventory). **Stage 3 is built
-too** (facing and sneak attacks). Stages 2 and 4 are not.
+too** (facing and sneak attacks). **Stages 2 and 4 are built (27 Nov 2026)**: loud events, walls that muffle, walkers
+that break through for a loud noise, and the player's own hearing — see each stage below.
 
 ## Why
 
@@ -127,8 +128,31 @@ for stage 2 (it is how Project Zomboid's zombies behave).
 Done looks like: sneak past a walker's back room without it stirring; walk past and it comes to look; a deer
 can be approached sneaking to bow range but not walking.
 
-### 2. Loud events
-`ms.sounds = [{x, y, r, until}]` on the map record: a shot (`shoot`), a blow on a structure
+### 2. Loud events — BUILT (27 Nov 2026)
+As built (the owner's choices: shots, blows on walls and objects, doors and melee fights all make noise, as thrown
+things already did; walls muffle; a walker breaks through a shut door for LOUD noises only):
+- **No list of sounds is kept.** A noise acts the moment it is made: **`World.soundAt(c, ws, mapId, x, y, radius, now,
+  by, skip)`** is the one way to make one. Every monster it reaches that is after nobody hears it exactly as it hears
+  footsteps (`m.hear`: the ?, the wait, then it goes to look where the noise WAS; an animal runs from there). `skip` =
+  the monster that made it.
+- **Who makes one:** a shot, from where it was fired (`shoot`: Items `noise`, else Config `noise_shot` 14); a blow on a
+  wall or object, from the thing struck (inside `damageStructure`, so players, bullets, blasts and monsters alike:
+  Config `noise_break` 10; not fire); a door opened or shut (`useDoor`, `noise_door` 5); a blow landed on a monster
+  (`attack`: Items `noise`, else `noise_melee` 5); a thrown thing landing (`throw_noise`, as before). Items `noise`:
+  0 = the usual, below 0 = silent (a bow can be 4).
+- **Walls muffle** — `World.soundCarries(c, map, sx, sy, lx, ly, radius, stateFn)` is the ONE "does this sound reach
+  there" question (footsteps in `notices`, `soundAt`, and the player's hearing on the page): within the radius LESS
+  Config `sound_muffle` (2) tiles for every wall, shut door or solid cell on the straight line between
+  (`wallsBetween`; 0 = walls muffle nothing, the old rule). Next to each other is always heard.
+- **Loud = Config `noise_loud` (9) tiles or more** (a shot, something being broken): `m.hear.loud` → the walker's
+  search carries `ai.bang`, and it BREAKS what is in its way to the spot (`walkerMove`: `ai.w && !ai.bang` is what
+  forbids breaking). Once there it only pokes about. A quiet noise (footsteps, a door, a fight, a thrown rock) still
+  breaks nothing. A walker breaking a wall is itself loud: others that hear it come, and break in too.
+- `tools/test_world.js`: the older tests keep `sound_muffle` 0; the "stealth: sound" tests turn it on.
+Not built: a ring on the page showing how far each noise carried (only footsteps and throws draw one); quieter doors
+while sneaking; monsters hearing each other's footsteps.
+
+The first plan, for the record: `ms.sounds = [{x, y, r, until}]` on the map record: a shot (`shoot`), a blow on a structure
 (`damageStructure`), a door. `World.makeSound(ws, mapId, x, y, r, now)` is the one way to add one. `notices`
 reads them as well as the players' own noise; a monster that hears one searches at that spot. A thrown item
 makes a sound where it lands (the distraction). This is the "hearing (shots)" listed as not built.
@@ -149,8 +173,16 @@ something is there, not where). Once struck it is engaged, so only the first blo
 Tests set `sight_cone` 360 and `ambush_mult` 1 for the old fights (top of `tools/test_world.js`); the
 "stealth:" tests turn them back on.
 
-### 4. The player's own hearing
-The page fills `sensed` (already passed to `renderer.draw` as `null`): monsters out of sight that moved
+### 4. The player's own hearing — BUILT (27 Nov 2026)
+As built (the owner's choice: creatures that are MOVING, each heard from as far as its kind is loud): **page only** —
+the page already knows where the map's creatures are, so nothing new is sent. `hearing(now)` in `main.js` fills the
+renderer's `sensed` set: a creature out of your sight whose tile changed within the last `HEAR_MS` (1.2 s) is heard
+from Monsters `noise` tiles (empty = Config `monster_noise`, 5; 0 = never heard), less what the walls muffle
+(`World.soundCarries`). It is drawn as the dashed outline (`Render.drawSensed`) where it is — not what it is, not its
+health — and goes when it stops. Config `hearing_sense` = off: none of it. `SheetsRPG.heard()` is the test hook.
+Not built: hearing other players, a sound for it, your own hearing being better while you stand still or sneak.
+
+The first plan, for the record: the page fills `sensed` (already passed to `renderer.draw` as `null`): monsters out of sight that moved
 within the player's hearing radius this turn, sent by the referee as positions only (no kind, no health).
 Needs a per-monster "made noise" mark and care with the push format (`client/js/wire.js`, `functions/referee.js`).
 
@@ -178,8 +210,7 @@ The owner noticed elevation hid nothing. Now `clearLine` (every sight line: play
 
 ## Open questions
 
-- **Do walls muffle sound?** Stage 1 says no (simplest; matches today's walker). An option: each sight-blocking
-  edge on the straight line takes 2 tiles off the radius.
+- **Do walls muffle sound?** Yes since stage 2 (owner, 27 Nov 2026): Config `sound_muffle`, 2 tiles a wall.
 - **Tame animals and feed in hand**: unchanged (an animal does not flee a player holding its `tame_with` item).
 - **Armour and load**: heavy gear making more noise needs a weight on items; on the UI backburner (`load`).
 

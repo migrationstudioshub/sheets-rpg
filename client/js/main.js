@@ -68,7 +68,7 @@
       var ramp = it.defaultTint ? Tint.TINTS[it.defaultTint] : null;     // item is tintable iff it names a default tint
       // A weapon with a magazine may look different empty or being reloaded (a bow: no arrow / being drawn). Yours is
       // known from your own magazine and reload; another player's comes with them (wst).
-      var wpath = Assets.wornFor(it.wornSprite, p.body === 'female');   // (the woman's cut, when the garment has one)
+      var wpath = Assets.wornFor(it.wornSprite, Tint.buildOf(p.body));   // (the cut for a woman's build, when the garment has one)
       if (slot === 'weapon' && (it.wornEmpty || it.wornReload || it.wornAim)) {
         var wst = p.mags ? (World.weaponState ? World.weaponState(content, p) : '') : (p.wst || '');
         if (wst === 'reload') wpath = it.wornReload || it.wornEmpty || wpath; else if (wst === 'empty') wpath = it.wornEmpty || wpath;
@@ -101,10 +101,10 @@
     var tone = Tint.lookSkin ? Tint.lookSkin(m.look) : '';                // a body rolled with a skin tone colours its hands too
     var fem = Tint.femaleLook && Tint.femaleLook(m.look);
     var out = m.look.map(function (l) {
-      if (fem) l = { path: Assets.wornFor(l.path, true), tint: l.tint };   // a woman's body: the woman's cut of what it wears
+      if (fem) l = { path: Assets.wornFor(l.path, fem), tint: l.tint };   // a woman's body: her build's cut of what it wears
       var sk = tone ? Tint.skinFor(l.path, tone) : null;
       var tint = Tint.lookTint ? Tint.lookTint(l.path, l.tint) : l.tint, ramp = tint ? Tint.TINTS[tint] : null;   // no colour given = the garment default
-      return { path: l.path, mask: ramp ? maskOf(l.path) : '', ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false, jig: fem && Tint.chestLayer(l.path) };
+      return { path: l.path, mask: ramp ? maskOf(l.path) : '', ramp: ramp, skin: sk ? sk.tone : '', skinAll: sk ? sk.all : false, jig: fem === 'curvy' && Tint.chestLayer(l.path) };
     });
     out.forEach(function (l) {                                           // make sure late-arriving layers load
       if (!Assets.get(l.path)) Assets.load(l.path);
@@ -3453,6 +3453,44 @@
     var map = renderer && renderer.map, T = content.config.tile_size || 32;
     return map && Render.liftAt ? Render.liftAt(map, clamp(x, 0, map.width - 1), clamp(y, 0, map.height - 1), T) : 0;
   }
+  // ---- your own hearing (docs/STEALTH.md, stage 4; owner, 27 Nov 2026: moving creatures, by how loud their kind is).
+  // A creature out of your sight that MOVED within the last HEAR_MS is heard from Monsters `noise` tiles (none said =
+  // Config monster_noise, 5; 0 = never), less what the walls between muffle (World.soundCarries, the same question the
+  // monsters ask about you). What is heard is drawn as an outline where it is (Render: `sensed`), nothing more — not
+  // what it is, not its health. Worked out here: the page already knows where the map's creatures are. Config
+  // hearing_sense = off: none of it.
+  var HEAR_MS = 1200, HEAR_EVERY = 150, heardMove = {}, heardIds = {}, heardAt = 0, heardMap = '';
+  function hearing(now) {
+    if (!me || !sight.vis || String(content.config.hearing_sense || 'on').toLowerCase() === 'off') return null;
+    if (heardMap !== me.map) { heardMap = me.map; heardMove = {}; heardIds = {}; }
+    var live = {}, any = false;
+    view.monsters.forEach(function (m) {
+      live[m.id] = 1;
+      var rec = heardMove[m.id];
+      if (!rec) heardMove[m.id] = { x: m.x, y: m.y, t: -1e9 };          // (first seen standing there: that is no movement)
+      else if (rec.x !== m.x || rec.y !== m.y) { rec.x = m.x; rec.y = m.y; rec.t = now; }
+    });
+    if (now - heardAt > HEAR_EVERY) {                                    // who is heard: looked at a few times a second
+      heardAt = now; heardIds = {};
+      var stateOf = null, map = mapOf(), dflt = Number(content.config.monster_noise);
+      if (!(dflt >= 0)) dflt = 5;
+      view.monsters.forEach(function (m) {
+        var rec = heardMove[m.id]; if (!rec || now - rec.t > HEAR_MS || sight.vis[m.x + ',' + m.y]) return;
+        var d = content.monsters[m.ref], own = d ? d.noise : null, r = own == null || own < 0 ? dflt : Number(own);
+        if (!(r > 0)) return;
+        stateOf = stateOf || World.viewLookup(content, map, view, me).stateOf;
+        if (World.soundCarries(content, map, m.x, m.y, me.x, me.y, r, stateOf)) heardIds[m.id] = 1;
+      });
+      Object.keys(heardMove).forEach(function (id) { if (!live[id]) delete heardMove[id]; });
+    }
+    var out = {};
+    view.monsters.forEach(function (m) {                                 // where each is DRAWN this frame (it glides between tiles)
+      if (!heardIds[m.id]) return;
+      var s = shownOthers[m.id] || m;
+      out[Math.round(s.x) + ',' + Math.round(s.y)] = 1; any = true;
+    });
+    return any ? out : null;
+  }
   function frame(now) {
     requestAnimationFrame(frame);
     if (!renderer || !renderer.map || !me) return;
@@ -3648,7 +3686,7 @@
     }
     sneakVeil();
     var thAim = throwing && !inScene ? throwAim() : null;      // (its reach is hatched on the ground, under what stands there)
-    renderer.draw(cam, actors, { reach: thAim && thAim.cells, states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: null, cutAll: removing && wallsDown, watch: sightAreas(map, vis), stains: liveStains(now), floorActors: floorActors(dt), floorStates: floorStates(), floorSight: floorSight() });
+    renderer.draw(cam, actors, { reach: thAim && thAim.cells, states: states, hidden: hiddenEntity, explored: explored, vis: vis, memory: mem, sensed: inScene ? null : hearing(now), cutAll: removing && wallsDown, watch: sightAreas(map, vis), stains: liveStains(now), floorActors: floorActors(dt), floorStates: floorStates(), floorSight: floorSight() });
     nameTags(renderer.nameTags);                              // the names over characters, as text over the view
     drawEmotes(cam, map, T, sceneEm);
     if (removing) renderer.drawRemove(cam, removeTarget(), wallsDown);
@@ -3706,7 +3744,7 @@
       function draw() {
         var hs = $('join-hair'), cs = $('join-color'), bs = $('join-body-pick'), bb = $('join-build'); hs.innerHTML = ''; cs.innerHTML = ''; bs.innerHTML = ''; bb.innerHTML = '';
         // Body: a man or a woman; a woman then picks her build (owner, 27 Nov 2026): curvy = body 'female', slim =
-        // 'female_slim' (the man's cut of what she wears, no chest motion). Slim is what Female starts on (owner). The build picked is kept while Male is tried.
+        // 'female_slim' (the slim cut of what she wears, no chest motion). Slim is what Female starts on (owner). The build picked is kept while Male is tried.
         var woman = look.body !== '';
         [['', 'Male'], [look.build || 'female_slim', 'Female']].forEach(function (kind) {
           var b = document.createElement('button'); b.type = 'button'; b.className = 'jbody' + ((kind[0] !== '') === woman ? ' on' : ''); b.textContent = kind[1];
@@ -3848,6 +3886,7 @@
   window.SheetsRPG = { state: function () { return { me: me, view: view, queue: queue.length }; },
                        pick: function (clientX, clientY) { return cellAt({ clientX: clientX, clientY: clientY }); },   // the tile a point of the page means (tests)
     plan: function () { return null; },    // kept for back-compat: there is no click-to-walk plan any more
+    heard: function () { return hearing(performance.now()); },   // the cells where a creature out of sight is heard right now (tests)    // kept for back-compat: there is no click-to-walk plan any more
     layers: function () { return me ? playerLayers(me) : null; },
     camera: function () { return lastCam; },
     content: function () { return content; },                                  // (tests: change a map in memory, then remap())

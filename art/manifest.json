@@ -20,6 +20,8 @@
     "art/sprites/items/materials/material_plank.png",
     "art/sprites/items/materials/material_rock.png",
     "art/sprites/items/placeables/placeable_bedroll.png",
+    "art/sprites/items/throwables/throwable_grenade.png",
+    "art/sprites/items/throwables/throwable_molotov.png",
     "art/sprites/objects/container/container_barrel-hazard.png",
     "art/sprites/objects/container/container_barrel.png",
     "art/sprites/objects/container/container_bookshelf-small-1.png",
